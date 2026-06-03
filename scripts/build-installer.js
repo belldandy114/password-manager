@@ -44,13 +44,13 @@ console.log(`${GREEN}✓ 清理旧缓存${RESET}`);
 step('构建 Renderer (Vite)', 'npx vite build');
 
 // 2. Pack Electron app
-step('打包 Electron 应用', 'npx electron-builder --dir');
+step('打包 Electron 应用', 'npx electron-builder --dir --publish never');
 
 // 3. Fix icon (rcedit workaround for Chinese path)
 step('修复 EXE 图标', 'node scripts/fix-icon.js');
 
 // 4. Build NSIS installer
-step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged release\\win-unpacked --win nsis');
+step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged release\\win-unpacked --win nsis --publish never');
 
 // 5. Verify
 const installer = path.join(ROOT, 'release', '网址管理器 Setup 1.0.1.exe');
