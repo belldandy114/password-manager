@@ -1,0 +1,58 @@
+name: 构建安装包
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建安装包
+        run: node scripts/build-installer.js
+        shell: cmd
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: 网址管理器-Setup-${{ github.ref_name }}
+          path: release/网址管理器 Setup *.exe
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 网址管理器 ${{ github.ref_name }}
+          body: |
+            ## 网址管理器 ${{ github.ref_name }}
+
+            Windows 桌面密码管理工具（网址管理器）。
+
+            ### 安装方式
+            下载下方的 `.exe` 安装包，运行后按提示安装即可。
+
+            ### 功能特性
+            - AES-256-GCM 加密存储
+            - 卡片/列表双视图
+            - 标签管理、回收站
+            - CSV/JSON/XLSX 导入导出
+            - 浏览器检测与一键打开
+            - 自动锁定、剪贴板自动清空
+          files: release/网址管理器 Setup *.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
