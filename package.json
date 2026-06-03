@@ -12,7 +12,7 @@
     "start": "electron .",
     "preview": "vite preview",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --dir && node scripts/fix-icon.js && npx electron-builder --prepackaged release\\win-unpacked --win nsis"
+    "dist": "node scripts/build-installer.js"
   },
   "build": {
     "appId": "com.passwordmanager.app",
