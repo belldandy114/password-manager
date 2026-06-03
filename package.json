@@ -1,0 +1,81 @@
+{
+  "name": "password-manager",
+  "version": "1.0.1",
+  "description": "🔐 网址管理器 - 安全便捷的网址密码管理工具",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build:renderer": "vite build",
+    "build": "vite build",
+    "start": "electron .",
+    "preview": "vite preview",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --dir && node scripts/fix-icon.js && npx electron-builder --prepackaged release\\win-unpacked --win nsis"
+  },
+  "build": {
+    "appId": "com.passwordmanager.app",
+    "productName": "网址管理器",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "buildResources/icon.ico",
+      "buildResources/icon.png",
+      "图标.png",
+      "图标.ico"
+    ],
+    "asarUnpack": [
+      "图标.ico",
+      "图标.png",
+      "buildResources/icon.ico",
+      "buildResources/icon.png"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "buildResources/icon.ico",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "buildResources/icon.ico",
+      "uninstallerIcon": "buildResources/icon.ico",
+      "installerHeaderIcon": "buildResources/icon.ico"
+    }
+  },
+  "keywords": [
+    "password-manager",
+    "security",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^9.2.1",
+    "electron": "^42.2.0",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14",
+    "wait-on": "^9.0.10"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.1",
+    "uuid": "^14.0.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.13"
+  }
+}
