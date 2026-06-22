@@ -1,6 +1,6 @@
 {
   "name": "password-manager",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "测试工具 - 集成网址管理与测试数据生成",
   "main": "electron/main.js",
   "scripts": {
@@ -38,7 +38,6 @@
     "directories": {
       "output": "release"
     },
-    "electronDist": "node_modules/electron/dist",
     "win": {
       "target": "nsis",
       "icon": "buildResources/icon.ico",
