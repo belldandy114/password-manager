@@ -14,7 +14,7 @@ const RCEDIT = path.join(ROOT, 'node_modules', 'electron-winstaller', 'vendor', 
 const ICO = path.join(ROOT, 'buildResources', 'icon.ico');
 
 // Find the main exe (productName + .exe)
-const exeName = '网址管理器.exe';
+const exeName = '测试工具.exe';
 const exePath = path.join(UNPACKED, exeName);
 
 if (!fs.existsSync(exePath)) {

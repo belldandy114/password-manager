@@ -64,4 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserDetect: () => ipcRenderer.invoke('browser:detect'),
   browserGetKnown: () => ipcRenderer.invoke('browser:get-known'),
   browserOpen: (data) => ipcRenderer.invoke('browser:open', data),
+
+  // Test Data Generator sub-app
+  tdgGetPath: () => ipcRenderer.invoke('tdg:get-path'),
 });

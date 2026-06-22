@@ -103,6 +103,9 @@ export interface ElectronAPI {
   browserDetect: () => Promise<{ id: string; name: string }[]>;
   browserGetKnown: () => Promise<{ id: string; name: string }[]>;
   browserOpen: (data: { browser: string; url: string }) => Promise<{ success: boolean; error?: string }>;
+
+  // Test Data Generator sub-app
+  tdgGetPath: () => Promise<{ distPath: string; preloadPath: string }>;
 }
 
 declare global {

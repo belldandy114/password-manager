@@ -2,6 +2,9 @@ name: 构建安装包
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
 
@@ -21,8 +24,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: 安装依赖
+      - name: 安装主应用依赖
         run: npm ci
+
+      - name: 安装子应用依赖
+        run: cd sub-apps/test-data-generator && npm ci
+        shell: cmd
 
       - name: 构建安装包
         run: node scripts/build-installer.js
@@ -31,30 +38,32 @@ jobs:
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: 网址管理器-Setup-${{ github.ref_name }}
-          path: release/网址管理器 Setup *.exe
+          name: 测试工具-Setup-${{ github.ref_name }}
+          path: release/测试工具 Setup *.exe
 
       - name: 创建 Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: 网址管理器 ${{ github.ref_name }}
+          name: 测试工具 ${{ github.ref_name }}
           body: |
-            ## 网址管理器 ${{ github.ref_name }}
+            ## 测试工具 ${{ github.ref_name }}
 
-            Windows 桌面密码管理工具（网址管理器）。
+            Windows 集成工具：网址密码管理 + 测试数据生成。
 
             ### 安装方式
             下载下方的 `.exe` 安装包，运行后按提示安装即可。
 
             ### 功能特性
-            - AES-256-GCM 加密存储
+            - AES-256-GCM 加密密码存储
             - 卡片/列表双视图
             - 标签管理、回收站
             - CSV/JSON/XLSX 导入导出
             - 浏览器检测与一键打开
             - 自动锁定、剪贴板自动清空
-          files: release/网址管理器 Setup *.exe
+            - 测试数据生成（SQL注入、身份证、手机号等 17 种类型）
+          files: release/测试工具 Setup *.exe
           draft: false
           prerelease: false
         env:

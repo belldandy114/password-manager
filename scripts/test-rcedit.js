@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const appBuilder = path.resolve('node_modules/app-builder-bin/win/x64/app-builder.exe');
 const ico = path.resolve('图标.ico');
-const exe = path.resolve('release/win-unpacked/网址管理器.exe');
+const exe = path.resolve('release/win-unpacked/测试工具.exe');
 
 console.log('=== Step 1: app-builder icon resolution ===');
 const outDir = path.resolve('.icon-test');
@@ -22,7 +22,7 @@ try {
 console.log('\n=== Step 2: app-builder rcedit on exe ===');
 if (fs.existsSync(exe)) {
   try {
-    const cmd = `"${appBuilder}" rcedit --args "${JSON.stringify(['--set-icon', ico, '--set-version-string', 'FileDescription', '网址管理器']).replace(/"/g,'\\"')}" --exec "${exe}"`;
+    const cmd = `"${appBuilder}" rcedit --args "${JSON.stringify(['--set-icon', ico, '--set-version-string', 'FileDescription', '测试工具']).replace(/"/g,'\\"')}" --exec "${exe}"`;
     console.log('Running rcedit via app-builder...');
     const r = execSync(cmd, { shell: true, timeout: 30000 });
     console.log('OK:', r.toString().slice(0, 500));
