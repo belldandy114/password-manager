@@ -20,7 +20,7 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
   { id: 'newEntry', label: '新增网址', desc: '快速添加新的密码记录' },
   { id: 'search', label: '搜索', desc: '聚焦到搜索输入框' },
   { id: 'settings', label: '打开设置', desc: '跳转到设置页面' },
-  { id: 'lock', label: '锁定应用', desc: '立即锁定网址管理器' },
+  { id: 'lock', label: '锁定应用', desc: '立即锁定测试工具' },
   { id: 'trash', label: '回收站', desc: '打开回收站页面' },
   { id: 'import', label: '导入数据', desc: '打开导入页面' },
   { id: 'export', label: '导出数据', desc: '打开导出页面' },

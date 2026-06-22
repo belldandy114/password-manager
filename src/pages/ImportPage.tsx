@@ -255,7 +255,7 @@ export function ImportPage() {
           <>
             <h3 style={{ marginBottom: 12 }}>字段映射</h3>
             <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-              将文件字段映射到网址管理器字段 ({records.length} 条记录)
+              将文件字段映射到测试工具字段 ({records.length} 条记录)
             </p>
             {isBookmark ? null : availableFields.map(field => {
               const fieldLabels: Record<string, string> = {
@@ -319,7 +319,7 @@ export function ImportPage() {
               <polyline points="22 4 12 14.01 9 11.01"/>
             </svg>
             <h3 style={{ color: 'var(--success)' }}>导入完成</h3>
-            <p>数据已成功导入到网址管理器</p>
+            <p>数据已成功导入到测试工具</p>
             <button className="btn btn-primary mt-16" onClick={() => { setStep('select'); setRecords([]); setFilePath(''); setImportPassword(''); }}>继续导入</button>
           </div>
         )}

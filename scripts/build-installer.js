@@ -29,10 +29,10 @@ function step(label, cmd) {
 
 // 0. Clean
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
-console.log(`${CYAN}  网址管理器 - 自动化构建${RESET}`);
+console.log(`${CYAN}  测试工具 - 自动化构建${RESET}`);
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
 
-['dist', 'release', path.join('node_modules', '.cache')].forEach(d => {
+['dist', 'dist-tdg', 'release', path.join('node_modules', '.cache')].forEach(d => {
   const p = path.join(ROOT, d);
   if (fs.existsSync(p)) {
     fs.rmSync(p, { recursive: true, force: true });
@@ -43,7 +43,10 @@ console.log(`${GREEN}✓ 清理旧缓存${RESET}`);
 // 1. Build renderer
 step('构建 Renderer (Vite)', 'npx vite build');
 
-// 2. Pack Electron app
+// 2. Build sub-app (test-data-generator)
+step('构建子应用 (test-data-generator)', 'cd sub-apps/test-data-generator && (test -d node_modules || npm install) && npx vite build');
+
+// 3. Pack Electron app
 step('打包 Electron 应用', 'npx electron-builder --dir --publish never');
 
 // 3. Fix icon (rcedit workaround for Chinese path)
@@ -53,12 +56,12 @@ step('修复 EXE 图标', 'node scripts/fix-icon.js');
 step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged release\\win-unpacked --win nsis --publish never');
 
 // 5. Verify
-const installer = path.join(ROOT, 'release', '网址管理器 Setup 1.0.1.exe');
+const installer = path.join(ROOT, 'release', '测试工具 Setup 1.0.1.exe');
 if (fs.existsSync(installer)) {
   const size = (fs.statSync(installer).size / 1024 / 1024).toFixed(1);
   console.log(`\n${GREEN}═══════════════════════════════════════${RESET}`);
   console.log(`${GREEN}  构建成功！${RESET}`);
-  console.log(`${GREEN}  安装包: release\\网址管理器 Setup 1.0.1.exe (${size} MB)${RESET}`);
+  console.log(`${GREEN}  安装包: release\\测试工具 Setup 1.0.1.exe (${size} MB)${RESET}`);
   console.log(`${GREEN}═══════════════════════════════════════${RESET}`);
 } else {
   console.error(`${RED}✗ 未找到安装包！${RESET}`);

@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const exe = path.join(ROOT, 'release', 'win-unpacked', '网址管理器.exe');
+const exe = path.join(ROOT, 'release', 'win-unpacked', '测试工具.exe');
 const rcedit = path.join(ROOT, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe');
 const icoPath = path.join(ROOT, '图标.ico');
 

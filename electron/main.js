@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -21,6 +21,14 @@ const SALT_LENGTH = 32;
 const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 const BIN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// ----------------------------------------------------------------
+// Test Data Generator sub-app paths
+// ----------------------------------------------------------------
+const TDG_DIST_PATH = IS_DEV
+  ? path.join(__dirname, '..', 'dist-tdg')
+  : path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-tdg');
+const TDG_PRELOAD_PATH = path.join(__dirname, 'preload-tdg.cjs');
 
 // ----------------------------------------------------------------
 // Key derivation
@@ -134,7 +142,7 @@ function createWindow() {
   );
 
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 1400,
     height: 800,
     minWidth: 900,
     minHeight: 600,
@@ -142,7 +150,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      webviewTag: true
     },
     icon: appIcon,
     show: false
@@ -907,12 +916,48 @@ function setupIpcHandlers() {
       return { success: false, error: e.message };
     }
   });
+  // ---- Test Data Generator IPC handlers ----
+  ipcMain.handle('dialog:saveFile', async (_event, { defaultName, filters }) => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultName,
+      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    return { canceled: false, filePath: result.filePath };
+  });
+
+  ipcMain.handle('fs:writeFile', async (_event, { filePath, content, encoding }) => {
+    try {
+      fs.writeFileSync(filePath, content, encoding || 'utf-8');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // IPC handler for renderer to get the TDG paths
+  ipcMain.handle('tdg:get-path', () => {
+    return {
+      distPath: TDG_DIST_PATH,
+      preloadPath: TDG_PRELOAD_PATH,
+    };
+  });
 }
 
-// ----------------------------------------------------------------
-// App lifecycle
-// ----------------------------------------------------------------
+// ---- Custom protocol for sub-app ----
+function setupTdgProtocol() {
+  protocol.registerFileProtocol('tdg', (request, callback) => {
+    let filePath = request.url.replace('tdg://', '');
+    // Default to index.html for directory requests
+    if (!filePath || filePath.endsWith('/')) filePath += 'index.html';
+    callback({ path: path.join(TDG_DIST_PATH, decodeURIComponent(filePath)) });
+  }, (error) => {
+    if (error) console.error('Failed to register tdg protocol:', error);
+  });
+}
 app.whenReady().then(() => {
+  // Register custom protocol for test-data-generator sub-app
+  setupTdgProtocol();
   // Set app-level icon for Windows taskbar
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.passwordmanager.app');

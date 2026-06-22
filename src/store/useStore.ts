@@ -30,9 +30,11 @@ interface AppState {
 
   // Signals (for keyboard shortcuts / cross-component triggers)
   triggerNewEntry: number;
+  pmSubPage: string;
 
   // Actions
   signalNewEntry: () => void;
+  setPmSubPage: (page: string) => void;
   setLocked: (locked: boolean) => void;
   setIsSetup: (setup: boolean) => void;
   setMasterPassword: (pw: string) => void;
@@ -94,6 +96,7 @@ export const useStore = create<AppState>((set, get) => ({
   isSetup: null,
   masterPassword: '',
   triggerNewEntry: 0,
+  pmSubPage: 'dashboard',
   entries: [],
   tags: [],
   trash: [],
@@ -128,6 +131,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   signalNewEntry: () => set((s) => ({ triggerNewEntry: s.triggerNewEntry + 1 })),
+  setPmSubPage: (page) => set({ pmSubPage: page }),
   setLocked: (locked) => set({ isLocked: locked }),
   setIsSetup: (setup) => set({ isSetup: setup }),
   setMasterPassword: (pw) => set({ masterPassword: pw }),

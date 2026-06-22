@@ -27,7 +27,7 @@ This project uses Git. See .gitignore for excluded files.
 
 ## Architecture
 
-Electron desktop password manager (网址管理器) using AES-256-GCM encryption. Three layers: Electron main process, preload bridge, and React renderer.
+Electron desktop app (测试工具) integrating a password manager using AES-256-GCM encryption and a test data generator via webview. Three layers: Electron main process, preload bridge, and React renderer.
 
 ### Entry Points
 

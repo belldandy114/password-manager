@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
-import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
-import { TrashPage } from './pages/TrashPage';
-import { ImportPage } from './pages/ImportPage';
-import { ExportPage } from './pages/ExportPage';
+import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
-import { TagSidebar } from './components/TagSidebar';
+import { DataGenerator } from './pages/DataGenerator';
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -16,7 +13,8 @@ function App() {
   const setMasterPassword = useStore(s => s.setMasterPassword);
   const setIsSetup = useStore(s => s.setIsSetup);
   const setSettings = useStore(s => s.setSettings);
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const setPmSubPage = useStore(s => s.setPmSubPage);
+  const [currentPage, setCurrentPage] = useState('passwordManager');
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const lastActivityRef = useRef(Date.now());
 
@@ -44,7 +42,7 @@ function App() {
     await window.electronAPI.sessionLock();
     setMasterPassword('');
     setLocked(true);
-    setCurrentPage('dashboard');
+    setCurrentPage('passwordManager');
   }, []);
 
   // Ref to always call the latest handleLock from intervals
@@ -55,7 +53,6 @@ function App() {
   useEffect(() => {
     if (isLocked) return;
 
-    // Read latest autoLockDelay from store on every check
     const checkLock = () => {
       const settings = useStore.getState().settings;
       const delayMs = settings.autoLockDelay * 60 * 1000;
@@ -74,7 +71,6 @@ function App() {
     const handlers = ['click', 'keydown', 'mousemove', 'scroll'] as const;
     handlers.forEach(ev => document.addEventListener(ev, resetAutoLock));
 
-    // Check immediately when user returns to the app (e.g. alt+tab back)
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         checkLock();
@@ -93,7 +89,6 @@ function App() {
   useEffect(() => {
     if (isLocked) return;
 
-    // Parse a keybinding string like "Ctrl+Shift+L" into match criteria
     const parseKeys = (keys: string): { ctrl: boolean; shift: boolean; key: string } | null => {
       const parts = keys.split('+');
       let ctrl = false;
@@ -120,8 +115,9 @@ function App() {
       const newEntryKeys = parseKeys(kb.newEntry);
       if (newEntryKeys && ctrl === newEntryKeys.ctrl && shift === newEntryKeys.shift && pressedKey === newEntryKeys.key) {
         e.preventDefault();
+        setCurrentPage('passwordManager');
         useStore.getState().signalNewEntry();
-        setCurrentPage('dashboard');
+        useStore.getState().setPmSubPage('dashboard');
         return;
       }
 
@@ -129,8 +125,13 @@ function App() {
       const searchKeys = parseKeys(kb.search);
       if (searchKeys && ctrl === searchKeys.ctrl && shift === searchKeys.shift && pressedKey === searchKeys.key) {
         e.preventDefault();
-        const input = document.querySelector<HTMLInputElement>('.toolbar-search input');
-        if (input) { input.focus(); input.select(); }
+        setCurrentPage('passwordManager');
+        useStore.getState().setPmSubPage('dashboard');
+        // Focus search input after switching
+        setTimeout(() => {
+          const input = document.querySelector<HTMLInputElement>('.toolbar-search input');
+          if (input) { input.focus(); input.select(); }
+        }, 50);
         return;
       }
 
@@ -154,7 +155,8 @@ function App() {
       const trashKeys = parseKeys(kb.trash);
       if (trashKeys && ctrl === trashKeys.ctrl && shift === trashKeys.shift && pressedKey === trashKeys.key) {
         e.preventDefault();
-        setCurrentPage('trash');
+        setCurrentPage('passwordManager');
+        useStore.getState().setPmSubPage('trash');
         return;
       }
 
@@ -162,7 +164,8 @@ function App() {
       const importKeys = parseKeys(kb.import);
       if (importKeys && ctrl === importKeys.ctrl && shift === importKeys.shift && pressedKey === importKeys.key) {
         e.preventDefault();
-        setCurrentPage('import');
+        setCurrentPage('passwordManager');
+        useStore.getState().setPmSubPage('import');
         return;
       }
 
@@ -170,7 +173,8 @@ function App() {
       const exportKeys = parseKeys(kb.export);
       if (exportKeys && ctrl === exportKeys.ctrl && shift === exportKeys.shift && pressedKey === exportKeys.key) {
         e.preventDefault();
-        setCurrentPage('export');
+        setCurrentPage('passwordManager');
+        useStore.getState().setPmSubPage('export');
         return;
       }
     };
@@ -188,7 +192,6 @@ function App() {
         if (!setup) {
           setLocked(true);
         }
-        // Load settings and apply theme
         const prefs = await window.electronAPI.settingsGet();
         if (prefs) {
           setSettings(prefs);
@@ -213,19 +216,16 @@ function App() {
   // Main app layout
   const renderPage = () => {
     switch (currentPage) {
-      case 'dashboard': return <Dashboard />;
+      case 'passwordManager': return <PasswordManagerPage />;
       case 'settings': return <Settings />;
-      case 'trash': return <TrashPage />;
-      case 'import': return <ImportPage />;
-      case 'export': return <ExportPage />;
-      default: return <Dashboard />;
+      case 'dataGenerator': return <DataGenerator />;
+      default: return <PasswordManagerPage />;
     }
   };
 
   return (
     <div className="app-layout">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} />
-      {currentPage === 'dashboard' && <TagSidebar />}
       <div className="main-content">
         {renderPage()}
       </div>
