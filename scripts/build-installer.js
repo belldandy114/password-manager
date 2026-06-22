@@ -40,6 +40,25 @@ console.log(`${CYAN}════════════════════
 });
 console.log(`${GREEN}✓ 清理旧缓存${RESET}`);
 
+// Helper: temporarily set electronDist if local electron dist exists (EPERM workaround)
+function patchElectronDist(action) {
+  const pkgPath = path.join(ROOT, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  const localDist = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
+  if (action === 'add' && fs.existsSync(localDist)) {
+    pkg.build.electronDist = 'node_modules/electron/dist';
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    console.log(`${GREEN}✓ electronDist 已设置 (本地构建)${RESET}`);
+  } else if (action === 'remove') {
+    delete pkg.build.electronDist;
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    console.log(`${GREEN}✓ electronDist 已清理${RESET}`);
+  }
+}
+
+// 0.5. Set electronDist if local binary exists (EPERM workaround for local env)
+patchElectronDist('add');
+
 // 1. Build renderer
 step('构建 Renderer (Vite)', 'npx vite build');
 
@@ -56,14 +75,18 @@ step('修复 EXE 图标', 'node scripts/fix-icon.js');
 step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged release\\win-unpacked --win nsis --publish never');
 
 // 5. Verify
-const installer = path.join(ROOT, 'release', '测试工具 Setup 1.0.1.exe');
+const installer = path.join(ROOT, 'release', '测试工具 Setup 1.0.2.exe');
 if (fs.existsSync(installer)) {
   const size = (fs.statSync(installer).size / 1024 / 1024).toFixed(1);
   console.log(`\n${GREEN}═══════════════════════════════════════${RESET}`);
   console.log(`${GREEN}  构建成功！${RESET}`);
-  console.log(`${GREEN}  安装包: release\\测试工具 Setup 1.0.1.exe (${size} MB)${RESET}`);
+  console.log(`${GREEN}  安装包: release\\测试工具 Setup 1.0.2.exe (${size} MB)${RESET}`);
   console.log(`${GREEN}═══════════════════════════════════════${RESET}`);
 } else {
   console.error(`${RED}✗ 未找到安装包！${RESET}`);
+  patchElectronDist('remove');
   process.exit(1);
 }
+
+// Cleanup: remove electronDist if it was added
+patchElectronDist('remove');
