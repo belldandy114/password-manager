@@ -92,11 +92,33 @@ export function generateIdCard(params: {
   gender: 'male' | 'female' | 'random'
   birthYearMin: number
   birthYearMax: number
-  idType: 'mainland' | 'hk' | 'macau'
+  idType: 'mainland' | 'hk' | 'macau' | 'mixed'
 }): string {
-  if (params.idType === 'hk') return generateHkIdCard()
-  if (params.idType === 'macau') return generateMacauIdCard()
+  let type = params.idType
+  if (type === 'mixed') {
+    const types: ('mainland' | 'hk' | 'macau')[] = ['mainland', 'hk', 'macau']
+    type = types[randInt(0, 2)]
+  }
+  if (type === 'hk') return generateHkIdCard()
+  if (type === 'macau') return generateMacauIdCard()
   return generateMainlandIdCard(params)
+}
+
+/**
+ * 获取实际生成的身份证类型标签（用于 mixed 模式区分）
+ */
+export function getIdCardTypeLabel(params: {
+  gender: 'male' | 'female' | 'random'
+  birthYearMin: number
+  birthYearMax: number
+  idType: 'mainland' | 'hk' | 'macau' | 'mixed'
+}, generatedValue: string): string {
+  const resolvedType = params.idType === 'mixed'
+    ? (generatedValue.match(/^\d{18}[\dX]$/i) ? 'mainland' : generatedValue.includes('(') ? (generatedValue.length > 12 ? 'hk' : 'macau') : 'mainland')
+    : params.idType
+  if (resolvedType === 'hk') return '香港身份证'
+  if (resolvedType === 'macau') return '澳门身份证'
+  return '身份证'
 }
 
 /**

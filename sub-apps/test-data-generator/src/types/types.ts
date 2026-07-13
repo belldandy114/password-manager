@@ -35,7 +35,7 @@ export interface IdCardParams {
 }
 
 /** 身份证类型 */
-export type IdCardType = 'mainland' | 'hk' | 'macau'
+export type IdCardType = 'mainland' | 'hk' | 'macau' | 'mixed'
 
 /** 港澳身份证参数 */
 export interface HkMacauIdParams {

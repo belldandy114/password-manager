@@ -35,7 +35,6 @@ export function DataGenerator() {
 
   // Handle webview errors
   const handleWebviewError = () => {
-    // The webview's 'did-fail-load' event
     const wv = webviewRef.current;
     if (!wv) return;
     const handler = (e: any) => {
@@ -56,35 +55,35 @@ export function DataGenerator() {
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden',
-      background: 'var(--bg-primary, #0f0f1a)',
+      background: 'var(--bg-primary)',
     }}>
       {isDev && (
         <div style={{
           padding: '8px 16px',
-          background: '#1a1a2e',
-          color: '#ffd700',
+          background: 'var(--bg-secondary)',
+          color: 'var(--warning)',
           fontSize: '13px',
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
-          borderBottom: '1px solid #2a2a4e',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}>
           <span style={{ fontWeight: 600 }}>⚡ 开发模式</span>
-          <span style={{ color: '#888' }}>— 生成测试数据运行在 http://localhost:5174</span>
+          <span style={{ color: 'var(--text-muted)' }}>— 生成测试数据运行在 http://localhost:5174</span>
         </div>
       )}
 
       {loadError && (
         <div style={{
           padding: '32px',
-          color: '#ff6b6b',
+          color: 'var(--danger)',
           textAlign: 'center',
           fontSize: '14px',
         }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
           <div>{loadError}</div>
-          <div style={{ fontSize: '12px', color: '#888', marginTop: '8px' }}>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
             {isDev ? '请确保子应用开发服务器已在端口 5174 启动' : '文件可能未正确打包'}
           </div>
         </div>
@@ -96,7 +95,7 @@ export function DataGenerator() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#888',
+          color: 'var(--text-muted)',
           fontSize: '14px',
         }}>
           加载中...
