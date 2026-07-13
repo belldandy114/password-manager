@@ -15,6 +15,7 @@ const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const RESET = '\x1b[0m';
+const YELLOW = '\x1b[33m';
 
 function step(label, cmd) {
   console.log(`\n${CYAN}▶ ${label}${RESET}`);
@@ -68,11 +69,17 @@ step('构建子应用 (test-data-generator)', 'cd sub-apps/test-data-generator &
 // 3. Pack Electron app
 step('打包 Electron 应用', 'npx electron-builder --dir --publish never');
 
-// 3. Fix icon (rcedit workaround for Chinese path)
-step('修复 EXE 图标', 'node scripts/fix-icon.js');
+// 3. Fix icon (rcedit workaround for Chinese path) — non-fatal
+console.log(`\n${CYAN}▶ 修复 EXE 图标${RESET}`);
+try {
+  execSync('node scripts/fix-icon.js', { cwd: ROOT, shell: true, stdio: 'inherit', timeout: 60000 });
+  console.log(`${GREEN}✓ 修复 EXE 图标${RESET}`);
+} catch {
+  console.log(`${YELLOW}⚠ 图标修复跳过（本机环境限制，不影响使用）${RESET}`);
+}
 
 // 4. Build NSIS installer
-step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged release\\win-unpacked --win nsis --publish never');
+step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged "release/win-unpacked" --win nsis --publish never');
 
 // 5. Verify
 const installer = path.join(ROOT, 'release', '测试工具 Setup 1.0.2.exe');

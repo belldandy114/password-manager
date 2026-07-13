@@ -3,7 +3,7 @@
  * 统一入口，将所有生成器整合在一起
  */
 
-import { generateIdCard, getIdCardLast6 } from './idCard'
+import { generateIdCard, getIdCardLast6, getIdCardTypeLabel } from './idCard'
 import { generateName, generateNames, generateNamesWithPinyin } from './nameGenerator'
 import { generateEmail } from './emailGenerator'
 import { generateLongText } from './longText'
@@ -62,7 +62,7 @@ export function generateData(config: GenerateConfig): GenerateResultItem[] {
         })
         results.push({
           id: results.length + 1,
-          type: p.idType === 'hk' ? '香港身份证' : p.idType === 'macau' ? '澳门身份证' : '身份证',
+          type: getIdCardTypeLabel({ ...p }, value),
           value,
           last6: getIdCardLast6(value, config.idCardLastDigits),
         })

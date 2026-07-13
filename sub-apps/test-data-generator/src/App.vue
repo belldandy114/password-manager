@@ -71,6 +71,7 @@
                     <el-radio value="mainland">大陆</el-radio>
                     <el-radio value="hk">香港</el-radio>
                     <el-radio value="macau">澳门</el-radio>
+                    <el-radio value="mixed">混合</el-radio>
                   </el-radio-group>
                 </el-form-item>
                 <el-form-item label="性别">
@@ -404,6 +405,9 @@
             <el-button size="small" @click="handleCopyMarkdown">
               <el-icon><CopyDocument /></el-icon> 复制Markdown
             </el-button>
+            <el-button size="small" @click="handleCopyLastDigits" v-show="hasIdCardData">
+              <el-icon><CopyDocument /></el-icon> 复制后{{ idCardParams.lastDigits }}位
+            </el-button>
             <el-button size="small" @click="handleExport('txt')">TXT</el-button>
             <el-button size="small" @click="handleExport('csv')">CSV</el-button>
             <el-button size="small" @click="handleExport('sql')">SQL</el-button>
@@ -517,7 +521,6 @@
     <!-- 免责声明 -->
     <footer class="app-footer">
       <span>⚠️ 本工具仅供合法的软件测试使用，严禁用于任何非法用途。</span>
-      <a class="footer-link" href="mailto:test@example.com">联系我们</a>
     </footer>
 
     <!-- 首次访问免责弹窗 -->
@@ -1195,6 +1198,19 @@ async function handleCopyMarkdown() {
   try {
     await navigator.clipboard.writeText(table)
     ElMessage.success('已复制 Markdown 表格（' + displayResults.value.length + ' 条）')
+  } catch {
+    ElMessage.warning('复制失败')
+  }
+}
+
+/** 复制身份证后 N 位 */
+async function handleCopyLastDigits() {
+  const items = displayResults.value.filter(i => SENSITIVE_TYPES.has(i.type) && i.last6)
+  if (items.length === 0) { ElMessage.warning('没有身份证数据'); return }
+  const text = items.map(i => i.last6).join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`已复制 ${items.length} 条后 ${idCardParams.lastDigits} 位`)
   } catch {
     ElMessage.warning('复制失败')
   }

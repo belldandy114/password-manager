@@ -5,6 +5,7 @@ import { Settings } from './pages/Settings';
 import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
 import { DataGenerator } from './pages/DataGenerator';
+import { JsonConverter } from './pages/JsonConverter';
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -219,6 +220,7 @@ function App() {
       case 'passwordManager': return <PasswordManagerPage />;
       case 'settings': return <Settings />;
       case 'dataGenerator': return <DataGenerator />;
+      case 'jsonConverter': return <JsonConverter />;
       default: return <PasswordManagerPage />;
     }
   };
