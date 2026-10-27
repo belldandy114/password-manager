@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import type { Note } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 
 const emptyNote = (): Note => ({
   id: '', title: '', content: '', tags: [], updatedAt: new Date().toISOString(),
@@ -36,6 +37,12 @@ function mdToHtml(md: string): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+const fmtDate = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+};
+
 export function Notes() {
   const { items, save, loading } = useCollection<Note>('notes');
   const [search, setSearch] = useState('');
@@ -65,39 +72,65 @@ export function Notes() {
 
   return (
     <div className="content-area">
-      <div className="module-page">
-        <PageHeader title="测试笔记" desc="踩坑记录、测试结论、环境说明，支持 Markdown，加密保存在本地">
-          <input className="module-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索标题 / 内容" />
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>+ 新建笔记</button>
-        </PageHeader>
+      <Page>
+        <PageHead
+          icon={<Icons.note size={16} />}
+          title="测试笔记"
+          desc="踩坑记录、测试结论、环境说明，支持 Markdown，加密保存在本地"
+          tools={
+            <>
+              <SearchBox value={search} onChange={setSearch} placeholder="搜索标题 / 内容" />
+              <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>
+                <Icons.plus size={13} /> 新建笔记
+              </button>
+            </>
+          }
+        />
 
         {loading ? (
-          <div className="module-empty">加载中…</div>
+          <Panel><div className="tbl-empty">加载中…</div></Panel>
         ) : filtered.length === 0 ? (
-          <EmptyHint
-            text="还没有笔记，记下第一个测试结论或踩坑记录"
-            action={<button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>新建笔记</button>}
-          />
+          <Panel>
+            <Empty
+              icon={<Icons.note size={22} />}
+              title={search ? '没有匹配的笔记' : '还没有笔记'}
+              desc={search ? '换个关键词试试' : '记下第一个测试结论或踩坑记录，支持 Markdown 语法'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>
+                  <Icons.plus size={13} /> 新建笔记
+                </button>
+              )}
+            />
+          </Panel>
         ) : (
-          <div className="card-list">
+          <div className="cards">
             {filtered.map(n => (
-              <div key={n.id} className="module-card clickable" onClick={() => setPreview(n)}>
-                <div className="module-card-head">
-                  <strong>{n.title}</strong>
-                  <div onClick={e => e.stopPropagation()}>
-                    <span className="text-sm text-muted" style={{ marginRight: 8 }}>
-                      {new Date(n.updatedAt).toLocaleDateString('zh-CN')}
-                    </span>
-                    <button className="mini-btn" onClick={() => setEditing(n)}>编辑</button>
-                    <button className="mini-btn danger" onClick={() => remove(n.id)}>删除</button>
+              <div key={n.id} className="card2 is-clickable" onClick={() => setPreview(n)}>
+                <div className="card2-head">
+                  <div className="card2-title" title={n.title}>{n.title}</div>
+                  <div className="card2-actions" onClick={e => e.stopPropagation()}>
+                    <IconBtn title="编辑" onClick={() => setEditing(n)}><Icons.pencil size={13} /></IconBtn>
+                    <IconBtn title="删除" danger onClick={() => remove(n.id)}><Icons.trash size={13} /></IconBtn>
                   </div>
                 </div>
-                <div className="note-excerpt">{(n.content || '').replace(/[#*`]/g, '').slice(0, 120) || '（空）'}</div>
+
+                <div className="card2-meta">
+                  <Icons.note size={11} />
+                  {fmtDate(n.updatedAt)}
+                  {n.tags?.length > 0 && <span className="chip" style={{ marginLeft: 'auto' }}>{n.tags.join(' · ')}</span>}
+                </div>
+
+                <div className="card2-body" style={{
+                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}>
+                  {(n.content || '').replace(/[#*`>]/g, '').replace(/\n+/g, ' ').trim() || '（空笔记）'}
+                </div>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </Page>
 
       <Modal
         open={!!editing}

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Checklist, ChecklistItem } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
 const emptyChecklist = (): Checklist => ({
   id: '', title: '', description: '', items: [], updatedAt: new Date().toISOString(),
@@ -11,6 +12,23 @@ export function Checklists() {
   const { items, save, loading } = useCollection<Checklist>('checklists');
   const [editing, setEditing] = useState<Checklist | null>(null);
   const [newItem, setNewItem] = useState('');
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(c => [c.title, c.description, ...c.items.map(i => i.text)]
+      .some(v => (v || '').toLowerCase().includes(q)));
+  }, [items, search]);
+
+  const totals = useMemo(() => {
+    let done = 0, all = 0;
+    for (const c of items) {
+      all += c.items.length;
+      done += c.items.filter(i => i.done).length;
+    }
+    return { done, all };
+  }, [items]);
 
   const saveEditing = async () => {
     if (!editing || !editing.title.trim()) return;
@@ -41,51 +59,87 @@ export function Checklists() {
 
   return (
     <div className="content-area">
-      <div className="module-page">
-        <PageHeader title="用例清单" desc="沉淀可复用的测试点 / 回归清单，勾选状态自动保存">
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyChecklist())}>+ 新建清单</button>
-        </PageHeader>
+      <Page>
+        <PageHead
+          icon={<Icons.list size={16} />}
+          title="用例清单"
+          desc="沉淀可复用的测试点 / 回归清单，勾选状态自动保存"
+          tools={
+            <>
+              <SearchBox value={search} onChange={setSearch} placeholder="搜索清单或检查项" />
+              <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyChecklist())}>
+                <Icons.plus size={13} /> 新建清单
+              </button>
+            </>
+          }
+        />
 
         {loading ? (
-          <div className="module-empty">加载中…</div>
-        ) : items.length === 0 ? (
-          <EmptyHint
-            text="还没有清单。例如「登录功能回归清单」：验证密码错误提示、验证锁定、验证记住密码…"
-            action={<button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyChecklist())}>新建清单</button>}
-          />
+          <Panel><div className="tbl-empty">加载中…</div></Panel>
+        ) : filtered.length === 0 ? (
+          <Panel>
+            <Empty
+              icon={<Icons.list size={22} />}
+              title={search ? '没有匹配的清单' : '还没有清单'}
+              desc={search ? '换个关键词试试' : '例如「登录功能回归清单」：验证密码错误提示、连续输错锁定、记住密码是否生效…'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyChecklist())}>
+                  <Icons.plus size={13} /> 新建清单
+                </button>
+              )}
+            />
+          </Panel>
         ) : (
-          <div className="card-list">
-            {items.map(list => {
-              const done = list.items.filter(i => i.done).length;
-              const total = list.items.length;
-              const percent = total ? Math.round((done / total) * 100) : 0;
-              return (
-                <div key={list.id} className="module-card">
-                  <div className="module-card-head">
-                    <strong>{list.title}</strong>
-                    <div>
-                      <button className="mini-btn" onClick={() => setEditing(list)}>编辑</button>
-                      <button className="mini-btn danger" onClick={() => remove(list.id)}>删除</button>
+          <>
+            <div className="pg-sub" style={{ marginTop: -8 }}>
+              共 {items.length} 个清单 · {totals.all} 个检查项，已完成 <strong style={{ color: 'var(--success)' }}>{totals.done}</strong>
+            </div>
+            <div className="cards">
+              {filtered.map(list => {
+                const done = list.items.filter(i => i.done).length;
+                const total = list.items.length;
+                const percent = total ? Math.round((done / total) * 100) : 0;
+                const finished = total > 0 && done === total;
+                return (
+                  <div key={list.id} className="card2">
+                    <div className="card2-head">
+                      <div className="card2-title" title={list.title}>{list.title}</div>
+                      {finished
+                        ? <Pill tone="ok" dot>已全部通过</Pill>
+                        : <Pill tone="mute">{done}/{total}</Pill>}
+                      <div className="card2-actions">
+                        <IconBtn title="编辑" onClick={() => setEditing(list)}><Icons.pencil size={13} /></IconBtn>
+                        <IconBtn title="删除" danger onClick={() => remove(list.id)}><Icons.trash size={13} /></IconBtn>
+                      </div>
+                    </div>
+
+                    {list.description && <div className="card2-meta">{list.description}</div>}
+
+                    <div className={`prog${finished ? ' is-done' : ''}`}><i style={{ width: percent + '%' }} /></div>
+
+                    <div className="card2-body" style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {list.items.length === 0 && (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>还没有检查项，点右上角编辑添加</div>
+                      )}
+                      {list.items.slice(0, 8).map(it => (
+                        <label key={it.id} className={`ck${it.done ? ' is-done' : ''}`}>
+                          <input type="checkbox" checked={it.done} onChange={() => toggleItem(list, it.id)} />
+                          <span>{it.text}</span>
+                        </label>
+                      ))}
+                      {list.items.length > 8 && (
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', paddingLeft: 8, marginTop: 4 }}>
+                          还有 {list.items.length - 8} 项…
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {list.description && <div className="text-muted text-sm">{list.description}</div>}
-                  <div className="progress-line"><i style={{ width: percent + '%' }} /></div>
-                  <div className="text-sm text-muted">{done} / {total} 项完成（{percent}%）</div>
-                  <div className="check-items">
-                    {list.items.slice(0, 6).map(it => (
-                      <label key={it.id} className={`check-item ${it.done ? 'done' : ''}`}>
-                        <input type="checkbox" checked={it.done} onChange={() => toggleItem(list, it.id)} />
-                        <span>{it.text}</span>
-                      </label>
-                    ))}
-                    {list.items.length > 6 && <div className="text-sm text-muted">还有 {list.items.length - 6} 项…</div>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
-      </div>
+      </Page>
 
       <Modal
         open={!!editing}
@@ -110,7 +164,7 @@ export function Checklists() {
             </div>
             <div className="form-group">
               <label>检查项（{editing.items.length}）</label>
-              <div className="tool-inline">
+              <div className="tool-line">
                 <input
                   value={newItem}
                   onChange={e => setNewItem(e.target.value)}
@@ -119,22 +173,24 @@ export function Checklists() {
                 />
                 <button className="btn btn-sm btn-secondary" onClick={addItem}>添加</button>
               </div>
-              <div className="check-items" style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {editing.items.map(it => (
-                  <div key={it.id} className="check-item editable">
+                  <div key={it.id} className={`ck${it.done ? ' is-done' : ''}`} style={{ paddingRight: 4 }}>
                     <input type="checkbox" checked={it.done}
                       onChange={() => setEditing({
                         ...editing,
                         items: editing.items.map(x => (x.id === it.id ? { ...x, done: !x.done } : x)),
                       })} />
-                    <span className={it.done ? 'done-text' : ''}>{it.text}</span>
-                    <button className="btn-icon-danger" onClick={() => setEditing({
+                    <span style={{ flex: 1 }}>{it.text}</span>
+                    <IconBtn title="移除" danger onClick={() => setEditing({
                       ...editing,
                       items: editing.items.filter(x => x.id !== it.id),
-                    })}>×</button>
+                    })}><Icons.close size={12} /></IconBtn>
                   </div>
                 ))}
-                {editing.items.length === 0 && <div className="text-muted text-sm">还没有检查项</div>}
+                {editing.items.length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>还没有检查项</div>
+                )}
               </div>
             </div>
           </>

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
+import { Page, PageHead, Panel, Icons } from '../components/ui';
 
 /* =============================================================
    工具箱：时间戳 / 编码 / 哈希&JWT / 正则 / 文本对比 / 数据校验
@@ -9,13 +10,13 @@ import { ToastContainer } from '../components/Toast';
 
 type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'diff' | 'validate';
 
-const TOOLS: { id: ToolId; label: string; icon: string; desc: string }[] = [
-  { id: 'timestamp', label: '时间戳', icon: '🕒', desc: 'Unix 时间戳与日期互转' },
-  { id: 'encode', label: '编码转换', icon: '🔤', desc: 'Base64 / URL / HTML / Unicode / Hex' },
-  { id: 'hash', label: '哈希 & JWT', icon: '#️⃣', desc: 'MD5 / SHA 摘要，JWT 解析' },
-  { id: 'regex', label: '正则测试', icon: '🧩', desc: '实时匹配高亮 + 常用正则' },
-  { id: 'diff', label: '文本对比', icon: '↔️', desc: '两段文本逐行差异' },
-  { id: 'validate', label: '数据校验', icon: '✅', desc: '身份证 / 手机号 / 银行卡等' },
+const TOOLS: { id: ToolId; label: string; icon: React.ReactNode; desc: string }[] = [
+  { id: 'timestamp', label: '时间戳', icon: <Icons.refresh size={13} />, desc: 'Unix 时间戳与日期互转，造数和看日志时最常用' },
+  { id: 'encode', label: '编码转换', icon: <Icons.terminal size={13} />, desc: 'Base64 / URL / HTML / Unicode / Hex 互转' },
+  { id: 'hash', label: '哈希 & JWT', icon: <Icons.key size={13} />, desc: 'MD5 / SHA 摘要，JWT 解析（看 token 过期时间）' },
+  { id: 'regex', label: '正则测试', icon: <Icons.search size={13} />, desc: '实时匹配高亮，内置常用正则' },
+  { id: 'diff', label: '文本对比', icon: <Icons.list size={13} />, desc: '两段文本逐行差异，回归比对很实用' },
+  { id: 'validate', label: '数据校验', icon: <Icons.check size={13} />, desc: '身份证 / 手机号 / 银行卡 / 统一社会信用代码' },
 ];
 
 /* ---------------- 时间戳 ---------------- */
@@ -562,30 +563,37 @@ export function Toolbox() {
   return (
     <div className="content-area">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      <div className="toolbox-page">
-        <h2>工具箱</h2>
-        <div className="toolbox-tabs">
+      <Page>
+        <PageHead
+          icon={<Icons.tool size={16} />}
+          title="工具箱"
+          desc="测试过程中高频用到的小工具，全部在本地计算，数据不出本机"
+        />
+
+        <div className="tabs">
           {TOOLS.map(t => (
             <button
               key={t.id}
-              className={`toolbox-tab ${active === t.id ? 'active' : ''}`}
+              className={`tab2${active === t.id ? ' is-active' : ''}`}
               onClick={() => setActive(t.id)}
               title={t.desc}
             >
-              <span className="toolbox-tab-icon">{t.icon}</span>
+              {t.icon}
               <span>{t.label}</span>
             </button>
           ))}
         </div>
-        <div className="toolbox-body">
+
+        <Panel title={TOOLS.find(t => t.id === active)?.label}>
+          <div className="tool-lead">{TOOLS.find(t => t.id === active)?.desc}</div>
           {active === 'timestamp' && <TimestampTool />}
           {active === 'encode' && <EncodeTool />}
           {active === 'hash' && <HashTool />}
           {active === 'regex' && <RegexTool />}
           {active === 'diff' && <DiffTool />}
           {active === 'validate' && <ValidateTool />}
-        </div>
-      </div>
+        </Panel>
+      </Page>
     </div>
   );
 }

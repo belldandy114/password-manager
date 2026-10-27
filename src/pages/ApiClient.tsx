@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { ApiRequest, ApiResponseData } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
+import { Page, PageHead, Panel, Empty, IconBtn, Icons } from '../components/ui';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -72,124 +73,181 @@ export function ApiClient() {
 
   return (
     <div className="content-area">
-      <div className="module-page api-page">
-        <PageHeader title="接口调试" desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存">
-          <button className="btn btn-secondary btn-sm" onClick={() => setReq(emptyReq())}>新建请求</button>
-          <button className="btn btn-secondary btn-sm" onClick={saveRequest}>保存请求</button>
-        </PageHeader>
+      <Page>
+        <PageHead
+          icon={<Icons.terminal size={16} />}
+          title="接口调试"
+          desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存"
+          tools={
+            <>
+              <button className="btn btn-secondary btn-sm" onClick={() => setReq(emptyReq())}>
+                <Icons.plus size={13} /> 新建请求
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={saveRequest}>保存请求</button>
+            </>
+          }
+        />
 
-        <div className="api-layout">
-          {/* 左侧：已保存请求 */}
-          <div className="api-sidebar">
-            <div className="api-sidebar-title">已保存（{items.length}）</div>
-            {items.length === 0 ? (
-              <div className="text-sm text-muted" style={{ padding: '8px 4px' }}>发送并保存后会出现在这里</div>
-            ) : (
-              items.map(i => (
-                <div key={i.id} className={`api-item ${req.id === i.id ? 'active' : ''}`} onClick={() => { setReq(i); setResponse(null); }}>
-                  <span className={`api-method m-${i.method}`}>{i.method}</span>
-                  <span className="api-item-name" title={i.url}>{i.name}</span>
-                  <button className="btn-icon-danger" onClick={e => { e.stopPropagation(); removeRequest(i.id); }}>×</button>
+        <div className="split" style={{ gridTemplateColumns: '248px minmax(0, 1fr)' }}>
+          <Panel title="已保存" meta={items.length} flush>
+            <div className="api-side" style={{ padding: 8 }}>
+              {items.length === 0 ? (
+                <div style={{ padding: '18px 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                  还没有保存的请求。<br />填好地址后点右上角「保存请求」。
                 </div>
-              ))
-            )}
-          </div>
-
-          {/* 右侧：编辑与响应 */}
-          <div className="api-main">
-            <div className="api-url-row">
-              <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })}>
-                {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-              <input
-                className="api-url"
-                value={req.url}
-                onChange={e => setReq({ ...req, url: e.target.value })}
-                placeholder="https://api.example.com/users  支持 {{baseUrl}}/path"
-                onKeyDown={e => { if (e.key === 'Enter') send(); }}
-              />
-              <button className="btn btn-primary btn-sm" onClick={send} disabled={sending}>
-                {sending ? '发送中…' : '发送'}
-              </button>
+              ) : (
+                items.map(i => (
+                  <div
+                    key={i.id}
+                    className={`api-list-item${req.id === i.id ? ' is-active' : ''}`}
+                    onClick={() => { setReq(i); setResponse(null); setError(''); }}
+                    title={i.url}
+                  >
+                    <span className={`method m-${i.method}`}>{i.method}</span>
+                    <span className="api-name">{i.name}</span>
+                    <IconBtn title="删除" danger onClick={e => { e.stopPropagation(); removeRequest(i.id); }}>
+                      <Icons.trash size={12} />
+                    </IconBtn>
+                  </div>
+                ))
+              )}
             </div>
+          </Panel>
 
-            <div className="api-tabs">
-              <button className={`api-tab ${showVars ? 'active' : ''}`} onClick={() => setShowVars(v => !v)}>
-                变量 {showVars ? '▴' : '▾'}
-              </button>
-              <input
-                className="api-name"
-                value={req.name}
-                onChange={e => setReq({ ...req, name: e.target.value })}
-                placeholder="请求名称（保存时使用）"
-              />
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+            <Panel
+              title="请求"
+              meta={req.name || '未命名'}
+              tools={
+                <button
+                  className={`tab2${showVars ? ' is-active' : ''}`}
+                  style={{ padding: '4px 10px', fontSize: 11.5 }}
+                  onClick={() => setShowVars(v => !v)}
+                  title="展开/收起变量表"
+                >
+                  <Icons.tag size={12} /> 变量
+                </button>
+              }
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="url-bar">
+                  <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })}>
+                    {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <input
+                    value={req.url}
+                    onChange={e => setReq({ ...req, url: e.target.value })}
+                    placeholder="https://api.example.com/users   支持 {{baseUrl}}/path"
+                    onKeyDown={e => { if (e.key === 'Enter') send(); }}
+                  />
+                  <button className="btn btn-primary btn-sm" onClick={send} disabled={sending} style={{ minWidth: 76 }}>
+                    {sending ? '发送中…' : '发送'}
+                  </button>
+                </div>
 
-            {showVars && (
-              <textarea
-                className="code-input api-vars"
-                value={req.variables || ''}
-                onChange={e => setReq({ ...req, variables: e.target.value })}
-                rows={4}
-                placeholder={'baseUrl=https://test.example.com\ntoken=abc123'}
-              />
-            )}
+                <div className="field">
+                  <span className="field-label">请求名称（保存时使用）</span>
+                  <input
+                    value={req.name}
+                    onChange={e => setReq({ ...req, name: e.target.value })}
+                    placeholder="例如：查询用户列表"
+                  />
+                </div>
 
-            <div className="api-pair">
-              <div className="api-field">
-                <label>请求头（每行 key: value）</label>
-                <textarea
-                  className="code-input"
-                  value={req.headers}
-                  onChange={e => setReq({ ...req, headers: e.target.value })}
-                  rows={5}
-                  placeholder={'Content-Type: application/json\nAuthorization: Bearer {{token}}'}
-                />
-              </div>
-              <div className="api-field">
-                <label>请求体</label>
-                <textarea
-                  className="code-input"
-                  value={req.body}
-                  onChange={e => setReq({ ...req, body: e.target.value })}
-                  rows={5}
-                  placeholder={'{\n  "name": "test"\n}'}
-                  disabled={['GET', 'HEAD'].includes(req.method)}
-                />
-              </div>
-            </div>
+                {showVars && (
+                  <div className="field">
+                    <span className="field-label">变量（每行 key=value，请求地址/请求头里用 {'{{名字}}'} 引用）</span>
+                    <textarea
+                      value={req.variables || ''}
+                      onChange={e => setReq({ ...req, variables: e.target.value })}
+                      rows={3}
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
+                      placeholder={'baseUrl=https://test.example.com\ntoken=abc123'}
+                    />
+                  </div>
+                )}
 
-            {error && <div className="api-error">{error}</div>}
-
-            {response && (
-              <div className="api-response">
-                <div className="api-response-meta">
-                  <span className={`api-status ${response.status < 400 ? 'ok' : 'bad'}`}>
-                    {response.status} {response.statusText}
-                  </span>
-                  <span className="text-sm text-muted">{response.timeMs} ms · {(response.size / 1024).toFixed(1)} KB</span>
-                  <div className="api-resp-tabs">
-                    <button className={`api-tab ${respTab === 'body' ? 'active' : ''}`} onClick={() => setRespTab('body')}>Body</button>
-                    <button className={`api-tab ${respTab === 'headers' ? 'active' : ''}`} onClick={() => setRespTab('headers')}>Headers</button>
-                    <button className="api-tab" onClick={() => navigator.clipboard.writeText(response.body)}>复制</button>
+                <div className="api-io">
+                  <div className="field">
+                    <span className="field-label">请求头（每行 key: value）</span>
+                    <textarea
+                      value={req.headers}
+                      onChange={e => setReq({ ...req, headers: e.target.value })}
+                      rows={7}
+                      placeholder={'Content-Type: application/json\nAuthorization: Bearer {{token}}'}
+                    />
+                  </div>
+                  <div className="field">
+                    <span className="field-label">
+                      请求体{['GET', 'HEAD'].includes(req.method) ? '（该请求方式不使用）' : ''}
+                    </span>
+                    <textarea
+                      value={req.body}
+                      onChange={e => setReq({ ...req, body: e.target.value })}
+                      rows={7}
+                      placeholder={'{\n  "name": "test"\n}'}
+                      disabled={['GET', 'HEAD'].includes(req.method)}
+                    />
                   </div>
                 </div>
-                {respTab === 'body' ? (
-                  <pre className="code-block api-resp-body">{prettyBody}</pre>
-                ) : (
-                  <table className="kv-table">
-                    <tbody>
-                      {Object.entries(response.headers).map(([k, v]) => (
-                        <tr key={k}><td>{k}</td><td><code>{v}</code></td></tr>
-                      ))}
-                    </tbody>
-                  </table>
+
+                {error && (
+                  <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
+                    {error}
+                  </div>
                 )}
               </div>
-            )}
+            </Panel>
+
+            <Panel
+              title="响应"
+              meta={response ? `${response.status} · ${response.timeMs} ms` : '待发送'}
+              tools={response && (
+                <div className="resp-tabs">
+                  <button className={`tab2${respTab === 'body' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('body')}>Body</button>
+                  <button className={`tab2${respTab === 'headers' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('headers')}>Headers</button>
+                  <IconBtn title="复制响应内容" onClick={() => navigator.clipboard.writeText(response.body)}>
+                    <Icons.copy size={13} />
+                  </IconBtn>
+                </div>
+              )}
+            >
+              {!response ? (
+                <Empty
+                  compact
+                  icon={<Icons.terminal size={20} />}
+                  title="还没有响应"
+                  desc="填好地址后点右上角「发送」，响应体会显示在这里；JSON 会自动格式化"
+                />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div className="resp-meta">
+                    <span className={`resp-status ${response.status < 400 ? 'is-ok' : 'is-bad'}`}>
+                      {response.status} {response.statusText}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                      {response.timeMs} ms · {(response.size / 1024).toFixed(1)} KB
+                    </span>
+                  </div>
+                  {respTab === 'body' ? (
+                    <pre className="code2" style={{ maxHeight: '46vh' }}>{prettyBody || '（空响应体）'}</pre>
+                  ) : (
+                    <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
+                      <table className="kv">
+                        <tbody>
+                          {Object.entries(response.headers).map(([k, v]) => (
+                            <tr key={k}><td>{k}</td><td><code>{v}</code></td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
           </div>
         </div>
-      </div>
+      </Page>
     </div>
   );
 }

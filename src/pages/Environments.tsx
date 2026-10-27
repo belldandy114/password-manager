@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import type { EnvEntry } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
 const ENVS = [
-  { id: 'production', label: '正式' },
-  { id: 'testing', label: '测试' },
-  { id: 'development', label: '开发' },
-  { id: 'staging', label: '预发' },
+  { id: 'production', label: '正式', color: 'var(--danger)' },
+  { id: 'testing', label: '测试', color: 'var(--accent)' },
+  { id: 'development', label: '开发', color: 'var(--warning)' },
+  { id: 'staging', label: '预发', color: 'var(--text-muted)' },
 ];
 
 interface Editing {
@@ -35,6 +36,8 @@ export function Environments() {
 
   const cell = (system: string, envType: string) =>
     items.find(i => i.system === system && i.envType === envType);
+
+  const filled = useMemo(() => items.filter(i => i.url || i.note).length, [items]);
 
   const openCell = (system: string, envType: string) => {
     const found = cell(system, envType);
@@ -76,71 +79,102 @@ export function Environments() {
     window.electronAPI.browserOpen({ browser: 'default', url });
   };
 
+  const addNew = () => setEditing({ system: '', envType: 'testing', url: '', note: '' });
+
   return (
     <div className="content-area">
-      <div className="module-page">
-        <PageHeader
+      <Page>
+        <PageHead
+          icon={<Icons.server size={16} />}
           title="环境地址"
-          desc="按系统 × 环境维护访问入口，点击网址直接打开浏览器；与密码库账号配合使用"
-        >
-          <input className="module-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索系统" />
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing({ system: '', envType: 'testing', url: '', note: '' })}>
-            + 新增地址
-          </button>
-        </PageHeader>
+          desc="按「系统 × 环境」维护访问入口，点击网址直接打开浏览器，与密码库账号配合使用"
+          tools={
+            <>
+              <SearchBox value={search} onChange={setSearch} placeholder="搜索系统" />
+              <button className="btn btn-primary btn-sm" onClick={addNew}>
+                <Icons.plus size={13} /> 新增地址
+              </button>
+            </>
+          }
+        />
 
         {loading ? (
-          <div className="module-empty">加载中…</div>
+          <Panel><div className="tbl-empty">加载中…</div></Panel>
         ) : visibleSystems.length === 0 ? (
-          <EmptyHint
-            text="还没有环境地址，先添加一个系统（例如「资产管理」），再为它填上各环境 URL"
-            action={<button className="btn btn-primary btn-sm" onClick={() => setEditing({ system: '', envType: 'testing', url: '', note: '' })}>新增地址</button>}
-          />
+          <Panel>
+            <Empty
+              icon={<Icons.server size={22} />}
+              title={search ? '没有匹配的系统' : '还没有环境地址'}
+              desc={search ? '换个关键词试试' : '先添加一个系统（例如「资产管理系统」），再为它填上各环境的访问地址'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={addNew}>
+                  <Icons.plus size={13} /> 新增地址
+                </button>
+              )}
+            />
+          </Panel>
         ) : (
-          <div className="env-matrix-wrap">
-            <table className="env-matrix">
+          <Panel
+            title={<>环境矩阵</>}
+            meta={`${visibleSystems.length} 个系统 · ${filled} 条地址`}
+            tools={<IconBtn title="新增地址" onClick={addNew}><Icons.plus size={14} /></IconBtn>}
+            flush
+            foot="点击任意单元格即可编辑；把地址和备注都清空即删除该格"
+          >
+            <table className="envx">
               <thead>
                 <tr>
-                  <th className="env-system-col">系统</th>
-                  {ENVS.map(e => <th key={e.id}>{e.label}</th>)}
-                  <th className="env-op-col" />
+                  <th style={{ width: 190 }}>系统 / 项目</th>
+                  {ENVS.map(e => (
+                    <th key={e.id}>
+                      <span className="envx-dot" style={{ background: e.color }} />
+                      {e.label}
+                    </th>
+                  ))}
+                  <th className="envx-op" />
                 </tr>
               </thead>
               <tbody>
                 {visibleSystems.map(system => (
                   <tr key={system}>
-                    <td className="env-system-col">{system}</td>
+                    <td className="envx-system">{system}</td>
                     {ENVS.map(env => {
                       const c = cell(system, env.id);
                       return (
-                        <td key={env.id} className="env-cell" onClick={() => openCell(system, env.id)}>
-                          {c && c.url ? (
-                            <span
-                              className="env-url"
-                              title={c.url + (c.note ? `\n${c.note}` : '')}
-                              onClick={e => { e.stopPropagation(); openUrl(c.url); }}
-                            >
-                              {c.url.replace(/^https?:\/\//, '').slice(0, 34)}
-                            </span>
-                          ) : c && c.note ? (
-                            <span className="env-note-only" title={c.note}>{c.note.slice(0, 30)}</span>
-                          ) : (
-                            <span className="env-empty">+</span>
-                          )}
+                        <td key={env.id}>
+                          <div className="envx-cell" onClick={() => openCell(system, env.id)}>
+                            {c && c.url ? (
+                              <span
+                                className="envx-url"
+                                title={`${c.url}${c.note ? `\n${c.note}` : ''}`}
+                                onClick={e => { e.stopPropagation(); openUrl(c.url); }}
+                              >
+                                {c.url.replace(/^https?:\/\//, '')}
+                              </span>
+                            ) : c && c.note ? (
+                              <span className="envx-note" title={c.note}>{c.note}</span>
+                            ) : (
+                              <>
+                                <Pill tone="mute">未配置</Pill>
+                                <span className="envx-plus">+</span>
+                              </>
+                            )}
+                          </div>
                         </td>
                       );
                     })}
-                    <td className="env-op-col">
-                      <button className="btn-icon-danger" title="删除该系统" onClick={() => removeSystem(system)}>×</button>
+                    <td className="envx-op">
+                      <IconBtn title="删除该系统" danger onClick={() => removeSystem(system)}>
+                        <Icons.trash size={13} />
+                      </IconBtn>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="module-tip">提示：点击单元格编辑，清空内容即删除该格</div>
-          </div>
+          </Panel>
         )}
-      </div>
+      </Page>
 
       <Modal
         open={!!editing}

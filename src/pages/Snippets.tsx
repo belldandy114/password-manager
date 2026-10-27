@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import type { Snippet } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 
 const emptySnippet = (): Snippet => ({
   id: '', title: '', sql: '', tags: [], updatedAt: new Date().toISOString(),
@@ -12,7 +13,7 @@ export function Snippets() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Snippet | null>(null);
   const [tagInput, setTagInput] = useState('');
-  const [copied, setCopied] = useState('');
+  const [toast, setToast] = useState('');
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -21,6 +22,12 @@ export function Snippets() {
       : items;
     return [...list].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }, [items, search]);
+
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach(s => (s.tags || []).forEach(t => set.add(t)));
+    return Array.from(set);
+  }, [items]);
 
   const saveEditing = async () => {
     if (!editing || !editing.title.trim()) return;
@@ -38,8 +45,8 @@ export function Snippets() {
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopied('已复制到剪贴板');
-    setTimeout(() => setCopied(''), 1500);
+    setToast('已复制到剪贴板');
+    setTimeout(() => setToast(''), 1500);
   };
 
   const addTag = () => {
@@ -49,47 +56,86 @@ export function Snippets() {
     setTagInput('');
   };
 
+  const applyTag = (t: string) => setSearch(search === t ? '' : t);
+
   return (
     <div className="content-area">
-      <div className="module-page">
-        <PageHeader title="SQL 片段" desc="常用查询 / 造数语句，加密保存在本地，一键复制">
-          <input className="module-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索标题 / 内容 / 标签" />
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptySnippet())}>+ 新增片段</button>
-        </PageHeader>
+      <Page>
+        <PageHead
+          icon={<Icons.db size={16} />}
+          title="SQL 片段"
+          desc="常用查询 / 造数 / 清理语句，加密保存在本地，一键复制"
+          tools={
+            <>
+              <SearchBox value={search} onChange={setSearch} placeholder="搜索标题 / 内容 / 标签" />
+              <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptySnippet())}>
+                <Icons.plus size={13} /> 新增片段
+              </button>
+            </>
+          }
+        />
 
-        {copied && <div className="inline-hint">{copied}</div>}
+        {toast && <div className="inline-hint">{toast}</div>}
+
+        {allTags.length > 0 && (
+          <div className="tags">
+            {allTags.map(t => (
+              <button
+                key={t}
+                className="chip"
+                style={search === t
+                  ? { borderColor: 'color-mix(in srgb, var(--accent) 40%, transparent)', color: 'var(--accent)', background: 'var(--accent-light)', cursor: 'pointer' }
+                  : { cursor: 'pointer' }}
+                onClick={() => applyTag(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
 
         {loading ? (
-          <div className="module-empty">加载中…</div>
+          <Panel><div className="tbl-empty">加载中…</div></Panel>
         ) : filtered.length === 0 ? (
-          <EmptyHint
-            text="还没有 SQL 片段，把常用的查数语句存进来"
-            action={<button className="btn btn-primary btn-sm" onClick={() => setEditing(emptySnippet())}>新增片段</button>}
-          />
+          <Panel>
+            <Empty
+              icon={<Icons.db size={22} />}
+              title={search ? '没有匹配的片段' : '还没有 SQL 片段'}
+              desc={search ? '换个关键词或点上面的标签筛选' : '把常用的查数、造数、清理语句存进来，下次直接复制'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptySnippet())}>
+                  <Icons.plus size={13} /> 新增片段
+                </button>
+              )}
+            />
+          </Panel>
         ) : (
-          <div className="card-list">
+          <div className="cards">
             {filtered.map(s => (
-              <div key={s.id} className="module-card">
-                <div className="module-card-head">
-                  <strong>{s.title}</strong>
-                  <div>
-                    <button className="mini-btn" onClick={() => copy(s.sql)}>复制</button>
-                    <button className="mini-btn" onClick={() => setEditing(s)}>编辑</button>
-                    <button className="mini-btn danger" onClick={() => remove(s.id)}>删除</button>
+              <div key={s.id} className="card2">
+                <div className="card2-head">
+                  <div className="card2-title" title={s.title}>{s.title}</div>
+                  <div className="card2-actions">
+                    <IconBtn title="复制 SQL" onClick={() => copy(s.sql)}><Icons.copy size={13} /></IconBtn>
+                    <IconBtn title="编辑" onClick={() => setEditing(s)}><Icons.pencil size={13} /></IconBtn>
+                    <IconBtn title="删除" danger onClick={() => remove(s.id)}><Icons.trash size={13} /></IconBtn>
                   </div>
                 </div>
-                <pre className="code-block">{s.sql}</pre>
+
+                <pre className="code2">{s.sql || '（空）'}</pre>
+
                 {s.tags.length > 0 && (
-                  <div className="card-tags">
-                    <span className="card-tags-icon">🏷️</span>
-                    <span className="card-tags-text">{s.tags.join(', ')}</span>
+                  <div className="tags">
+                    {s.tags.map(t => (
+                      <button key={t} className="chip" style={{ cursor: 'pointer' }} onClick={() => applyTag(t)}>{t}</button>
+                    ))}
                   </div>
                 )}
               </div>
             ))}
           </div>
         )}
-      </div>
+      </Page>
 
       <Modal
         open={!!editing}
@@ -120,7 +166,7 @@ export function Snippets() {
             </div>
             <div className="form-group">
               <label>标签</label>
-              <div className="tool-inline">
+              <div className="tool-line">
                 <input
                   value={tagInput}
                   onChange={e => setTagInput(e.target.value)}
@@ -130,11 +176,18 @@ export function Snippets() {
                 <button className="btn btn-sm btn-secondary" onClick={addTag}>添加</button>
               </div>
               {editing.tags.length > 0 && (
-                <div className="card-tags" style={{ marginTop: 8 }}>
+                <div className="tags" style={{ marginTop: 8 }}>
                   {editing.tags.map(t => (
-                    <span key={t} className="tag">
+                    <span key={t} className="chip">
                       {t}
-                      <span className="remove-tag" onClick={() => setEditing({ ...editing, tags: editing.tags.filter(x => x !== t) })}>×</span>
+                      <button
+                        className="ibtn"
+                        style={{ width: 16, height: 16 }}
+                        title="移除"
+                        onClick={() => setEditing({ ...editing, tags: editing.tags.filter(x => x !== t) })}
+                      >
+                        <Icons.close size={10} />
+                      </button>
                     </span>
                   ))}
                 </div>

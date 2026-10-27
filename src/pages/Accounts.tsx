@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import type { TestAccount } from '../types';
-import { useCollection, PageHeader, EmptyHint } from '../hooks/useCollection';
+import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
 const ENVS = [
-  { id: 'production', label: '正式' },
-  { id: 'testing', label: '测试' },
-  { id: 'development', label: '开发' },
-  { id: 'staging', label: '预发' },
+  { id: 'production', label: '正式', tone: 'bad' as const },
+  { id: 'testing', label: '测试', tone: 'info' as const },
+  { id: 'development', label: '开发', tone: 'warn' as const },
+  { id: 'staging', label: '预发', tone: 'mute' as const },
 ];
-const envLabel = (id: string) => ENVS.find(e => e.id === id)?.label || id || '—';
+const envOf = (id: string) => ENVS.find(e => e.id === id);
 
 const empty = (): TestAccount => ({
   id: '', role: '', system: '', envType: 'testing', username: '', password: '', note: '',
@@ -21,7 +22,7 @@ export function Accounts() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<TestAccount | null>(null);
   const [showPw, setShowPw] = useState<Record<string, boolean>>({});
-  const [copied, setCopied] = useState('');
+  const [toast, setToast] = useState('');
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -60,71 +61,104 @@ export function Accounts() {
 
   const copy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(`${label}已复制`);
-    setTimeout(() => setCopied(''), 1500);
+    setToast(`${label}已复制`);
+    setTimeout(() => setToast(''), 1500);
   };
 
   return (
     <div className="content-area">
-      <div className="module-page">
-        <PageHeader title="测试账号" desc="按角色归档各系统账号，一键复制账号密码">
-          <input className="module-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索角色 / 系统 / 账号" />
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing(empty())}>+ 新增账号</button>
-        </PageHeader>
+      <Page>
+        <PageHead
+          icon={<Icons.key size={16} />}
+          title="测试账号"
+          desc="按系统与角色归档测试账号，账号密码一键复制，避免每次翻聊天记录"
+          tools={
+            <>
+              <SearchBox value={search} onChange={setSearch} placeholder="搜索角色 / 系统 / 账号" />
+              <button className="btn btn-primary btn-sm" onClick={() => setEditing(empty())}>
+                <Icons.plus size={13} /> 新增账号
+              </button>
+            </>
+          }
+        />
 
-        {copied && <div className="inline-hint">{copied}</div>}
+        {toast && <div className="inline-hint">{toast}</div>}
 
         {loading ? (
-          <div className="module-empty">加载中…</div>
+          <Panel><div className="tbl-empty">加载中…</div></Panel>
         ) : grouped.length === 0 ? (
-          <EmptyHint
-            text="还没有测试账号，添加后可以按角色快速取用"
-            action={<button className="btn btn-primary btn-sm" onClick={() => setEditing(empty())}>新增账号</button>}
-          />
+          <Panel>
+            <Empty
+              icon={<Icons.key size={22} />}
+              title={search ? '没有匹配的账号' : '还没有测试账号'}
+              desc={search ? '换个关键词试试' : '把各系统的常用测试账号存进来，按角色区分，取用时不用再去问同事'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(empty())}>
+                  <Icons.plus size={13} /> 新增账号
+                </button>
+              )}
+            />
+          </Panel>
         ) : (
           grouped.map(([system, list]) => (
-            <div key={system} className="module-section">
-              <div className="module-section-title">{system} <span className="text-muted text-sm">({list.length})</span></div>
-              <table className="data-table">
+            <Panel key={system} title={system} meta={`${list.length} 个账号`} flush>
+              <table className="tbl">
                 <thead>
                   <tr>
-                    <th style={{ width: 130 }}>角色</th>
-                    <th style={{ width: 80 }}>环境</th>
-                    <th style={{ width: 190 }}>账号</th>
-                    <th style={{ width: 190 }}>密码</th>
+                    <th style={{ width: 180 }}>角色 / 权限</th>
+                    <th style={{ width: 88 }}>环境</th>
+                    <th style={{ width: 210 }}>账号</th>
+                    <th style={{ width: 220 }}>密码</th>
                     <th>备注</th>
-                    <th style={{ width: 150 }}>操作</th>
+                    <th style={{ width: 92 }} />
                   </tr>
                 </thead>
                 <tbody>
-                  {list.map(a => (
-                    <tr key={a.id}>
-                      <td>{a.role}</td>
-                      <td><span className={`env-badge env-${a.envType}`}>{envLabel(a.envType)}</span></td>
-                      <td>
-                        <span className="mono-cell">{a.username}</span>
-                        <button className="mini-btn" onClick={() => copy(a.username, '账号')}>复制</button>
-                      </td>
-                      <td>
-                        <span className="mono-cell">{showPw[a.id] ? a.password : '•'.repeat(Math.min(10, (a.password || '').length))}</span>
-                        <button className="mini-btn" onClick={() => setShowPw(s => ({ ...s, [a.id]: !s[a.id] }))}>
-                          {showPw[a.id] ? '隐藏' : '显示'}
-                        </button>
-                        <button className="mini-btn" onClick={() => copy(a.password, '密码')}>复制</button>
-                      </td>
-                      <td className="text-muted">{a.note}</td>
-                      <td>
-                        <button className="mini-btn" onClick={() => setEditing(a)}>编辑</button>
-                        <button className="mini-btn danger" onClick={() => remove(a.id)}>删除</button>
-                      </td>
-                    </tr>
-                  ))}
+                  {list.map(a => {
+                    const env = envOf(a.envType);
+                    return (
+                      <tr key={a.id}>
+                        <td className="cell-strong">{a.role}</td>
+                        <td>
+                          {env
+                            ? <Pill tone={env.tone} dot>{env.label}</Pill>
+                            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                        </td>
+                        <td>
+                          <span className="cell-mono">{a.username}</span>
+                          <IconBtn title="复制账号" onClick={() => copy(a.username, '账号')}>
+                            <Icons.copy size={12} />
+                          </IconBtn>
+                        </td>
+                        <td>
+                          <span className="cell-mono" style={{ letterSpacing: showPw[a.id] ? 0 : 1.5 }}>
+                            {showPw[a.id] ? a.password : '•'.repeat(Math.min(10, (a.password || '').length || 6))}
+                          </span>
+                          <IconBtn
+                            title={showPw[a.id] ? '隐藏密码' : '显示密码'}
+                            active={showPw[a.id]}
+                            onClick={() => setShowPw(s => ({ ...s, [a.id]: !s[a.id] }))}
+                          >
+                            {showPw[a.id] ? <Icons.eyeOff size={12} /> : <Icons.eye size={12} />}
+                          </IconBtn>
+                          <IconBtn title="复制密码" onClick={() => copy(a.password, '密码')}>
+                            <Icons.copy size={12} />
+                          </IconBtn>
+                        </td>
+                        <td style={{ color: 'var(--text-muted)' }}>{a.note || '—'}</td>
+                        <td className="cell-actions">
+                          <IconBtn title="编辑" onClick={() => setEditing(a)}><Icons.pencil size={13} /></IconBtn>
+                          <IconBtn title="删除" danger onClick={() => remove(a.id)}><Icons.trash size={13} /></IconBtn>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            </div>
+            </Panel>
           ))
         )}
-      </div>
+      </Page>
 
       <Modal
         open={!!editing}
