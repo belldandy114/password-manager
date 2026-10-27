@@ -3,7 +3,8 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import type { KeybindingId } from '../types';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile } from '../types';
+import { applyTheme } from '../utils/theme';
 
 interface BrowserInfo {
   id: string;
@@ -47,6 +48,12 @@ export function Settings() {
   const [passwordAutoHideDelay, setPasswordAutoHideDelay] = useState(settings.passwordAutoHideDelay);
   const [autoLockDelay, setAutoLockDelay] = useState(settings.autoLockDelay);
   const [defaultViewMode, setDefaultViewMode] = useState(settings.defaultViewMode);
+  const [minimizeToTray, setMinimizeToTray] = useState(settings.minimizeToTray);
+  const [closeToTray, setCloseToTray] = useState(settings.closeToTray);
+  const [contentProtection, setContentProtection] = useState(settings.contentProtection);
+  const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
+  const [backups, setBackups] = useState<BackupFile[]>([]);
+  const [backupDir, setBackupDir] = useState('');
   const [showChangePwd, setShowChangePwd] = useState(false);
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -69,12 +76,27 @@ export function Settings() {
     window.electronAPI.browserGetKnown().then(setKnownBrowsers);
   }, []);
 
+  // 备份列表（进入安全页时刷新）
+  const refreshBackups = useCallback(async () => {
+    const res = await window.electronAPI.backupList();
+    if (res.success) {
+      setBackups(res.data);
+      setBackupDir(res.dir);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'security') refreshBackups();
+  }, [activeTab, refreshBackups]);
+
   const handleSave = async () => {
     const prefs = {
       clipboardClearDelay: Math.max(5, Math.min(300, clipboardClearDelay)),
       passwordAutoHideDelay: Math.max(3, Math.min(120, passwordAutoHideDelay)),
       autoLockDelay: Math.max(1, Math.min(60, autoLockDelay)),
       defaultViewMode,
+      minimizeToTray,
+      closeToTray,
       browserPaths,
       theme: settings.theme,
       keybindings: localKeybindings,
@@ -84,12 +106,20 @@ export function Settings() {
     addToast('设置已保存', 'success');
   };
 
+  // Tray behaviours take effect immediately (no need to hit 保存设置) — the main process
+  // creates/destroys the tray icon on settings:save.
+  const applyTraySetting = async (patch: { minimizeToTray?: boolean; closeToTray?: boolean }) => {
+    updateSettings(patch);
+    await window.electronAPI.settingsSave(patch);
+    addToast('窗口设置已更新', 'success');
+  };
+
   const handleSelectBrowserPath = async (id: string) => {
     const result = await window.electronAPI.dialogOpenFile({
       filters: [{ name: '可执行文件', extensions: ['exe'] }]
     });
     if (result.canceled || !result.filePath) return;
-    setBrowserPaths(prev => ({ ...prev, [id]: result.filePath }));
+    setBrowserPaths(prev => ({ ...prev, [id]: result.filePath } as Record<string, string>));
   };
 
   const handleChangePassword = async () => {
@@ -202,6 +232,32 @@ export function Settings() {
                 <span className="text-sm text-muted">分钟</span>
               </div>
             </div>
+
+            <h3 style={{ marginTop: 24 }}>数据备份</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">自动备份</div>
+                <div className="setting-desc">
+                  每次修改数据时，若当天尚无备份则自动保存一份加密副本，保留最近 7 份
+                </div>
+              </div>
+              <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.backupOpenFolder()}>
+                打开备份目录
+              </button>
+            </div>
+            <div className="backup-list">
+              {backups.length === 0 ? (
+                <div className="text-sm text-muted">暂无备份（首次修改数据后自动生成）</div>
+              ) : (
+                backups.map(b => (
+                  <div key={b.name} className="backup-item">
+                    <span className="backup-name">{b.name}</span>
+                    <span className="text-sm text-muted">{(b.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                ))
+              )}
+              {backupDir && <div className="backup-dir text-sm text-muted" title={backupDir}>{backupDir}</div>}
+            </div>
           </div>
         );
 
@@ -216,13 +272,14 @@ export function Settings() {
               </div>
               <div className="setting-control">
                 <select value={settings.theme} onChange={e => {
-                  const val = e.target.value;
-                  updateSettings({ theme: val as 'dark' | 'light' });
-                  document.documentElement.setAttribute('data-theme', val);
-                  window.electronAPI.settingsSave({ theme: val as 'dark' | 'light' });
+                  const val = e.target.value as ThemeMode;
+                  updateSettings({ theme: val });
+                  applyTheme(val);
+                  window.electronAPI.settingsSave({ theme: val });
                 }}>
                   <option value="dark">深色主题</option>
                   <option value="light">浅色主题</option>
+                  <option value="system">跟随系统</option>
                 </select>
               </div>
             </div>
@@ -262,6 +319,99 @@ export function Settings() {
                 <span className="text-sm text-muted">秒</span>
               </div>
             </div>
+
+            <h3 style={{ marginTop: 24 }}>窗口与托盘</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">最小化到托盘</div>
+                <div className="setting-desc">点击最小化时隐藏到系统托盘，不再占用任务栏</div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!minimizeToTray}
+                    onChange={e => {
+                      const val = e.target.checked;
+                      setMinimizeToTray(val);
+                      applyTraySetting({ minimizeToTray: val });
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">关闭窗口时最小化到托盘</div>
+                <div className="setting-desc">
+                  点右上角 × 时隐藏到托盘继续后台运行；退出请用托盘菜单的「退出」
+                </div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!closeToTray}
+                    onChange={e => {
+                      const val = e.target.checked;
+                      setCloseToTray(val);
+                      applyTraySetting({ closeToTray: val });
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <div className="setting-desc" style={{ padding: '4px 0 0' }}>
+              托盘图标单击可恢复窗口；全局快捷键 <kbd>Ctrl+Shift+P</kbd> 也可随时唤起。
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>隐私与系统</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">防截屏 / 录屏</div>
+                <div className="setting-desc">开启后窗口内容在截图和录屏中显示为黑屏（Windows 10+）</div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!contentProtection}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setContentProtection(val);
+                      updateSettings({ contentProtection: val });
+                      await window.electronAPI.settingsSave({ contentProtection: val });
+                      addToast(val ? '已开启防截屏' : '已关闭防截屏', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">开机自动启动</div>
+                <div className="setting-desc">登录 Windows 后自动启动（可配合「最小化到托盘」使用）</div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!launchAtLogin}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setLaunchAtLogin(val);
+                      updateSettings({ launchAtLogin: val });
+                      await window.electronAPI.settingsSave({ launchAtLogin: val });
+                      addToast(val ? '已设置开机自启' : '已取消开机自启', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
           </div>
         );
 
@@ -276,7 +426,7 @@ export function Settings() {
                   <div className="setting-desc">留空则自动检测常见安装位置</div>
                 </div>
                 <div className="setting-control browser-path-control">
-                  <input type="text" value={browserPaths[b.id] || ''} onChange={e => setBrowserPaths(prev => ({ ...prev, [b.id]: e.target.value }))}
+                  <input type="text" value={browserPaths[b.id] || ''} onChange={e => setBrowserPaths(prev => ({ ...prev, [b.id]: e.target.value } as Record<string, string>))}
                     placeholder={`设置 ${b.name} 的路径，留空自动检测`} />
                   <button className="btn btn-sm btn-secondary" onClick={() => handleSelectBrowserPath(b.id)}>浏览</button>
                 </div>

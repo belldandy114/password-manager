@@ -8,6 +8,8 @@ interface Props {
   entries: PasswordEntry[];
   onEdit: (entry: PasswordEntry) => void;
   onCopy: (text: string, label: string) => void;
+  /** 安全体检标记：entry.id → 弱密码/重复密码 */
+  securityFlags?: Record<string, { weak: boolean; duplicate: boolean }>;
 }
 
 /* ---------- helpers ---------- */
@@ -76,7 +78,7 @@ function highlightText(text: string, query: string): React.ReactNode {
 
 /* ---------- component ---------- */
 
-export function EntryList({ entries, onEdit, onCopy }: Props) {
+export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
   const selectedIds = useStore(s => s.selectedIds);
   const toggleSelected = useStore(s => s.toggleSelected);
   const settings = useStore(s => s.settings);
@@ -90,8 +92,8 @@ export function EntryList({ entries, onEdit, onCopy }: Props) {
   const [recentCopy, setRecentCopy] = useState<{ id: string; field: string } | null>(null);
   const [sortField, setSortField] = useState<'name' | 'envType' | 'url' | 'username' | 'updatedAt'>('updatedAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  const copyTimerRef = useRef<NodeJS.Timeout>();
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     return () => {
@@ -231,6 +233,8 @@ export function EntryList({ entries, onEdit, onCopy }: Props) {
                   title={entry.name}>
                   {highlightText(entry.name, searchQuery)}
                 </span>
+                {securityFlags?.[entry.id]?.weak && <span className="sec-flag sec-flag-weak" title="弱密码，建议更换">弱</span>}
+                {securityFlags?.[entry.id]?.duplicate && <span className="sec-flag sec-flag-dup" title="与其他网址共用了同一个密码">重</span>}
               </td>
 
               {/* Env (icon + text, matching card mode) */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { PasswordEntry, SearchField } from '../types';
 import { useStore, sortFieldLabels, sortOrderLabels, searchFieldLabels } from '../store/useStore';
 import { EntryCard } from '../components/EntryCard';
@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
 
 export function Dashboard() {
   const store = useStore();
@@ -28,6 +29,24 @@ export function Dashboard() {
   const [exportPassword, setExportPassword] = useState('');
   const [includePasswords, setIncludePasswords] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showSecurity, setShowSecurity] = useState(false);
+
+  // 增量渲染：一次最多渲染 visibleLimit 条，滚动到底部再追加
+  const PAGE_SIZE = 120;
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+
+  const securityReport = useMemo(() => buildSecurityReport(store.entries), [store.entries]);
+  const securityFlags = useMemo(() => entrySecurityFlags(store.entries), [store.entries]);
+  const riskCount = securityReport.weak.length + securityReport.duplicates.length;
+
+  useEffect(() => { setVisibleLimit(PAGE_SIZE); }, [store.searchQuery, store.filterEnv, store.filterTag, store.viewMode]);
+
+  const handleContentScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+      setVisibleLimit(prev => (prev < filteredEntries.length ? prev + PAGE_SIZE : prev));
+    }
+  };
 
   const toggleEnvCollapse = useCallback((env: string) => {
     setCollapsedEnvs(prev => {
@@ -298,6 +317,20 @@ export function Dashboard() {
 
         {/* Zone 3: View & Add */}
         <div className="toolbar-actions">
+          <button
+            className={`view-toggle-btn security-btn ${riskCount > 0 ? 'has-risk' : ''}`}
+            onClick={() => setShowSecurity(true)}
+            title={riskCount > 0 ? `安全体检：发现 ${riskCount} 个问题` : '安全体检：未发现问题'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              {riskCount > 0
+                ? <><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="15.5" x2="12.01" y2="15.5"/></>
+                : <polyline points="9 12 11 14 15 10"/>}
+            </svg>
+            {riskCount > 0 && <span className="security-badge">{riskCount}</span>}
+          </button>
+
           <button className="view-toggle-btn" onClick={() => store.setViewMode(store.viewMode === 'card' ? 'list' : 'card')} title={store.viewMode === 'card' ? '切换列表视图' : '切换卡片视图'}>
             {store.viewMode === 'card' ? (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -385,7 +418,7 @@ export function Dashboard() {
       )}
 
       {/* Content */}
-      <div className="content-area">
+      <div className="content-area" onScroll={handleContentScroll}>
         {filteredEntries.length === 0 ? (
           <div className="empty-state">
             {store.filterTags && store.filterTags.size > 0 ? (
@@ -424,34 +457,55 @@ export function Dashboard() {
           </div>
         ) : store.viewMode === 'card' ? (
           // Card view - grouped by env
-          Object.entries(groupedEntries).map(([env, entries]) => {
-            const isCollapsed = collapsedEnvs.has(env);
-            return (
-            <div key={env}>
-              <div className="env-section-header" onClick={() => toggleEnvCollapse(env)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                <span className="env-collapse-icon" style={{ fontSize: 10, marginRight: 4, color: 'var(--text-muted)', transition: 'transform 0.15s' }}>
-                  {isCollapsed ? '▶' : '▼'}
-                </span>
-                <span className={`env-badge env-${env}`}>{envLabel[env] || env}</span>
-                <span className="count">({entries.length})</span>
-              </div>
-              {!isCollapsed && (
-              <div className="entry-grid">
-                {entries.map(entry => (
-                  <EntryCard key={entry.id} entry={entry}
-                    onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
-                    onCopy={handleCopy} />
-                ))}
-              </div>
-              )}
-            </div>
-            );
-          })
+          <>
+          {(() => {
+            // 只渲染前 visibleLimit 条，避免几百条时首屏卡顿
+            let budget = visibleLimit;
+            const limited = Object.entries(groupedEntries).map(([env, list]) => {
+              const take = Math.max(0, Math.min(list.length, budget));
+              budget -= take;
+              return [env, list.slice(0, take), list.length] as const;
+            }).filter(([, list]) => list.length > 0);
+            return limited.map(([env, entries, total]) => {
+              const isCollapsed = collapsedEnvs.has(env);
+              return (
+                <div key={env}>
+                  <div className="env-section-header" onClick={() => toggleEnvCollapse(env)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                    <span className="env-collapse-icon" style={{ fontSize: 10, marginRight: 4, color: 'var(--text-muted)', transition: 'transform 0.15s' }}>
+                      {isCollapsed ? '▶' : '▼'}
+                    </span>
+                    <span className={`env-badge env-${env}`}>{envLabel[env] || env}</span>
+                    <span className="count">({total})</span>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="entry-grid">
+                      {entries.map(entry => (
+                        <EntryCard key={entry.id} entry={entry}
+                          security={securityFlags[entry.id]}
+                          onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
+                          onCopy={handleCopy} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
+          {filteredEntries.length > visibleLimit && (
+            <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
+          )}
+          </>
         ) : (
           // List view
-          <EntryList entries={filteredEntries}
-            onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
-            onCopy={handleCopy} />
+          <>
+            <EntryList entries={filteredEntries.slice(0, visibleLimit)}
+              securityFlags={securityFlags}
+              onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
+              onCopy={handleCopy} />
+            {filteredEntries.length > visibleLimit && (
+              <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
+            )}
+          </>
         )}
       </div>
 
@@ -474,6 +528,74 @@ export function Dashboard() {
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
+
+      {/* 安全体检 */}
+      <Modal
+        open={showSecurity}
+        onClose={() => setShowSecurity(false)}
+        title="安全体检"
+        footer={<button className="btn btn-primary" onClick={() => setShowSecurity(false)}>知道了</button>}
+      >
+        <div className="security-report">
+          <div className="security-score">
+            <div className={`score-ring ${securityReport.score >= 80 ? 'ok' : securityReport.score >= 60 ? 'warn' : 'bad'}`}>
+              {securityReport.score}
+            </div>
+            <div>
+              <div className="score-title">
+                {securityReport.score >= 80 ? '整体状况良好' : securityReport.score >= 60 ? '有需要关注的问题' : '安全风险较高'}
+              </div>
+              <div className="text-sm text-muted">
+                共 {securityReport.total} 条 · 弱密码 {securityReport.weak.length} 条 · 重复密码 {securityReport.duplicates.length} 组
+                {securityReport.empty > 0 ? ` · 未填密码 ${securityReport.empty} 条` : ''}
+              </div>
+            </div>
+          </div>
+
+          {securityReport.weak.length === 0 && securityReport.duplicates.length === 0 && (
+            <div className="security-empty">🎉 没有发现弱密码或重复使用的密码</div>
+          )}
+
+          {securityReport.weak.length > 0 && (
+            <div className="security-section">
+              <h4>弱密码（{securityReport.weak.length}）</h4>
+              {securityReport.weak.map((issue, i) => {
+                const entry = store.entries.find(e => e.id === issue.entryIds[0]);
+                return (
+                  <div key={i} className="security-item" onClick={() => {
+                    if (!entry) return;
+                    setShowSecurity(false);
+                    setEditingEntry(entry);
+                    setShowForm(true);
+                  }}>
+                    <span className="security-item-icon">⚠️</span>
+                    <div className="security-item-body">
+                      <div>{issue.message}</div>
+                      <div className="text-sm text-muted">{issue.detail}</div>
+                    </div>
+                    <span className="security-item-action">去修改</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {securityReport.duplicates.length > 0 && (
+            <div className="security-section">
+              <h4>重复使用的密码（{securityReport.duplicates.length} 组）</h4>
+              {securityReport.duplicates.map((issue, i) => (
+                <div key={i} className="security-item">
+                  <span className="security-item-icon">🔁</span>
+                  <div className="security-item-body">
+                    <div>{issue.message}</div>
+                    <div className="text-sm text-muted">{issue.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
 
       {/* Batch Export Modal */}
       <Modal open={showExportModal} onClose={() => !exporting && setShowExportModal(false)} title="批量导出所选网址">

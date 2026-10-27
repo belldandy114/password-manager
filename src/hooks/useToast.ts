@@ -10,7 +10,7 @@ let toastId = 0;
 
 export function useToast() {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const addToast = useCallback((message: string, type: Toast['type'] = 'info', duration = 3000) => {
     const id = String(++toastId);

@@ -38,9 +38,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeAllListeners('clipboard-cleared');
   },
 
+  // Tray menu → "锁定"
+  onLockRequest: (cb) => {
+    ipcRenderer.on('lock-request', () => cb());
+    return () => ipcRenderer.removeAllListeners('lock-request');
+  },
+
   // Settings
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSave: (data) => ipcRenderer.invoke('settings:save', data),
+
+  // Password generator
+  passwordGenerate: (opts) => ipcRenderer.invoke('password:generate', opts),
+
+  // Backups
+  backupList: () => ipcRenderer.invoke('backup:list'),
+  backupOpenFolder: () => ipcRenderer.invoke('backup:open-folder'),
 
   // Import/Export
   importCsvJson: (data) => ipcRenderer.invoke('import:csv-json', data),

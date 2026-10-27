@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { PasswordEntry } from '../types';
+import type { PasswordEntry, PasswordGenOptions } from '../types';
 import { Modal } from './Modal';
+import { passwordStrength } from '../utils/security';
 
 interface Props {
   open: boolean;
@@ -29,7 +30,14 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
   const [tagInput, setTagInput] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showTagSuggestions, setShowTagSuggestions] = useState(false);
-  const tagBlurTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const tagBlurTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // 密码生成器
+  const [showGen, setShowGen] = useState(false);
+  const [genOpts, setGenOpts] = useState<PasswordGenOptions>({
+    length: 16, upper: true, lower: true, digits: true, symbols: true, excludeAmbiguous: true,
+  });
+  const [genPreview, setGenPreview] = useState('');
 
   useEffect(() => {
     if (open) {
@@ -49,6 +57,17 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
     setForm(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
   };
+
+  // 每次改动选项或展开时重新生成（主进程用 crypto 保证随机性）
+  const regenerate = async () => {
+    const result = await window.electronAPI.passwordGenerate(genOpts);
+    if (result.success && result.data) setGenPreview(result.data);
+  };
+
+  useEffect(() => {
+    if (showGen) regenerate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showGen, genOpts.length, genOpts.upper, genOpts.lower, genOpts.digits, genOpts.symbols, genOpts.excludeAmbiguous]);
 
   const addTag = () => {
     const t = tagInput.trim();
@@ -139,14 +158,73 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
       </div>
 
       <div className="form-group">
-        <label>密码</label>
+        <div className="field-label-row">
+          <label>密码</label>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowGen(v => !v)}>
+            {showGen ? '收起生成器' : '🎲 生成'}
+          </button>
+        </div>
         <div className="password-input-wrapper">
           <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => update('password', e.target.value)} placeholder="输入密码" />
           <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
             {showPassword ? '🙈' : '👁'}
           </button>
         </div>
+        {form.password && (
+          <div className={`pw-strength pw-strength-${passwordStrength(form.password).score}`}>
+            <span className="pw-strength-bar"><i style={{ width: `${(passwordStrength(form.password).score / 4) * 100}%` }} /></span>
+            <span>{passwordStrength(form.password).label}</span>
+            {passwordStrength(form.password).reasons.length > 0 && (
+              <span className="text-muted">（{passwordStrength(form.password).reasons.join('、')}）</span>
+            )}
+          </div>
+        )}
         {errors.password && <div className="input-hint" style={{ color: 'var(--danger)' }}>{errors.password}</div>}
+
+        {showGen && (
+          <div className="password-gen-panel">
+            <div className="gen-preview">
+              <code>{genPreview || '生成中…'}</code>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={regenerate} title="重新生成">↻</button>
+            </div>
+            <div className="gen-row">
+              <span>长度</span>
+              <input
+                type="range" min={8} max={64} value={genOpts.length || 16}
+                onChange={e => setGenOpts(o => ({ ...o, length: Number(e.target.value) }))}
+              />
+              <span className="gen-len">{genOpts.length}</span>
+            </div>
+            <div className="gen-checks">
+              {([
+                ['upper', '大写 A-Z'],
+                ['lower', '小写 a-z'],
+                ['digits', '数字 0-9'],
+                ['symbols', '符号 !@#'],
+                ['excludeAmbiguous', '排除易混 Il1O0'],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="gen-check">
+                  <input
+                    type="checkbox"
+                    checked={!!genOpts[key]}
+                    onChange={e => setGenOpts(o => ({ ...o, [key]: e.target.checked }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="gen-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={!genPreview || !(genOpts.lower !== false || genOpts.upper !== false || genOpts.digits !== false || genOpts.symbols)}
+                onClick={() => { update('password', genPreview); setShowGen(false); }}
+              >
+                使用此密码
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="form-group">

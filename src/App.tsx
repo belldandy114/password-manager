@@ -6,6 +6,7 @@ import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
 import { DataGenerator } from './pages/DataGenerator';
 import { JsonConverter } from './pages/JsonConverter';
+import { applyTheme, watchSystemTheme } from './utils/theme';
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -18,6 +19,8 @@ function App() {
   const [currentPage, setCurrentPage] = useState('passwordManager');
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const lastActivityRef = useRef(Date.now());
+  // 锁定时会把页面切回主页，那次切换不应该覆盖「上次停留页面」
+  const skipLastPageSaveRef = useRef(false);
 
   // Handle login success
   const handleLogin = useCallback(async () => {
@@ -42,7 +45,14 @@ function App() {
   const handleLock = useCallback(async () => {
     await window.electronAPI.sessionLock();
     setMasterPassword('');
+    // 清掉渲染层内存中的明文，锁定后不可再从 DevTools / 内存里翻到
+    const st = useStore.getState();
+    st.setVaultData({ entries: [], tags: [] });
+    st.setTrash([]);
+    st.setSearchQuery('');
+    st.clearSelected();
     setLocked(true);
+    skipLastPageSaveRef.current = true;
     setCurrentPage('passwordManager');
   }, []);
 
@@ -62,8 +72,14 @@ function App() {
       }
     };
 
+    let lastTouchSentAt = 0;
     const resetAutoLock = () => {
-      lastActivityRef.current = Date.now();
+      const now = Date.now();
+      lastActivityRef.current = now;
+      // mousemove/scroll fire dozens of times per second — only tell the main process
+      // once every 5s instead of flooding it with IPC round-trips.
+      if (now - lastTouchSentAt < 5000) return;
+      lastTouchSentAt = now;
       window.electronAPI.sessionTouch();
     };
 
@@ -184,6 +200,14 @@ function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [isLocked]);
 
+  // Tray menu → 锁定（窗口可能处于隐藏/后台状态，锁定时不需要弹窗）
+  useEffect(() => {
+    const off = window.electronAPI.onLockRequest(() => {
+      handleLockRef.current();
+    });
+    return off;
+  }, []);
+
   // Check auth state on mount & apply theme
   useEffect(() => {
     (async () => {
@@ -196,7 +220,7 @@ function App() {
         const prefs = await window.electronAPI.settingsGet();
         if (prefs) {
           setSettings(prefs);
-          document.documentElement.setAttribute('data-theme', prefs.theme || 'dark');
+          applyTheme(prefs.theme);
         }
       } catch {
         setLocked(true);
@@ -204,10 +228,31 @@ function App() {
     })();
   }, []);
 
-  // Apply theme on change
+  // Apply theme on change (支持 dark / light / system)
+  const themeMode = useStore(s => s.settings.theme);
+
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', useStore.getState().settings.theme || 'dark');
-  }, [useStore(s => s.settings).theme]);
+    applyTheme(themeMode);
+    if (themeMode !== 'system') return;
+    return watchSystemTheme(() => applyTheme('system'));
+  }, [themeMode]);
+
+  // 解锁后回到上次停留的页面
+  useEffect(() => {
+    if (isLocked) return;
+    const saved = useStore.getState().settings.lastPage;
+    if (saved && saved !== 'passwordManager') setCurrentPage(saved);
+  }, [isLocked]);
+
+  // 记住当前页面（600ms 节流）
+  useEffect(() => {
+    if (isLocked) return;
+    if (skipLastPageSaveRef.current) { skipLastPageSaveRef.current = false; return; }
+    const t = setTimeout(() => {
+      window.electronAPI.settingsSave({ lastPage: currentPage });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [currentPage, isLocked]);
 
   // If locked or not set up, show login
   if (isLocked) {

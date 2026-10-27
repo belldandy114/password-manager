@@ -19,15 +19,42 @@ export interface VaultData {
 
 export type KeybindingId = 'newEntry' | 'search' | 'settings' | 'lock' | 'trash' | 'import' | 'export';
 
+export type ThemeMode = 'dark' | 'light' | 'system';
+
 export interface AppSettings {
   clipboardClearDelay: number;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
   defaultViewMode: 'card' | 'list';
   defaultEnvFilter: string;
-  theme: 'dark' | 'light';
+  theme: ThemeMode;
+  /** 点最小化时隐藏到系统托盘 */
+  minimizeToTray: boolean;
+  /** 点关闭按钮时隐藏到托盘（不退出程序） */
+  closeToTray: boolean;
+  /** 禁止窗口被截图/录屏 */
+  contentProtection: boolean;
+  /** 开机自启 */
+  launchAtLogin: boolean;
+  /** 上次停留的页面 */
+  lastPage: string;
   browserPaths: { [key: string]: string };
   keybindings: Record<KeybindingId, string>;
+}
+
+export interface BackupFile {
+  name: string;
+  size: number;
+  mtime: string;
+}
+
+export interface PasswordGenOptions {
+  length?: number;
+  upper?: boolean;
+  lower?: boolean;
+  digits?: boolean;
+  symbols?: boolean;
+  excludeAmbiguous?: boolean;
 }
 
 export type ViewMode = 'card' | 'list';
@@ -44,7 +71,7 @@ export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
   authSetup: (data: { password: string; hint: string }) => Promise<{ success: boolean; error?: string }>;
-  authVerify: (data: { password: string }) => Promise<{ success: boolean; error?: string; hint?: string }>;
+  authVerify: (data: { password: string }) => Promise<{ success: boolean; error?: string; hint?: string; retryAfterMs?: number }>;
   authGetHint: () => Promise<string>;
   authChangePassword: (data: { oldPassword: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
   authSetSecurityWord: (data: { password: string; securityWord: string }) => Promise<{ success: boolean; error?: string }>;
@@ -74,15 +101,24 @@ export interface ElectronAPI {
   clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;
   onClipboardCleared: (cb: () => void) => () => void;
+  /** 托盘菜单「锁定」触发 */
+  onLockRequest: (cb: () => void) => () => void;
 
   // Settings
   settingsGet: () => Promise<AppSettings>;
   settingsSave: (data: Partial<AppSettings>) => Promise<{ success: boolean }>;
 
+  // Password generator
+  passwordGenerate: (opts?: PasswordGenOptions) => Promise<{ success: boolean; data?: string; error?: string }>;
+
+  // Backups
+  backupList: () => Promise<{ success: boolean; data: BackupFile[]; dir: string }>;
+  backupOpenFolder: () => Promise<{ success: boolean; error?: string }>;
+
   // Import
   importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;
   importEncrypted: (data: { filePath: string; importPassword: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;
-  importConfirm: (data: { entries: any[]; conflictStrategy: ConflictStrategy }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
+  importConfirm: (data: { entries: any[]; conflictStrategy: ConflictStrategy }) => Promise<{ success: boolean; data?: VaultData; error?: string; importedCount?: number }>;
   importDownloadTemplate: () => Promise<{ success?: boolean; canceled?: boolean; error?: string }>;
 
   // Export

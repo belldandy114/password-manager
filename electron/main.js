@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -6,6 +6,23 @@ const { exec, spawn } = require('child_process');
 const XLSX = require('xlsx');
 
 const IS_DEV = !app.isPackaged;
+
+// ----------------------------------------------------------------
+// Single instance
+// ----------------------------------------------------------------
+// Two instances would each keep their own decrypted copy of the vault in memory and
+// overwrite each other's data on save (and fight over the same userData profile).
+// A second launch now just surfaces the window that is already running.
+let hasSingleInstanceLock = true;
+if (!app.requestSingleInstanceLock()) {
+  hasSingleInstanceLock = false;
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (app.isReady()) showMainWindow();
+    else app.once('ready', () => showMainWindow());
+  });
+}
 
 // ----------------------------------------------------------------
 // Constants
@@ -33,16 +50,47 @@ const TDG_PRELOAD_PATH = path.join(__dirname, 'preload-tdg.cjs');
 // ----------------------------------------------------------------
 // Key derivation
 // ----------------------------------------------------------------
+// PBKDF2(SHA-512, 600k) costs ~400ms on this hardware. Deriving it on every read *and*
+// every write made each CRUD action take ~650-950ms, which the UI showed as lag.
+// The derived key is therefore cached for the current master password, and writes reuse
+// the same salt/key pair. The on-disk format is unchanged (salt is still stored in the
+// file header), so existing vaults keep working and the KDF cost stays the same.
 function deriveKey(password, salt) {
   return crypto.pbkdf2Sync(password, salt, KEY_ITERATIONS, KEY_LENGTH, 'sha512');
+}
+
+let keyCache = null; // { password, saltHex, salt, key }
+
+function getKey(password, salt) {
+  const saltHex = salt.toString('hex');
+  if (keyCache && keyCache.password === password && keyCache.saltHex === saltHex) {
+    return keyCache.key;
+  }
+  const key = deriveKey(password, salt);
+  keyCache = { password, saltHex, salt: Buffer.from(salt), key };
+  return key;
+}
+
+// Decrypted data kept in memory for the unlocked session (see loadVault/saveVault).
+let vaultCache = { password: null, data: null };
+let trashCache = { password: null, data: null };
+
+// Drops every in-memory secret: derived key plus decrypted vault/trash.
+function clearCaches() {
+  keyCache = null;
+  vaultCache = { password: null, data: null };
+  trashCache = { password: null, data: null };
 }
 
 // ----------------------------------------------------------------
 // Encryption / Decryption (AES-256-GCM)
 // ----------------------------------------------------------------
 function encrypt(plaintext, password) {
-  const salt = crypto.randomBytes(SALT_LENGTH);
-  const key = deriveKey(password, salt);
+  // Reuse the cached salt/key when the password matches: a fresh random salt on every
+  // write would force another ~400ms PBKDF2 round on each save.
+  const reuse = keyCache && keyCache.password === password;
+  const salt = reuse ? keyCache.salt : crypto.randomBytes(SALT_LENGTH);
+  const key = reuse ? keyCache.key : getKey(password, salt);
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGO, key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -57,7 +105,7 @@ function decrypt(ciphertextB64, password) {
     const iv = buf.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
     const tag = buf.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
     const encrypted = buf.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
-    const key = deriveKey(password, salt);
+    const key = getKey(password, salt);
     const decipher = crypto.createDecipheriv(ALGO, key, iv);
     decipher.setAuthTag(tag);
     return decipher.update(encrypted) + decipher.final('utf8');
@@ -70,44 +118,110 @@ function decrypt(ciphertextB64, password) {
 // Vault I/O
 // ----------------------------------------------------------------
 function loadVault(password) {
-  if (!fs.existsSync(DATA_FILE)) return { entries: [], tags: [] };
-  const raw = fs.readFileSync(DATA_FILE, 'utf8').trim();
-  if (!raw) return { entries: [], tags: [] };
-  const json = decrypt(raw, password);
-  if (!json) return null;
+  if (vaultCache.password === password && vaultCache.data) return vaultCache.data;
+  let result;
+  if (!fs.existsSync(DATA_FILE)) {
+    result = { entries: [], tags: [] };
+  } else {
+    const raw = fs.readFileSync(DATA_FILE, 'utf8').trim();
+    if (!raw) {
+      result = { entries: [], tags: [] };
+    } else {
+      const json = decrypt(raw, password);
+      if (!json) return null;
+      try {
+        result = JSON.parse(json);
+      } catch {
+        return null;
+      }
+    }
+  }
+  vaultCache = { password, data: result };
+  return result;
+}
+
+// ----------------------------------------------------------------
+// Automatic backups (one encrypted copy per day, keep the newest N)
+// ----------------------------------------------------------------
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = 7;
+
+function backupVaultOncePerDay() {
   try {
-    return JSON.parse(json);
+    if (!fs.existsSync(DATA_FILE)) return;
+    const day = new Date().toISOString().slice(0, 10);
+    const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
+    if (fs.existsSync(target)) return; // already backed up today
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    fs.copyFileSync(DATA_FILE, target);
+
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => /^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(f))
+      .sort();
+    while (files.length > BACKUP_KEEP) {
+      const oldest = files.shift();
+      try { fs.unlinkSync(path.join(BACKUP_DIR, oldest)); } catch { /* ignore */ }
+    }
+  } catch { /* a failed backup must never block the save path */ }
+}
+
+function listBackups() {
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    return fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.endsWith('.enc'))
+      .map(f => {
+        const full = path.join(BACKUP_DIR, f);
+        const st = fs.statSync(full);
+        return { name: f, size: st.size, mtime: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.name.localeCompare(a.name));
   } catch {
-    return null;
+    return [];
   }
 }
 
 function saveVault(vault, password) {
   const json = JSON.stringify(vault);
   const encrypted = encrypt(json, password);
+  // Snapshot yesterday's file before it is overwritten (once per day).
+  backupVaultOncePerDay();
   fs.writeFileSync(DATA_FILE, encrypted, 'utf8');
+  vaultCache = { password, data: vault };
+  scheduleTrayRefresh();
 }
 
 // ----------------------------------------------------------------
 // Trash (recycle bin) I/O
 // ----------------------------------------------------------------
 function loadTrash(password) {
-  if (!fs.existsSync(BIN_FILE)) return [];
-  const raw = fs.readFileSync(BIN_FILE, 'utf8').trim();
-  if (!raw) return [];
-  const json = decrypt(raw, password);
-  if (!json) return null;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
+  if (trashCache.password === password && trashCache.data) return trashCache.data;
+  let result;
+  if (!fs.existsSync(BIN_FILE)) {
+    result = [];
+  } else {
+    const raw = fs.readFileSync(BIN_FILE, 'utf8').trim();
+    if (!raw) {
+      result = [];
+    } else {
+      const json = decrypt(raw, password);
+      if (!json) return null;
+      try {
+        result = JSON.parse(json);
+      } catch {
+        return null;
+      }
+    }
   }
+  trashCache = { password, data: result };
+  return result;
 }
 
 function saveTrash(trash, password) {
   const json = JSON.stringify(trash);
   const encrypted = encrypt(json, password);
   fs.writeFileSync(BIN_FILE, encrypted, 'utf8');
+  trashCache = { password, data: trash };
 }
 
 // ----------------------------------------------------------------
@@ -126,24 +240,188 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
 }
 
+// Single source of truth for defaults. settings:get always returns a complete object —
+// returning {} used to overwrite the renderer store with an empty object and crash the
+// auto-lock timer (`settings.autoLockDelay * 60000` → NaN).
+const DEFAULT_SETTINGS = {
+  clipboardClearDelay: 30,
+  passwordAutoHideDelay: 10,
+  autoLockDelay: 5,
+  defaultViewMode: 'card',
+  defaultEnvFilter: 'all',
+  theme: 'dark',
+  minimizeToTray: false,
+  closeToTray: false,
+  contentProtection: false,
+  launchAtLogin: false,
+  lastPage: 'passwordManager',
+  browserPaths: { chrome: '', msedge: '', firefox: '', brave: '', opera: '', vivaldi: '', '360': '', qq: '', quark: '' },
+  keybindings: {
+    newEntry: 'Ctrl+N',
+    search: 'Ctrl+F',
+    settings: 'Ctrl+,',
+    lock: 'Ctrl+Shift+L',
+    trash: 'Ctrl+Shift+T',
+    import: 'Ctrl+Shift+I',
+    export: 'Ctrl+Shift+E',
+  },
+};
+
 // ----------------------------------------------------------------
-// Window
+// Window / Tray
 // ----------------------------------------------------------------
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+
+function getWindowPrefs() {
+  const s = loadSettings() || {};
+  return {
+    minimizeToTray: !!s.minimizeToTray,
+    closeToTray: !!s.closeToTray,
+  };
+}
+
+function appIconPath() {
+  return IS_DEV
+    ? path.join(__dirname, '..', 'buildResources', 'icon.ico')
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'buildResources', 'icon.ico');
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  // Show first, then restore: a window that was hidden *while minimized* reports
+  // isMinimized() === false until it is visible again, so restoring up-front would be
+  // skipped and the user would get a taskbar-minimized window back from the tray.
+  mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
+function hideToTray() {
+  createTray();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+}
+
+function createTray() {
+  if (tray) return;
+  let icon = nativeImage.createFromPath(appIconPath());
+  if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(__dirname, '..', 'buildResources', 'icon.ico'));
+
+  tray = new Tray(icon);
+  tray.setToolTip('测试工具');
+  buildTrayMenu();
+  // Left click / double click on the icon restores the window (Windows convention).
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+}
+
+// Rebuilt whenever the vault changes so "最近条目" stays current.
+function buildTrayMenu() {
+  if (!tray) return;
+
+  const settings = loadSettings() || {};
+  const delay = Number(settings.clipboardClearDelay) || 30;
+  const entries = (vaultCache.data && Array.isArray(vaultCache.data.entries))
+    ? [...vaultCache.data.entries]
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+      .slice(0, 5)
+    : [];
+
+  const template = [];
+  if (entries.length > 0) {
+    template.push({
+      label: '最近条目（点击复制密码）',
+      submenu: entries.map(e => ({
+        label: `${e.name || e.url || '未命名'}${e.username ? ' — ' + e.username : ''}`.slice(0, 48),
+        click: () => {
+          clipboard.writeText(e.password || '');
+          if (delay > 0) clearClipboardAfter(delay * 1000);
+          if (tray) tray.displayBalloon({ title: '已复制密码', content: `${e.name || '条目'}（${delay} 秒后自动清空）` });
+        },
+      })),
+    });
+    template.push({ type: 'separator' });
+  }
+
+  template.push(
+    { label: '显示主窗口', click: () => showMainWindow() },
+    {
+      label: '锁定', click: () => {
+        showMainWindow();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('lock-request');
+      },
+    },
+    { type: 'separator' },
+    { label: '退出', click: () => { isQuitting = true; app.quit(); } },
+  );
+
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+let trayRefreshTimer = null;
+function scheduleTrayRefresh() {
+  if (!tray) return;
+  if (trayRefreshTimer) clearTimeout(trayRefreshTimer);
+  trayRefreshTimer = setTimeout(() => { trayRefreshTimer = null; buildTrayMenu(); }, 400);
+}
+
+function destroyTray() {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
+}
+
+// ----------------------------------------------------------------
+// Window state (size / position / maximized)
+// ----------------------------------------------------------------
+const WINDOW_STATE_FILE = path.join(DATA_DIR, 'window-state.json');
+
+function loadWindowState() {
+  try {
+    const b = JSON.parse(fs.readFileSync(WINDOW_STATE_FILE, 'utf8'));
+    if (!b || typeof b.width !== 'number' || typeof b.height !== 'number') return null;
+    // Reject bounds that no longer land on a connected display (monitor unplugged).
+    const onScreen = screen.getAllDisplays().some(d => {
+      const wa = d.workArea;
+      return b.x < wa.x + wa.width - 80 && b.x + b.width > wa.x + 80
+        && b.y < wa.y + wa.height - 40 && b.y + b.height > wa.y + 40;
+    });
+    return onScreen ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
+  try {
+    const bounds = mainWindow.getNormalBounds ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+    fs.writeFileSync(WINDOW_STATE_FILE,
+      JSON.stringify({ ...bounds, maximized: mainWindow.isMaximized() }), 'utf8');
+  } catch { /* ignore */ }
+}
+
+let windowStateTimer = null;
+function scheduleSaveWindowState() {
+  if (windowStateTimer) clearTimeout(windowStateTimer);
+  windowStateTimer = setTimeout(() => { windowStateTimer = null; saveWindowState(); }, 600);
+}
 
 function createWindow() {
   // Remove default menu bar (File, Edit, View, etc.)
   Menu.setApplicationMenu(null);
 
-  const appIcon = nativeImage.createFromPath(
-    IS_DEV
-      ? path.join(__dirname, '..', 'buildResources', 'icon.ico')
-      : path.join(process.resourcesPath, 'app.asar.unpacked', 'buildResources', 'icon.ico')
-  );
+  const appIcon = nativeImage.createFromPath(appIconPath());
+  const savedState = loadWindowState();
 
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 800,
+    width: savedState ? Math.max(900, savedState.width) : 1400,
+    height: savedState ? Math.max(600, savedState.height) : 800,
+    ...(savedState ? { x: savedState.x, y: savedState.y } : {}),
     minWidth: 900,
     minHeight: 600,
     webPreferences: {
@@ -157,12 +435,36 @@ function createWindow() {
     show: false
   });
 
+  if (savedState && savedState.maximized) mainWindow.maximize();
+
   if (IS_DEV) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  // "最小化到托盘": hide instead of sitting in the taskbar.
+  mainWindow.on('minimize', (event) => {
+    if (!getWindowPrefs().minimizeToTray) return;
+    event.preventDefault();
+    hideToTray();
+  });
+
+  // "关闭时最小化到托盘": the window keeps running in the background.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    if (!getWindowPrefs().closeToTray) return;
+    event.preventDefault();
+    hideToTray();
+  });
+
+  // Persist size/position (debounced) and remember it on the way out.
+  ['resize', 'move', 'maximize', 'unmaximize'].forEach(ev => mainWindow.on(ev, scheduleSaveWindowState));
+  mainWindow.on('close', () => saveWindowState());
+
+  // Privacy: keep the vault out of screen captures/recordings when enabled.
+  if ((loadSettings() || {}).contentProtection) mainWindow.setContentProtection(true);
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -184,9 +486,130 @@ function clearClipboardAfter(delayMs) {
 }
 
 // ----------------------------------------------------------------
+// Import helpers: CSV parsing + field normalisation
+// ----------------------------------------------------------------
+// RFC 4180 parser: quoted fields, "" as an escaped quote, commas and newlines inside
+// quotes. The previous implementation used split(',') which silently mangled any
+// password containing a comma or quote.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const s = String(text).replace(/^\uFEFF/, '');
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field); field = '';
+    } else if (ch === '\n') {
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else if (ch !== '\r') {
+      field += ch;
+    }
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ''));
+}
+
+// Column aliases: exports use Chinese headers, JSON backups use the internal names.
+// Both (and the template) must import correctly.
+const IMPORT_FIELD_ALIASES = {
+  name: ['name', '名称', '标题', 'title'],
+  url: ['url', '网址', '地址', '链接', 'link'],
+  username: ['username', '账号', '用户名', '账户', 'user', 'account', 'login'],
+  password: ['password', '密码', 'pwd', 'pass'],
+  notes: ['notes', '备注', '说明', 'note', 'remark', 'comment'],
+  tags: ['tags', '标签', 'tag'],
+  envType: ['envtype', '环境类型', '环境', 'env'],
+  createdAt: ['createdat', '创建时间'],
+  updatedAt: ['updatedat', '修改时间'],
+};
+
+const ENV_ALIASES = {
+  production: 'production', prod: 'production', '正式': 'production', '生产': 'production',
+  testing: 'testing', test: 'testing', '测试': 'testing',
+  development: 'development', dev: 'development', '开发': 'development',
+  staging: 'staging', '预发布': 'staging', '预发': 'staging',
+};
+
+function normalizeImportRecords(records) {
+  if (!Array.isArray(records)) return [];
+
+  // Excel writes dates as serial numbers (days since 1899-12-30); CSV users type text.
+  const toIso = (v) => {
+    if (v === undefined || v === null || String(v).trim() === '') return undefined;
+    const raw = String(v).trim();
+    if (/^\d+(\.\d+)?$/.test(raw) && Number(raw) > 20000 && Number(raw) < 100000) {
+      const ms = Date.UTC(1899, 11, 30) + Number(raw) * 86400000;
+      return new Date(ms).toISOString();
+    }
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? undefined : d.toISOString();
+  };
+
+  return records.map(raw => {
+    if (!raw || typeof raw !== 'object') return null;
+    const flat = {};
+    for (const [k, v] of Object.entries(raw)) {
+      flat[String(k).trim().toLowerCase()] = typeof v === 'string' ? v.trim() : v;
+    }
+    const pick = (key) => {
+      for (const alias of IMPORT_FIELD_ALIASES[key]) {
+        const v = flat[alias];
+        if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+      }
+      return '';
+    };
+
+    const tagsRaw = flat.tags !== undefined ? String(flat.tags) : pick('tags');
+    const tags = tagsRaw
+      ? tagsRaw.split(/[;,、|]/).map(t => t.trim()).filter(Boolean)
+      : [];
+
+    const envRaw = pick('envType');
+    const envType = envRaw ? (ENV_ALIASES[envRaw.toLowerCase()] || ENV_ALIASES[envRaw] || envRaw) : 'production';
+
+    const name = pick('name');
+    const url = pick('url');
+    if (!name && !url) return null;
+
+    return {
+      // Keep original ids/timestamps when re-importing an exported JSON file.
+      ...(raw.id ? { id: String(raw.id) } : {}),
+      name,
+      url,
+      username: pick('username'),
+      password: pick('password'),
+      notes: pick('notes'),
+      envType,
+      tags,
+      ...(toIso(pick('createdAt')) ? { createdAt: toIso(pick('createdAt')) } : {}),
+      ...(toIso(pick('updatedAt')) ? { updatedAt: toIso(pick('updatedAt')) } : {}),
+    };
+  }).filter(Boolean);
+}
+
+// ----------------------------------------------------------------
 // IPC Handlers
 // ----------------------------------------------------------------
 function setupIpcHandlers() {
+
+  // Brute-force guard: 5 wrong passwords in a row → 30s cool-down (in-memory, resets on restart).
+  const LOGIN_MAX_FAILURES = 5;
+  const LOGIN_LOCK_MS = 30000;
+  let loginFailures = 0;
+  let loginLockedUntil = 0;
 
   // ---- Master password ----
   ipcMain.handle('auth:is-setup', () => {
@@ -195,6 +618,7 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('auth:setup', (_event, { password, hint }) => {
+    clearCaches();
     const salt = crypto.randomBytes(32).toString('hex');
     const hash = crypto.pbkdf2Sync(password, salt, KEY_ITERATIONS, 64, 'sha512').toString('hex');
     const settings = { masterPasswordHash: hash, salt, hint: hint || '', createdAt: new Date().toISOString() };
@@ -208,13 +632,27 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('auth:verify', (_event, { password }) => {
+    const wait = loginLockedUntil - Date.now();
+    if (wait > 0) {
+      return { success: false, error: `密码错误次数过多，请 ${Math.ceil(wait / 1000)} 秒后再试`, retryAfterMs: wait };
+    }
     const settings = loadSettings();
     if (!settings) return { success: false, error: '未初始化' };
     const hash = crypto.pbkdf2Sync(password, settings.salt, KEY_ITERATIONS, 64, 'sha512').toString('hex');
-    if (hash !== settings.masterPasswordHash) return { success: false, error: '密码错误' };
+    if (hash !== settings.masterPasswordHash) {
+      loginFailures++;
+      if (loginFailures >= LOGIN_MAX_FAILURES) {
+        loginFailures = 0;
+        loginLockedUntil = Date.now() + LOGIN_LOCK_MS;
+        return { success: false, error: `连续错误 ${LOGIN_MAX_FAILURES} 次，请 ${LOGIN_LOCK_MS / 1000} 秒后再试`, retryAfterMs: LOGIN_LOCK_MS };
+      }
+      return { success: false, error: `密码错误（还可尝试 ${LOGIN_MAX_FAILURES - loginFailures} 次）` };
+    }
     // Verify we can decrypt the vault
     const vault = loadVault(password);
     if (!vault) return { success: false, error: '数据损坏，无法解密' };
+    loginFailures = 0;
+    loginLockedUntil = 0;
     return { success: true, hint: settings.hint || '' };
   });
 
@@ -251,6 +689,10 @@ function setupIpcHandlers() {
     // Re-save trash with new password
     const trash = loadTrash(oldPassword);
     if (trash) saveTrash(trash, newPassword);
+    // The session now belongs to the new password — cached key/vault still hold the old
+    // one, so drop them and continue the session under the new password.
+    clearCaches();
+    currentPassword = newPassword;
     return { success: true };
   });
 
@@ -318,6 +760,9 @@ function setupIpcHandlers() {
     // Re-save trash with new password
     const trash = loadTrash(masterPassword);
     if (trash) saveTrash(trash, newPassword);
+    // Password reset always ends the session: the user must unlock with the new password.
+    clearCaches();
+    currentPassword = null;
     return { success: true };
   });
 
@@ -326,6 +771,7 @@ function setupIpcHandlers() {
   let lastActivity = Date.now();
 
   ipcMain.handle('session:unlock', (_event, { password }) => {
+    clearCaches();
     const vault = loadVault(password);
     if (!vault) return { success: false };
     currentPassword = password;
@@ -335,6 +781,7 @@ function setupIpcHandlers() {
 
   ipcMain.handle('session:lock', () => {
     currentPassword = null;
+    clearCaches();
     return { success: true };
   });
 
@@ -489,25 +936,21 @@ function setupIpcHandlers() {
 
   // ---- Settings (user preferences) ----
   ipcMain.handle('settings:get', () => {
-    const s = loadSettings();
-    if (!s) return {};
+    const s = loadSettings() || {};
     return {
-      clipboardClearDelay: s.clipboardClearDelay || 30,
-      passwordAutoHideDelay: s.passwordAutoHideDelay || 10,
-      autoLockDelay: s.autoLockDelay || 5,
-      defaultViewMode: s.defaultViewMode || 'card',
-      defaultEnvFilter: s.defaultEnvFilter || 'all',
-      theme: s.theme || 'dark',
-      browserPaths: s.browserPaths || { chrome: '', msedge: '', firefox: '', brave: '', opera: '', vivaldi: '', '360': '', qq: '', quark: '' },
-      keybindings: s.keybindings || {
-        newEntry: 'Ctrl+N',
-        search: 'Ctrl+F',
-        settings: 'Ctrl+,',
-        lock: 'Ctrl+Shift+L',
-        trash: 'Ctrl+Shift+T',
-        import: 'Ctrl+Shift+I',
-        export: 'Ctrl+Shift+E',
-      },
+      clipboardClearDelay: s.clipboardClearDelay || DEFAULT_SETTINGS.clipboardClearDelay,
+      passwordAutoHideDelay: s.passwordAutoHideDelay || DEFAULT_SETTINGS.passwordAutoHideDelay,
+      autoLockDelay: s.autoLockDelay || DEFAULT_SETTINGS.autoLockDelay,
+      defaultViewMode: s.defaultViewMode || DEFAULT_SETTINGS.defaultViewMode,
+      defaultEnvFilter: s.defaultEnvFilter || DEFAULT_SETTINGS.defaultEnvFilter,
+      theme: s.theme || DEFAULT_SETTINGS.theme,
+      minimizeToTray: !!s.minimizeToTray,
+      closeToTray: !!s.closeToTray,
+      contentProtection: !!s.contentProtection,
+      launchAtLogin: !!s.launchAtLogin,
+      lastPage: s.lastPage || DEFAULT_SETTINGS.lastPage,
+      browserPaths: s.browserPaths || { ...DEFAULT_SETTINGS.browserPaths },
+      keybindings: s.keybindings || { ...DEFAULT_SETTINGS.keybindings },
     };
   });
 
@@ -515,7 +958,69 @@ function setupIpcHandlers() {
     const s = loadSettings() || {};
     Object.assign(s, prefs);
     saveSettings(s);
+    // Keep the tray icon in sync: create it as soon as a tray behaviour is enabled,
+    // remove it when both are off so the user is not left with a stray icon.
+    const p = getWindowPrefs();
+    if (p.minimizeToTray || p.closeToTray) createTray();
+    else {
+      // Only tear the tray down if the window is visible — otherwise the app would
+      // become unreachable while hidden.
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) destroyTray();
+    }
+
+    // Privacy: exclude the window from screenshots / screen recordings.
+    if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'contentProtection')
+      && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(!!prefs.contentProtection);
+    }
+
+    // Start with Windows (only meaningful for the installed app).
+    if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'launchAtLogin') && app.isPackaged) {
+      try {
+        app.setLoginItemSettings({ openAtLogin: !!prefs.launchAtLogin, args: [] });
+      } catch { /* ignore */ }
+    }
     return { success: true };
+  });
+
+  // ---- Password generator ----
+  ipcMain.handle('password:generate', (_event, opts = {}) => {
+    const length = Math.min(128, Math.max(6, Number(opts.length) || 16));
+    const sets = [];
+    const AMBIGUOUS = 'Il1O0o';
+    const clean = (s) => opts.excludeAmbiguous ? s.split('').filter(c => !AMBIGUOUS.includes(c)).join('') : s;
+
+    if (opts.lower !== false) sets.push(clean('abcdefghijklmnopqrstuvwxyz'));
+    if (opts.upper !== false) sets.push(clean('ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
+    if (opts.digits !== false) sets.push(clean('0123456789'));
+    if (opts.symbols) sets.push(clean('!@#$%^&*()-_=+[]{};:,.?/'));
+
+    const usable = sets.filter(s => s.length > 0);
+    if (usable.length === 0) return { success: false, error: '请至少选择一种字符类型' };
+
+    const chars = [];
+    // Guarantee at least one character from every selected set.
+    for (const set of usable) chars.push(set[crypto.randomInt(set.length)]);
+    const all = usable.join('');
+    while (chars.length < length) chars.push(all[crypto.randomInt(all.length)]);
+    // Fisher–Yates with crypto randomness so the guaranteed characters are not stuck at the front.
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return { success: true, data: chars.join('') };
+  });
+
+  // ---- Backups ----
+  ipcMain.handle('backup:list', () => ({ success: true, data: listBackups(), dir: BACKUP_DIR }));
+  ipcMain.handle('backup:open-folder', async () => {
+    try {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      await shell.openPath(BACKUP_DIR);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
   });
 
   // ---- Import ----
@@ -530,27 +1035,24 @@ function setupIpcHandlers() {
         const sheetName = workbook.SheetNames[0];
         if (!sheetName) return { success: false, error: 'Excel文件为空' };
         const sheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        records = json.map((row) => {
-          const obj = {};
-          Object.keys(row).forEach(k => { obj[k.toLowerCase()] = String(row[k]); });
-          return obj;
-        });
+        records = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       } else {
         const content = fs.readFileSync(filePath, 'utf8');
         if (ext === '.json') {
           records = JSON.parse(content);
           if (!Array.isArray(records)) records = [records];
         } else if (ext === '.csv') {
-          const lines = content.split('\n').filter(l => l.trim());
-          if (lines.length < 2) return { success: false, error: 'CSV文件格式无效' };
-          const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-          for (let i = 1; i < lines.length; i++) {
-            const vals = lines[i].split(',').map(v => v.trim());
+          const rows = parseCsv(content);
+          if (rows.length < 2) return { success: false, error: 'CSV文件格式无效' };
+          const headers = rows[0].map(h => h.trim());
+          for (let i = 1; i < rows.length; i++) {
+            if (rows[i].every(v => !String(v).trim())) continue;
             const obj = {};
-            headers.forEach((h, idx) => { obj[h] = vals[idx] || ''; });
+            headers.forEach((h, idx) => { obj[h] = rows[i][idx] === undefined ? '' : rows[i][idx]; });
             records.push(obj);
           }
+          // CSV has no way to keep the original timestamps apart from these columns;
+          // they are mapped by normalizeImportRecords like any other field.
         } else if (ext === '.html' || ext === '.htm') {
           const linkRegex = /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
           let match;
@@ -558,12 +1060,12 @@ function setupIpcHandlers() {
             const url = match[1];
             const name = match[2].trim();
             if (url && !url.startsWith('javascript:') && !url.startsWith('place:')) {
-              records.push({ name, url, username: '', password: '', notes: '', envType: 'production', tags: [] });
+              records.push({ name, url, username: '', password: '', notes: '', envType: 'production', tags: '' });
             }
           }
         }
       }
-      return { success: true, data: records };
+      return { success: true, data: normalizeImportRecords(records) };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -956,6 +1458,7 @@ function setupTdgProtocol() {
   });
 }
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
   // Register custom protocol for test-data-generator sub-app
   setupTdgProtocol();
   // Set app-level icon for Windows taskbar
@@ -971,6 +1474,16 @@ app.whenReady().then(() => {
   }
   setupIpcHandlers();
   createWindow();
+  // Restore the tray icon when a tray behaviour was enabled in a previous session.
+  const prefs = getWindowPrefs();
+  if (prefs.minimizeToTray || prefs.closeToTray) createTray();
+  // Keep the Windows "start with system" entry in sync with the saved preference.
+  if (app.isPackaged) {
+    try {
+      const s = loadSettings() || {};
+      app.setLoginItemSettings({ openAtLogin: !!s.launchAtLogin, args: [] });
+    } catch { /* ignore */ }
+  }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
   // Global shortcut: Ctrl+Shift+P or Cmd+Shift+P to show/hide the window
@@ -979,20 +1492,23 @@ app.whenReady().then(() => {
     if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
       mainWindow.hide();
     } else {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      showMainWindow();
     }
   });
 });
 
+app.on('before-quit', () => { isQuitting = true; });
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  destroyTray();
 });
 
 app.on('window-all-closed', () => {
   for (const k of Object.keys(clipboardTimers)) clearTimeout(clipboardTimers[k]);
   clipboard.clear();
+  // If a window was closed while "close to tray" is on, the window is only hidden and
+  // never reaches this handler; this path means the app is really shutting down.
   if (process.platform !== 'darwin') app.quit();
 });
 

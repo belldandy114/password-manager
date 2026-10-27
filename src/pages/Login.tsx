@@ -19,6 +19,14 @@ export function Login({ onLogin }: Props) {
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotNewPassword2, setForgotNewPassword2] = useState('');
   const [forgotStep, setForgotStep] = useState<'security' | 'reset'>('security');
+  // 连续输错后的冷却倒计时（秒）
+  const [lockRemain, setLockRemain] = useState(0);
+
+  useEffect(() => {
+    if (lockRemain <= 0) return;
+    const t = setTimeout(() => setLockRemain(n => Math.max(0, n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [lockRemain]);
 
   useEffect(() => {
     (async () => {
@@ -61,6 +69,7 @@ export function Login({ onLogin }: Props) {
   const handleLogin = async () => {
     setError('');
     if (!password) { setError('请输入主密码'); return; }
+    if (lockRemain > 0) return;
     try {
       const result = await window.electronAPI.authVerify({ password });
       if (result.success) {
@@ -68,6 +77,9 @@ export function Login({ onLogin }: Props) {
         onLogin();
       } else {
         setError(result.error || '密码错误');
+        if (result.retryAfterMs && result.retryAfterMs > 0) {
+          setLockRemain(Math.ceil(result.retryAfterMs / 1000));
+        }
       }
     } catch (e: any) {
       setError(e.message || '验证失败');
@@ -248,7 +260,9 @@ export function Login({ onLogin }: Props) {
               </div>
             </div>
             {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
-            <button className="btn btn-primary btn-block btn-lg" onClick={handleLogin}>解锁</button>
+            <button className="btn btn-primary btn-block btn-lg" onClick={handleLogin} disabled={lockRemain > 0}>
+              {lockRemain > 0 ? `${lockRemain} 秒后可重试` : '解锁'}
+            </button>
             <div style={{ textAlign: 'center', marginTop: 12 }}>
               <button className="btn btn-ghost btn-sm" onClick={async () => {
                 const has = await window.electronAPI.authHasSecurityWord();

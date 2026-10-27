@@ -6,7 +6,8 @@ interface TdgPaths {
 }
 
 export function DataGenerator() {
-  const webviewRef = useRef<Electron.WebviewTag>(null);
+  // webview 是 Electron 自定义元素，没有随项目引入 Electron 的类型声明
+  const webviewRef = useRef<any>(null);
   const [tdgPaths, setTdgPaths] = useState<TdgPaths | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const isDev = window.location.href.startsWith('http://');
@@ -113,7 +114,6 @@ export function DataGenerator() {
             height: '100%',
             display: 'flex',
           }}
-          allowpopups="false"
         />
       )}
     </div>

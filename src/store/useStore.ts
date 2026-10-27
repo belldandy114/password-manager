@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { PasswordEntry, VaultData, ViewMode, SortField, SortOrder, AppSettings, SearchField, SortOption } from '../types';
+import { fuzzyMatch } from '../utils/search';
 
 interface AppState {
   // Auth
@@ -118,6 +119,11 @@ export const useStore = create<AppState>((set, get) => ({
     defaultViewMode: 'card',
     defaultEnvFilter: 'all',
     theme: 'dark',
+    minimizeToTray: false,
+    closeToTray: false,
+    contentProtection: false,
+    launchAtLogin: false,
+    lastPage: 'passwordManager',
     browserPaths: {},
     keybindings: {
       newEntry: 'Ctrl+N',
@@ -170,23 +176,16 @@ export const useStore = create<AppState>((set, get) => ({
     const state = get();
     let result = [...state.entries];
 
-    // Search with field scope
+    // Search with field scope (支持拼音首字母/全拼模糊匹配)
     if (state.searchQuery) {
-      const q = state.searchQuery.toLowerCase();
       const field = state.searchField;
+      const q = state.searchQuery.trim();
+      const hit = (v: string) => fuzzyMatch(v || '', q);
       result = result.filter(e => {
-        if (field === 'all' || field === 'name') {
-          if (e.name.toLowerCase().includes(q)) return true;
-        }
-        if (field === 'all' || field === 'url') {
-          if (e.url.toLowerCase().includes(q)) return true;
-        }
-        if (field === 'all' || field === 'username') {
-          if (e.username.toLowerCase().includes(q)) return true;
-        }
-        if (field === 'all' || field === 'tags') {
-          if (e.tags.some(t => t.toLowerCase().includes(q))) return true;
-        }
+        if ((field === 'all' || field === 'name') && hit(e.name)) return true;
+        if ((field === 'all' || field === 'url') && hit(e.url)) return true;
+        if ((field === 'all' || field === 'username') && hit(e.username)) return true;
+        if ((field === 'all' || field === 'tags') && (e.tags || []).some(t => hit(t))) return true;
         return false;
       });
     }

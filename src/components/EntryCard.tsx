@@ -7,6 +7,8 @@ interface Props {
   entry: PasswordEntry;
   onEdit: (entry: PasswordEntry) => void;
   onCopy: (text: string, label: string) => void;
+  /** 安全体检标记：弱密码 / 重复密码 */
+  security?: { weak: boolean; duplicate: boolean };
 }
 
 const envLabel: Record<string, string> = {
@@ -16,12 +18,12 @@ const envLabel: Record<string, string> = {
   staging: '\u9884\u53D1\u5E03', // 预发布
 };
 
-export function EntryCard({ entry, onEdit, onCopy }: Props) {
+export function EntryCard({ entry, onEdit, onCopy, security }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const selected = useStore(s => s.selectedIds.has(entry.id));
   const toggleSelected = useStore(s => s.toggleSelected);
   const settings = useStore(s => s.settings);
-  const timerRef = useRef<NodeJS.Timeout>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (showPassword) {
@@ -36,6 +38,8 @@ export function EntryCard({ entry, onEdit, onCopy }: Props) {
       {/* Row 1: Title + Env badge */}
       <div className="card-header">
         <span className="card-title">{entry.name}</span>
+        {security?.weak && <span className="sec-flag sec-flag-weak" title="弱密码，建议更换">弱</span>}
+        {security?.duplicate && <span className="sec-flag sec-flag-dup" title="与其他网址共用了同一个密码">重</span>}
         <span className={`env-badge env-${entry.envType}`}>
           {envLabel[entry.envType] || entry.envType}
         </span>

@@ -2,62 +2,62 @@
    Global Styles - Dark Theme Password Manager (V2 Optimized)
    ================================================================ */
 :root {
-  --bg-primary: #0c0e1a;
-  --bg-secondary: #141729;
-  --bg-card: #1a1e33;
-  --bg-hover: #1e2345;
-  --bg-input: #11142a;
-  --bg-sidebar: #0a0c18;
-  --bg-selected: #1a2450;
-  --text-primary: #e8edf5;
-  --text-secondary: #8892b0;
-  --text-muted: #5a6380;
+  --bg-primary: #0f111a;
+  --bg-secondary: #161819;
+  --bg-card: #161822;
+  --bg-hover: #1c1e2e;
+  --bg-input: #12141e;
+  --bg-sidebar: #0b0d14;
+  --bg-selected: #191d3a;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
   --accent: #6366f1;
   --accent-hover: #5558e6;
-  --accent-light: rgba(99, 102, 241, 0.12);
+  --accent-light: rgba(99, 102, 241, 0.1);
   --success: #22c55e;
   --warning: #eab308;
   --danger: #ef4444;
   --danger-hover: #dc2626;
-  --border: #2a2f50;
-  --border-light: #353b60;
+  --border: #1e2235;
+  --border-light: #282c42;
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --radius: 10px;
-  --radius-sm: 6px;
-  --radius-lg: 16px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
   --transition: 0.2s ease;
   --font: 'Fira Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-  --tag-bg: hsla(var(--tag-hue, 240), 50%, 50%, 0.15);
-  --tag-text: hsl(var(--tag-hue, 240), 50%, 75%);
-  --tag-border: hsla(var(--tag-hue, 240), 50%, 55%, 0.2);
+  --tag-bg: hsla(var(--tag-hue, 240), 50%, 50%, 0.12);
+  --tag-text: hsl(var(--tag-hue, 240), 50%, 72%);
+  --tag-border: hsla(var(--tag-hue, 240), 50%, 55%, 0.15);
 }
 
 /* ---- Light Theme ---- */
 [data-theme="light"] {
-  --bg-primary: #f0f2f8;
+  --bg-primary: #f1f3f8;
   --bg-secondary: #ffffff;
   --bg-card: #ffffff;
-  --bg-hover: #e8eaf5;
-  --bg-input: #e4e6f0;
-  --bg-sidebar: #ffffff;
+  --bg-hover: #e8eaf2;
+  --bg-input: #e6e8f0;
+  --bg-sidebar: #fafafa;
   --bg-selected: #eef0ff;
   --text-primary: #1a1a2e;
   --text-secondary: #5a5a78;
-  --text-muted: #9090a8;
+  --text-muted: #8e8ea8;
   --accent: #6366f1;
   --accent-hover: #5558e6;
-  --accent-light: rgba(99, 102, 241, 0.08);
+  --accent-light: rgba(99, 102, 241, 0.07);
   --success: #16a34a;
   --warning: #ca8a04;
   --danger: #dc2626;
   --danger-hover: #b91c1c;
-  --border: #d4d6e5;
-  --border-light: #c0c2d5;
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
-  --tag-bg: hsla(var(--tag-hue, 240), 50%, 70%, 0.2);
-  --tag-text: hsl(var(--tag-hue, 240), 50%, 30%);
-  --tag-border: hsla(var(--tag-hue, 240), 50%, 60%, 0.3);
+  --border: #d8dae8;
+  --border-light: #c5c7d8;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.05);
+  --tag-bg: hsla(var(--tag-hue, 240), 50%, 70%, 0.18);
+  --tag-text: hsl(var(--tag-hue, 240), 50%, 28%);
+  --tag-border: hsla(var(--tag-hue, 240), 50%, 60%, 0.25);
 }
 
 [data-theme="light"] .env-production { background: #065f46; color: #fff; }
@@ -175,6 +175,7 @@ body {
   background: var(--accent-light);
   color: var(--accent);
   font-weight: 600;
+  border-left: 3px solid var(--accent);
 }
 
 .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; stroke-width: 1.5; }
@@ -1994,6 +1995,7 @@ mark {
 .login-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
   border-radius: var(--radius-lg);
   padding: 40px;
   width: 400px;
@@ -2764,4 +2766,339 @@ mark {
   background: var(--accent);
   color: #fff;
   line-height: 1;
+}
+
+/* ---- Toggle switch (设置页开关，用于窗口/托盘等布尔项) ---- */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--border-light);
+  border-radius: 11px;
+  transition: background var(--transition);
+}
+
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform var(--transition);
+}
+
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+}
+
+.switch input:checked + .switch-slider::before {
+  transform: translateX(18px);
+}
+
+.switch input:focus-visible + .switch-slider {
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+/* ---- Password strength meter ---- */
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.field-label-row label {
+  margin: 0;
+}
+
+.pw-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pw-strength-bar {
+  position: relative;
+  width: 80px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.pw-strength-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  transition: width var(--transition);
+}
+
+.pw-strength-0 .pw-strength-bar i,
+.pw-strength-1 .pw-strength-bar i { background: var(--danger); }
+.pw-strength-2 .pw-strength-bar i { background: var(--warning); }
+.pw-strength-3 .pw-strength-bar i { background: var(--success); }
+.pw-strength-4 .pw-strength-bar i { background: var(--success); }
+
+/* ---- Password generator panel ---- */
+.password-gen-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gen-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gen-preview code {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-all;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+
+.gen-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.gen-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.gen-len {
+  width: 28px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.gen-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.gen-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.gen-check input {
+  accent-color: var(--accent);
+}
+
+.gen-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ---- Security check entry + badges ---- */
+.security-btn {
+  position: relative;
+}
+
+.security-btn.has-risk {
+  color: var(--warning);
+}
+
+.security-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.sec-flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: middle;
+  border: 1px solid currentColor;
+}
+
+.sec-flag-weak { color: var(--danger); }
+.sec-flag-dup { color: var(--warning); }
+
+/* ---- Security report modal ---- */
+.security-report {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.security-score {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.score-ring {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  border: 3px solid var(--border);
+}
+
+.score-ring.ok { color: var(--success); border-color: var(--success); }
+.score-ring.warn { color: var(--warning); border-color: var(--warning); }
+.score-ring.bad { color: var(--danger); border-color: var(--danger); }
+
+.score-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.security-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border-radius: var(--radius);
+}
+
+.security-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.security-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  margin-bottom: 6px;
+  cursor: default;
+}
+
+.security-item[onclick],
+.security-item.clickable {
+  cursor: pointer;
+}
+
+.security-item:hover {
+  background: var(--bg-hover);
+}
+
+.security-item-icon {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.security-item-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.security-item-action {
+  font-size: 12px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ---- Incremental list hint ---- */
+.load-more-hint {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---- Backup list ---- */
+.backup-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backup-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-size: 12px;
+}
+
+.backup-name {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.backup-dir {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  word-break: break-all;
+  opacity: 0.7;
 }

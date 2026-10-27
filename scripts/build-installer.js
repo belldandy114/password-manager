@@ -69,25 +69,36 @@ step('构建子应用 (test-data-generator)', 'cd sub-apps/test-data-generator &
 // 3. Pack Electron app
 step('打包 Electron 应用', 'npx electron-builder --dir --publish never');
 
-// 3. Fix icon (rcedit workaround for Chinese path) — non-fatal
-console.log(`\n${CYAN}▶ 修复 EXE 图标${RESET}`);
-try {
-  execSync('node scripts/fix-icon.js', { cwd: ROOT, shell: true, stdio: 'inherit', timeout: 60000 });
-  console.log(`${GREEN}✓ 修复 EXE 图标${RESET}`);
-} catch {
-  console.log(`${YELLOW}⚠ 图标修复跳过（本机环境限制，不影响使用）${RESET}`);
-}
+// 3. Icon: electron-builder already embeds buildResources/icon.ico via rcedit during
+//    the `--dir` step, so no post-processing is needed. The old fix-icon.js step is
+//    kept for reference but disabled: it targeted `password-manager-temp.exe`, a file
+//    electron-builder no longer leaves behind, so it always failed with
+//    "Fatal error: Unable to load file".
+console.log(`\n${CYAN}▶ EXE 图标${RESET}`);
+console.log(`${GREEN}✓ 图标已由 electron-builder 内置写入，跳过额外处理${RESET}`);
 
 // 4. Build NSIS installer
 step('生成 NSIS 安装程序', 'npx electron-builder --prepackaged "release/win-unpacked" --win nsis --publish never');
 
+// 4.5 Integrity labels — a "Low Mandatory Level" label breaks the Chromium sandbox
+//     and makes the exe exit silently on double click (0x80000003).
+console.log(`\n${CYAN}▶ 完整性级别自检${RESET}`);
+try {
+  execSync('node scripts/check-integrity.js --fix', { cwd: ROOT, shell: true, stdio: 'inherit', timeout: 900000 });
+  console.log(`${GREEN}✓ 完整性级别正常${RESET}`);
+} catch {
+  console.log(`${YELLOW}⚠ 完整性自检未通过，请手动执行：icacls "<目录>" /setintegritylevel (OI)(CI)Medium /T${RESET}`);
+}
+
 // 5. Verify
-const installer = path.join(ROOT, 'release', '测试工具 Setup 1.0.2.exe');
+const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
+const installerName = `测试工具 Setup ${pkg.version}.exe`;
+const installer = path.join(ROOT, 'release', installerName);
 if (fs.existsSync(installer)) {
   const size = (fs.statSync(installer).size / 1024 / 1024).toFixed(1);
   console.log(`\n${GREEN}═══════════════════════════════════════${RESET}`);
   console.log(`${GREEN}  构建成功！${RESET}`);
-  console.log(`${GREEN}  安装包: release\\测试工具 Setup 1.0.2.exe (${size} MB)${RESET}`);
+  console.log(`${GREEN}  安装包: release\\${installerName} (${size} MB)${RESET}`);
   console.log(`${GREEN}═══════════════════════════════════════${RESET}`);
 } else {
   console.error(`${RED}✗ 未找到安装包！${RESET}`);
