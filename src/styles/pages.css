@@ -1230,3 +1230,351 @@
   margin-right: 6px;
   vertical-align: 1px;
 }
+
+/* ----------------------------------------------------------------
+   17. 周报 & 禅道统计
+   ---------------------------------------------------------------- */
+
+/* --- 周报：目录行 --- */
+.wk-dir {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wk-dir input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* --- 周报：左侧列表 --- */
+.wk-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+}
+
+.wk-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.wk-item:hover {
+  background: var(--bg-hover);
+}
+
+.wk-item.is-active {
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+}
+
+.wk-date {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.wk-item.is-active .wk-date {
+  color: var(--accent);
+}
+
+.wk-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* --- 周报正文 --- */
+.md-body {
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--text-secondary);
+}
+
+.md-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.md-title-sub {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.md-h {
+  margin: 18px 0 8px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.md-body > .md-h:first-child {
+  margin-top: 0;
+}
+
+.md-p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.md-list {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.md-list .md-li {
+  margin: 3px 0;
+}
+
+.md-list .md-li.sub {
+  color: var(--text-muted);
+  padding-left: 4px;
+}
+
+.md-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--accent);
+}
+
+.md-quote {
+  margin: 0 0 10px;
+  padding: 6px 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--text-muted);
+}
+
+/* --- 禅道：统计卡片 --- */
+.zt-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.zt-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+
+.zt-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--bg-hover);
+}
+
+.zt-card:active {
+  transform: translateY(1px);
+}
+
+.zt-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.zt-card-num {
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.2;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.zt-card-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.zt-card.is-active .zt-card-num,
+.zt-card.is-active .zt-card-label {
+  color: var(--accent);
+}
+
+.zt-card.is-bad .zt-card-num { color: var(--danger); }
+.zt-card.is-warn .zt-card-num { color: var(--warning); }
+.zt-card.is-ok .zt-card-num { color: var(--success); }
+.zt-card.is-info .zt-card-num { color: var(--accent); }
+
+/* --- 禅道：按项目统计表 --- */
+.zt-proj-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.zt-proj th.num,
+.zt-proj td.num {
+  text-align: right;
+}
+
+.zt-proj tr.is-active {
+  background: var(--accent-light);
+}
+
+.zt-proj-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-proj-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.zt-num {
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.zt-num:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.zt-num.zero {
+  color: var(--text-muted);
+}
+
+.zt-num.danger {
+  color: var(--danger);
+}
+
+/* --- 禅道：筛选栏 --- */
+.zt-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zt-filters select {
+  font-size: 12px;
+  padding: 6px 26px 6px 10px;
+  max-width: 190px;
+}
+
+.zt-filters .search input {
+  width: 150px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.zt-active-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.zt-active-filter .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.zt-active-filter .pill button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.zt-active-filter .pill button:hover {
+  opacity: 1;
+}
+
+/* 列表里「已修复」的小角标 */
+.zt-fixed {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+  font-size: 10.5px;
+  vertical-align: 1px;
+}
+
+/* 弹窗里的「已有系统」快捷标签（替代 datalist，避免 Chromium 崩溃） */
+.suggest-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.suggest-row .chip {
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease;
+}
+
+.suggest-row .chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}

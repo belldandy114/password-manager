@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { TestAccount } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { newId } from '../utils/id';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
 const ENVS = [
@@ -46,7 +47,7 @@ export function Accounts() {
     if (!editing || !editing.role.trim() || !editing.username.trim()) return;
     const entry: TestAccount = {
       ...editing,
-      id: editing.id || crypto.randomUUID(),
+      id: editing.id || newId(),
       updatedAt: new Date().toISOString(),
     };
     const next = editing.id ? items.map(i => (i.id === entry.id ? entry : i)) : [...items, entry];
@@ -176,10 +177,17 @@ export function Accounts() {
             <div className="form-group">
               <label>系统 *</label>
               <input value={editing.system} onChange={e => setEditing({ ...editing, system: e.target.value })}
-                placeholder="例如：资产管理系统" autoFocus list="account-system-list" />
-              <datalist id="account-system-list">
-                {Array.from(new Set(items.map(i => i.system).filter(Boolean))).map(s => <option key={s} value={s} />)}
-              </datalist>
+                placeholder="例如：资产管理系统" autoFocus />
+              {/* 同 Environments：不要用 <datalist>，会导致 Chromium 原生崩溃 */}
+              {Array.from(new Set(items.map(i => i.system).filter(Boolean))).length > 0 && (
+                <div className="suggest-row">
+                  {Array.from(new Set(items.map(i => i.system).filter(Boolean))).map(s => (
+                    <button key={s} type="button" className="chip" onClick={() => setEditing({ ...editing, system: s })}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label>角色 / 权限说明 *</label>

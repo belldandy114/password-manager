@@ -240,3 +240,30 @@ vault 从 `{ entries, tags }` 扩展为：
   只能按括号配平截取 `"data":[...]` 再解析（`ztTableRows`）。
 - 快捷入口用 `my-work-{bug,task,story,testtask,testcase,todo}.html`，`index.php?m=my&f=` 会 302。
 - 我的账号实测：166 条 assignedTo Bug，18 个产品；字段 `productName` 直接可用。
+
+### ⚠️ 绝对不要用 `<datalist>`（会导致程序原生崩溃）
+
+`Environments` / `Accounts` 的弹窗曾用 `<input list="xxx"> + <datalist>` 做「系统名」联想。
+实测：**输入框处于聚焦状态时，候选项（options）发生更新，Chromium 直接 0xC0000005 崩溃**，
+整个程序瞬间退出、没有任何 JS 报错 —— 用户看到的现象就是「点保存没反应 / 添加内容无效」。
+
+- 复现路径：打开弹窗（input `autoFocus`）→ 填系统名 + 地址 → 点保存 → `setItems` 让
+  `systems` 变化 → datalist 重新渲染 → 崩溃。
+- 对照实验：删掉 `<datalist>` 节点后再保存 → 一切正常、数据正常落盘。
+- **替代方案**：用可点的快捷标签（`.suggest-row .chip`），功能等价、无崩溃风险。
+  已在 `Environments.tsx` / `Accounts.tsx` 里改掉，别再改回 datalist。
+
+### 排查 Electron 原生崩溃（无 JS 报错）的方法
+
+1. `spawn(exe, ['--no-sandbox', '--remote-debugging-port=9xxx', '--user-data-dir=<临时>'])`
+2. CDP 连上后 `Runtime.enable`，监听 `Runtime.exceptionThrown` / `Inspector.targetCrashed`，
+   并监听子进程 `exit` 拿退出码（`3221225477 = 0xC0000005`）。
+3. 用「变量替换法」逐步排除：把可疑 API 用桩替换（如 `window.electronAPI.wsSet = async () => ({success:true})`），
+   或直接删掉可疑 DOM 节点再触发同样操作 —— 崩溃是否消失就是结论。
+参考脚本：`scripts/ui-features-test.js`（CDP 驱动真实界面的回归测试）。
+
+### 工作台页面状态：跨页面保留用 store，不要用 useState
+
+侧边栏切页是 `switch` 直接换组件，旧组件会卸载 —— 页面里的 `useState` 全丢。
+禅道这类「拉取一次、多处查看」的数据必须放 store：`src/store/zentaoStore.ts`
+（数据 + 筛选条件都在里面，切页/切回来都还在）。

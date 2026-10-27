@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { EnvEntry } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { newId } from '../utils/id';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
 const ENVS = [
@@ -41,6 +42,7 @@ export function Environments() {
 
   const openCell = (system: string, envType: string) => {
     const found = cell(system, envType);
+    setError('');
     setEditing({
       id: found?.id,
       system,
@@ -50,22 +52,31 @@ export function Environments() {
     });
   };
 
+  const [error, setError] = useState('');
+
   const saveEditing = async () => {
     if (!editing) return;
+    const system = editing.system.trim();
+    if (!system) { setError('请填写系统 / 项目名'); return; }
+    setError('');
     const now = new Date().toISOString();
     const rest = items.filter(i => i.id !== editing.id
-      && !(i.system === editing.system && i.envType === editing.envType));
+      && !(i.system === system && i.envType === editing.envType));
     const next = editing.url.trim() || editing.note.trim()
       ? [...rest, {
-        id: editing.id || crypto.randomUUID(),
-        system: editing.system,
+        id: editing.id || newId(),
+        system,
         envType: editing.envType,
         url: editing.url.trim(),
         note: editing.note.trim(),
         updatedAt: now,
       }]
       : rest; // 清空即删除该格
-    await save(next);
+    const res = await save(next);
+    if (!res || res.success === false) {
+      setError((res && res.error) || '保存失败，请重试');
+      return;
+    }
     setEditing(null);
   };
 
@@ -79,7 +90,7 @@ export function Environments() {
     window.electronAPI.browserOpen({ browser: 'default', url });
   };
 
-  const addNew = () => setEditing({ system: '', envType: 'testing', url: '', note: '' });
+  const addNew = () => { setError(''); setEditing({ system: '', envType: 'testing', url: '', note: '' }); };
 
   return (
     <div className="content-area">
@@ -196,11 +207,19 @@ export function Environments() {
                 onChange={e => setEditing({ ...editing, system: e.target.value })}
                 placeholder="例如：资产管理系统"
                 autoFocus
-                list="env-system-list"
               />
-              <datalist id="env-system-list">
-                {systems.map(s => <option key={s} value={s} />)}
-              </datalist>
+              {/* 注意：这里曾经用 <input list="..."> + <datalist> 做系统名联想，
+                  实测在「输入框聚焦 + 候选项更新」时 Chromium 会原生崩溃（0xC0000005），
+                  表现为点保存后程序直接退出。改成可点的快捷标签，功能一样但没有崩溃风险。 */}
+              {systems.length > 0 && (
+                <div className="suggest-row">
+                  {systems.map(s => (
+                    <button key={s} type="button" className="chip" onClick={() => setEditing({ ...editing, system: s })}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label>环境</label>
@@ -216,6 +235,11 @@ export function Environments() {
               <label>备注</label>
               <input value={editing.note} onChange={e => setEditing({ ...editing, note: e.target.value })} placeholder="例如：需要 VPN" />
             </div>
+            {error && (
+              <div className="form-group">
+                <div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div>
+              </div>
+            )}
           </>
         )}
       </Modal>

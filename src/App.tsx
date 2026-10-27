@@ -9,7 +9,7 @@ import { JsonConverter } from './pages/JsonConverter';
 import { Toolbox } from './pages/Toolbox';
 import { Environments } from './pages/Environments';
 import { Accounts } from './pages/Accounts';
-import { Checklists } from './pages/Checklists';
+import { WeeklyReport } from './pages/WeeklyReport';
 import { Snippets } from './pages/Snippets';
 import { Notes } from './pages/Notes';
 import { ZentaoPage } from './pages/ZentaoPage';
@@ -293,7 +293,7 @@ function App() {
       case 'toolbox': return <Toolbox />;
       case 'environments': return <Environments />;
       case 'accounts': return <Accounts />;
-      case 'checklists': return <Checklists />;
+      case 'weeklyReport': return <WeeklyReport />;
       case 'snippets': return <Snippets />;
       case 'notes': return <Notes />;
       case 'zentao': return <ZentaoPage />;

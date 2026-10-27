@@ -119,6 +119,12 @@ export interface ZentaoBug {
   resolution?: string;
 }
 
+export interface WeeklyFile {
+  name: string;
+  size: number;
+  mtime: string;
+}
+
 export interface ApiResponseData {
   status: number;
   statusText: string;
@@ -269,6 +275,13 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
+
+  // 周报（本地 Markdown 目录，只读）
+  weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
+  weeklyRead: (dir: string, name: string) =>
+    Promise<{ success: boolean; data?: { name: string; content: string; mtime: string; size: number }; error?: string }>;
+  weeklyPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
+  weeklyReveal: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
 
   // Update
   updateCheck: () => Promise<{

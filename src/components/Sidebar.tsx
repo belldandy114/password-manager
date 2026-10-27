@@ -86,6 +86,15 @@ const accountIcon = (
   </svg>
 );
 
+const reportIcon = (
+  <svg {...S}>
+    <path d="M8 2v3M16 2v3"/>
+    <rect x="3" y="5" width="18" height="16" rx="2"/>
+    <path d="M3 10h18"/>
+    <path d="M8 14h3M8 17h6"/>
+  </svg>
+);
+
 const checkIcon = (
   <svg {...S}>
     <polyline points="9 11 12 14 22 4"/>
@@ -172,7 +181,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'environments', label: '环境地址', icon: envIcon },
       { id: 'accounts', label: '测试账号', icon: accountIcon },
-      { id: 'checklists', label: '用例清单', icon: checkIcon },
+      { id: 'weeklyReport', label: '周报', icon: reportIcon },
       { id: 'snippets', label: 'SQL 片段', icon: dbIcon },
       { id: 'notes', label: '测试笔记', icon: noteIcon },
       { id: 'zentao', label: '禅道', icon: bugIcon },

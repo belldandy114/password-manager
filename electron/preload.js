@@ -75,6 +75,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
   zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
 
+  // 周报（本地 Markdown 目录）
+  weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),
+  weeklyRead: (dir, name) => ipcRenderer.invoke('weekly:read', { dir, name }),
+  weeklyPickDir: () => ipcRenderer.invoke('weekly:pick-dir'),
+  weeklyReveal: (dir, name) => ipcRenderer.invoke('weekly:reveal', { dir, name }),
+
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
 

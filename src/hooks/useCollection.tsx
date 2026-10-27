@@ -17,9 +17,10 @@ export function useCollection<T extends WithId>(key: WorkspaceKey) {
 
   useEffect(() => { reload(); }, [reload]);
 
+  /** 返回主进程的结果，页面可以据此提示「保存失败」 */
   const save = useCallback(async (next: T[]) => {
     setItems(next);
-    await window.electronAPI.wsSet(key, next);
+    return await window.electronAPI.wsSet(key, next);
   }, [key]);
 
   return { items, save, loading, reload };

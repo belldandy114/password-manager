@@ -1598,6 +1598,72 @@ function setupIpcHandlers() {
     }
   });
 
+  // ---- 周报（本地 Markdown 目录，只读） ----
+  // 只做「列目录 + 读文件」，不写不删，避免误改用户的真实工作记录。
+  const WEEKLY_EXTS = ['.md', '.markdown', '.txt'];
+
+  const weeklyResolve = (dir, name) => {
+    const root = path.resolve(String(dir || ''));
+    const file = path.resolve(root, String(name || ''));
+    // 目录穿越保护：拼出来的路径必须还在目录里
+    if (!file.startsWith(root + path.sep) && file !== root) {
+      return { error: '非法文件路径' };
+    }
+    return { file };
+  };
+
+  ipcMain.handle('weekly:list', async (_event, { dir } = {}) => {
+    try {
+      if (!dir) return { success: false, error: '未指定周报目录' };
+      if (!fs.existsSync(dir)) return { success: false, error: `目录不存在：${dir}` };
+      if (!fs.statSync(dir).isDirectory()) return { success: false, error: `不是目录：${dir}` };
+      const files = fs.readdirSync(dir)
+        .filter(n => WEEKLY_EXTS.includes(path.extname(n).toLowerCase()))
+        .map(n => {
+          const st = fs.statSync(path.join(dir, n));
+          return { name: n, size: st.size, mtime: st.mtime.toISOString() };
+        })
+        .sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+      return { success: true, data: files };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('weekly:read', async (_event, { dir, name } = {}) => {
+    try {
+      const { file, error } = weeklyResolve(dir, name);
+      if (error) return { success: false, error };
+      if (!fs.existsSync(file)) return { success: false, error: '文件不存在' };
+      const content = fs.readFileSync(file, 'utf8');
+      const st = fs.statSync(file);
+      return { success: true, data: { name, content, mtime: st.mtime.toISOString(), size: st.size } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('weekly:pick-dir', async () => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, data: null };
+      return { success: true, data: r.filePaths[0] };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('weekly:reveal', async (_event, { dir, name } = {}) => {
+    try {
+      const { file, error } = weeklyResolve(dir, name);
+      if (error) return { success: false, error };
+      shell.showItemInFolder(file);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // ---- Import ----
   ipcMain.handle('import:csv-json', async (_event, { filePath, password }) => {
     if (!currentPassword) return { success: false, error: '未解锁' };
