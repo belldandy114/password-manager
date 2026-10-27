@@ -119,6 +119,7 @@ export const useStore = create<AppState>((set, get) => ({
     defaultViewMode: 'card',
     defaultEnvFilter: 'all',
     theme: 'dark',
+    accent: 'indigo',
     minimizeToTray: false,
     closeToTray: false,
     contentProtection: false,
@@ -209,6 +210,8 @@ export const useStore = create<AppState>((set, get) => ({
     const sf: SortField = (['updatedAt', 'createdAt', 'name'].includes(state.sortField) ? state.sortField : 'updatedAt');
     const so: SortOrder = (['asc', 'desc'].includes(state.sortOrder) ? state.sortOrder : 'desc');
     result.sort((a, b) => {
+      // 收藏条目始终置顶，不受排序方向影响
+      if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
       let cmp = 0;
       if (sf === 'name') cmp = a.name.localeCompare(b.name);
       else if (sf === 'updatedAt') cmp = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();

@@ -3,8 +3,8 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile } from '../types';
-import { applyTheme } from '../utils/theme';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor } from '../types';
+import { applyTheme, applyAccent, ACCENTS } from '../utils/theme';
 
 interface BrowserInfo {
   id: string;
@@ -54,6 +54,20 @@ export function Settings() {
   const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
   const [backups, setBackups] = useState<BackupFile[]>([]);
   const [backupDir, setBackupDir] = useState('');
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkUpdate = async () => {
+    setChecking(true);
+    const res = await window.electronAPI.updateCheck();
+    setChecking(false);
+    if (res.success && res.data) {
+      setUpdateInfo(res.data);
+      addToast(res.data.hasUpdate ? `发现新版本 ${res.data.latest}` : '已是最新版本', res.data.hasUpdate ? 'success' : 'info');
+    } else {
+      addToast('检查更新失败：' + (res.error || '网络不可用'), 'error');
+    }
+  };
   const [showChangePwd, setShowChangePwd] = useState(false);
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -283,6 +297,28 @@ export function Settings() {
                 </select>
               </div>
             </div>
+
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">强调色</div>
+                <div className="setting-desc">按钮、选中态等强调元素的颜色</div>
+              </div>
+              <div className="setting-control accent-picker">
+                {(Object.keys(ACCENTS) as AccentColor[]).map(key => (
+                  <button
+                    key={key}
+                    className={`accent-dot ${(settings.accent || 'indigo') === key ? 'active' : ''}`}
+                    style={{ background: ACCENTS[key].value }}
+                    title={ACCENTS[key].label}
+                    onClick={() => {
+                      updateSettings({ accent: key });
+                      applyAccent(key);
+                      window.electronAPI.settingsSave({ accent: key });
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
             <div className="setting-row">
               <div>
                 <div className="setting-label">默认视图</div>
@@ -410,6 +446,30 @@ export function Settings() {
                   />
                   <span className="switch-slider" />
                 </label>
+              </div>
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>关于</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">检查更新</div>
+                <div className="setting-desc">
+                  {updateInfo
+                    ? (updateInfo.hasUpdate
+                      ? `发现新版本 ${updateInfo.latest}（当前 ${updateInfo.current}）`
+                      : `已是最新版本（${updateInfo.current}）`)
+                    : '从 GitHub Releases 检查是否有新版本'}
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
+                {updateInfo?.hasUpdate && updateInfo.url && (
+                  <button className="btn btn-sm btn-primary" onClick={() => window.electronAPI.browserOpen({ browser: 'default', url: updateInfo.url })}>
+                    去下载
+                  </button>
+                )}
+                <button className="btn btn-sm btn-secondary" onClick={checkUpdate} disabled={checking}>
+                  {checking ? '检查中…' : '检查更新'}
+                </button>
               </div>
             </div>
           </div>

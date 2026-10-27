@@ -177,3 +177,46 @@ npm run dist            # 全量构建：renderer → 子应用 → --dir → NS
 
 `scripts/smoke-test.js` 用 `--remote-debugging-port` 连渲染进程，覆盖初始化/解锁/增删改查/回收站/设置/密码生成/锁定拒绝访问，
 改动 IPC 契约时要同步更新它。
+
+## 1.2.0：多模块扩展（改动前必读）
+
+### 数据层
+vault 从 `{ entries, tags }` 扩展为：
+
+```js
+{ entries, tags, history,
+  snippets, notes, checklists, accounts, environments, apiRequests, integrations }
+```
+
+- `normalizeVault()` 在 `loadVault` 里补齐缺失字段，**旧密码库可直接打开**。
+- 新增集合只加进 `VAULT_COLLECTIONS` 即可，渲染层用 `ws:get` / `ws:set` 读写（`src/hooks/useCollection.tsx`）。
+- **不要**给这些模块新建第二个密码库或明文文件——所有数据都在这一个加密 vault 里。
+- `history` 由 `entries:update` 自动维护（密码变更时留最近 10 条），不要手动写。
+
+### 页面
+
+| 页面 | 文件 | 说明 |
+|---|---|---|
+| 环境地址 | `pages/Environments.tsx` | 系统 × 环境矩阵，单元格点击编辑，空内容即删除 |
+| 测试账号 | `pages/Accounts.tsx` | 按系统分组，可显示/复制密码 |
+| 用例清单 | `pages/Checklists.tsx` | 勾选状态逐次落盘 |
+| SQL 片段 | `pages/Snippets.tsx` | 等宽显示 + 一键复制 |
+| 测试笔记 | `pages/Notes.tsx` | 极简 Markdown（先转义再渲染） |
+| 禅道 | `pages/ZentaoPage.tsx` | 登录（md5+rand）→ 拉我的 Bug / 快捷入口 |
+| 工具箱 | `pages/Toolbox.tsx` | 时间戳 / 编码 / 哈希&JWT / 正则 / Diff / 校验 |
+| 接口调试 | `pages/ApiClient.tsx` | 主进程发请求（无 CORS），`{{变量}}` 替换 |
+
+### 关键约束
+
+- **hooks 必须在 `if (isLocked) return` 之前**：`App.tsx` 里锁定/解锁是同一个组件，
+  提前 return 之后再写 `useState` 会导致 hooks 数量变化，触发 React error #310（整页白屏）。
+  已踩过，新增 hook 请放在所有条件返回之前。
+- **TOTP 算法**（`base32Decode` + `totpAt`）已用 RFC 6238 官方向量校验（94287082 / 287082），
+  改动后请重新跑向量。
+- **附件**用当前会话密钥加密存 `userData/attachments/<id>.enc`，单文件上限 20MB；
+  vault 里只存元数据，删除附件要同时删文件。
+- **导入别名表**（`IMPORT_FIELD_ALIASES`）已覆盖本应用导出、Chrome/Edge、Bitwarden、1Password；
+  新增字段要同时补别名，否则导出→导入会丢值。
+- **更新检查**只读 GitHub Releases 做版本比对，不自动下载安装（避免签名/发布链路依赖）。
+- 测试数据子应用（webview）**保活**：`App.tsx` 用 `tdgMounted` + `display:none` 隐藏，绝不卸载；
+  登录后空闲 3 秒预热。实测首次 ~1s、再次进入 ~2ms（不重新加载）。

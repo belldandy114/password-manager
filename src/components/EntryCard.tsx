@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { PasswordEntry } from '../types';
 import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
+import { TotpBadge } from './EntryExtras';
 
 interface Props {
   entry: PasswordEntry;
@@ -9,6 +10,7 @@ interface Props {
   onCopy: (text: string, label: string) => void;
   /** 安全体检标记：弱密码 / 重复密码 */
   security?: { weak: boolean; duplicate: boolean };
+  onToggleFavorite?: (entry: PasswordEntry) => void;
 }
 
 const envLabel: Record<string, string> = {
@@ -18,7 +20,7 @@ const envLabel: Record<string, string> = {
   staging: '\u9884\u53D1\u5E03', // 预发布
 };
 
-export function EntryCard({ entry, onEdit, onCopy, security }: Props) {
+export function EntryCard({ entry, onEdit, onCopy, security, onToggleFavorite }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const selected = useStore(s => s.selectedIds.has(entry.id));
   const toggleSelected = useStore(s => s.toggleSelected);
@@ -37,6 +39,15 @@ export function EntryCard({ entry, onEdit, onCopy, security }: Props) {
     <div className={`entry-card ${selected ? 'selected' : ''}`} onClick={() => toggleSelected(entry.id)}>
       {/* Row 1: Title + Env badge */}
       <div className="card-header">
+        {onToggleFavorite && (
+          <button
+            className={`fav-btn ${entry.favorite ? 'active' : ''}`}
+            title={entry.favorite ? '取消收藏' : '收藏（置顶）'}
+            onClick={e => { e.stopPropagation(); onToggleFavorite(entry); }}
+          >
+            ★
+          </button>
+        )}
         <span className="card-title">{entry.name}</span>
         {security?.weak && <span className="sec-flag sec-flag-weak" title="弱密码，建议更换">弱</span>}
         {security?.duplicate && <span className="sec-flag sec-flag-dup" title="与其他网址共用了同一个密码">重</span>}
@@ -56,6 +67,13 @@ export function EntryCard({ entry, onEdit, onCopy, security }: Props) {
         <div className="card-tags">
           <span className="card-tags-icon">{'\u{1F3F7}\uFE0F'}</span>
           <span className="card-tags-text">{entry.tags.join(', ')}</span>
+        </div>
+      )}
+
+      {/* Row 3.5: TOTP 动态验证码 */}
+      {entry.totpSecret && (
+        <div className="card-totp-row">
+          <TotpBadge secret={entry.totpSecret} onCopy={code => onCopy(code, '两步验证码')} />
         </div>
       )}
 

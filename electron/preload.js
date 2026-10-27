@@ -55,6 +55,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backupList: () => ipcRenderer.invoke('backup:list'),
   backupOpenFolder: () => ipcRenderer.invoke('backup:open-folder'),
 
+  // Generic collection storage (snippets / notes / checklists / accounts / environments / apiRequests)
+  wsGet: (key) => ipcRenderer.invoke('ws:get', key),
+  wsSet: (key, value) => ipcRenderer.invoke('ws:set', { key, value }),
+
+  // Password history
+  historyGet: (entryId) => ipcRenderer.invoke('history:get', entryId),
+
+  // TOTP
+  totpCode: (data) => ipcRenderer.invoke('totp:code', data),
+
+  // Attachments
+  attachmentPick: () => ipcRenderer.invoke('attachment:pick'),
+  attachmentOpen: (data) => ipcRenderer.invoke('attachment:open', data),
+  attachmentDelete: (data) => ipcRenderer.invoke('attachment:delete', data),
+
+  // API debugger / Zentao
+  apiSend: (data) => ipcRenderer.invoke('api:send', data),
+  zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
+  zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
+
+  // Update check
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+
   // Import/Export
   importCsvJson: (data) => ipcRenderer.invoke('import:csv-json', data),
   importEncrypted: (data) => ipcRenderer.invoke('import:encrypted', data),

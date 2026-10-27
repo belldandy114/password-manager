@@ -121,16 +121,16 @@ function loadVault(password) {
   if (vaultCache.password === password && vaultCache.data) return vaultCache.data;
   let result;
   if (!fs.existsSync(DATA_FILE)) {
-    result = { entries: [], tags: [] };
+    result = normalizeVault(null);
   } else {
     const raw = fs.readFileSync(DATA_FILE, 'utf8').trim();
     if (!raw) {
-      result = { entries: [], tags: [] };
+      result = normalizeVault(null);
     } else {
       const json = decrypt(raw, password);
       if (!json) return null;
       try {
-        result = JSON.parse(json);
+        result = normalizeVault(JSON.parse(json));
       } catch {
         return null;
       }
@@ -250,6 +250,7 @@ const DEFAULT_SETTINGS = {
   defaultViewMode: 'card',
   defaultEnvFilter: 'all',
   theme: 'dark',
+  accent: 'indigo',
   minimizeToTray: false,
   closeToTray: false,
   contentProtection: false,
@@ -523,18 +524,32 @@ function parseCsv(text) {
 }
 
 // Column aliases: exports use Chinese headers, JSON backups use the internal names.
-// Both (and the template) must import correctly.
+// Also covers Chrome / Edge (`name,url,username,password,note`), Bitwarden
+// (`folder,favorite,type,name,login_uri,login_username,login_password,login_totp`)
+// and 1Password (`Title,Url,Username,Password,OTPAuth,...`) exports.
 const IMPORT_FIELD_ALIASES = {
   name: ['name', '名称', '标题', 'title'],
-  url: ['url', '网址', '地址', '链接', 'link'],
-  username: ['username', '账号', '用户名', '账户', 'user', 'account', 'login'],
-  password: ['password', '密码', 'pwd', 'pass'],
+  url: ['url', '网址', '地址', '链接', 'link', 'login_uri', 'website'],
+  username: ['username', '账号', '用户名', '账户', 'user', 'account', 'login', 'login_username'],
+  password: ['password', '密码', 'pwd', 'pass', 'login_password'],
   notes: ['notes', '备注', '说明', 'note', 'remark', 'comment'],
-  tags: ['tags', '标签', 'tag'],
+  tags: ['tags', '标签', 'tag', 'folder'],
   envType: ['envtype', '环境类型', '环境', 'env'],
+  totp: ['totp', 'login_totp', 'otpauth', 'otp'],
+  favorite: ['favorite', 'starred'],
   createdAt: ['createdat', '创建时间'],
   updatedAt: ['updatedat', '修改时间'],
 };
+
+/** 从 otpauth:// 链接或纯密钥里取出 Base32 secret */
+function extractTotpSecret(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  const m = value.match(/[?&]secret=([A-Za-z2-7]+)/i);
+  if (m) return m[1].toUpperCase();
+  if (/^[A-Za-z2-7\s]{16,}$/.test(value)) return value.replace(/\s/g, '').toUpperCase();
+  return '';
+}
 
 const ENV_ALIASES = {
   production: 'production', prod: 'production', '正式': 'production', '生产': 'production',
@@ -594,10 +609,81 @@ function normalizeImportRecords(records) {
       notes: pick('notes'),
       envType,
       tags,
+      ...(extractTotpSecret(pick('totp')) ? { totpSecret: extractTotpSecret(pick('totp')) } : {}),
+      ...(/^(true|1|yes|是)$/i.test(pick('favorite')) ? { favorite: true } : {}),
       ...(toIso(pick('createdAt')) ? { createdAt: toIso(pick('createdAt')) } : {}),
       ...(toIso(pick('updatedAt')) ? { updatedAt: toIso(pick('updatedAt')) } : {}),
     };
   }).filter(Boolean);
+}
+
+// ----------------------------------------------------------------
+// Vault shape (1.2.0 expanded from { entries, tags })
+// ----------------------------------------------------------------
+// 新增模块（SQL 片段 / 笔记 / 检查清单 / 账号池 / 环境总览 / 接口调试）都放在同一个
+// 加密文件里，随密码库一起加密，不额外增加新的密码。旧数据缺少这些字段时补空数组。
+const VAULT_COLLECTIONS = ['snippets', 'notes', 'checklists', 'accounts', 'environments', 'apiRequests', 'integrations'];
+
+function normalizeVault(v) {
+  const src = v && typeof v === 'object' ? v : {};
+  const out = {
+    entries: Array.isArray(src.entries) ? src.entries : [],
+    tags: Array.isArray(src.tags) ? src.tags : [],
+    history: (src.history && typeof src.history === 'object' && !Array.isArray(src.history)) ? src.history : {},
+  };
+  for (const key of VAULT_COLLECTIONS) {
+    out[key] = Array.isArray(src[key]) ? src[key] : [];
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------
+// TOTP (two-factor codes stored next to the entry)
+// ----------------------------------------------------------------
+function base32Decode(input) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = String(input || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = '';
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx === -1) continue;
+    bits += idx.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+
+function totpAt(secret, atMs, digits = 6, period = 30) {
+  const key = base32Decode(secret);
+  if (!key.length) return null;
+  const counter = BigInt(Math.floor(atMs / 1000 / period));
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(counter);
+  const hmac = crypto.createHmac('sha1', key).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const bin = ((hmac[offset] & 0x7f) << 24)
+    | (hmac[offset + 1] << 16)
+    | (hmac[offset + 2] << 8)
+    | hmac[offset + 3];
+  return String(bin % (10 ** digits)).padStart(digits, '0');
+}
+
+// ----------------------------------------------------------------
+// Attachments (encrypted at rest with the session key)
+// ----------------------------------------------------------------
+const ATTACH_DIR = path.join(DATA_DIR, 'attachments');
+
+function attachmentFile(id) {
+  return path.join(ATTACH_DIR, `${String(id).replace(/[^a-zA-Z0-9-]/g, '')}.enc`);
+}
+
+function readAttachment(id, password) {
+  const file = attachmentFile(id);
+  if (!fs.existsSync(file)) return null;
+  const raw = fs.readFileSync(file, 'utf8').trim();
+  if (!raw) return null;
+  return decrypt(raw, password);
 }
 
 // ----------------------------------------------------------------
@@ -821,10 +907,23 @@ function setupIpcHandlers() {
     if (!vault) return { success: false, error: '数据损坏' };
     const idx = vault.entries.findIndex(e => e.id === entry.id);
     if (idx === -1) return { success: false, error: '网址不存在' };
-    vault.entries[idx] = entry;
+    const prev = vault.entries[idx];
+
+    // 密码变更时留一份历史（最多 10 条），改错了还能翻回来
+    let next = entry;
+    if (prev.password && entry.password && prev.password !== entry.password) {
+      const list = Array.isArray(vault.history[entry.id]) ? vault.history[entry.id] : [];
+      list.unshift({ password: prev.password, changedAt: new Date().toISOString() });
+      vault.history[entry.id] = list.slice(0, 10);
+      next = { ...entry, passwordUpdatedAt: new Date().toISOString() };
+    } else if (!entry.passwordUpdatedAt && prev.passwordUpdatedAt) {
+      next = { ...entry, passwordUpdatedAt: prev.passwordUpdatedAt };
+    }
+
+    vault.entries[idx] = next;
     // Update tags list
-    if (entry.tags) {
-      entry.tags.forEach(t => { if (!vault.tags.includes(t)) vault.tags.push(t); });
+    if (next.tags) {
+      next.tags.forEach(t => { if (!vault.tags.includes(t)) vault.tags.push(t); });
     }
     // Clean up orphaned tags
     const usedTags = new Set(vault.entries.flatMap(e => e.tags || []));
@@ -944,6 +1043,7 @@ function setupIpcHandlers() {
       defaultViewMode: s.defaultViewMode || DEFAULT_SETTINGS.defaultViewMode,
       defaultEnvFilter: s.defaultEnvFilter || DEFAULT_SETTINGS.defaultEnvFilter,
       theme: s.theme || DEFAULT_SETTINGS.theme,
+      accent: s.accent || DEFAULT_SETTINGS.accent,
       minimizeToTray: !!s.minimizeToTray,
       closeToTray: !!s.closeToTray,
       contentProtection: !!s.contentProtection,
@@ -1018,6 +1118,272 @@ function setupIpcHandlers() {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
       await shell.openPath(BACKUP_DIR);
       return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- Update check (GitHub Releases) ----
+  ipcMain.handle('update:check', async () => {
+    const cmpVersion = (a, b) => {
+      const pa = String(a).split('.').map(Number);
+      const pb = String(b).split('.').map(Number);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const x = pa[i] || 0;
+        const y = pb[i] || 0;
+        if (x !== y) return x > y ? 1 : -1;
+      }
+      return 0;
+    };
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch('https://api.github.com/repos/belldandy114/password-manager/releases/latest', {
+        headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      const json = await res.json();
+      const latest = String(json.tag_name || '').replace(/^v/, '');
+      const current = app.getVersion();
+      return {
+        success: true,
+        data: {
+          current,
+          latest,
+          hasUpdate: !!latest && cmpVersion(latest, current) > 0,
+          url: json.html_url || '',
+          notes: (json.body || '').slice(0, 2000),
+        },
+      };
+    } catch (e) {
+      return { success: false, error: e.name === 'AbortError' ? '请求超时' : e.message };
+    }
+  });
+
+  // ---- Generic storage for the extra modules (snippets/notes/checklists/…) ----
+  ipcMain.handle('ws:get', (_event, key) => {
+    if (!currentPassword) return { success: false, error: '未解锁' };
+    if (!VAULT_COLLECTIONS.includes(key)) return { success: false, error: '无效的数据类型' };
+    const vault = loadVault(currentPassword);
+    if (!vault) return { success: false, error: '数据损坏' };
+    return { success: true, data: vault[key] };
+  });
+
+  ipcMain.handle('ws:set', (_event, { key, value }) => {
+    if (!currentPassword) return { success: false, error: '未解锁' };
+    if (!VAULT_COLLECTIONS.includes(key)) return { success: false, error: '无效的数据类型' };
+    if (!Array.isArray(value)) return { success: false, error: '数据格式错误' };
+    const vault = loadVault(currentPassword);
+    if (!vault) return { success: false, error: '数据损坏' };
+    vault[key] = value;
+    saveVault(vault, currentPassword);
+    return { success: true, data: value };
+  });
+
+  // ---- Password history ----
+  ipcMain.handle('history:get', (_event, entryId) => {
+    if (!currentPassword) return { success: false, error: '未解锁' };
+    const vault = loadVault(currentPassword);
+    if (!vault) return { success: false, error: '数据损坏' };
+    return { success: true, data: vault.history[entryId] || [] };
+  });
+
+  // ---- TOTP ----
+  ipcMain.handle('totp:code', (_event, { secret, digits = 6, period = 30 } = {}) => {
+    if (!secret) return { success: false, error: '未配置密钥' };
+    const now = Date.now();
+    const code = totpAt(secret, now, digits, period);
+    if (!code) return { success: false, error: '密钥格式无效' };
+    const remain = period - Math.floor((now / 1000) % period);
+    return { success: true, data: { code, remain, period } };
+  });
+
+  // ---- Attachments (encrypted with the session key) ----
+  ipcMain.handle('attachment:pick', async () => {
+    if (!currentPassword) return { success: false, error: '未解锁' };
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'] });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    try {
+      const filePath = result.filePaths[0];
+      const st = fs.statSync(filePath);
+      if (st.size > 20 * 1024 * 1024) return { success: false, error: '附件不能超过 20MB' };
+      const buf = fs.readFileSync(filePath);
+      const id = crypto.randomUUID();
+      fs.mkdirSync(ATTACH_DIR, { recursive: true });
+      fs.writeFileSync(attachmentFile(id), encrypt(buf.toString('base64'), currentPassword), 'utf8');
+      return {
+        success: true,
+        data: { id, name: path.basename(filePath), size: st.size, addedAt: new Date().toISOString() },
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('attachment:open', async (_event, { id, name }) => {
+    if (!currentPassword) return { success: false, error: '未解锁' };
+    try {
+      const b64 = readAttachment(id, currentPassword);
+      if (!b64) return { success: false, error: '附件不存在或已损坏' };
+      const dir = path.join(app.getPath('temp'), 'pm-attachments');
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, name || `${id}.bin`);
+      fs.writeFileSync(target, Buffer.from(b64, 'base64'));
+      await shell.openPath(target);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('attachment:delete', async (_event, { id }) => {
+    try {
+      const file = attachmentFile(id);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- HTTP client for the API debugger ----
+  ipcMain.handle('api:send', async (_event, { method = 'GET', url, headers = '', body = '' }) => {
+    if (!/^https?:\/\//i.test(String(url || ''))) {
+      return { success: false, error: 'URL 必须以 http:// 或 https:// 开头' };
+    }
+    const started = Date.now();
+    try {
+      const hdrs = {};
+      String(headers || '').split('\n').forEach(line => {
+        const idx = line.indexOf(':');
+        if (idx > 0) hdrs[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      });
+      const init = { method: method.toUpperCase(), headers: hdrs };
+      if (!['GET', 'HEAD'].includes(init.method) && body) init.body = body;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      init.signal = controller.signal;
+
+      const res = await fetch(url, init);
+      clearTimeout(timer);
+      const text = await res.text();
+      const resHeaders = {};
+      res.headers.forEach((v, k) => { resHeaders[k] = v; });
+      return {
+        success: true,
+        data: {
+          status: res.status,
+          statusText: res.statusText,
+          headers: resHeaders,
+          body: text.length > 500000 ? text.slice(0, 500000) + '\n...（响应过大，已截断）' : text,
+          size: Buffer.byteLength(text),
+          timeMs: Date.now() - started,
+        },
+      };
+    } catch (e) {
+      return { success: false, error: e.name === 'AbortError' ? '请求超时（30 秒）' : e.message };
+    }
+  });
+
+  // ---- Zentao (禅道) ----
+  // 登录采用禅道标准的「随机盐」流程：GET refreshRandom 拿 rand，
+  // password = md5(md5(明文) + rand)。会话 cookie 保存在内存里。
+  let zentaoCookie = '';
+
+  async function zentaoRequest(cfg, pathAndQuery, options = {}) {
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    const url = `${base}/index.php?${pathAndQuery}`;
+    const headers = { ...(options.headers || {}) };
+    if (zentaoCookie) headers.Cookie = zentaoCookie;
+    const res = await fetch(url, { ...options, headers, redirect: 'manual' });
+    const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    if (setCookie.length) {
+      const sid = setCookie.map(c => c.split(';')[0]).find(c => /zentaosid/i.test(c));
+      if (sid) zentaoCookie = sid;
+    }
+    const text = await res.text();
+    return { status: res.status, text };
+  }
+
+  ipcMain.handle('zentao:login', async (_event, cfg) => {
+    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
+      return { success: false, error: '请先填写地址、账号和密码' };
+    }
+    zentaoCookie = '';
+    try {
+      // 1) 建立会话
+      await zentaoRequest(cfg, 'm=user&f=login');
+      // 2) 取随机盐（部分版本无此接口，失败则退回明文 md5）
+      let rand = '';
+      try {
+        const r = await zentaoRequest(cfg, 'm=user&f=refreshRandom');
+        const parsed = JSON.parse(r.text);
+        rand = String(parsed.rand || parsed.data || '');
+      } catch { /* 忽略，走无盐流程 */ }
+
+      const md5 = (s) => crypto.createHash('md5').update(String(s)).digest('hex');
+      const hashed = rand ? md5(md5(cfg.password) + rand) : md5(cfg.password);
+      const form = new URLSearchParams({
+        account: cfg.account,
+        password: hashed,
+        passwordStrength: '1',
+        referer: '/',
+        keepLogin: '1',
+      });
+      const res = await zentaoRequest(cfg, 'm=user&f=login&t=json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      let ok = false;
+      let message = '';
+      try {
+        const json = JSON.parse(res.text);
+        ok = json.status === 'success' || json.result === 'success';
+        message = json.message || json.reason || '';
+      } catch {
+        ok = /我的地盘|my-bug|退出|logout/i.test(res.text);
+      }
+      if (!ok) return { success: false, error: message || `登录失败（HTTP ${res.status}），请检查账号密码或地址` };
+      return { success: true, data: { cookie: true } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('zentao:my-bugs', async (_event, cfg) => {
+    if (!zentaoCookie) return { success: false, error: '尚未登录禅道' };
+    try {
+      // 先试 JSON 接口（禅道 18+），失败再解析 HTML 表格
+      let list = [];
+      try {
+        const r = await zentaoRequest(cfg, 'm=my&f=bug&t=json&type=assignedTo&orderBy=id_desc&recPerPage=100');
+        const json = JSON.parse(r.text);
+        const rows = json.data || json.bugs || json.bugList;
+        if (Array.isArray(rows)) {
+          list = rows.map(b => ({
+            id: b.id, title: b.title || b.name, status: b.status, severity: b.severity,
+            pri: b.pri, assignedTo: b.assignedTo, openedBy: b.openedBy,
+            product: b.productName || b.product, date: b.openedDate || b.date,
+          }));
+        }
+      } catch { /* 走 HTML 解析 */ }
+
+      if (list.length === 0) {
+        const r = await zentaoRequest(cfg, 'm=my&f=bug&type=assignedTo&orderBy=id_desc&recPerPage=100');
+        const re = /<tr[^>]*data-id="(\d+)"[\s\S]*?<\/tr>/g;
+        const rows = r.text.match(re) || [];
+        for (const row of rows) {
+          const id = (row.match(/data-id="(\d+)"/) || [])[1];
+          const title = ((row.match(/class="text-left"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || '')
+            .replace(/<[^>]+>/g, '').trim();
+          if (id && title) list.push({ id, title, status: '', severity: '', pri: '', date: '' });
+        }
+      }
+      return { success: true, data: list.slice(0, 200) };
     } catch (e) {
       return { success: false, error: e.message };
     }

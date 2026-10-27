@@ -24,10 +24,14 @@ export interface SecurityReport {
   total: number;
   weak: PasswordIssue[];
   duplicates: PasswordIssue[];
+  expired: PasswordIssue[];
   empty: number;
   /** 0-100，分数越高越安全 */
   score: number;
 }
+
+/** 密码超过这个天数没改过就算「过期」 */
+export const PASSWORD_MAX_AGE_DAYS = 180;
 
 /** 返回 0-4 分强度（附带原因），供 UI 展示 */
 export function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string; reasons: string[] } {
@@ -90,9 +94,27 @@ export function buildSecurityReport(entries: PasswordEntry[]): SecurityReport {
     });
   }
 
+  // 长期未修改的密码
+  const expired: PasswordIssue[] = [];
+  const now = Date.now();
+  for (const e of withPw) {
+    const base = e.passwordUpdatedAt || e.updatedAt || e.createdAt;
+    if (!base) continue;
+    const days = Math.floor((now - new Date(base).getTime()) / 86400000);
+    if (days >= PASSWORD_MAX_AGE_DAYS) {
+      expired.push({
+        type: 'weak',
+        entryIds: [e.id],
+        message: `「${e.name}」密码已 ${days} 天未修改`,
+        detail: `建议定期更换（超过 ${PASSWORD_MAX_AGE_DAYS} 天）`,
+      });
+    }
+  }
+
   const problemEntries = new Set<string>();
   weak.forEach(w => w.entryIds.forEach(id => problemEntries.add(id)));
   duplicates.forEach(d => d.entryIds.forEach(id => problemEntries.add(id)));
+  expired.forEach(x => x.entryIds.forEach(id => problemEntries.add(id)));
 
   const ratio = entries.length === 0 ? 1 : 1 - problemEntries.size / entries.length;
   const score = Math.round(
@@ -100,7 +122,7 @@ export function buildSecurityReport(entries: PasswordEntry[]): SecurityReport {
     (empty === 0 ? 20 : Math.max(0, 20 - empty * 5)),
   );
 
-  return { total: entries.length, weak, duplicates, empty, score };
+  return { total: entries.length, weak, duplicates, expired, empty, score };
 }
 
 /** 供列表角标使用：条目是否存在问题 */

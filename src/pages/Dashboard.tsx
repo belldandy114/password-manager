@@ -31,6 +31,11 @@ export function Dashboard() {
   const [exporting, setExporting] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
 
+  const handleToggleFavorite = useCallback(async (entry: PasswordEntry) => {
+    const result = await window.electronAPI.entriesUpdate({ ...entry, favorite: !entry.favorite });
+    if (result.success && result.data) store.setVaultData(result.data);
+  }, [store]);
+
   // 增量渲染：一次最多渲染 visibleLimit 条，滚动到底部再追加
   const PAGE_SIZE = 120;
   const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
@@ -482,6 +487,7 @@ export function Dashboard() {
                       {entries.map(entry => (
                         <EntryCard key={entry.id} entry={entry}
                           security={securityFlags[entry.id]}
+                          onToggleFavorite={handleToggleFavorite}
                           onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
                           onCopy={handleCopy} />
                       ))}
@@ -547,13 +553,14 @@ export function Dashboard() {
               </div>
               <div className="text-sm text-muted">
                 共 {securityReport.total} 条 · 弱密码 {securityReport.weak.length} 条 · 重复密码 {securityReport.duplicates.length} 组
+                {securityReport.expired.length > 0 ? ` · 长期未改 ${securityReport.expired.length} 条` : ''}
                 {securityReport.empty > 0 ? ` · 未填密码 ${securityReport.empty} 条` : ''}
               </div>
             </div>
           </div>
 
-          {securityReport.weak.length === 0 && securityReport.duplicates.length === 0 && (
-            <div className="security-empty">🎉 没有发现弱密码或重复使用的密码</div>
+          {securityReport.weak.length === 0 && securityReport.duplicates.length === 0 && securityReport.expired.length === 0 && (
+            <div className="security-empty">🎉 没有发现弱密码、重复密码或长期未修改的密码</div>
           )}
 
           {securityReport.weak.length > 0 && (
@@ -592,6 +599,30 @@ export function Dashboard() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {securityReport.expired.length > 0 && (
+            <div className="security-section">
+              <h4>长期未修改的密码（{securityReport.expired.length}）</h4>
+              {securityReport.expired.map((issue, i) => {
+                const entry = store.entries.find(e => e.id === issue.entryIds[0]);
+                return (
+                  <div key={i} className="security-item" onClick={() => {
+                    if (!entry) return;
+                    setShowSecurity(false);
+                    setEditingEntry(entry);
+                    setShowForm(true);
+                  }}>
+                    <span className="security-item-icon">⏳</span>
+                    <div className="security-item-body">
+                      <div>{issue.message}</div>
+                      <div className="text-sm text-muted">{issue.detail}</div>
+                    </div>
+                    <span className="security-item-action">去修改</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { PasswordEntry, PasswordGenOptions } from '../types';
 import { Modal } from './Modal';
+import { EntryExtras } from './EntryExtras';
 import { passwordStrength } from '../utils/security';
 
 interface Props {
@@ -57,6 +58,8 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
     setForm(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
   };
+
+  const applyPatch = (patch: Partial<PasswordEntry>) => setForm(prev => ({ ...prev, ...patch }));
 
   // 每次改动选项或展开时重新生成（主进程用 crypto 保证随机性）
   const regenerate = async () => {
@@ -130,7 +133,13 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
       }
     >
       <div className="form-group">
-        <label>名称 *</label>
+        <div className="field-label-row">
+          <label>名称 *</label>
+          <label className="favorite-toggle" title="收藏后排在列表最前">
+            <input type="checkbox" checked={!!form.favorite} onChange={e => update('favorite', e.target.checked)} />
+            ★ 收藏
+          </label>
+        </div>
         <input type="text" value={form.name} onChange={e => update('name', e.target.value)} placeholder="例如: 阿里云管理后台" autoFocus />
         {errors.name && <div className="input-hint" style={{ color: 'var(--danger)' }}>{errors.name}</div>}
       </div>
@@ -227,10 +236,11 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
         )}
       </div>
 
+      <EntryExtras form={form} onChange={applyPatch} isEditing={!!entry} />
+
       <div className="form-group">
         <label>标签</label>
-        <div className="tag-field-wrapper">
-          <div className="tags-input" onClick={e => { (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus(); }}>
+        <div className="tag-field-wrapper">          <div className="tags-input" onClick={e => { (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus(); }}>
             {form.tags.map(t => (
               <span key={t} className="tag">
                 {t}

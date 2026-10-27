@@ -6,7 +6,15 @@ import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
 import { DataGenerator } from './pages/DataGenerator';
 import { JsonConverter } from './pages/JsonConverter';
-import { applyTheme, watchSystemTheme } from './utils/theme';
+import { Toolbox } from './pages/Toolbox';
+import { Environments } from './pages/Environments';
+import { Accounts } from './pages/Accounts';
+import { Checklists } from './pages/Checklists';
+import { Snippets } from './pages/Snippets';
+import { Notes } from './pages/Notes';
+import { ZentaoPage } from './pages/ZentaoPage';
+import { ApiClient } from './pages/ApiClient';
+import { applyTheme, watchSystemTheme, applyAccent } from './utils/theme';
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -221,6 +229,7 @@ function App() {
         if (prefs) {
           setSettings(prefs);
           applyTheme(prefs.theme);
+          applyAccent(prefs.accent);
         }
       } catch {
         setLocked(true);
@@ -236,6 +245,10 @@ function App() {
     if (themeMode !== 'system') return;
     return watchSystemTheme(() => applyTheme('system'));
   }, [themeMode]);
+
+  // 强调色
+  const accentColor = useStore(s => s.settings.accent);
+  useEffect(() => { applyAccent(accentColor); }, [accentColor]);
 
   // 解锁后回到上次停留的页面
   useEffect(() => {
@@ -254,6 +267,18 @@ function App() {
     return () => clearTimeout(t);
   }, [currentPage, isLocked]);
 
+  // 测试数据子应用（webview）保活：切走只隐藏，不卸载
+  // 首次进入立即挂载；之后在解锁空闲 3 秒时预热，点进去时已经就绪
+  // 注意：这些 hooks 必须在下面的 `if (isLocked) return` 之前，否则锁定/解锁切换时
+  // hooks 数量会变化，触发 React error #310。
+  const [tdgMounted, setTdgMounted] = useState(false);
+  useEffect(() => {
+    if (currentPage === 'dataGenerator') { setTdgMounted(true); return; }
+    if (isLocked || tdgMounted) return;
+    const t = setTimeout(() => setTdgMounted(true), 3000);
+    return () => clearTimeout(t);
+  }, [currentPage, isLocked, tdgMounted]);
+
   // If locked or not set up, show login
   if (isLocked) {
     return <Login onLogin={handleLogin} />;
@@ -264,8 +289,15 @@ function App() {
     switch (currentPage) {
       case 'passwordManager': return <PasswordManagerPage />;
       case 'settings': return <Settings />;
-      case 'dataGenerator': return <DataGenerator />;
       case 'jsonConverter': return <JsonConverter />;
+      case 'toolbox': return <Toolbox />;
+      case 'environments': return <Environments />;
+      case 'accounts': return <Accounts />;
+      case 'checklists': return <Checklists />;
+      case 'snippets': return <Snippets />;
+      case 'notes': return <Notes />;
+      case 'zentao': return <ZentaoPage />;
+      case 'apiClient': return <ApiClient />;
       default: return <PasswordManagerPage />;
     }
   };
@@ -274,7 +306,12 @@ function App() {
     <div className="app-layout">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} />
       <div className="main-content">
-        {renderPage()}
+        {currentPage !== 'dataGenerator' && renderPage()}
+        {tdgMounted && (
+          <div className="keepalive-host" style={{ display: currentPage === 'dataGenerator' ? 'flex' : 'none' }}>
+            <DataGenerator />
+          </div>
+        )}
       </div>
     </div>
   );
