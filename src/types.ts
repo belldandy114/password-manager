@@ -109,10 +109,14 @@ export interface ZentaoBug {
   status?: string;
   severity?: string;
   pri?: string;
+  type?: string;
   assignedTo?: string;
   openedBy?: string;
   product?: string;
+  productName?: string;
   date?: string;
+  deadline?: string;
+  resolution?: string;
 }
 
 export interface ApiResponseData {
@@ -264,7 +268,7 @@ export interface ElectronAPI {
   apiSend: (data: { method: string; url: string; headers?: string; body?: string }) =>
     Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
-  zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; error?: string }>;
+  zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
 
   // Update
   updateCheck: () => Promise<{

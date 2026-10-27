@@ -1289,65 +1289,242 @@ function setupIpcHandlers() {
   });
 
   // ---- Zentao (禅道) ----
-  // 登录采用禅道标准的「随机盐」流程：GET refreshRandom 拿 rand，
-  // password = md5(md5(明文) + rand)。会话 cookie 保存在内存里。
-  let zentaoCookie = '';
+  // 禅道 18+ / 20.x 的登录流程（与浏览器一致）：
+  //   1. GET  user-login.html          建立会话，取表单里的 referer
+  //   2. GET  user-refreshRandom.html  返回【纯文本】随机盐（不是 JSON）
+  //   3. POST user-login.html          password = md5(md5(明文) + rand)，并必须带上 verifyRand
+  // 注意：index.php?m=user&f=login 这种老式地址在本实例会 302 到 PATH_INFO 地址，
+  // 直接请求会拿到空 body —— 这是之前误报「登录失败（HTTP 302）」的原因。
+  // 禅道 20.6 的「我的地盘」里 my-bug 无权限，但 my-work-bug 可访问，优先用它。
+  let ztCookies = new Map();
+  let ztLoggedInBase = '';
 
-  async function zentaoRequest(cfg, pathAndQuery, options = {}) {
-    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
-    const url = `${base}/index.php?${pathAndQuery}`;
-    const headers = { ...(options.headers || {}) };
-    if (zentaoCookie) headers.Cookie = zentaoCookie;
-    const res = await fetch(url, { ...options, headers, redirect: 'manual' });
-    const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-    if (setCookie.length) {
-      const sid = setCookie.map(c => c.split(';')[0]).find(c => /zentaosid/i.test(c));
-      if (sid) zentaoCookie = sid;
+  const ztCookieHeader = () => [...ztCookies].map(([k, v]) => `${k}=${v}`).join('; ');
+
+  /** 允许用户只填 zentao.example.com/zentao，自动补协议、去掉尾部斜杠 */
+  function ztNormalizeCfg(cfg) {
+    let base = String(cfg.baseUrl || '').trim();
+    if (base && !/^https?:\/\//i.test(base)) base = `http://${base}`;
+    return { ...cfg, baseUrl: base.replace(/\/+$/, '') };
+  }
+
+  function ztAbsorbCookies(res) {
+    const list = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    for (const c of list) {
+      const kv = String(c).split(';')[0];
+      const i = kv.indexOf('=');
+      if (i > 0) ztCookies.set(kv.slice(0, i).trim(), kv.slice(i + 1).trim());
     }
-    const text = await res.text();
-    return { status: res.status, text };
+  }
+
+  /** 请求禅道；GET 自动跟随 302，POST 不跟随（重定向即代表失败） */
+  async function ztFetch(cfg, pathOrUrl, options = {}) {
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    let url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${base}/${String(pathOrUrl).replace(/^\/+/, '')}`;
+    const isPost = String(options.method || 'GET').toUpperCase() !== 'GET';
+    for (let hop = 0; hop < 6; hop++) {
+      const headers = { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html,application/json,*/*', ...(options.headers || {}) };
+      const cookie = ztCookieHeader();
+      if (cookie) headers.Cookie = cookie;
+      let res;
+      try {
+        res = await fetch(url, { ...options, headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
+      } catch (e) {
+        const reason = e.name === 'TimeoutError' ? '请求超时（20 秒）'
+          : e.name === 'AbortError' ? '请求超时'
+            : '无法连接禅道（网络不通或地址填错了）';
+        throw new Error(`${reason}${/^https?:\/\//i.test(base) ? '' : '：地址需以 http:// 或 https:// 开头'}`);
+      }
+      ztAbsorbCookies(res);
+      const loc = res.headers.get('location');
+      if (res.status >= 300 && res.status < 400 && loc) {
+        if (isPost) return { status: res.status, loc, text: '', url };
+        url = /^https?:\/\//i.test(loc) ? loc : new URL(loc, url).toString();
+        continue;
+      }
+      const text = await res.text();
+      return { status: res.status, loc: null, text, url };
+    }
+    return { status: 0, loc: null, text: '', url };
+  }
+
+  function ztParseJson(text) {
+    if (!text) return null;
+    const t = String(text).trim();
+    if (!t) return null;
+    if (t.startsWith('{')) {
+      try { return JSON.parse(t); } catch { /* 继续抠 */ }
+    }
+    const m = t.match(/\{[\s\S]*\}/);
+    if (m) {
+      try { return JSON.parse(m[0]); } catch { /* ignore */ }
+    }
+    return null;
+  }
+
+  const ztDecodeEntities = (s) => String(s)
+    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#x2F;/g, '/');
+
+  /**
+   * 禅道 20.x 把表格数据写在 zui-create-dtable 属性里，但整体不是合法 JSON
+   * （混了 JS 函数体），所以只按括号配平截取 "data": [...] 再解析。
+   */
+  function ztTableRows(html) {
+    if (!html) return [];
+    const attr = html.match(/zui-create-dtable="([^"]*)"/);
+    if (!attr) return [];
+    const raw = ztDecodeEntities(attr[1]);
+    const marker = '"data":';
+    const at = raw.indexOf(marker);
+    if (at < 0) return [];
+    let i = at + marker.length;
+    while (i < raw.length && /\s/.test(raw[i])) i++;
+    if (raw[i] !== '[') return [];
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let j = i; j < raw.length; j++) {
+      const c = raw[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === '[') depth++;
+      else if (c === ']') { depth--; if (depth === 0) { end = j + 1; break; } }
+    }
+    if (end < 0) return [];
+    try {
+      const arr = JSON.parse(raw.slice(i, end));
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const ztStripTags = (s) => String(s || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  function ztMapBug(b) {
+    return {
+      id: String(b.id || ''),
+      title: ztStripTags(b.title || b.name || ''),
+      status: String(b.status || ''),
+      severity: String(b.severity || ''),
+      pri: String(b.pri || ''),
+      type: String(b.type || ''),
+      product: String(b.product || ''),
+      productName: ztStripTags(b.productName || ''),
+      assignedTo: String(b.assignedTo || ''),
+      openedBy: String(b.openedBy || ''),
+      date: String(b.openedDate || ''),
+      deadline: /^0{4}-0{2}-0{2}/.test(String(b.deadline || '')) ? '' : String(b.deadline || ''),
+      resolution: String(b.resolution || ''),
+    };
+  }
+
+  /** 执行一次登录；style: 'path' = 20.x 的 user-login.html，'query' = 老版本 index.php?m= */
+  async function ztLoginAttempt(cfg, style) {
+    ztCookies = new Map();
+    const urls = style === 'path'
+      ? { login: 'user-login.html', rand: 'user-refreshRandom.html' }
+      : { login: 'index.php?m=user&f=login', rand: 'index.php?m=user&f=refreshRandom' };
+
+    const page = await ztFetch(cfg, urls.login);
+    if (!page.text) return { ok: false, error: `无法打开登录页（HTTP ${page.status}）` };
+    if (page.status !== 200) return { ok: false, error: `登录页返回 HTTP ${page.status}` };
+
+    const referer = (page.text.match(/name="referer"\s+value="([^"]*)"/) || [])[1] || '/';
+
+    // 随机盐：20.x 返回纯文本；个别版本返回 JSON
+    const rr = await ztFetch(cfg, urls.rand);
+    let rand = String(rr.text || '').trim();
+    if (!/^\d+$/.test(rand)) {
+      const j = ztParseJson(rand);
+      rand = j ? String(j.rand || j.data || '') : '';
+    }
+    if (!rand) return { ok: false, error: '没能从禅道取到登录随机盐（user-refreshRandom），请确认地址指向禅道根目录' };
+
+    const md5 = (s) => crypto.createHash('md5').update(String(s)).digest('hex');
+    const ztBase = String(cfg.baseUrl).replace(/\/+$/, '');
+    const headers = {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      Referer: style === 'path' ? `${ztBase}/user-login.html` : `${ztBase}/${urls.login}`,
+    };
+
+    const rc = await ztFetch(cfg, urls.login, {
+      method: 'POST',
+      headers,
+      body: new URLSearchParams({
+        account: cfg.account,
+        password: md5(md5(cfg.password) + rand),
+        passwordStrength: '1',
+        referer,
+        verifyRand: rand,
+        keepLogin: '1',
+        captcha: '',
+      }).toString(),
+    });
+
+    const json = ztParseJson(rc.text);
+    if (json) {
+      const ok = json.result === 'success' || json.status === 'success' || (!json.result && !json.status && json.locate);
+      if (ok) return { ok: true };
+      const msg = String(json.message || json.reason || '').trim();
+      return { ok: false, error: msg || '账号或密码不正确' };
+    }
+    if (rc.status >= 300 && rc.status < 400) {
+      // POST 被重定向 = 登录没通过
+      return { ok: false, error: `登录未通过（HTTP ${rc.status} → ${rc.loc}）` };
+    }
+    if (/退出|logout|我的地盘|my-work/i.test(rc.text)) return { ok: true };
+    return { ok: false, error: `登录失败（HTTP ${rc.status}），未返回预期的响应` };
+  }
+
+  async function ztEnsureLogin(cfg) {
+    if (ztCookies.size > 0 && ztLoggedInBase === String(cfg.baseUrl || '').replace(/\/+$/, '')) {
+      return { ok: true };
+    }
+    let last = { ok: false, error: '登录失败' };
+    for (const style of ['path', 'query']) {
+      try {
+        const r = await ztLoginAttempt(cfg, style);
+        if (r.ok) {
+          ztLoggedInBase = String(cfg.baseUrl || '').replace(/\/+$/, '');
+          return { ok: true };
+        }
+        last = r;
+        // 账号密码错误就没必要再试另一种地址风格
+        if (/密码|用户名|账号/.test(r.error || '')) break;
+      } catch (e) {
+        last = { ok: false, error: e.message };
+      }
+    }
+    return last;
   }
 
   ipcMain.handle('zentao:login', async (_event, cfg) => {
     if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
       return { success: false, error: '请先填写地址、账号和密码' };
     }
-    zentaoCookie = '';
+    cfg = ztNormalizeCfg(cfg);
     try {
-      // 1) 建立会话
-      await zentaoRequest(cfg, 'm=user&f=login');
-      // 2) 取随机盐（部分版本无此接口，失败则退回明文 md5）
-      let rand = '';
-      try {
-        const r = await zentaoRequest(cfg, 'm=user&f=refreshRandom');
-        const parsed = JSON.parse(r.text);
-        rand = String(parsed.rand || parsed.data || '');
-      } catch { /* 忽略，走无盐流程 */ }
-
-      const md5 = (s) => crypto.createHash('md5').update(String(s)).digest('hex');
-      const hashed = rand ? md5(md5(cfg.password) + rand) : md5(cfg.password);
-      const form = new URLSearchParams({
-        account: cfg.account,
-        password: hashed,
-        passwordStrength: '1',
-        referer: '/',
-        keepLogin: '1',
-      });
-      const res = await zentaoRequest(cfg, 'm=user&f=login&t=json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: form.toString(),
-      });
-      let ok = false;
-      let message = '';
-      try {
-        const json = JSON.parse(res.text);
-        ok = json.status === 'success' || json.result === 'success';
-        message = json.message || json.reason || '';
-      } catch {
-        ok = /我的地盘|my-bug|退出|logout/i.test(res.text);
+      // 手动点「登录」时强制走一次完整校验，避免复用已建立的会话导致错误密码也显示成功
+      ztCookies = new Map();
+      ztLoggedInBase = '';
+      const r = await ztEnsureLogin(cfg);
+      if (!r.ok) return { success: false, error: r.error };
+      // 用「我的地盘」探一次会话，顺便验证权限
+      const probe = await ztFetch(cfg, 'my-work.html');
+      if (probe.status >= 300 && probe.status < 400 && /user-login/i.test(probe.loc || '')) {
+        ztCookies = new Map();
+        return { success: false, error: '登录成功但会话未建立，请重试' };
       }
-      if (!ok) return { success: false, error: message || `登录失败（HTTP ${res.status}），请检查账号密码或地址` };
       return { success: true, data: { cookie: true } };
     } catch (e) {
       return { success: false, error: e.message };
@@ -1355,35 +1532,67 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('zentao:my-bugs', async (_event, cfg) => {
-    if (!zentaoCookie) return { success: false, error: '尚未登录禅道' };
+    if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
+    cfg = ztNormalizeCfg(cfg);
     try {
-      // 先试 JSON 接口（禅道 18+），失败再解析 HTML 表格
-      let list = [];
-      try {
-        const r = await zentaoRequest(cfg, 'm=my&f=bug&t=json&type=assignedTo&orderBy=id_desc&recPerPage=100');
-        const json = JSON.parse(r.text);
-        const rows = json.data || json.bugs || json.bugList;
-        if (Array.isArray(rows)) {
-          list = rows.map(b => ({
-            id: b.id, title: b.title || b.name, status: b.status, severity: b.severity,
-            pri: b.pri, assignedTo: b.assignedTo, openedBy: b.openedBy,
-            product: b.productName || b.product, date: b.openedDate || b.date,
-          }));
-        }
-      } catch { /* 走 HTML 解析 */ }
+      const login = await ztEnsureLogin(cfg);
+      if (!login.ok) return { success: false, error: login.error };
 
-      if (list.length === 0) {
-        const r = await zentaoRequest(cfg, 'm=my&f=bug&type=assignedTo&orderBy=id_desc&recPerPage=100');
-        const re = /<tr[^>]*data-id="(\d+)"[\s\S]*?<\/tr>/g;
-        const rows = r.text.match(re) || [];
-        for (const row of rows) {
-          const id = (row.match(/data-id="(\d+)"/) || [])[1];
-          const title = ((row.match(/class="text-left"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/) || [])[1] || '')
-            .replace(/<[^>]+>/g, '').trim();
-          if (id && title) list.push({ id, title, status: '', severity: '', pri: '', date: '' });
+      let rows = [];
+      let total = 0;
+
+      // 1) 我的地盘 → 我的 Bug（禅道 20.x 可用，my-bug 可能无权限）
+      const first = await ztFetch(cfg, 'my-work-bug.html');
+      if (first.status === 200) {
+        rows = ztTableRows(first.text);
+        const tpl = first.text.match(/my-work-bug-assignedTo-0-id_desc-(\d+)-\{recPerPage\}-\{page\}\.html/);
+        if (tpl) total = Number(tpl[1]) || rows.length;
+        // 一次拉满：复用页面里的分页链接模板，每页 100 条
+        if (total > rows.length) {
+          const perPage = 100;
+          const pages = Math.min(5, Math.ceil(total / perPage));
+          const collected = [];
+          for (let p = 1; p <= pages; p++) {
+            const r = await ztFetch(cfg, `my-work-bug-assignedTo-0-id_desc-${total}-${perPage}-${p}.html`);
+            const pageRows = ztTableRows(r.text);
+            if (pageRows.length === 0) break;
+            collected.push(...pageRows);
+            if (pageRows.length < perPage) break;
+          }
+          if (collected.length > rows.length) rows = collected;
         }
       }
-      return { success: true, data: list.slice(0, 200) };
+
+      // 2) 老版本：my-bug.html
+      if (rows.length === 0) {
+        const legacy = await ztFetch(cfg, 'my-bug.html');
+        if (legacy.status === 200) rows = ztTableRows(legacy.text);
+      }
+
+      // 3) 再退一步：解析 HTML 表格里的 data-id 行
+      if (rows.length === 0) {
+        const html = await ztFetch(cfg, 'my-work-bug.html');
+        const trs = (html.text.match(/<tr[^>]*data-id="\d+"[\s\S]*?<\/tr>/g) || []);
+        for (const tr of trs) {
+          const id = (tr.match(/data-id="(\d+)"/) || [])[1];
+          const title = ztStripTags((tr.match(/class="[^"]*text-left[^"]*"[^>]*>([\s\S]*?)<\/a>/) || [])[1] || '');
+          if (id) rows.push({ id, title });
+        }
+      }
+
+      if (rows.length === 0) {
+        const probe = await ztFetch(cfg, 'my-work-bug.html');
+        if (probe.status >= 300 && probe.status < 400) {
+          return {
+            success: false,
+            error: `没有访问「我的地盘」的权限（HTTP ${probe.status} → ${probe.loc}）。请用上方快捷入口在浏览器中查看。`,
+          };
+        }
+        return { success: false, error: '未取到 Bug 数据，可能是该禅道版本页面结构不同，可先用快捷入口查看' };
+      }
+
+      const list = rows.map(ztMapBug).filter(b => b.id);
+      return { success: true, data: list.slice(0, 500), total: total || list.length };
     } catch (e) {
       return { success: false, error: e.message };
     }

@@ -7,6 +7,16 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const SEVERITY_LABEL: Record<string, string> = { '1': '1 致命', '2': '2 严重', '3': '3 一般', '4': '4 轻微' };
 
+/** 禅道 20.x 的「我的地盘」页面地址（index.php?m=my&f=bug 会 302，不能用） */
+const QUICK_LINKS: { label: string; page: string }[] = [
+  { label: '我的 Bug', page: 'my-work-bug.html' },
+  { label: '我的任务', page: 'my-work-task.html' },
+  { label: '我的需求', page: 'my-work-story.html' },
+  { label: '我的测试单', page: 'my-work-testtask.html' },
+  { label: '我的用例', page: 'my-work-testcase.html' },
+  { label: '我的待办', page: 'my-work-todo.html' },
+];
+
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
   const cfg = useMemo(() => items.find(i => i.id === 'zentao'), [items]);
@@ -16,6 +26,7 @@ export function ZentaoPage() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [bugs, setBugs] = useState<ZentaoBug[] | null>(null);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     if (cfg) setForm({ baseUrl: cfg.baseUrl, account: cfg.account, password: cfg.password });
@@ -27,12 +38,18 @@ export function ZentaoPage() {
     await save([...others, entry]);
   };
 
+  const currentCfg = (): ZentaoConfig => ({
+    id: 'zentao',
+    baseUrl: form.baseUrl.trim(),
+    account: form.account.trim(),
+    password: form.password,
+  }) as ZentaoConfig;
+
   const login = async () => {
     setError('');
+    if (!form.baseUrl.trim()) { setError('请填写禅道地址，例如 http://zentao.example.com/zentao'); return; }
     setBusy('login');
-    const res = await window.electronAPI.zentaoLogin({
-      id: 'zentao', baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password,
-    } as ZentaoConfig);
+    const res = await window.electronAPI.zentaoLogin(currentCfg());
     setBusy('');
     if (res.success) {
       setLoggedIn(true);
@@ -46,18 +63,21 @@ export function ZentaoPage() {
   const loadBugs = async () => {
     setError('');
     setBusy('bugs');
-    const res = await window.electronAPI.zentaoMyBugs({
-      id: 'zentao', baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password,
-    } as ZentaoConfig);
+    const res = await window.electronAPI.zentaoMyBugs(currentCfg());
     setBusy('');
-    if (res.success && res.data) setBugs(res.data);
-    else setError(res.error || '拉取失败');
+    if (res.success && res.data) {
+      setBugs(res.data);
+      setTotal(res.total || res.data.length);
+      setLoggedIn(true);
+    } else {
+      setError(res.error || '拉取失败');
+    }
   };
 
-  const openPage = (page: string) => {
+  const openUrl = (path: string) => {
     const base = form.baseUrl.trim().replace(/\/+$/, '');
     if (!base) { setError('请先填写禅道地址'); return; }
-    window.electronAPI.browserOpen({ browser: 'default', url: `${base}/index.php?m=my&f=${page}` });
+    window.electronAPI.browserOpen({ browser: 'default', url: `${base}/${path.replace(/^\/+/, '')}` });
   };
 
   const stats = useMemo(() => {
@@ -100,28 +120,28 @@ export function ZentaoPage() {
               <button className="btn btn-primary btn-sm" onClick={login} disabled={busy === 'login'}>
                 {busy === 'login' ? '登录中…' : '登录并保存'}
               </button>
-              <button className="btn btn-secondary btn-sm" onClick={loadBugs} disabled={!loggedIn || busy === 'bugs'}>
+              <button className="btn btn-secondary btn-sm" onClick={loadBugs} disabled={busy === 'bugs'}>
                 {busy === 'bugs' ? '拉取中…' : '拉取我的 Bug'}
               </button>
             </div>
-            {error && <div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div>}
+            {error && <div className="input-hint" style={{ color: 'var(--danger)', whiteSpace: 'pre-wrap' }}>{error}</div>}
           </div>
         </div>
 
         <div className="module-section">
           <div className="module-section-title">快捷入口</div>
           <div className="zt-links">
-            <button className="btn btn-sm btn-secondary" onClick={() => openPage('bug')}>我的 Bug</button>
-            <button className="btn btn-sm btn-secondary" onClick={() => openPage('task')}>我的任务</button>
-            <button className="btn btn-sm btn-secondary" onClick={() => openPage('story')}>我的需求</button>
-            <button className="btn btn-sm btn-secondary" onClick={() => openPage('testtask')}>我的测试单</button>
-            <button className="btn btn-sm btn-secondary" onClick={() => openPage('todo')}>我的待办</button>
+            {QUICK_LINKS.map(l => (
+              <button key={l.page} className="btn btn-sm btn-secondary" onClick={() => openUrl(l.page)}>{l.label}</button>
+            ))}
           </div>
         </div>
 
         {bugs && (
           <div className="module-section">
-            <div className="module-section-title">我的 Bug（{bugs.length}）</div>
+            <div className="module-section-title">
+              我的 Bug（{bugs.length}{total > bugs.length ? ` / 共 ${total}` : ''}）
+            </div>
             {stats && (
               <div className="zt-stats">
                 {Object.entries(stats.byStatus).map(([k, v]) => (
@@ -141,18 +161,22 @@ export function ZentaoPage() {
                     <th style={{ width: 70 }}>ID</th>
                     <th>标题</th>
                     <th style={{ width: 80 }}>状态</th>
-                    <th style={{ width: 90 }}>严重程度</th>
-                    <th style={{ width: 60 }}>优先级</th>
+                    <th style={{ width: 86 }}>严重程度</th>
+                    <th style={{ width: 64 }}>优先级</th>
+                    <th style={{ width: 160 }}>产品</th>
+                    <th style={{ width: 96 }}>截止日期</th>
                   </tr>
                 </thead>
                 <tbody>
                   {bugs.map(b => (
-                    <tr key={b.id} onClick={() => openPage('bug')} style={{ cursor: 'pointer' }}>
+                    <tr key={b.id} onClick={() => openUrl(`bug-view-${b.id}.html`)} style={{ cursor: 'pointer' }}>
                       <td>{b.id}</td>
-                      <td>{b.title}</td>
+                      <td title={b.title}>{b.title}</td>
                       <td>{STATUS_LABEL[b.status || ''] || b.status || '-'}</td>
                       <td>{SEVERITY_LABEL[String(b.severity)] || b.severity || '-'}</td>
                       <td>{b.pri || '-'}</td>
+                      <td title={b.productName}>{b.productName || '-'}</td>
+                      <td>{b.deadline || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -163,7 +187,7 @@ export function ZentaoPage() {
 
         {!bugs && (
           <div className="module-tip">
-            提示：登录后会记住会话（仅本次运行有效），可直接拉取名下 Bug；若公司禅道版本不支持 JSON 接口，请使用上方快捷入口。
+            提示：登录后会话保存在内存中（重启程序需重新登录）；拉取 Bug 时会自动登录，无需先点「登录并保存」。
           </div>
         )}
       </div>

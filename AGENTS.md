@@ -202,7 +202,7 @@ vault 从 `{ entries, tags }` 扩展为：
 | 用例清单 | `pages/Checklists.tsx` | 勾选状态逐次落盘 |
 | SQL 片段 | `pages/Snippets.tsx` | 等宽显示 + 一键复制 |
 | 测试笔记 | `pages/Notes.tsx` | 极简 Markdown（先转义再渲染） |
-| 禅道 | `pages/ZentaoPage.tsx` | 登录（md5+rand）→ 拉我的 Bug / 快捷入口 |
+| 禅道 | `pages/ZentaoPage.tsx` | 登录（PATH_INFO + md5(md5+rand) + verifyRand）→ 拉我的 Bug / 快捷入口 |
 | 工具箱 | `pages/Toolbox.tsx` | 时间戳 / 编码 / 哈希&JWT / 正则 / Diff / 校验 |
 | 接口调试 | `pages/ApiClient.tsx` | 主进程发请求（无 CORS），`{{变量}}` 替换 |
 
@@ -220,3 +220,23 @@ vault 从 `{ entries, tags }` 扩展为：
 - **更新检查**只读 GitHub Releases 做版本比对，不自动下载安装（避免签名/发布链路依赖）。
 - 测试数据子应用（webview）**保活**：`App.tsx` 用 `tdgMounted` + `display:none` 隐藏，绝不卸载；
   登录后空闲 3 秒预热。实测首次 ~1s、再次进入 ~2ms（不重新加载）。
+
+### 禅道接入（20.6 实测，改动务必按此流程回归）
+
+| 步骤 | 地址 | 要点 |
+|---|---|---|
+| 1 | `user-login.html` | 建会话，并从表单里取隐藏域 `referer`（如 `/zentao/`） |
+| 2 | `user-refreshRandom.html` | 返回**纯文本**数字随机盐，不是 JSON（`JSON.parse` 会失败→rand 为空） |
+| 3 | `POST user-login.html` | 字段：`account`、`password=md5(md5(明文)+rand)`、`verifyRand=rand`、`passwordStrength`、`referer`、`keepLogin`、`captcha` |
+
+- **必须带 `X-Requested-With: XMLHttpRequest` 和 `Referer`**，否则服务端返回整页 HTML 而不是 JSON。
+- **不要用 `index.php?m=user&f=login`**：本实例 `requestType=PATH_INFO`，该地址一律 302 到
+  `user-login-L3plbnRhby8=.html`，body 为空 —— 这就是「登录失败（HTTP 302）」的根因。
+- 响应：`{"result":"success","locate":"/zentao/#app=my"}` 或 `{"result":"fail","message":"..."}`。
+- **Bug 列表**：`my-bug.html` 无权限（302 到 `user-deny-my-bug.html`），改用
+  `my-work-bug.html`；分页复用页面里的模板
+  `my-work-bug-assignedTo-0-id_desc-{recTotal}-{recPerPage}-{page}.html`（每页可设 100）。
+- 表格数据在 `zui-create-dtable="..."` 属性里，**整体不是合法 JSON**（混了 JS 函数体），
+  只能按括号配平截取 `"data":[...]` 再解析（`ztTableRows`）。
+- 快捷入口用 `my-work-{bug,task,story,testtask,testcase,todo}.html`，`index.php?m=my&f=` 会 302。
+- 我的账号实测：166 条 assignedTo Bug，18 个产品；字段 `productName` 直接可用。
