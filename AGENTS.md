@@ -351,3 +351,32 @@ gh release create v1.2.6 "release/PasswordManager-Setup-1.2.6.exe" \
 
 验证脚本：`node scripts/ui-bug-image-test.js`（断言 steps 里有 `[图N]`、images 长度、`naturalWidth > 0`）。
 实测 Bug #14171：2 张图均取回（1920×953），dataURL 约 210KB / 50KB。
+
+### ⚠️ 应用内下载必须用 Electron `net`，不要用 Node `fetch`
+
+Node 的 `fetch`（undici）**不读系统代理**，公司网络一拦，`update:download` 只会抛一句 `fetch failed`（信息量为零）。
+改用 `net.request({ url, redirect: 'follow' })`（Chromium 网络栈）：跟随系统代理，能拿到 `HTTP 404` 这类真实原因。
+实测本机直连 GitHub Release 附件：**9.2 秒 / 96 MB**，与附件字节数完全一致。
+
+- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`，dialog 选 exe，<10MB 拒绝）→ `加速镜像重试`（`ghfast.top` / `gh-proxy.com`，**必须用户手动点**，默认不代下 exe）。
+- 安装**不要默认 `/S` 静默**：静默装的是默认目录，用户装到 `E:/password-manager` 会变成两份。
+  默认走安装向导（`spawn(file, [])` + `app.quit()`）；静默才传 `['/S', '/D=<当前 exe 目录>']`。
+
+### ⚠️ 发布时 CI 会覆盖 Release 说明（token 没有 workflow scope）
+
+`.github/workflows/build.yml` 在打 tag 时会用 `softprops/action-gh-release` 建 Release，
+body 是**写死的模板**，把我们 `gh release create --notes-file` 的说明覆盖掉（v1.2.6~v1.3.2 都中过），
+还会额外上传一个中文名附件（被 GitHub 改名为 `Setup.1.3.2.exe`）。
+
+- 本机 gh token 只有 `gist / read:org / repo`，**没有 `workflow`**，所以推不上去 workflow 的改动
+  （`refusing to allow an OAuth App to create or update workflow ... without workflow scope`）。
+  想根治得先 `gh auth refresh -h github.com -s workflow`（需浏览器授权）。
+- 当前流程：发布后**等 CI 跑完**（`gh run watch <id>`，约 2 分钟）再
+  `gh release edit <tag> --notes-file release-notes-<ver>.md` + `gh release delete-asset <tag> Setup.<ver>.exe`。
+- 注意 `git checkout -- .github/workflows/build.yml` 恢复的是 **HEAD 版本（含改动）**，
+  要还原成远程版本得 `git checkout origin/master -- .github/workflows/build.yml`。
+
+### 时间显示：一律走 `src/utils/time.ts`
+
+`iso.slice(11, 16)` 取的是 **UTC 小时**，北京时间会少 8 小时（禅道「· 03:20 拉取」其实是 11:20）。
+用 `formatHm` / `formatDateTime` / `formatRecent`。
