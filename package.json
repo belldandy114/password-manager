@@ -18,7 +18,10 @@
     "check:integrity": "node scripts/check-integrity.js",
     "smoke": "node scripts/smoke-test.js",
     "dist": "node scripts/build-installer.js",
-    "verify:packaged-csv": "node scripts/verify-packaged-csv.js"
+    "verify:packaged-csv": "node scripts/verify-packaged-csv.js",
+    "check": "node scripts/preflight.js",
+    "check:pack": "node scripts/preflight.js --pack",
+    "hooks:install": "node scripts/install-hooks.js"
   },
   "build": {
     "appId": "com.passwordmanager.app",
