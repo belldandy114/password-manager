@@ -37,6 +37,23 @@ const TABS: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'shortcuts', label: '快捷键', icon: '⌨️' },
 ];
 
+/** 下载体积显示：1.2 MB / 860 KB */
+function fmtBytes(n: number): string {
+  if (!n || n < 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 剩余时间：48 秒 / 3 分 20 秒 */
+function fmtEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+  if (seconds < 60) return `${Math.ceil(seconds)} 秒`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m} 分${s ? ` ${s} 秒` : ''}`;
+}
+
 export function Settings() {
   const settings = useStore(s => s.settings);
   const updateSettings = useStore(s => s.updateSettings);
@@ -71,7 +88,7 @@ export function Settings() {
   const [checking, setChecking] = useState(false);
   // 应用内更新：下载进度 / 已下载文件
   const [downloading, setDownloading] = useState(false);
-  const [progress, setProgress] = useState({ received: 0, total: 0 });
+  const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1 });
   const [downloadedFile, setDownloadedFile] = useState('');
   // 下载失败时的提示与兜底（网络访问不了 GitHub CDN 时用）
   const [dlError, setDlError] = useState('');
@@ -79,7 +96,12 @@ export function Settings() {
   const [viaMirror, setViaMirror] = useState(false);
 
   useEffect(() => {
-    const off = window.electronAPI.onUpdateProgress?.((p) => setProgress(p));
+    const off = window.electronAPI.onUpdateProgress?.((p) => setProgress({
+      received: p.received || 0,
+      total: p.total || 0,
+      speed: p.speed || 0,
+      threads: p.threads || 1,
+    }));
     return off;
   }, []);
 
@@ -107,7 +129,7 @@ export function Settings() {
     if (!url) { addToast('这个版本没有可用的安装包，请到发布页手动下载', 'error'); return; }
     setDownloading(true);
     setDlError('');
-    setProgress({ received: 0, total: 0 });
+    setProgress({ received: 0, total: 0, speed: 0, threads: 1 });
     const res = await window.electronAPI.updateDownload(url, mirror);
     setDownloading(false);
     if (res.success && res.data) {
@@ -115,7 +137,7 @@ export function Settings() {
       setCanMirror(false);
       setDlError('');
       setViaMirror(!!mirror);
-      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}）`, 'success');
+      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}${res.data.threads && res.data.threads > 1 ? ` · ${res.data.threads} 线程加速` : ''}）`, 'success');
     } else {
       setDlError(res.error || '下载失败');
       setCanMirror(!!res.canMirror);
@@ -733,6 +755,21 @@ export function Settings() {
                       className="dl-bar-fill"
                       style={{ width: progress.total ? `${Math.min(100, (progress.received / progress.total) * 100)}%` : '20%' }}
                     />
+                  </div>
+                )}
+                {downloading && progress.received > 0 && (
+                  <div className="dl-meta">
+                    <span>{fmtBytes(progress.received)}{progress.total ? ` / ${fmtBytes(progress.total)}` : ''}</span>
+                    <span>{progress.speed ? `${fmtBytes(progress.speed)}/s` : '测速中…'}</span>
+                    {progress.total > progress.received && progress.speed > 0 && (
+                      <span>剩余 {fmtEta((progress.total - progress.received) / progress.speed)}</span>
+                    )}
+                    <span className="dl-meta-dim">{progress.threads > 1 ? `${progress.threads} 线程` : '单连接'}</span>
+                    {progress.speed > 0 && progress.speed < 150 * 1024 && !viaMirror && (
+                      <button className="btn btn-sm btn-ghost" onClick={() => downloadUpdate(true)} title="当前速度偏慢，换第三方加速节点重下">
+                        太慢？换镜像
+                      </button>
+                    )}
                   </div>
                 )}
                 {dlError && (

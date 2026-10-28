@@ -540,7 +540,7 @@ export interface ElectronAPI {
   /** 下载新版本安装包（进度通过 onUpdateProgress 推送）；useMirror=true 时走第三方加速 */
   updateDownload: (url: string, useMirror?: boolean) => Promise<{
     success: boolean;
-    data?: { file: string; size: number; via?: string };
+    data?: { file: string; size: number; via?: string; threads?: number };
     error?: string;
     canMirror?: boolean;
     detail?: string;
@@ -555,7 +555,7 @@ export interface ElectronAPI {
   updatePickFile: () => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string; canceled?: boolean }>;
   /** 启动静默安装并退出应用 */
   updateInstall: (file: string) => Promise<{ success: boolean; error?: string }>;
-  onUpdateProgress: (cb: (p: { received: number; total: number }) => void) => () => void;
+  onUpdateProgress: (cb: (p: { received: number; total: number; speed?: number; threads?: number }) => void) => () => void;
 
   // Import
   importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;

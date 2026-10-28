@@ -389,6 +389,44 @@ const check = (name, ok, extra = '') => {
   const wkCmp = await ev(`(() => document.querySelectorAll('.wk-cmp').length)()`);
   check('周报：页面正常渲染（没禅道数据时不显示对比块）', wkTitle.includes('周报') && Number(wkCmp) === 0, `${wkTitle} / 对比块 ${wkCmp} 个`);
 
+  /* ================= F. 应用内更新：多线程分段下载 ================= */
+  // 本地起一个支持 Range 的“安装包”服务，验证主进程确实并发分段抓取
+  const bigFile = Buffer.alloc(6 * 1024 * 1024, 7);
+  let rangeHits = 0;
+  const dlServer = http.createServer((rq, rs) => {
+    if (rq.url !== '/setup.exe') { rs.statusCode = 404; rs.end(); return; }
+    const range = rq.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d+)/.exec(range);
+      if (!m) { rs.statusCode = 400; rs.end(); return; }
+      const start = Number(m[1]);
+      const end = Math.min(Number(m[2]), bigFile.length - 1);
+      rangeHits++;
+      rs.statusCode = 206;
+      rs.setHeader('Content-Range', `bytes ${start}-${end}/${bigFile.length}`);
+      rs.setHeader('Content-Length', end - start + 1);
+      rs.end(bigFile.subarray(start, end + 1));
+      return;
+    }
+    rs.setHeader('Content-Length', bigFile.length);
+    rs.end(bigFile);
+  });
+  await new Promise(res => dlServer.listen(9812, '127.0.0.1', res));
+
+  const dl = await api(`window.electronAPI.updateDownload('http://127.0.0.1:9812/setup.exe', false)`);
+  dlServer.close();
+  check('更新下载：分段下载成功', dl.success === true, dl.error || '');
+  check('更新下载：走的是多线程（≥3 个 Range 请求）', rangeHits >= 3, `${rangeHits} 个 Range 请求`);
+  if (dl.success && dl.data) {
+    const st = fs.statSync(dl.data.file);
+    check('更新下载：拼出来的文件大小与原文件一致', st.size === bigFile.length, `${st.size} / ${bigFile.length}`);
+    check('更新下载：报告了线程数', (dl.data.threads || 1) >= 2, `${dl.data.threads} 线程`);
+    try { fs.unlinkSync(dl.data.file); } catch { /* 忽略 */ }
+  } else {
+    check('更新下载：拼出来的文件大小与原文件一致', false, '下载未成功');
+    check('更新下载：报告了线程数', false, '下载未成功');
+  }
+
   /* ================= 结果 ================= */
   srv.close();
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

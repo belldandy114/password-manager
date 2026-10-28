@@ -1404,19 +1404,30 @@ function setupIpcHandlers() {
         const total = Number(response.headers['content-length'] || 0);
         const out = fs.createWriteStream(file);
         let received = 0;
+        let lastEmit = 0;
+        let windowBytes = 0;
+        let windowAt = Date.now();
+        let speed = 0;
         response.on('data', (chunk) => {
           received += chunk.length;
+          windowBytes += chunk.length;
           if (!out.write(chunk)) {
             try {
               response.pause();
               out.once('drain', () => response.resume());
             } catch { /* 忽略 */ }
           }
-          onProgress(received, total);
+          const now = Date.now();
+          if (now - lastEmit >= 200) {
+            const dt = (now - windowAt) / 1000;
+            if (dt >= 0.5) { speed = windowBytes / dt; windowBytes = 0; windowAt = now; }
+            lastEmit = now;
+            onProgress(received, total, speed);
+          }
         });
         response.on('end', () => {
           clearTimeout(timer);
-          out.end(() => fin(resolve, { size: received, total }));
+          out.end(() => fin(resolve, { size: received, total, speed, threads: 1 }));
         });
         response.on('error', (e) => {
           clearTimeout(timer);
@@ -1430,6 +1441,188 @@ function setupIpcHandlers() {
       });
       request.end();
     });
+  }
+
+  /**
+   * 单段 Range 下载（并行下载的一个分片）。
+   * 返回实际写入的字节数；中途断线由调用方决定是否重试。
+   */
+  function netDownloadRange(url, start, end, dest, onChunk) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const fin = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+      let request;
+      try {
+        request = net.request({ url, redirect: 'follow' });
+      } catch (e) { reject(e); return; }
+      const timer = setTimeout(() => {
+        try { request.abort(); } catch { /* 忽略 */ }
+        fin(reject, new Error(`分片 ${start}-${end} 超时`));
+      }, 15 * 60 * 1000);
+
+      request.setHeader('User-Agent', 'password-manager-app');
+      request.setHeader('Range', `bytes=${start}-${end}`);
+      request.on('response', (response) => {
+        if (response.statusCode >= 400) {
+          clearTimeout(timer);
+          try { response.resume(); } catch { /* 忽略 */ }
+          fin(reject, new Error(`HTTP ${response.statusCode}`));
+          return;
+        }
+        const out = fs.createWriteStream(dest);
+        let received = 0;
+        response.on('data', (chunk) => {
+          received += chunk.length;
+          onChunk(chunk.length);
+          if (!out.write(chunk)) {
+            try {
+              response.pause();
+              out.once('drain', () => response.resume());
+            } catch { /* 忽略 */ }
+          }
+        });
+        response.on('end', () => {
+          clearTimeout(timer);
+          out.end(() => fin(resolve, received));
+        });
+        response.on('error', (e) => {
+          clearTimeout(timer);
+          out.destroy();
+          fin(reject, e);
+        });
+      });
+      request.on('error', (e) => { clearTimeout(timer); fin(reject, e); });
+      request.end();
+    });
+  }
+
+  /** 探测文件大小与是否支持 Range（用 0-0 的 GET，比 HEAD 靠谱） */
+  function netProbe(url) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const fin = (v) => { if (!settled) { settled = true; resolve(v); } };
+      let request;
+      try {
+        request = net.request({ url, redirect: 'follow' });
+      } catch {
+        fin({ ok: false });
+        return;
+      }
+      const timer = setTimeout(() => { try { request.abort(); } catch { /* 忽略 */ } fin({ ok: false }); }, 20000);
+      request.setHeader('User-Agent', 'password-manager-app');
+      request.setHeader('Range', 'bytes=0-0');
+      request.on('response', (response) => {
+        clearTimeout(timer);
+        const cr = String(response.headers['content-range'] || '');
+        const m = cr.match(/bytes\s+\d+-\d+\/(\d+)/i);
+        const total = m ? Number(m[1]) : 0;
+        try { response.resume(); } catch { /* 忽略 */ }
+        fin({ ok: response.statusCode === 206 && total > 0, total });
+      });
+      request.on('error', () => { clearTimeout(timer); fin({ ok: false }); });
+      request.end();
+    });
+  }
+
+  /** 顺序拼片 */
+  function concatFiles(parts, dest) {
+    return new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(dest);
+      let i = 0;
+      const next = () => {
+        if (i >= parts.length) {
+          out.end(() => resolve());
+          return;
+        }
+        const rs = fs.createReadStream(parts[i++]);
+        rs.on('error', (e) => { out.destroy(); reject(e); });
+        rs.on('end', next);
+        rs.pipe(out, { end: false });
+      };
+      out.on('error', reject);
+      next();
+    });
+  }
+
+  /**
+   * 多线程分段下载：GitHub 的 CDN 单连接常被限速（几十 KB/s），
+   * 而它支持 Range —— 拆成 N 段并发，速度大致线性提升。
+   * 任何一段失败都会重试该段（最多 2 次），整体不支持 Range 时由调用方回退单连接。
+   */
+  async function netDownloadParallel(url, file, onProgress, threads = 6) {
+    const probe = await netProbe(url);
+    if (!probe.ok || probe.total < 4 * 1024 * 1024) {
+      return { fallback: true };
+    }
+    const total = probe.total;
+    const n = Math.max(2, Math.min(8, threads));
+    const chunk = Math.ceil(total / n);
+    const parts = [];
+    const ranges = [];
+    for (let i = 0; i < n; i++) {
+      const start = i * chunk;
+      if (start >= total) break;
+      const end = Math.min(total - 1, start + chunk - 1);
+      ranges.push({ start, end, part: `${file}.part${i}` });
+      parts.push(`${file}.part${i}`);
+    }
+
+    let received = 0;
+    let lastEmit = 0;
+    let windowBytes = 0;
+    let windowAt = Date.now();
+    let speed = 0;
+    const emit = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastEmit < 150) return;
+      const dt = (now - windowAt) / 1000;
+      if (dt >= 0.5) {
+        speed = windowBytes / dt;
+        windowBytes = 0;
+        windowAt = now;
+      }
+      lastEmit = now;
+      onProgress(received, total, speed);
+    };
+
+    const results = await Promise.all(ranges.map(async (r) => {
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let written = 0;
+        try {
+          written = await netDownloadRange(url, r.start, r.end, r.part, (len) => {
+            received += len;
+            windowBytes += len;
+            emit();
+          });
+        } catch (e) {
+          lastErr = e;
+          received -= written;
+          windowBytes -= written;
+          try { fs.unlinkSync(r.part); } catch { /* 忽略 */ }
+          continue;
+        }
+        const expect = r.end - r.start + 1;
+        if (written !== expect) {
+          lastErr = new Error(`分片大小不符（${written}/${expect}）`);
+          received -= written;
+          windowBytes -= written;
+          try { fs.unlinkSync(r.part); } catch { /* 忽略 */ }
+          continue;
+        }
+        return true;
+      }
+      throw lastErr || new Error('分片下载失败');
+    }));
+
+    if (results.every(Boolean)) {
+      await concatFiles(parts, file);
+      parts.forEach(p => { try { fs.unlinkSync(p); } catch { /* 忽略 */ } });
+      emit(true);
+      return { size: total, total, threads: n, speed };
+    }
+    parts.forEach(p => { try { fs.unlinkSync(p); } catch { /* 忽略 */ } });
+    return { fallback: true };
   }
 
   ipcMain.handle('update:download', async (event, { url, useMirror } = {}) => {
@@ -1446,15 +1639,22 @@ function setupIpcHandlers() {
     const errors = [];
     for (const t of targets) {
       try {
-        const r = await netDownload(t.url, file, (received, total) => {
-          try { event.sender.send('update:progress', { received, total }); } catch { /* 窗口已关 */ }
+        // 先试多线程分段（CDN 单连接常被限速），不支持 Range 再退回单连接
+        let r = await netDownloadParallel(t.url, file, (received, total, speed) => {
+          try { event.sender.send('update:progress', { received, total, speed, threads: 6 }); } catch { /* 窗口已关 */ }
         });
+        if (r.fallback) {
+          try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* 忽略 */ }
+          r = await netDownload(t.url, file, (received, total, speed) => {
+            try { event.sender.send('update:progress', { received, total, speed, threads: 1 }); } catch { /* 窗口已关 */ }
+          });
+        }
         if (r.size < 1024 * 1024) {
           try { fs.unlinkSync(file); } catch { /* 忽略 */ }
           errors.push(`${t.label}：文件过小（${Math.round(r.size / 1024)} KB）`);
           continue;
         }
-        return { success: true, data: { file, size: r.size, via: t.label } };
+        return { success: true, data: { file, size: r.size, via: t.label, threads: r.threads || 1 } };
       } catch (e) {
         errors.push(`${t.label}：${e.message || '连接被中断'}`);
         try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* 忽略 */ }
