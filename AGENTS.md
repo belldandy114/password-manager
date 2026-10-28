@@ -554,3 +554,20 @@ Get-Process -Name "测试工具" -ErrorAction SilentlyContinue | Stop-Process -F
 
 另外：脚本 `spawn` 打包后的 exe 时，必须 `delete env.ELECTRON_RUN_AS_NODE`
 （本机环境里有这个变量，否则 exe 会以「纯 Node」模式启动，窗口不出现、CDP 连不上）。
+
+### CI 门禁是怎么生效的（1.6.0）
+
+CI 的「构建安装包」步骤跑的是 `node scripts/build-installer.js`，所以门禁装在**脚本**里而不是 workflow 里：
+
+```js
+step('质量门禁：类型检查', 'npx tsc --noEmit');
+step('质量门禁：单元测试', 'npx vitest run');
+```
+
+任一步失败 → `process.exit(1)` → CI 不出包、不发 Release。本地 `npm run dist` 同样跑这套（约多 10 秒），
+`SKIP_PREFLIGHT=1` 可临时跳过（只用于排查构建问题）。
+
+- 为什么不直接写进 `build.yml`：本机 token 没有 `workflow` scope，推 workflow 改动会被服务端拒绝；
+  详见 `ci-quality-gate.md`（含以后授权后要加的两段 YAML）。
+- `npm run check` / `npm run check:pack` 是同一套门禁的手动入口；
+  `npm run hooks:install` 会把它装成 git `pre-push` 钩子。

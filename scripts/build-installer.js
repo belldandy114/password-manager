@@ -43,6 +43,16 @@ if (!process.env.ELECTRON_BUILDER_CACHE) {
 // 0. Clean
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
 console.log(`${CYAN}  测试工具 - 自动化构建${RESET}`);
+
+// 0. 质量门禁（CI 也跑这个脚本，所以门禁对 CI 与本地同时生效）：
+//    typecheck 或单测挂了就不出包，避免「带病发版」。
+//    跳过：SKIP_PREFLIGHT=1（只用于排查构建本身的问题，正式发版不要跳）。
+if (process.env.SKIP_PREFLIGHT === '1') {
+  console.log(`${YELLOW}⚠ SKIP_PREFLIGHT=1，已跳过类型检查与单元测试${RESET}`);
+} else {
+  step('质量门禁：类型检查', 'npx tsc --noEmit');
+  step('质量门禁：单元测试', 'npx vitest run');
+}
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
 
 ['dist', 'dist-tdg', 'release', path.join('node_modules', '.cache')].forEach(d => {
