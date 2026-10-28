@@ -6,6 +6,7 @@ import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, type PillT
 import { Modal } from '../components/Modal';
 import { BugDrawer } from '../components/BugDrawer';
 import { bugsToText } from '../utils/bugText';
+import { formatHm } from '../utils/time';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
   active: { label: '激活', tone: 'bad' },
@@ -441,7 +442,7 @@ export function ZentaoPage() {
             {bugs.length > 0 && (
               <Panel
                 title="统计（点数字筛选下方列表）"
-                meta={`我的 Bug 共 ${bugs.length} 条${fetchedAt ? ` · ${fetchedAt.slice(11, 16)} 拉取` : ''}`}
+                meta={`我的 Bug 共 ${bugs.length} 条${fetchedAt ? ` · ${formatHm(fetchedAt)} 拉取` : ''}`}
                 tools={hasFilter ? (
                   <button className="btn btn-ghost btn-sm" onClick={() => setFilter({ project: '', status: '', severity: '', query: '' })}>清除筛选</button>
                 ) : undefined}

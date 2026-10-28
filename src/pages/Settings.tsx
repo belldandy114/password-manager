@@ -62,24 +62,46 @@ export function Settings() {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState({ received: 0, total: 0 });
   const [downloadedFile, setDownloadedFile] = useState('');
+  // 下载失败时的提示与兜底（网络访问不了 GitHub CDN 时用）
+  const [dlError, setDlError] = useState('');
+  const [canMirror, setCanMirror] = useState(false);
+  const [viaMirror, setViaMirror] = useState(false);
 
   useEffect(() => {
     const off = window.electronAPI.onUpdateProgress?.((p) => setProgress(p));
     return off;
   }, []);
 
-  const downloadUpdate = async () => {
+  const downloadUpdate = async (mirror = false) => {
     const url = updateInfo?.downloadUrl;
     if (!url) { addToast('这个版本没有可用的安装包，请到发布页手动下载', 'error'); return; }
     setDownloading(true);
+    setDlError('');
     setProgress({ received: 0, total: 0 });
-    const res = await window.electronAPI.updateDownload(url);
+    const res = await window.electronAPI.updateDownload(url, mirror);
     setDownloading(false);
     if (res.success && res.data) {
       setDownloadedFile(res.data.file);
-      addToast('下载完成，点「安装并重启」即可更新', 'success');
+      setCanMirror(false);
+      setDlError('');
+      setViaMirror(!!mirror);
+      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}）`, 'success');
     } else {
-      addToast(res.error || '下载失败', 'error');
+      setDlError(res.error || '下载失败');
+      setCanMirror(!!res.canMirror);
+    }
+  };
+
+  /** 兜底：让用户自己选已下载好的安装包 */
+  const pickLocalSetup = async () => {
+    const res = await window.electronAPI.updatePickFile();
+    if (res.canceled) return;
+    if (res.success && res.data) {
+      setDownloadedFile(res.data.file);
+      setDlError('');
+      addToast('已选择安装包，点「安装并重启」开始更新', 'success');
+    } else {
+      addToast(res.error || '选择文件失败', 'error');
     }
   };
 
@@ -87,6 +109,7 @@ export function Settings() {
     if (!downloadedFile) return;
     const res = await window.electronAPI.updateInstall(downloadedFile);
     if (!res.success) addToast(res.error || '启动安装失败', 'error');
+    else addToast('安装程序已启动，应用会自动退出，按向导完成即可', 'success');
   };
 
   const checkUpdate = async () => {
@@ -561,18 +584,48 @@ export function Settings() {
                     />
                   </div>
                 )}
-                {downloadedFile && <div className="setting-desc">已下载：{downloadedFile.split('\\').pop()}</div>}
+                {dlError && (
+                  <div className="dl-error">
+                    <div>{dlError}</div>
+                    <div className="dl-error-actions">
+                      {updateInfo?.url && (
+                        <button
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => window.electronAPI.browserOpen({ browser: 'default', url: updateInfo.url })}
+                        >
+                          浏览器下载
+                        </button>
+                      )}
+                      <button className="btn btn-sm btn-secondary" onClick={pickLocalSetup}>选择本地安装包</button>
+                    </div>
+                  </div>
+                )}
+                {downloadedFile && (
+                  <div className="setting-desc">
+                    已下载：{downloadedFile.split('\\').pop()}{viaMirror ? '（来自加速镜像）' : ''}
+                  </div>
+                )}
               </div>
               <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {downloadedFile ? (
                   <button className="btn btn-sm btn-primary" onClick={installUpdate}>安装并重启</button>
                 ) : updateInfo?.hasUpdate && (
-                  <button className="btn btn-sm btn-primary" onClick={downloadUpdate} disabled={downloading}>
+                  <button className="btn btn-sm btn-primary" onClick={() => downloadUpdate(false)} disabled={downloading}>
                     {downloading
                       ? (progress.total
                         ? `下载中 ${Math.floor((progress.received / progress.total) * 100)}%`
                         : `已下载 ${(progress.received / 1024 / 1024).toFixed(1)} MB`)
                       : '下载并安装'}
+                  </button>
+                )}
+                {canMirror && !downloadedFile && (
+                  <button className="btn btn-sm btn-secondary" onClick={() => downloadUpdate(true)} disabled={downloading} title="走第三方 GitHub 加速节点下载安装包">
+                    加速镜像重试
+                  </button>
+                )}
+                {!downloadedFile && (
+                  <button className="btn btn-sm btn-ghost" onClick={pickLocalSetup} disabled={downloading} title="已经用浏览器下好了？选它直接安装">
+                    选择安装包
                   </button>
                 )}
                 {updateInfo?.url && (

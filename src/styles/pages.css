@@ -3059,3 +3059,28 @@
 .shot-viewer-close:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+.api-hist-time {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 更新下载失败提示（网络访问不了 GitHub 时的兜底入口） */
+.dl-error {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.dl-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

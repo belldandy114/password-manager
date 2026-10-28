@@ -96,7 +96,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
-  updateDownload: (url) => ipcRenderer.invoke('update:download', { url }),
+  updateDownload: (url, useMirror) => ipcRenderer.invoke('update:download', { url, useMirror }),
+  updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
   updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),
   onUpdateProgress: (cb) => {
     const h = (_e, p) => cb(p);

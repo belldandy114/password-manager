@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1178,45 +1178,140 @@ function setupIpcHandlers() {
   });
 
   // ---- 应用内更新：下载安装包并重启安装 ----
-  ipcMain.handle('update:download', async (event, { url } = {}) => {
-    try {
-      if (!url) return { success: false, error: '没有可用的下载地址' };
-      const dir = path.join(app.getPath('temp'), 'pm-update');
-      fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `PasswordManager-Setup-${Date.now()}.exe`);
-      const res = await fetch(url, {
-        redirect: 'follow',
-        headers: { 'User-Agent': 'password-manager-app' },
-        signal: AbortSignal.timeout(30 * 60 * 1000),
+  /** GitHub 大文件走 CDN（objects.githubusercontent.com），不少公司网络会直接重置连接 */
+  const UPDATE_MIRRORS = ['https://ghfast.top/', 'https://gh-proxy.com/'];
+
+  /**
+   * 用 Chromium 网络栈下载（Electron net）：
+   * Node 的 fetch(undici) 不读系统代理，遇到代理/证书拦截就只报一句 "fetch failed"；
+   * net 走 Chromium，能跟随系统代理设置，也能拿到更具体的错误。
+   */
+  function netDownload(url, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const fin = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+      let request;
+      try {
+        request = net.request({ url, redirect: 'follow' });
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      const timer = setTimeout(() => {
+        try { request.abort(); } catch { /* 忽略 */ }
+        fin(reject, new Error('下载超时（30 分钟无响应）'));
+      }, 30 * 60 * 1000);
+
+      request.setHeader('User-Agent', 'password-manager-app');
+      request.on('response', (response) => {
+        const status = response.statusCode;
+        if (status >= 400) {
+          clearTimeout(timer);
+          try { response.resume(); } catch { /* 忽略 */ }
+          fin(reject, new Error(`HTTP ${status}`));
+          return;
+        }
+        const total = Number(response.headers['content-length'] || 0);
+        const out = fs.createWriteStream(file);
+        let received = 0;
+        response.on('data', (chunk) => {
+          received += chunk.length;
+          if (!out.write(chunk)) {
+            try {
+              response.pause();
+              out.once('drain', () => response.resume());
+            } catch { /* 忽略 */ }
+          }
+          onProgress(received, total);
+        });
+        response.on('end', () => {
+          clearTimeout(timer);
+          out.end(() => fin(resolve, { size: received, total }));
+        });
+        response.on('error', (e) => {
+          clearTimeout(timer);
+          out.destroy();
+          fin(reject, e);
+        });
       });
-      if (!res.ok || !res.body) return { success: false, error: `下载失败（HTTP ${res.status}）` };
-      const total = Number(res.headers.get('content-length') || 0);
-      let received = 0;
-      const out = fs.createWriteStream(file);
-      for await (const chunk of res.body) {
-        received += chunk.length;
-        if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
-        try { event.sender.send('update:progress', { received, total }); } catch { /* 窗口已关 */ }
+      request.on('error', (e) => {
+        clearTimeout(timer);
+        fin(reject, e);
+      });
+      request.end();
+    });
+  }
+
+  ipcMain.handle('update:download', async (event, { url, useMirror } = {}) => {
+    if (!url) return { success: false, error: '没有可用的下载地址' };
+    const dir = path.join(app.getPath('temp'), 'pm-update');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
+    const file = path.join(dir, `PasswordManager-Setup-${Date.now()}.exe`);
+
+    // 直连优先；只有用户主动点「用加速镜像」才走第三方代理（安装包是 exe，默认不代下载）
+    const targets = useMirror
+      ? UPDATE_MIRRORS.map(m => ({ label: m.replace(/^https?:\/\//, '').replace(/\/+$/, ''), url: `${m.replace(/\/+$/, '')}/${url}` }))
+      : [{ label: 'GitHub', url }];
+
+    const errors = [];
+    for (const t of targets) {
+      try {
+        const r = await netDownload(t.url, file, (received, total) => {
+          try { event.sender.send('update:progress', { received, total }); } catch { /* 窗口已关 */ }
+        });
+        if (r.size < 1024 * 1024) {
+          try { fs.unlinkSync(file); } catch { /* 忽略 */ }
+          errors.push(`${t.label}：文件过小（${Math.round(r.size / 1024)} KB）`);
+          continue;
+        }
+        return { success: true, data: { file, size: r.size, via: t.label } };
+      } catch (e) {
+        errors.push(`${t.label}：${e.message || '连接被中断'}`);
+        try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* 忽略 */ }
       }
-      await new Promise(r => out.end(r));
-      if (received < 1024 * 1024) {
-        try { fs.unlinkSync(file); } catch { /* 忽略 */ }
-        return { success: false, error: '下载内容异常（文件过小），请改用浏览器下载' };
+    }
+
+    return {
+      success: false,
+      error: [
+        '下载失败，网络访问不了 GitHub 的下载节点（公司网络常见）。',
+        '可以：①点「浏览器下载」到发布页手动下；②已经下好了就点「选择安装包」；' + (useMirror ? '③换个网络再试。' : '③点「加速镜像重试」。'),
+        `（${errors.join('；')}）`,
+      ].join(' '),
+      canMirror: !useMirror,
+      detail: errors.join('；'),
+    };
+  });
+
+  /** 手动选已下载的安装包：网络实在下不动时的兜底 */
+  ipcMain.handle('update:pick-file', async () => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: '选择下载好的安装包',
+        properties: ['openFile'],
+        filters: [{ name: '安装包', extensions: ['exe'] }],
+      });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, canceled: true };
+      const f = r.filePaths[0];
+      const st = fs.statSync(f);
+      if (st.size < 10 * 1024 * 1024) {
+        return { success: false, error: '这个文件不像是安装包（体积过小）' };
       }
-      return { success: true, data: { file, size: received } };
+      return { success: true, data: { file: f, size: st.size } };
     } catch (e) {
-      const reason = e.name === 'TimeoutError' ? '下载超时' : e.message;
-      return { success: false, error: reason };
+      return { success: false, error: e.message };
     }
   });
 
-  ipcMain.handle('update:install', async (_event, { file } = {}) => {
+  ipcMain.handle('update:install', async (_event, { file, silent } = {}) => {
     try {
       if (!file || !fs.existsSync(file)) return { success: false, error: '安装包不存在，请重新下载' };
-      // 静默安装到当前用户；安装完成后应用会自己退出
-      spawn(file, ['/S', '/currentuser'], { detached: true, stdio: 'ignore' }).unref();
-      setTimeout(() => app.quit(), 900);
-      return { success: true };
+      // 默认走安装向导：能看清进度、能选目录。
+      // ⚠️ 不要默认 /S 静默安装 —— 它会装到默认目录，跟用户自定义的安装路径变成两份。
+      const args = silent ? ['/S', `/D=${path.dirname(app.getPath('exe'))}`] : [];
+      spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 1200);
+      return { success: true, data: { silent: !!silent } };
     } catch (e) {
       return { success: false, error: e.message };
     }

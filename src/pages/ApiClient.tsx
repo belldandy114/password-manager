@@ -3,6 +3,7 @@ import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem } from '../typ
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
+import { formatRecent } from '../utils/time';
 import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
@@ -271,6 +272,7 @@ export function ApiClient() {
                     >
                       <span className={`method m-${h.method}`}>{h.method}</span>
                       <span className="api-name">{h.url.replace(/^https?:\/\//, '')}</span>
+                      <span className="api-hist-time">{formatRecent(h.at)}</span>
                       <span className={`api-hist${h.status >= 200 && h.status < 400 ? ' is-ok' : ' is-bad'}`}>
                         {h.status || 'ERR'}
                       </span>

@@ -365,8 +365,16 @@ export interface ElectronAPI {
     data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string; downloadUrl?: string };
     error?: string;
   }>;
-  /** 下载新版本安装包（进度通过 onUpdateProgress 推送） */
-  updateDownload: (url: string) => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string }>;
+  /** 下载新版本安装包（进度通过 onUpdateProgress 推送）；useMirror=true 时走第三方加速 */
+  updateDownload: (url: string, useMirror?: boolean) => Promise<{
+    success: boolean;
+    data?: { file: string; size: number; via?: string };
+    error?: string;
+    canMirror?: boolean;
+    detail?: string;
+  }>;
+  /** 手动选择已下载的安装包（网络下不动时的兜底） */
+  updatePickFile: () => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string; canceled?: boolean }>;
   /** 启动静默安装并退出应用 */
   updateInstall: (file: string) => Promise<{ success: boolean; error?: string }>;
   onUpdateProgress: (cb: (p: { received: number; total: number }) => void) => () => void;
