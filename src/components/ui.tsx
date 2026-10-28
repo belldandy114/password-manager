@@ -47,6 +47,7 @@ export const Icons = {
   chevron: svg(<><path d="m9 6 6 6-6 6" /></>),
   tag: svg(<><path d="M3 12V5a2 2 0 0 1 2-2h7l9 9-9 9-9-9Z" /><circle cx="7.5" cy="7.5" r="1.2" /></>),
   inbox: svg(<><path d="M3 12h5l2 3h4l2-3h5" /><path d="M4.6 5h14.8l1.6 7v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l1.6-7Z" /></>),
+  folder: svg(<><path d="M3 7a2 2 0 0 1 2-2h3.4l1.8 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" /></>),
 };
 
 /* ---------------- 页面骨架 ---------------- */

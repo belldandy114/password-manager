@@ -424,3 +424,37 @@ useEffect(() => {
   loadMine();
 }, [cmdSignal]);
 ```
+
+### 1.5.0 起的几个约定（改代码前先看）
+
+| 能力 | 位置 | 约定 |
+|---|---|---|
+| 请求体类型 | `ApiRequest.bodyType` | `json / form / multipart / raw / none`；`form`/`multipart` 正文按**每行 key=value** 写，`multipart` 的值以 `@` 开头=本地文件路径；`raw` 的 Content-Type 填在 `rawContentType`；**用户自己写了 Content-Type 头就不覆盖** |
+| Cookie | `ApiRequest.headers` | 已取消独立 `cookies` 字段，统一写在请求头里（`Cookie: a=1; b=2`）；读取旧数据走 `migrateReq()` 自动合并 |
+| 笔记目录 | `notes:*` IPC | 目录存 `localStorage['pm.notes.dir']`，为空=用加密库；文件名由标题生成（非法字符转 `_`、重名加 `-2`），删除走 `shell.trashItem`（可找回） |
+| 目录类 IPC 安全 | `notesResolve` / `weeklyResolve` | **必须做目录穿越校验**：拼出的绝对路径必须仍在根目录内，否则报错 |
+
+### ⚠️ 跑 UI 回归时的两个坑
+
+1. **CDP 里 DevTools 自己也是一个 `type: 'page'` 的 target**，而且排在应用前面。
+   只写 `list.find(t => t.type === 'page')` 会连到 DevTools 页面上（表现为 `document.body` 里全是 CSS 文本）。
+   必须过滤：`!t.url.startsWith('devtools://')`。
+2. **开发模式（`electron .`）窗口加载的是 `http://localhost:5173`**，本机 Electron 连不上 dev server
+   （页面变成 `chrome-error://chromewebdata/`，curl 却是 200）。
+   现在主进程支持 `PM_USE_DIST=1`：开发目录下也直接加载已构建的 `dist`，回归脚本不用先打包。
+
+### ⚠️ electron-builder 下载超时时的应急办法
+
+`npm run pack` 会去 GitHub 下 electron / winCodeSign，**公司网络下经常 `Timeout awaiting 'request'`**（10 分钟白等）。
+winCodeSign、nsis 一般在 `~/AppData/Local/electron-builder/Cache` 里是齐的，缺的多半只是 electron。
+此时可以**只重打 asar**，让已有的 `release/win-unpacked` 直接跑上新代码（exe 本体不需要变）：
+
+```bash
+npx asar extract release/win-unpacked/resources/app.asar _asar-tmp
+cp -r dist/. _asar-tmp/dist/
+cp electron/main.js electron/preload.js electron/preload-tdg.cjs _asar-tmp/electron/
+# 记得同步 _asar-tmp/package.json 的 version
+npx asar pack _asar-tmp release/win-unpacked/resources/app.asar
+```
+
+（要出安装包仍然必须让 electron-builder 完整跑通，asar 手工打包只能用于验证。）

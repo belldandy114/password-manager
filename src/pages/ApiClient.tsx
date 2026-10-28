@@ -9,11 +9,27 @@ import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
+/** 请求体的发送方式：决定 Content-Type 与正文如何编码 */
+const BODY_TYPES: { v: NonNullable<ApiRequest['bodyType']>; label: string; ph: string; hint: string }[] = [
+  { v: 'json', label: 'JSON', ph: '{\n  "name": "test"\n}', hint: '原样发送，自动带 Content-Type: application/json（自己写了请求头就不覆盖）' },
+  { v: 'form', label: '表单', ph: 'name=test\npage=1', hint: '每行 key=value，编码成 application/x-www-form-urlencoded' },
+  { v: 'multipart', label: '文件', ph: 'file=@C:\\Users\\a\\test.png\ndesc=说明', hint: '每行 key=value；值以 @ 开头表示上传本地文件，其余当普通字段' },
+  { v: 'raw', label: '原文', ph: '<user><name>test</name></user>', hint: '原样发送正文，Content-Type 在下面自己填（如 text/xml、text/plain）' },
+  { v: 'none', label: '无', ph: '', hint: '不发送请求体' },
+];
+
 const emptyReq = (): ApiRequest => ({
   id: '', name: '', method: 'GET', url: '', headers: '', body: '', variables: '',
-  cookies: '', assertions: {},
+  cookies: '', assertions: {}, bodyType: 'json', rawContentType: '',
   updatedAt: new Date().toISOString(),
 });
+
+/** 旧数据的 cookies 合并进 headers（Cookie 现在统一写在请求头里） */
+function migrateReq(r: ApiRequest): ApiRequest {
+  if (!r.cookies) return { ...r, bodyType: r.bodyType || 'json' };
+  const merged = withCookies(r.headers || '', r.cookies);
+  return { ...r, headers: merged, cookies: '', bodyType: r.bodyType || 'json' };
+}
 
 /** 把 cookies（每行 key=value）拼成 Cookie 头；已有 Cookie 头时不覆盖 */
 function withCookies(headers: string, cookies?: string): string {
@@ -208,6 +224,29 @@ export function ApiClient() {
     await saveHistory([entry, ...history].slice(0, 50));
   };
 
+  const removeHistory = async (id: string) => {
+    await saveHistory(history.filter(h => h.id !== id));
+  };
+
+  const clearHistory = async () => {
+    await saveHistory([]);
+  };
+
+  /** 请求头里补一行 Cookie（Cookie 已并入请求头，不再单独一个字段） */
+  const addCookieRow = () => {
+    if (/^cookie\s*:/im.test(req.headers || '')) return;
+    const base = String(req.headers || '').replace(/\n+$/, '');
+    setReq({ ...req, headers: `${base ? `${base}\n` : ''}Cookie: ` });
+  };
+
+  /** multipart 选文件：把 `file=@绝对路径` 追加到请求体 */
+  const pickUploadFile = async () => {
+    const res = await window.electronAPI.pickFile('选择要上传的文件');
+    if (!res.success || !res.data) return;
+    const base = String(req.body || '').replace(/\n+$/, '');
+    setReq({ ...req, body: `${base ? `${base}\n` : ''}file=@${res.data.file}` });
+  };
+
   const send = async () => {
     if (!req.url.trim()) { setError('请输入 URL'); return; }
     setSending(true);
@@ -217,7 +256,10 @@ export function ApiClient() {
     const url = applyVars(req.url, req.variables || '');
     const headers = withCookies(applyVars(req.headers, req.variables || ''), req.cookies);
     const body = applyVars(req.body, req.variables || '');
-    const res = await window.electronAPI.apiSend({ method: req.method, url, headers, body });
+    const res = await window.electronAPI.apiSend({
+      method: req.method, url, headers, body,
+      bodyType: req.bodyType || 'json', rawContentType: req.rawContentType || '',
+    });
     setSending(false);
     if (res.success && res.data) {
       setResponse(res.data);
@@ -239,7 +281,10 @@ export function ApiClient() {
       const url = applyVars(r.url, r.variables || '');
       const headers = withCookies(applyVars(r.headers, r.variables || ''), r.cookies);
       const body = applyVars(r.body, r.variables || '');
-      const res = await window.electronAPI.apiSend({ method: r.method, url, headers, body });
+      const res = await window.electronAPI.apiSend({
+        method: r.method, url, headers, body,
+        bodyType: r.bodyType || 'json', rawContentType: r.rawContentType || '',
+      });
       const asserts = res.success && res.data ? runAssertions(r.assertions, res.data) : [];
       const ok = !!(res.success && res.data) && (asserts.length === 0 || asserts.every(a => a.ok));
       rows.push({
@@ -296,6 +341,21 @@ export function ApiClient() {
               <div className="resp-tabs">
                 <button className={`tab2${sideTab === 'saved' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('saved')}>保存</button>
                 <button className={`tab2${sideTab === 'history' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('history')}>历史</button>
+                {sideTab === 'history' && history.length > 0 && (
+                  <button
+                    className="ibtn"
+                    title="清空请求历史"
+                    aria-label="清空请求历史"
+                    onClick={() => ask({
+                      title: '清空请求历史',
+                      message: `确定清空全部 ${history.length} 条请求记录？`,
+                      confirmText: '清空',
+                      onOk: clearHistory,
+                    })}
+                  >
+                    <Icons.trash size={12} />
+                  </button>
+                )}
               </div>
             }
           >
@@ -323,6 +383,12 @@ export function ApiClient() {
                       <span className={`api-hist${h.status >= 200 && h.status < 400 ? ' is-ok' : ' is-bad'}`}>
                         {h.status || 'ERR'}
                       </span>
+                      <IconBtn
+                        title="删除这条记录"
+                        onClick={e => { e.stopPropagation(); removeHistory(h.id); }}
+                      >
+                        <Icons.close size={12} />
+                      </IconBtn>
                     </div>
                   ))
                 )
@@ -337,7 +403,7 @@ export function ApiClient() {
                   <div
                     key={i.id}
                     className={`api-list-item${req.id === i.id ? ' is-active' : ''}`}
-                    onClick={() => { setReq(i); setResponse(null); setError(''); }}
+                    onClick={() => { setReq(migrateReq(i)); setResponse(null); setError(''); }}
                     title={i.url}
                   >
                     <span className="api-pick" onClick={e => e.stopPropagation()}>
@@ -469,38 +535,87 @@ export function ApiClient() {
 
                 <div className="api-io">
                   <div className="field">
-                    <span className="field-label">请求头（一行一个）</span>
+                    <div className="field-label-row">
+                      <span className="field-label">请求头（一行一个，Cookie 写在里面）</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={addCookieRow}
+                        title="在请求头里追加一行 Cookie"
+                      >
+                        <Icons.plus size={11} /> Cookie
+                      </button>
+                    </div>
                     <KvEditor
                       value={req.headers}
                       onChange={v => setReq({ ...req, headers: v })}
-                      keyPlaceholder="Header，如 Authorization"
+                      keyPlaceholder="Header，如 Authorization / Cookie"
                       valuePlaceholder="值，如 Bearer {{token}}"
                       sep=":"
                     />
-                  </div>
-                  <div className="field">
-                    <span className="field-label">
-                      请求体{['GET', 'HEAD'].includes(req.method) ? '（该请求方式不使用）' : ''}
-                    </span>
-                    <textarea
-                      value={req.body}
-                      onChange={e => setReq({ ...req, body: e.target.value })}
-                      rows={7}
-                      placeholder={'{\n  "name": "test"\n}'}
-                      disabled={['GET', 'HEAD'].includes(req.method)}
-                    />
+                    <div className="assert-hint">
+                      Cookie 直接写成一行：<code>Cookie: token=abc; SESSION=xxx</code>
+                    </div>
                   </div>
 
-                  <div className="field">
-                    <span className="field-label">Cookie（一行一个，发送时自动拼 Cookie 头）</span>
-                    <KvEditor
-                      value={req.cookies || ''}
-                      onChange={v => setReq({ ...req, cookies: v })}
-                      keyPlaceholder="名称，如 SESSIONID"
-                      valuePlaceholder="值"
-                      sep="="
-                    />
-                  </div>
+                  {(() => {
+                    const bodyless = ['GET', 'HEAD'].includes(req.method);
+                    const bt = req.bodyType || 'json';
+                    const meta = BODY_TYPES.find(b => b.v === bt) || BODY_TYPES[0];
+                    return (
+                      <div className="field">
+                        <div className="field-label-row">
+                          <span className="field-label">
+                            请求体{bodyless ? '（该请求方式不使用）' : ''}
+                          </span>
+                          {!bodyless && (
+                            <div className="resp-tabs">
+                              {BODY_TYPES.map(b => (
+                                <button
+                                  key={b.v}
+                                  className={`tab2${bt === b.v ? ' is-active' : ''}`}
+                                  style={{ padding: '3px 8px', fontSize: 11 }}
+                                  onClick={() => setReq({ ...req, bodyType: b.v })}
+                                  title={b.hint}
+                                >
+                                  {b.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {!bodyless && bt !== 'none' && (
+                          <textarea
+                            value={req.body}
+                            onChange={e => setReq({ ...req, body: e.target.value })}
+                            rows={7}
+                            placeholder={meta.ph}
+                          />
+                        )}
+
+                        {!bodyless && bt === 'raw' && (
+                          <input
+                            value={req.rawContentType || ''}
+                            onChange={e => setReq({ ...req, rawContentType: e.target.value })}
+                            placeholder="Content-Type，如 text/xml; charset=UTF-8（留空用 text/plain）"
+                            spellCheck={false}
+                          />
+                        )}
+
+                        {!bodyless && bt === 'multipart' && (
+                          <div className="mp-bar">
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={pickUploadFile}>
+                              <Icons.plus size={11} /> 选择文件
+                            </button>
+                            <span className="text-sm text-muted">值以 @ 开头 = 上传本地文件</span>
+                          </div>
+                        )}
+
+                        <div className="assert-hint">{bodyless ? 'GET / HEAD 不发送请求体' : meta.hint}</div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="field">
                     <button

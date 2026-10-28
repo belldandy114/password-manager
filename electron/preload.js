@@ -98,11 +98,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   weeklyRename: (dir, name, nextName) => ipcRenderer.invoke('weekly:rename', { dir, name, nextName }),
   weeklyDelete: (dir, name) => ipcRenderer.invoke('weekly:delete', { dir, name }),
 
+  // 测试笔记（可选：存到自己选的目录）
+  notesList: (dir) => ipcRenderer.invoke('notes:list', { dir }),
+  notesRead: (dir, name) => ipcRenderer.invoke('notes:read', { dir, name }),
+  notesSave: (dir, name, content, title) => ipcRenderer.invoke('notes:save', { dir, name, content, title }),
+  notesRename: (dir, name, nextName) => ipcRenderer.invoke('notes:rename', { dir, name, nextName }),
+  notesDelete: (dir, name) => ipcRenderer.invoke('notes:delete', { dir, name }),
+  notesPickDir: () => ipcRenderer.invoke('notes:pick-dir'),
+  notesReveal: (dir, name) => ipcRenderer.invoke('notes:reveal', { dir, name }),
+
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: (url, useMirror) => ipcRenderer.invoke('update:download', { url, useMirror }),
   updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
   saveText: (content, defaultName, filters) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters }),
+  pickFile: (title, filters) => ipcRenderer.invoke('file:pick', { title, filters }),
   updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),
   onUpdateProgress: (cb) => {
     const h = (_e, p) => cb(p);

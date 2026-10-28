@@ -285,8 +285,12 @@ export interface ApiRequest {
   body: string;
   /** KEY=VALUE 每行一个，用于 {{变量}} 替换 */
   variables?: string;
-  /** Cookie，每行 key=value（发送时自动拼 Cookie 头） */
+  /** Cookie（旧字段，读取时会合并进 headers.Cookie，不再单独展示） */
   cookies?: string;
+  /** 请求体类型：json / form / multipart / raw / none */
+  bodyType?: 'json' | 'form' | 'multipart' | 'raw' | 'none';
+  /** raw 时的 Content-Type */
+  rawContentType?: string;
   /** 断言配置 */
   assertions?: ApiAssertions;
   updatedAt: string;
@@ -371,8 +375,11 @@ export interface ElectronAPI {
   attachmentDelete: (data: { id: string }) => Promise<{ success: boolean; error?: string }>;
 
   // API debugger / Zentao
-  apiSend: (data: { method: string; url: string; headers?: string; body?: string }) =>
-    Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
+  apiSend: (data: {
+    method: string; url: string; headers?: string; body?: string;
+    bodyType?: 'json' | 'form' | 'multipart' | 'raw' | 'none';
+    rawContentType?: string;
+  }) => Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
@@ -419,6 +426,18 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: { name: string }; error?: string }>;
   weeklyDelete: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
 
+  // 测试笔记（可选：存到自己选的目录）
+  notesList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
+  notesRead: (dir: string, name: string) =>
+    Promise<{ success: boolean; data?: { name: string; content: string; mtime: string; size: number }; error?: string }>;
+  notesSave: (dir: string, name: string, content: string, title?: string) =>
+    Promise<{ success: boolean; data?: WeeklyFile; error?: string }>;
+  notesRename: (dir: string, name: string, nextName: string) =>
+    Promise<{ success: boolean; data?: { name: string }; error?: string }>;
+  notesDelete: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  notesPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
+  notesReveal: (dir: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+
   // Update
   updateCheck: () => Promise<{
     success: boolean;
@@ -433,6 +452,9 @@ export interface ElectronAPI {
     canMirror?: boolean;
     detail?: string;
   }>;
+  /** 选任意文件（上传附件） */
+  pickFile: (title?: string, filters?: { name: string; extensions: string[] }[]) =>
+    Promise<{ success: boolean; data?: { file: string; name: string }; error?: string; canceled?: boolean }>;
   /** 保存文本到文件（导出 CSV 等），自动加 BOM */
   saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[]) =>
     Promise<{ success: boolean; data?: { file: string }; error?: string; canceled?: boolean }>;

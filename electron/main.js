@@ -489,7 +489,8 @@ function createWindow() {
 
   if (savedState && savedState.maximized) mainWindow.maximize();
 
-  if (IS_DEV) {
+  // PM_USE_DIST=1：开发目录下也直接加载已构建的 dist（用于跑 UI 回归，省一次打包）
+  if (IS_DEV && !process.env.PM_USE_DIST) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
@@ -1399,6 +1400,21 @@ function setupIpcHandlers() {
     }
   });
 
+  /** 选任意文件（接口调试上传附件用） */
+  ipcMain.handle('file:pick', async (_event, { title, filters } = {}) => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: title || '选择文件',
+        properties: ['openFile'],
+        filters: filters || undefined,
+      });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, canceled: true };
+      return { success: true, data: { file: r.filePaths[0], name: path.basename(r.filePaths[0]) } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   /** 保存文本文件（导出 CSV 等）：带 UTF-8 BOM，Excel 打开不乱码 */
   ipcMain.handle('file:save-text', async (_event, { content, defaultName, filters } = {}) => {
     try {
@@ -1501,7 +1517,9 @@ function setupIpcHandlers() {
   });
 
   // ---- HTTP client for the API debugger ----
-  ipcMain.handle('api:send', async (_event, { method = 'GET', url, headers = '', body = '' }) => {
+  ipcMain.handle('api:send', async (_event, {
+    method = 'GET', url, headers = '', body = '', bodyType = 'json', rawContentType = '',
+  }) => {
     if (!/^https?:\/\//i.test(String(url || ''))) {
       return { success: false, error: 'URL 必须以 http:// 或 https:// 开头' };
     }
@@ -1512,8 +1530,51 @@ function setupIpcHandlers() {
         const idx = line.indexOf(':');
         if (idx > 0) hdrs[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
       });
+      // 用户自己写了 Content-Type 就不覆盖
+      const hasCT = () => Object.keys(hdrs).some(k => k.toLowerCase() === 'content-type');
+      const setCT = (v) => { if (!hasCT()) hdrs['Content-Type'] = v; };
+
       const init = { method: method.toUpperCase(), headers: hdrs };
-      if (!['GET', 'HEAD'].includes(init.method) && body) init.body = body;
+      const canHaveBody = !['GET', 'HEAD'].includes(init.method);
+      if (canHaveBody && bodyType !== 'none' && body) {
+        if (bodyType === 'form') {
+          // key=value 每行一个 → x-www-form-urlencoded
+          const params = new URLSearchParams();
+          String(body).split('\n').forEach(line => {
+            const i = line.indexOf('=');
+            if (i > 0) params.append(line.slice(0, i).trim(), line.slice(i + 1).trim());
+          });
+          init.body = params.toString();
+          setCT('application/x-www-form-urlencoded; charset=UTF-8');
+        } else if (bodyType === 'multipart') {
+          // key=value 每行一个；value 以 @ 开头视为文件路径
+          const fd = new FormData();
+          const lines = String(body).split('\n').filter(l => l.trim());
+          for (const line of lines) {
+            const i = line.indexOf('=');
+            if (i <= 0) continue;
+            const key = line.slice(0, i).trim();
+            const val = line.slice(i + 1).trim();
+            if (val.startsWith('@')) {
+              const file = val.slice(1);
+              if (!fs.existsSync(file)) {
+                return { success: false, error: `上传文件不存在：${file}` };
+              }
+              fd.append(key, new Blob([fs.readFileSync(file)]), path.basename(file));
+            } else {
+              fd.append(key, val);
+            }
+          }
+          // 不要手动设 Content-Type，fetch 会自动带 boundary
+          init.body = fd;
+        } else if (bodyType === 'raw') {
+          init.body = body;
+          setCT(rawContentType || 'text/plain; charset=UTF-8');
+        } else {
+          init.body = body;
+          setCT('application/json; charset=UTF-8');
+        }
+      }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 30000);
@@ -2510,6 +2571,143 @@ function setupIpcHandlers() {
       if (error) return { success: false, error };
       if (!fs.existsSync(file)) return { success: false, error: '文件已不存在' };
       await shell.trashItem(file);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- 测试笔记（可选：存到自己选的目录里，一篇一个 .md） ----
+  const NOTE_EXTS = ['.md', '.markdown', '.txt'];
+
+  const notesResolve = (dir, name) => {
+    const root = path.resolve(String(dir || ''));
+    const file = path.resolve(root, String(name || ''));
+    if (!file.startsWith(root + path.sep) && file !== root) return { error: '非法文件路径' };
+    return { file };
+  };
+
+  /** 文件名安全化：去掉非法字符，保证 .md 结尾，且不与已有文件重名 */
+  const notesFileName = (title, dir) => {
+    let base = String(title || '').trim()
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .replace(/\s+/g, ' ')
+      .slice(0, 80);
+    if (!base) base = '未命名笔记';
+    if (!/\.(md|markdown|txt)$/i.test(base)) base += '.md';
+    if (!dir) return base;
+    let name = base;
+    let i = 2;
+    while (fs.existsSync(path.join(dir, name))) {
+      const dot = base.lastIndexOf('.');
+      name = `${base.slice(0, dot)}-${i}${base.slice(dot)}`;
+      i += 1;
+    }
+    return name;
+  };
+
+  ipcMain.handle('notes:list', async (_event, { dir } = {}) => {
+    try {
+      if (!dir) return { success: false, error: '未指定笔记目录' };
+      if (!fs.existsSync(dir)) return { success: false, error: `目录不存在：${dir}` };
+      if (!fs.statSync(dir).isDirectory()) return { success: false, error: `不是目录：${dir}` };
+      const files = fs.readdirSync(dir)
+        .filter(n => NOTE_EXTS.includes(path.extname(n).toLowerCase()))
+        .map(n => {
+          const st = fs.statSync(path.join(dir, n));
+          return { name: n, size: st.size, mtime: st.mtime.toISOString() };
+        })
+        .sort((a, b) => (b.mtime || '').localeCompare(a.mtime || ''));
+      return { success: true, data: files };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('notes:read', async (_event, { dir, name } = {}) => {
+    try {
+      const { file, error } = notesResolve(dir, name);
+      if (error) return { success: false, error };
+      if (!fs.existsSync(file)) return { success: false, error: '文件不存在' };
+      const st = fs.statSync(file);
+      return {
+        success: true,
+        data: { name, content: fs.readFileSync(file, 'utf8'), mtime: st.mtime.toISOString(), size: st.size },
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('notes:save', async (_event, { dir, name, content, title } = {}) => {
+    try {
+      if (!dir) return { success: false, error: '未指定笔记目录' };
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      // 没给文件名时用标题生成；给了就沿用（改名由 rename 处理）
+      const fileName = String(name || '').trim() || notesFileName(title, dir);
+      const { file, error } = notesResolve(dir, fileName);
+      if (error) return { success: false, error };
+      fs.writeFileSync(file, String(content == null ? '' : content), 'utf8');
+      const st = fs.statSync(file);
+      return { success: true, data: { name: fileName, size: st.size, mtime: st.mtime.toISOString() } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('notes:rename', async (_event, { dir, name, nextName } = {}) => {
+    try {
+      let target = String(nextName || '').trim().replace(/[\\/:*?"<>|]/g, '_');
+      if (!target) return { success: false, error: '请填写文件名' };
+      if (!/\.(md|markdown|txt)$/i.test(target)) target += '.md';
+      const a = notesResolve(dir, name);
+      const b = notesResolve(dir, target);
+      if (a.error) return { success: false, error: a.error };
+      if (b.error) return { success: false, error: b.error };
+      if (!fs.existsSync(a.file)) return { success: false, error: '原文件不存在' };
+      if (a.file !== b.file && fs.existsSync(b.file)) return { success: false, error: '同名文件已存在' };
+      fs.renameSync(a.file, b.file);
+      return { success: true, data: { name: target } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('notes:delete', async (_event, { dir, name } = {}) => {
+    try {
+      const { file, error } = notesResolve(dir, name);
+      if (error) return { success: false, error };
+      if (!fs.existsSync(file)) return { success: false, error: '文件已不存在' };
+      await shell.trashItem(file);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('notes:pick-dir', async () => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: '选择存放测试笔记的目录',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, data: null };
+      return { success: true, data: r.filePaths[0] };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 在资源管理器里打开（打开目录 / 定位某个文件） */
+  ipcMain.handle('notes:reveal', async (_event, { dir, name } = {}) => {
+    try {
+      if (name) {
+        const { file, error } = notesResolve(dir, name);
+        if (error) return { success: false, error };
+        shell.showItemInFolder(file);
+      } else if (dir && fs.existsSync(dir)) {
+        shell.openPath(dir);
+      }
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };

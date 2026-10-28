@@ -14,6 +14,35 @@ const DEFAULT_OPTS: Partial<JsonRepairOptions> = {
   sortKeys: false,
 };
 
+/** 左右两栏共用：标题条同高、正文同字号/行高/内边距，保证输入输出严格对齐 */
+const PANEL_HEAD: React.CSSProperties = {
+  height: 36,
+  boxSizing: 'border-box',
+  padding: '0 16px',
+  fontSize: 12,
+  color: 'var(--text-muted)',
+  background: 'var(--bg-secondary)',
+  borderBottom: '1px solid var(--border)',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 8,
+  flexShrink: 0,
+};
+
+const PANEL_BODY: React.CSSProperties = {
+  flex: 1,
+  overflow: 'auto',
+  padding: '16px',
+  fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+  fontSize: 13,
+  lineHeight: 1.6,
+  tabSize: 2,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+  scrollbarGutter: 'stable',
+};
+
 export function JsonConverter() {
   const [input, setInput] = useState('');
   const [result, setResult] = useState<RepairResult | null>(null);
@@ -129,17 +158,7 @@ export function JsonConverter() {
           borderRight: '1px solid var(--border)',
           overflow: 'hidden',
         }}>
-          <div style={{
-            padding: '6px 16px',
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            background: 'var(--bg-secondary)',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexShrink: 0,
-          }}>
+          <div style={PANEL_HEAD}>
             <span>输入（{inputLines} 行）</span>
             <div style={{ display: 'flex', gap: 6 }}>
               {[
@@ -165,11 +184,15 @@ export function JsonConverter() {
             ref={inputRef}
             value={input}
             onChange={e => { setInput(e.target.value); setResult(null); }}
-            placeholder="粘贴需要修复/格式化的 JSON..."
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleConvert(); }
+            }}
+            placeholder="粘贴需要修复/格式化的 JSON...（Ctrl+Enter 直接转化）"
             spellCheck={false}
             style={{
               flex: 1,
               width: '100%',
+              margin: 0,
               padding: '16px',
               background: 'var(--bg-primary)',
               color: 'var(--text-primary)',
@@ -180,6 +203,9 @@ export function JsonConverter() {
               fontSize: 13,
               lineHeight: 1.6,
               tabSize: 2,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              scrollbarGutter: 'stable',
             }}
           />
         </div>
@@ -191,17 +217,7 @@ export function JsonConverter() {
           flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          <div style={{
-            padding: '6px 16px',
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            background: 'var(--bg-secondary)',
-            borderBottom: '1px solid var(--border)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexShrink: 0,
-          }}>
+          <div style={PANEL_HEAD}>
             <span>输出（{result?.json ? `${outputLines} 行` : '—'}）{result?.success === false ? '⚠️ 错误' : ''}</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {result?.warnings && result.warnings.length > 0 && (
@@ -229,16 +245,7 @@ export function JsonConverter() {
           </div>
 
           {/* Output content area */}
-          <div style={{
-            flex: 1,
-            overflow: 'auto',
-            padding: '16px',
-            fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-            fontSize: 13,
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
+          <div style={PANEL_BODY}>
             {!result && !input.trim() && (
               <div style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: 60, fontSize: 14 }}>
                 在左侧输入 JSON，然后点击「转化」
