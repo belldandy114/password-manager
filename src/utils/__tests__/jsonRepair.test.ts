@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { repairJson } from '../jsonRepair';
 import { formatHm, formatDateTime, formatRecent } from '../time';
 
+/** 用本地时区算出「应该显示成什么」——测试自己不能假设跑在哪个时区（CI 是 UTC） */
+const localHm = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const localDateTime = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${localHm(iso)}`;
+};
+
 const ok = (input: string) => {
   const r = repairJson(input);
   expect(r.success).toBe(true);
@@ -61,16 +71,18 @@ describe('jsonRepair.repairJson', () => {
   });
 });
 
-describe('time 格式化（北京时间，不是 UTC）', () => {
+describe('time 格式化（按本地时区，不是 UTC）', () => {
   it('formatHm 取本地时分，别用 iso.slice 拿 UTC', () => {
-    // 2026-01-05T03:20:00Z = 北京时间 11:20
     const iso = '2026-01-05T03:20:00.000Z';
-    expect(formatHm(iso)).toBe('11:20');
+    expect(formatHm(iso)).toBe(localHm(iso));
+    // UTC 偏移非零时，本地时分一定不等于 UTC 时分（这就是当初那个 8 小时 bug）
+    const utcHm = iso.slice(11, 16);
+    if (new Date(iso).getTimezoneOffset() !== 0) expect(formatHm(iso)).not.toBe(utcHm);
   });
 
   it('formatDateTime 带日期与时分', () => {
     const iso = '2026-01-05T03:20:00.000Z';
-    expect(formatDateTime(iso)).toBe('2026-01-05 11:20');
+    expect(formatDateTime(iso)).toBe(localDateTime(iso));
   });
 
   it('空值返回空串，不抛异常', () => {
