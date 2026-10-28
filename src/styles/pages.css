@@ -3279,6 +3279,57 @@
   color: var(--text-muted);
 }
 
+/* 断言行列表（1.6.0：可加行，不再固定 5 个槽位） */
+.assert-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.assert-rule {
+  display: grid;
+  grid-template-columns: 120px minmax(140px, 1fr) minmax(150px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.assert-rule select,
+.assert-rule input {
+  height: 30px;
+  font-size: 12px;
+}
+
+.assert-rule input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.assert-neg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.assert-neg input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .assert-rule {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* 会话保持开关 + Cookie 罐计数（接口调试页） */
 .api-session-row {
   display: flex;

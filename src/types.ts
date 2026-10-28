@@ -285,17 +285,33 @@ export interface EnvEntry {
   updatedAt: string;
 }
 
-/** 接口断言：只断言填了的项 */
+/** 断言的检查类型 */
+export type AssertOp = 'status' | 'time' | 'json' | 'body' | 'header' | 'jsonValid';
+
+/** 一条断言（1.6.0 起断言是可加可减的行列表，不再局限于 5 个固定槽位） */
+export interface AssertRule {
+  id: string;
+  op: AssertOp;
+  /** json 路径 / 响应头名；status、time、body、jsonValid 不用 */
+  target?: string;
+  /** 期望值：状态码(200/2xx)、耗时上限、JSON 期望值、包含文本 */
+  value?: string;
+  /** 取反：不等于 / 不包含 / 路径不存在 / 响应头不存在 */
+  negate?: boolean;
+}
+
+/** 接口断言：规则列表 + 1.5.x 旧字段（只读兼容，保存时统一写 rules） */
 export interface ApiAssertions {
-  /** 期望状态码：200 精确，2xx 通配，空=不断言 */
+  rules?: AssertRule[];
+  /** @deprecated 旧数据兼容：期望状态码 */
   status?: string;
-  /** 响应时间上限（ms） */
+  /** @deprecated 旧数据兼容：响应时间上限（ms） */
   maxMs?: string;
-  /** JSON 取值路径，如 data.list[0].id */
+  /** @deprecated 旧数据兼容：JSON 取值路径 */
   jsonPath?: string;
-  /** 路径值需包含的内容（空 = 只要求该路径存在） */
+  /** @deprecated 旧数据兼容：路径值需包含的内容 */
   jsonValue?: string;
-  /** 响应正文必须包含的关键字 */
+  /** @deprecated 旧数据兼容：正文必须包含的关键字 */
   contains?: string;
 }
 

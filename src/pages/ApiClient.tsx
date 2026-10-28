@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie } from '../types';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { formatRecent } from '../utils/time';
-import { runAssertions, hasAssertions, type AssertResult } from '../utils/apiAssert';
+import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule, ASSERT_OPS, type AssertResult } from '../utils/apiAssert';
 import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
@@ -256,6 +256,10 @@ export function ApiClient() {
     const r = await window.electronAPI.apiCookies();
     if (r.success) setJar(r.data || []);
   };
+
+  // 断言统一走「规则列表」：旧数据（5 个固定槽位）在这里被迁移成行，随后编辑都写回 rules
+  const assertRules = useMemo(() => migrateAssertions(req.assertions), [req.assertions]);
+  const setRules = (next: AssertRule[]) => setReq({ ...req, assertions: toAssertions(next) });
 
   useEffect(() => { refreshJar(); }, []);
 
@@ -682,47 +686,61 @@ export function ApiClient() {
                       <span className="assert-caret">{showAssert ? '收起' : '展开'}</span>
                     </button>
                     {showAssert && (
-                      <div className="assert-grid">
-                        <label>
-                          <span>状态码</span>
-                          <input
-                            value={req.assertions?.status || ''}
-                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, status: e.target.value } })}
-                            placeholder="200 或 2xx"
-                          />
-                        </label>
-                        <label>
-                          <span>耗时 ≤ (ms)</span>
-                          <input
-                            value={req.assertions?.maxMs || ''}
-                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, maxMs: e.target.value } })}
-                            placeholder="1000"
-                          />
-                        </label>
-                        <label>
-                          <span>JSON 路径</span>
-                          <input
-                            value={req.assertions?.jsonPath || ''}
-                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, jsonPath: e.target.value } })}
-                            placeholder="data.list[0].id"
-                          />
-                        </label>
-                        <label>
-                          <span>期望包含</span>
-                          <input
-                            value={req.assertions?.jsonValue || ''}
-                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, jsonValue: e.target.value } })}
-                            placeholder="留空 = 只要求路径存在"
-                          />
-                        </label>
-                        <label className="span2">
-                          <span>正文包含</span>
-                          <input
-                            value={req.assertions?.contains || ''}
-                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, contains: e.target.value } })}
-                            placeholder='例如 "success":true'
-                          />
-                        </label>
+                      <div className="assert-rules">
+                        {assertRules.length === 0 && (
+                          <div className="assert-hint" style={{ marginTop: 0 }}>
+                            还没有断言。点下面「添加断言」按需加行，例如「状态码 = 2xx」+「data.list[0].id 存在」。
+                          </div>
+                        )}
+                        {assertRules.map((r) => {
+                          const meta = ASSERT_OPS.find(o => o.v === r.op) || ASSERT_OPS[0];
+                          return (
+                            <div className="assert-rule" key={r.id}>
+                              <select
+                                value={r.op}
+                                onChange={e => {
+                                  const op = e.target.value as AssertRule['op'];
+                                  setRules(assertRules.map(x => x.id === r.id ? { ...x, op, target: '', value: '' } : x));
+                                }}
+                              >
+                                {ASSERT_OPS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+                              </select>
+                              <input
+                                value={r.target || ''}
+                                disabled={meta.targetPh === '—'}
+                                placeholder={meta.targetPh}
+                                onChange={e => setRules(assertRules.map(x => x.id === r.id ? { ...x, target: e.target.value } : x))}
+                              />
+                              <input
+                                value={r.value || ''}
+                                disabled={meta.valuePh === '—'}
+                                placeholder={meta.valuePh}
+                                onChange={e => setRules(assertRules.map(x => x.id === r.id ? { ...x, value: e.target.value } : x))}
+                              />
+                              <label className="assert-neg" title="取反：不等于 / 不包含 / 不存在">
+                                <input
+                                  type="checkbox"
+                                  checked={!!r.negate}
+                                  onChange={e => setRules(assertRules.map(x => x.id === r.id ? { ...x, negate: e.target.checked } : x))}
+                                />
+                                <span>取反</span>
+                              </label>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setRules(assertRules.filter(x => x.id !== r.id))}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          );
+                        })}
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          style={{ alignSelf: 'flex-start' }}
+                          onClick={() => setRules([...assertRules, makeRule('status')])}
+                        >
+                          ＋ 添加断言
+                        </button>
                       </div>
                     )}
                     <div className="assert-hint">

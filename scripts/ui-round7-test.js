@@ -222,9 +222,69 @@ const check = (name, ok, extra = '') => {
 
   const cleared = await api(`window.electronAPI.apiCookiesClear()`);
   check('会话：可一键清空', !cleared.data || cleared.data.length === 0);
-  srv.close();
+
+  /* ================= B6. 断言改成可加行 ================= */
+  await navTo('接口调试');
+  await ev(`(() => { const el = document.querySelector('.url-bar input'); if (el) { const s = ${SETVAL}; s(el, ${JSON.stringify(base + '/me')}); return true; } return false; })()`);
+  // GET /me 返回 {"cookie":"...","ok":false}
+  await ev(`(() => { const b = [...document.querySelectorAll('.assert-toggle')][0]; if (b) { b.click(); return true; } return false; })()`);
+  await sleep(400);
+  const addRule = async () => {
+    await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('添加断言')); if (b) { b.click(); return true; } return false; })()`);
+    await sleep(220);
+  };
+  const setRule = async (i, op, target, value, negate) => {
+    await ev(`(() => {
+      const row = document.querySelectorAll('.assert-rule')[${i}];
+      if (!row) return false;
+      const s = ${SETVAL};
+      s(row.querySelector('select'), ${JSON.stringify(op)});
+      return true;
+    })()`);
+    await sleep(250);
+    await ev(`(() => {
+      const row = document.querySelectorAll('.assert-rule')[${i}];
+      if (!row) return false;
+      const s = ${SETVAL};
+      const ins = [...row.querySelectorAll('input')].filter(x => x.type !== 'checkbox');
+      if (ins[0] && !ins[0].disabled) s(ins[0], ${JSON.stringify(target)});
+      if (ins[1] && !ins[1].disabled) s(ins[1], ${JSON.stringify(value)});
+      const cb = row.querySelector('input[type=checkbox]');
+      if (cb && cb.checked !== ${negate ? 'true' : 'false'}) cb.click();
+      return true;
+    })()`);
+    await sleep(200);
+  };
+
+  // 状态码 200 / JSON 路径 cookie 存在 / 正文包含 ok / 响应头 content-type 含 json / 取反：状态码 ≠ 500
+  await addRule(); await setRule(0, 'status', '', '200', false);
+  await addRule(); await setRule(1, 'json', 'cookie', '', false);
+  await addRule(); await setRule(2, 'body', '', '"ok"', false);
+  await addRule(); await setRule(3, 'header', 'content-type', 'json', false);
+  await addRule(); await setRule(4, 'status', '', '500', true);
+  const ruleCount = await ev(`(() => document.querySelectorAll('.assert-rule').length)()`);
+  check('断言：可以加成多行（5 行）', Number(ruleCount) === 5, `${ruleCount} 行`);
+
+  await clickHas('发送');
+  await sleep(1600);
+  const barText = await ev(`(() => { const b = document.querySelector('.assert-bar'); return b ? b.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`);
+  check('断言：5 行全部通过', /断言 5 \/ 5/.test(barText) && barText.includes('全部通过'), barText.slice(0, 90));
+
+  // 改一行成必然失败（状态码 999），看是否只挂一条
+  await setRule(0, 'status', '', '999', false);
+  await clickHas('发送');
+  await sleep(1600);
+  const barText2 = await ev(`(() => { const b = document.querySelector('.assert-bar'); return b ? b.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`);
+  check('断言：失败行单独标红', /断言 4 \/ 5/.test(barText2) && barText2.includes('有失败项'), barText2.slice(0, 90));
+
+  // 删掉一行
+  await ev(`(() => { const row = document.querySelectorAll('.assert-rule')[0]; if (!row) return false; const b = [...row.querySelectorAll('button')].find(x => x.textContent.includes('删除')); if (b) { b.click(); return true; } return false; })()`);
+  await sleep(300);
+  const ruleCount2 = await ev(`(() => document.querySelectorAll('.assert-rule').length)()`);
+  check('断言：可以删行', Number(ruleCount2) === 4, `${ruleCount2} 行`);
 
   /* ================= 结果 ================= */
+  srv.close();
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   try { ws.close(); } catch { /* ignore */ }
   app.kill();
