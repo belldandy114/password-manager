@@ -380,3 +380,47 @@ body 是**写死的模板**，把我们 `gh release create --notes-file` 的说�
 
 `iso.slice(11, 16)` 取的是 **UTC 小时**，北京时间会少 8 小时（禅道「· 03:20 拉取」其实是 11:20）。
 用 `formatHm` / `formatDateTime` / `formatRecent`。
+
+### 1.4.0 起的几个约定（改代码前先看）
+
+| 能力 | 位置 | 约定 |
+|---|---|---|
+| 列表分页 | `components/Pager.tsx` | 数据量大就分页，**不要再用「只渲染前 N 行 + 提示缩小范围」**；筛选变化要把页码重置到 1 |
+| 导出文件 | `file:save-text`（主进程） | 渲染层生成文本，主进程负责选路径 + 写 **UTF-8 BOM**（Excel 打开不乱码） |
+| 断言 | `utils/apiAssert.ts` | 只断言填了的项；状态码支持 `2xx` 通配；`jsonPath` 留空值 = 只要求路径存在 |
+| 全量 Bug 缓存 | `zentao:all-bugs` | 10 分钟 TTL，按 `baseUrl|account` 分键，`force=true` 绕过；返回带 `cached/ageMs` |
+| 安全体检 | `components/SecurityAudit.tsx` | 纯前端统计，不改数据；点条目 → 回列表并设置搜索词 |
+| 审计日志 | `DATA_DIR/audit.log`（JSONL） | **只记动作 + 条目名，绝不写密码内容**；超 512KB 自动截到最近 2000 条 |
+| 自动备份 | `backupVaultOncePerDay()` | 解锁时也调一次；保留份数读 `settings.backupKeep`（1~60） |
+
+### Esc 必须能关掉一切浮层
+
+新增任何弹窗 / 抽屉 / 下拉 / 右键菜单，都要在组件里加：
+
+```ts
+useEffect(() => {
+  if (!open) return;
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  return () => document.removeEventListener('keydown', onKey);
+}, [open]);
+```
+
+- `Modal` 已内置，直接用它就不用重复写。
+- 多层同时打开时，**内层先关**：例如 Bug 抽屉里的大图预览，Esc 先关大图再关抽屉（`BugDrawer` 有实现）。
+- 别只写在 `onKeyDown` 上：焦点一旦离开输入框（点过列表）就收不到事件，必须 `document` 级。
+
+### 跨页触发动作：用 `cmdSignal`
+
+命令面板要"跳页并执行某个动作"时，不要直接调另一个页面的函数（组件是 switch 渲染的，跨页拿不到实例）。
+用 `useStore.getState().signalCmd('zentao:refresh-mine')`，目标页面：
+
+```ts
+let lastCmdAt = 0;                       // 模块级：页面重新挂载也不会重复执行
+useEffect(() => {
+  if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
+  if (cmdSignal.kind !== 'zentao:refresh-mine') return;
+  lastCmdAt = cmdSignal.at;
+  loadMine();
+}, [cmdSignal]);
+```
