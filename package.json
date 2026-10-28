@@ -17,7 +17,8 @@
     "pack": "electron-builder --dir",
     "check:integrity": "node scripts/check-integrity.js",
     "smoke": "node scripts/smoke-test.js",
-    "dist": "node scripts/build-installer.js"
+    "dist": "node scripts/build-installer.js",
+    "verify:packaged-csv": "node scripts/verify-packaged-csv.js"
   },
   "build": {
     "appId": "com.passwordmanager.app",
