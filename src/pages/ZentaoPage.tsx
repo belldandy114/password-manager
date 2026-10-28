@@ -64,7 +64,6 @@ export function ZentaoPage() {
 
   /* ---------- store：我的 Bug ---------- */
   const bugs = useZentaoStore(s => s.bugs);
-  const total = useZentaoStore(s => s.total);
   const fetchedAt = useZentaoStore(s => s.fetchedAt);
   const project = useZentaoStore(s => s.project);
   const status = useZentaoStore(s => s.status);
@@ -194,20 +193,6 @@ export function ZentaoPage() {
     }
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
   }, [bugs]);
-
-  const byProject = useMemo(() => myProjects.map(([name]) => {
-    const list = bugs.filter(b => (b.productName || '未分类') === name);
-    return {
-      name,
-      total: list.length,
-      unclosed: list.filter(isUnclosed).length,
-      active: list.filter(b => String(b.status) === 'active').length,
-      resolved: list.filter(b => String(b.status) === 'resolved').length,
-      closed: list.filter(isClosed).length,
-      fixed: list.filter(isFixed).length,
-      fatal: list.filter(b => String(b.severity) === '1').length,
-    };
-  }), [bugs, myProjects]);
 
   const overall = useMemo(() => ({
     total: bugs.length,
@@ -387,8 +372,8 @@ export function ZentaoPage() {
 
             {bugs.length > 0 && (
               <Panel
-                title="统计（点击筛选下方列表）"
-                meta={`共 ${bugs.length} 条${total > bugs.length ? ` / 禅道共 ${total}` : ''}${fetchedAt ? ` · ${fetchedAt.slice(11, 16)} 拉取` : ''}`}
+                title="统计（点数字筛选下方列表）"
+                meta={`我的 Bug 共 ${bugs.length} 条${fetchedAt ? ` · ${fetchedAt.slice(11, 16)} 拉取` : ''}`}
                 tools={hasFilter ? (
                   <button className="btn btn-ghost btn-sm" onClick={() => setFilter({ project: '', status: '', severity: '', query: '' })}>清除筛选</button>
                 ) : undefined}
@@ -398,11 +383,6 @@ export function ZentaoPage() {
                   status={status} severity={severity}
                   onStatus={v => setFilter({ status: status === v ? '' : v })}
                   onSeverity={v => setFilter({ severity: severity === v ? '' : v })}
-                />
-                <ProjectTable
-                  rows={byProject} activeName={project}
-                  onPick={(name, dim) => setFilter({ project: name, status: dim || '' })}
-                  onPickFatal={name => setFilter({ project: name, severity: '1' })}
                 />
               </Panel>
             )}

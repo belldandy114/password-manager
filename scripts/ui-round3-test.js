@@ -130,7 +130,25 @@ const check = (name, ok, detail) => {
     }
     check('禅道：项目列表加载', opts > 1, `${opts - 2} 个项目`);
 
-    // 切到「全部项目」
+    // 先选「资产管理系统-管理后台V2.0.0」(58)，验证是全量（禅道网页显示 680+）
+    const picked = await evaluate(`(() => {
+      const s = document.querySelector('.zt-proj-pick select');
+      const opt = Array.from(s.options).find(o => /管理后台V2\.0\.0/.test(o.textContent));
+      if (!opt) return 'no-option';
+      const d = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+      d.call(s, opt.value);
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return opt.value;
+    })()`);
+    let cnt58 = 0;
+    for (let i = 0; i < 60; i++) {
+      cnt58 = Number(await evaluate(`(() => { const c = document.querySelector('.zt-card .zt-card-num'); return c ? c.textContent : 0; })()`) || 0);
+      if (cnt58 > 0) break;
+      await sleep(1000);
+    }
+    check('禅道：单个项目是全量（含已关闭）', cnt58 >= 680, `${picked} → ${cnt58} 条`);
+
+    // 再切到「全部项目」
     await evaluate(`(() => { const s = document.querySelector('.zt-proj-pick select'); const d = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; d.call(s, '__all__'); s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
     let totalTxt = '';
     let projRows = 0;
@@ -140,7 +158,7 @@ const check = (name, ok, detail) => {
       if (totalTxt && Number(totalTxt) > 0) break;
       await sleep(1000);
     }
-    check('禅道：全部项目显示总 Bug 数', Number(totalTxt) > 100, `总 ${totalTxt} 条`);
+    check('禅道：全部项目显示总 Bug 数', Number(totalTxt) > 5000, `总 ${totalTxt} 条`);
     check('禅道：全部项目有按项目统计表', projRows > 5, `${projRows} 个项目行`);
 
     /* ③ 其余页面渲染 */

@@ -1730,14 +1730,15 @@ function setupIpcHandlers() {
         await ztApiProducts(cfg);
         nameMap = ztProductCache.get(key) || {};
       }
-      const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&limit=1000&page=1`);
+      // ⚠️ 不带 status=all 时 REST 只返回「未关闭」的，含已关闭必须显式传 all
+      const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&status=all&limit=1000&page=1`);
       let bugs = Array.isArray(first.bugs) ? first.bugs.slice() : [];
       const total = Number(first.total || bugs.length);
       // 超过 1000 条时继续翻页（最多 5 页，够用且不至于把内存打爆）
       if (total > bugs.length) {
         const pages = Math.min(5, Math.ceil(total / 1000));
         for (let p = 2; p <= pages; p++) {
-          const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&limit=1000&page=${p}`);
+          const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&status=all&limit=1000&page=${p}`);
           const arr = Array.isArray(more.bugs) ? more.bugs : [];
           if (arr.length === 0) break;
           bugs = bugs.concat(arr);
@@ -1771,13 +1772,13 @@ function setupIpcHandlers() {
         for (;;) {
           const p = queue.shift();
           if (!p) return;
-          const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&limit=${perPage}&page=1`);
+          const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&status=all&limit=${perPage}&page=1`);
           const total = Number(first.total || 0);
           reported += total;
           let bugs = Array.isArray(first.bugs) ? first.bugs : [];
           const pages = Math.min(maxPages, Math.ceil(total / perPage));
           for (let pg = 2; pg <= pages; pg++) {
-            const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&limit=${perPage}&page=${pg}`);
+            const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&status=all&limit=${perPage}&page=${pg}`);
             const arr = Array.isArray(more.bugs) ? more.bugs : [];
             if (!arr.length) break;
             bugs = bugs.concat(arr);

@@ -307,3 +307,14 @@ vault 从 `{ entries, tags }` 扩展为：
   这样左侧栏与工作台页面观感统一；改动该页时注意 `.pm-main > .content-area` 是它自己的滚动容器。
 - 禅道统计卡用 `repeat(auto-fit, minmax(92px, 1fr))`，保证「全部 + 5 状态 + 4 严重度」10 张卡一行放得下。
 - 视觉走查脚本：`node scripts/shots.js <输出目录> [dark|light]`（CDP 截图 7 个页面，1440×900）。
+
+### ⚠️ 禅道 REST 查 Bug 必须带 `status=all`
+
+`api.php/v1/bugs?product=58` **默认只返回「未关闭」（active + resolved）**：
+```
+product=58                  → total 219（active 190 + resolved 29）
+product=58&status=all        → total 680（active 190 + resolved 29 + closed 461）✅
+```
+`browseType=all` / `/products/58/bugs` 都是 219，只有 `status=all` 是网页上看到的全量。
+实测该实例：产品 58 = 681 条；31 个产品合计 9881 条（其中 9358 已关闭）。
+明细表仍限制渲染 300 行（`.tbl-more` 提示），别整表渲染上万行。
