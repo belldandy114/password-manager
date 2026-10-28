@@ -18,7 +18,7 @@ const SEVERITY: Record<string, { label: string; tone: PillTone }> = {
   '4': { label: '轻微', tone: 'mute' },
 };
 
-/** 统计维度：key 为 status 字段值，或 unclosed / fixed 这类派生维度 */
+/** 统计维度：status 字段值，或 unclosed / fixed 这类派生维度 */
 const DIMS: { key: string; label: string; tone: PillTone }[] = [
   { key: 'unclosed', label: '未关闭', tone: 'warn' },
   { key: 'active', label: '激活', tone: 'bad' },
@@ -38,8 +38,7 @@ const matchDim = (b: ZentaoBug, dim: string) => {
   return String(b.status || '') === dim;
 };
 
-const dimLabel = (dim: string) =>
-  DIMS.find(d => d.key === dim)?.label || STATUS[dim]?.label || dim;
+const dimLabel = (dim: string) => DIMS.find(d => d.key === dim)?.label || STATUS[dim]?.label || dim;
 
 /** 禅道 20.x 的「我的地盘」页面地址（index.php?m=my&f=bug 会 302，不能用） */
 const QUICK_LINKS: { label: string; page: string }[] = [
@@ -51,27 +50,42 @@ const QUICK_LINKS: { label: string; page: string }[] = [
   { label: '我的待办', page: 'my-work-todo.html' },
 ];
 
+type TabId = 'mine' | 'project';
+
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
   const cfg = useMemo(() => items.find(i => i.id === 'zentao'), [items]);
 
-  // 数据与筛选都放在 store 里：切走页面组件会卸载，useState 会丢
+  /* ---------- store：我的 Bug ---------- */
   const bugs = useZentaoStore(s => s.bugs);
   const total = useZentaoStore(s => s.total);
-  const loggedIn = useZentaoStore(s => s.loggedIn);
   const fetchedAt = useZentaoStore(s => s.fetchedAt);
   const project = useZentaoStore(s => s.project);
   const status = useZentaoStore(s => s.status);
   const severity = useZentaoStore(s => s.severity);
   const query = useZentaoStore(s => s.query);
   const setBugs = useZentaoStore(s => s.setBugs);
-  const setLoggedIn = useZentaoStore(s => s.setLoggedIn);
   const setFilter = useZentaoStore(s => s.setFilter);
-  const clearAll = useZentaoStore(s => s.clear);
 
+  /* ---------- store：项目 Bug ---------- */
+  const projects = useZentaoStore(s => s.projects);
+  const activeProject = useZentaoStore(s => s.activeProject);
+  const pBugs = useZentaoStore(s => s.projectBugs);
+  const pTotal = useZentaoStore(s => s.projectTotal);
+  const pStatus = useZentaoStore(s => s.pStatus);
+  const pSeverity = useZentaoStore(s => s.pSeverity);
+  const pQuery = useZentaoStore(s => s.pQuery);
+  const pFetchedAt = useZentaoStore(s => s.projectFetchedAt);
+  const setProjects = useZentaoStore(s => s.setProjects);
+  const setActiveProject = useZentaoStore(s => s.setActiveProject);
+  const setProjectBugs = useZentaoStore(s => s.setProjectBugs);
+  const setPFilter = useZentaoStore(s => s.setPFilter);
+
+  const [tab, setTab] = useState<TabId>('mine');
   const [form, setForm] = useState({ baseUrl: '', account: '', password: '' });
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [projQuery, setProjQuery] = useState('');
 
   useEffect(() => {
     if (cfg) setForm({ baseUrl: cfg.baseUrl, account: cfg.account, password: cfg.password });
@@ -90,33 +104,71 @@ export function ZentaoPage() {
     password: form.password,
   }) as ZentaoConfig;
 
+  const ready = () => {
+    if (!form.baseUrl.trim()) { setError('请填写禅道地址，例如 http://zentao.example.com/zentao'); return false; }
+    if (!form.account.trim() || !form.password) { setError('请填写账号和密码'); return false; }
+    return true;
+  };
+
   const login = async () => {
     setError('');
-    if (!form.baseUrl.trim()) { setError('请填写禅道地址，例如 http://zentao.example.com/zentao'); return; }
+    if (!ready()) return;
     setBusy('login');
     const res = await window.electronAPI.zentaoLogin(currentCfg());
     setBusy('');
     if (res.success) {
-      setLoggedIn(true);
       await persist({ baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
-      setLoggedIn(false);
       setError(res.error || '登录失败');
     }
   };
 
-  const loadBugs = async () => {
+  const loadMine = async () => {
     setError('');
-    setBusy('bugs');
+    if (!ready()) return;
+    setBusy('mine');
     const res = await window.electronAPI.zentaoMyBugs(currentCfg());
     setBusy('');
     if (res.success && res.data) {
       setBugs(res.data, res.total || res.data.length);
-      setLoggedIn(true);
       await persist({ baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
       setError(res.error || '拉取失败');
     }
+  };
+
+  const loadProjects = async () => {
+    setError('');
+    if (!ready()) return;
+    setBusy('projects');
+    const res = await window.electronAPI.zentaoProjects(currentCfg());
+    setBusy('');
+    if (res.success && res.data) {
+      // 把「我有 Bug 的项目」排到前面：默认选中的就是自己实际在测的那个
+      const mineNames = new Set(bugs.map(b => b.productName).filter(Boolean));
+      const sorted = res.data.slice().sort((a, b) => {
+        const an = mineNames.has(a.name) ? 0 : 1;
+        const bn = mineNames.has(b.name) ? 0 : 1;
+        return an - bn;
+      });
+      setProjects(sorted);
+      const first = sorted.find(p => p.id === activeProject) || sorted[0];
+      if (first) await loadProjectBugs(first.id);
+      await persist({ baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
+    } else {
+      setError(res.error || '拉取项目列表失败');
+    }
+  };
+
+  const loadProjectBugs = async (productId: string) => {
+    if (!productId) return;
+    setError('');
+    setActiveProject(productId);
+    setBusy('pb');
+    const res = await window.electronAPI.zentaoProjectBugs(currentCfg(), productId);
+    setBusy('');
+    if (res.success && res.data) setProjectBugs(res.data, res.total || res.data.length);
+    else setError(res.error || '拉取项目 Bug 失败');
   };
 
   const openUrl = (path: string) => {
@@ -125,8 +177,8 @@ export function ZentaoPage() {
     window.electronAPI.browserOpen({ browser: 'default', url: `${base}/${path.replace(/^\/+/, '')}` });
   };
 
-  /** 项目清单：按 Bug 数从多到少 */
-  const projects = useMemo(() => {
+  /* ---------- 我的 Bug：项目清单 ---------- */
+  const myProjects = useMemo(() => {
     const map = new Map<string, number>();
     for (const b of bugs) {
       const key = b.productName || '未分类';
@@ -135,26 +187,20 @@ export function ZentaoPage() {
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
   }, [bugs]);
 
-  /** 按项目 × 维度统计 */
-  const byProject = useMemo(() => {
-    const rows = projects.map(([name]) => {
-      const list = bugs.filter(b => (b.productName || '未分类') === name);
-      const row = {
-        name,
-        total: list.length,
-        unclosed: list.filter(isUnclosed).length,
-        active: list.filter(b => String(b.status) === 'active').length,
-        resolved: list.filter(b => String(b.status) === 'resolved').length,
-        closed: list.filter(isClosed).length,
-        fixed: list.filter(isFixed).length,
-        fatal: list.filter(b => String(b.severity) === '1').length,
-      };
-      return row;
-    });
-    return rows;
-  }, [bugs, projects]);
+  const byProject = useMemo(() => myProjects.map(([name]) => {
+    const list = bugs.filter(b => (b.productName || '未分类') === name);
+    return {
+      name,
+      total: list.length,
+      unclosed: list.filter(isUnclosed).length,
+      active: list.filter(b => String(b.status) === 'active').length,
+      resolved: list.filter(b => String(b.status) === 'resolved').length,
+      closed: list.filter(isClosed).length,
+      fixed: list.filter(isFixed).length,
+      fatal: list.filter(b => String(b.severity) === '1').length,
+    };
+  }), [bugs, myProjects]);
 
-  /** 顶部卡片：全量统计（可点击筛选） */
   const overall = useMemo(() => ({
     total: bugs.length,
     unclosed: bugs.filter(isUnclosed).length,
@@ -173,18 +219,56 @@ export function ZentaoPage() {
     return map;
   }, [bugs]);
 
-  const visibleBugs = useMemo(() => {
+  const visibleMine = useMemo(() => {
     const q = query.trim().toLowerCase();
     return bugs.filter(b => {
       if (project && (b.productName || '未分类') !== project) return false;
       if (!matchDim(b, status)) return false;
       if (severity && String(b.severity) !== severity) return false;
-      if (q && ![b.id, b.title, b.productName, b.status].some(v => String(v || '').toLowerCase().includes(q))) return false;
+      if (q && ![b.id, b.title, b.productName, b.status, b.assignedTo].some(v => String(v || '').toLowerCase().includes(q))) return false;
       return true;
     });
   }, [bugs, project, status, severity, query]);
 
+  /* ---------- 项目 Bug ---------- */
+  const pStats = useMemo(() => ({
+    total: pBugs.length,
+    unclosed: pBugs.filter(isUnclosed).length,
+    active: pBugs.filter(b => String(b.status) === 'active').length,
+    resolved: pBugs.filter(b => String(b.status) === 'resolved').length,
+    closed: pBugs.filter(isClosed).length,
+    fixed: pBugs.filter(isFixed).length,
+  }), [pBugs]);
+
+  const pSeverityCount = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const b of pBugs) {
+      const k = String(b.severity || '未知');
+      map[k] = (map[k] || 0) + 1;
+    }
+    return map;
+  }, [pBugs]);
+
+  const visibleProject = useMemo(() => {
+    const q = pQuery.trim().toLowerCase();
+    return pBugs.filter(b => {
+      if (!matchDim(b, pStatus)) return false;
+      if (pSeverity && String(b.severity) !== pSeverity) return false;
+      if (q && ![b.id, b.title, b.assignedTo, b.openedBy, b.status].some(v => String(v || '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [pBugs, pStatus, pSeverity, pQuery]);
+
+  const projName = useMemo(() => projects.find(p => p.id === activeProject)?.name || '', [projects, activeProject]);
+
+  const filteredProjects = useMemo(() => {
+    const q = projQuery.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter(p => p.name.toLowerCase().includes(q));
+  }, [projects, projQuery]);
+
   const hasFilter = !!(project || status || severity || query.trim());
+  const hasPFilter = !!(pStatus || pSeverity || pQuery.trim());
 
   return (
     <div className="content-area">
@@ -192,21 +276,21 @@ export function ZentaoPage() {
         <PageHead
           icon={<Icons.bug size={16} />}
           title="禅道"
-          desc="连接公司禅道，按项目查看名下 Bug 与统计；账号密码加密保存在本地"
+          desc="连接公司禅道：我的 Bug 按项目统计；「项目 Bug」看整个项目的全部缺陷"
           tools={
             <>
-              {loggedIn && <Pill tone="ok" dot>已登录</Pill>}
-              {bugs.length > 0 && (
-                <Pill tone="info">
-                  {bugs.length} 条{fetchedAt ? ` · ${fetchedAt.slice(11, 16)} 拉取` : ''}
-                </Pill>
-              )}
               <button className="btn btn-secondary btn-sm" onClick={login} disabled={busy === 'login'}>
                 <Icons.lock size={13} /> {busy === 'login' ? '登录中…' : '登录并保存'}
               </button>
-              <button className="btn btn-primary btn-sm" onClick={loadBugs} disabled={busy === 'bugs'}>
-                <Icons.refresh size={13} /> {busy === 'bugs' ? '拉取中…' : '拉取我的 Bug'}
-              </button>
+              {tab === 'mine' ? (
+                <button className="btn btn-primary btn-sm" onClick={loadMine} disabled={busy === 'mine'}>
+                  <Icons.refresh size={13} /> {busy === 'mine' ? '拉取中…' : '拉取我的 Bug'}
+                </button>
+              ) : (
+                <button className="btn btn-primary btn-sm" onClick={loadProjects} disabled={busy === 'projects'}>
+                  <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
+                </button>
+              )}
             </>
           }
         />
@@ -231,198 +315,336 @@ export function ZentaoPage() {
             </Field>
           </div>
           <div className="pg-sub" style={{ marginTop: 12 }}>
-            地址可只填 <code>zentao.example.com/zentao</code>，协议会自动补全；只填到根地址也能识别。
-            拉取 Bug 时会自动登录，无需先点登录。
+            地址可只填 <code>zentao.example.com/zentao</code>，协议会自动补全。拉取时自动登录，无需先点登录；
+            「项目 Bug」走禅道 REST API（<code>api.php/v1</code>），取的是该项目下所有指派人的缺陷。
           </div>
         </Panel>
 
-        <Panel title="快捷入口" meta={`${QUICK_LINKS.length} 个`}>
-          <div className="zt-quick">
-            {QUICK_LINKS.map(l => (
-              <button key={l.page} className="btn btn-secondary" onClick={() => openUrl(l.page)}>
-                {l.label}
-                <Icons.extern size={12} />
-              </button>
-            ))}
-          </div>
-        </Panel>
+        <div className="tabs">
+          <button className={`tab2${tab === 'mine' ? ' is-active' : ''}`} onClick={() => setTab('mine')}>
+            <Icons.bug size={13} /><span>我的 Bug</span>
+          </button>
+          <button className={`tab2${tab === 'project' ? ' is-active' : ''}`} onClick={() => setTab('project')}>
+            <Icons.db size={13} /><span>项目 Bug</span>
+          </button>
+        </div>
 
-        {bugs.length > 0 && (
-          <Panel
-            title="统计（点击筛选下方列表）"
-            meta={`共 ${bugs.length} 条${total > bugs.length ? ` / 禅道共 ${total}` : ''}`}
-            tools={hasFilter ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => setFilter({ project: '', status: '', severity: '', query: '' })}>
-                清除筛选
-              </button>
-            ) : undefined}
-          >
-            <div className="zt-cards">
-              <StatCard label="全部" value={overall.total} tone="info" active={!status && !severity}
-                onClick={() => setFilter({ status: '', severity: '' })} />
-              {DIMS.map(d => (
-                <StatCard key={d.key} label={d.label} value={(overall as Record<string, number>)[d.key] || 0} tone={d.tone}
-                  active={status === d.key} onClick={() => setFilter({ status: status === d.key ? '' : d.key })} />
-              ))}
-              {Object.entries(SEVERITY).map(([k, v]) => (
-                <StatCard key={k} label={v.label} value={severityCount[k] || 0} tone={v.tone}
-                  active={severity === k} onClick={() => setFilter({ severity: severity === k ? '' : k })} />
-              ))}
-            </div>
-
-            <div className="zt-proj-wrap">
-              <table className="tbl zt-proj">
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 180 }}>项目</th>
-                    <th className="num">总计</th>
-                    {DIMS.map(d => <th key={d.key} className="num">{d.label}</th>)}
-                    <th className="num">致命</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byProject.map(r => (
-                    <tr key={r.name} className={project === r.name ? 'is-active' : undefined}>
-                      <td>
-                        <button className="zt-proj-name" onClick={() => setFilter({ project: project === r.name ? '' : r.name })} title={r.name}>
-                          {r.name}
-                        </button>
-                      </td>
-                      <td className="cell-num">
-                        <button className="zt-num" onClick={() => setFilter({ project: r.name, status: '', severity: '' })}>{r.total}</button>
-                      </td>
-                      {DIMS.map(d => (
-                        <td key={d.key} className="cell-num">
-                          <button
-                            className={`zt-num${(r as unknown as Record<string, number>)[d.key] ? '' : ' zero'}`}
-                            onClick={() => setFilter({ project: r.name, status: d.key })}
-                          >
-                            {(r as unknown as Record<string, number>)[d.key]}
-                          </button>
-                        </td>
-                      ))}
-                      <td className="cell-num">
-                        <button
-                          className={`zt-num${r.fatal ? ' danger' : ' zero'}`}
-                          onClick={() => setFilter({ project: r.name, severity: '1' })}
-                        >
-                          {r.fatal}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-        )}
-
-        {bugs.length > 0 && (
-          <Panel
-            title="我的 Bug"
-            meta={`${visibleBugs.length} / ${bugs.length} 条`}
-            tools={
-              <div className="zt-filters">
-                <select value={project} onChange={e => setFilter({ project: e.target.value })}>
-                  <option value="">全部项目</option>
-                  {projects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
-                </select>
-                <select value={status} onChange={e => setFilter({ status: e.target.value })}>
-                  <option value="">全部状态</option>
-                  {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
-                </select>
-                <select value={severity} onChange={e => setFilter({ severity: e.target.value })}>
-                  <option value="">全部严重程度</option>
-                  {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-                <SearchBox value={query} onChange={v => setFilter({ query: v })} placeholder="标题 / ID" />
+        {tab === 'mine' && (
+          <>
+            <Panel title="快捷入口" meta={`${QUICK_LINKS.length} 个`}>
+              <div className="zt-quick">
+                {QUICK_LINKS.map(l => (
+                  <button key={l.page} className="btn btn-secondary" onClick={() => openUrl(l.page)}>
+                    {l.label}
+                    <Icons.extern size={12} />
+                  </button>
+                ))}
               </div>
-            }
-            flush
-          >
-            {hasFilter && (
-              <div className="zt-active-filter">
-                <span>当前筛选：</span>
-                {project && <Pill tone="info">{project}<button onClick={() => setFilter({ project: '' })}><Icons.close size={11} /></button></Pill>}
-                {status && <Pill tone="warn">{dimLabel(status)}<button onClick={() => setFilter({ status: '' })}><Icons.close size={11} /></button></Pill>}
-                {severity && <Pill tone={SEVERITY[severity]?.tone}>{SEVERITY[severity]?.label || severity}<button onClick={() => setFilter({ severity: '' })}><Icons.close size={11} /></button></Pill>}
-                {query.trim() && <Pill tone="mute">“{query.trim()}”<button onClick={() => setFilter({ query: '' })}><Icons.close size={11} /></button></Pill>}
-              </div>
+            </Panel>
+
+            {bugs.length > 0 && (
+              <Panel
+                title="统计（点击筛选下方列表）"
+                meta={`共 ${bugs.length} 条${total > bugs.length ? ` / 禅道共 ${total}` : ''}${fetchedAt ? ` · ${fetchedAt.slice(11, 16)} 拉取` : ''}`}
+                tools={hasFilter ? (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setFilter({ project: '', status: '', severity: '', query: '' })}>清除筛选</button>
+                ) : undefined}
+              >
+                <StatRow
+                  overall={overall} severityCount={severityCount}
+                  status={status} severity={severity}
+                  onStatus={v => setFilter({ status: status === v ? '' : v })}
+                  onSeverity={v => setFilter({ severity: severity === v ? '' : v })}
+                />
+                <ProjectTable
+                  rows={byProject} activeName={project}
+                  onPick={(name, dim) => setFilter({ project: name, status: dim || '' })}
+                  onPickFatal={name => setFilter({ project: name, severity: '1' })}
+                />
+              </Panel>
             )}
 
-            {visibleBugs.length === 0 ? (
-              <Empty
-                icon={<Icons.bug size={22} />}
-                title="没有符合条件的 Bug"
-                desc="点上面的「清除筛选」看全部"
-              />
+            {bugs.length > 0 ? (
+              <Panel
+                title="我的 Bug"
+                meta={`${visibleMine.length} / ${bugs.length} 条`}
+                tools={
+                  <div className="zt-filters">
+                    <select value={project} onChange={e => setFilter({ project: e.target.value })}>
+                      <option value="">全部项目</option>
+                      {myProjects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
+                    </select>
+                    <select value={status} onChange={e => setFilter({ status: e.target.value })}>
+                      <option value="">全部状态</option>
+                      {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                    </select>
+                    <select value={severity} onChange={e => setFilter({ severity: e.target.value })}>
+                      <option value="">全部严重程度</option>
+                      {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                    <SearchBox value={query} onChange={v => setFilter({ query: v })} placeholder="标题 / ID" />
+                  </div>
+                }
+                flush
+              >
+                <FilterBar
+                  chips={[
+                    project && { label: project, tone: 'info' as PillTone, clear: () => setFilter({ project: '' }) },
+                    status && { label: dimLabel(status), tone: 'warn' as PillTone, clear: () => setFilter({ status: '' }) },
+                    severity && { label: SEVERITY[severity]?.label || severity, tone: SEVERITY[severity]?.tone || 'mute', clear: () => setFilter({ severity: '' }) },
+                    query.trim() && { label: `“${query.trim()}”`, tone: 'mute' as PillTone, clear: () => setFilter({ query: '' }) },
+                  ].filter(Boolean) as { label: string; tone: PillTone; clear: () => void }[]}
+                />
+                {visibleMine.length === 0 ? (
+                  <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部" />
+                ) : (
+                  <BugTable bugs={visibleMine} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee={false} />
+                )}
+              </Panel>
             ) : (
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th style={{ width: 78 }}>ID</th>
-                    <th>标题</th>
-                    <th style={{ width: 96 }}>状态</th>
-                    <th style={{ width: 92 }}>严重程度</th>
-                    <th style={{ width: 70 }}>优先级</th>
-                    <th style={{ width: 190 }}>项目</th>
-                    <th style={{ width: 104 }}>截止</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleBugs.map(b => {
-                    const st = STATUS[b.status || ''];
-                    const sev = SEVERITY[String(b.severity)];
-                    return (
-                      <tr key={b.id} className="zt-row" onClick={() => openUrl(`bug-view-${b.id}.html`)} title="在浏览器中打开该 Bug">
-                        <td className="cell-mono">#{b.id}</td>
-                        <td className="cell-strong" style={{ maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.title}>
-                          {isFixed(b) && <span className="zt-fixed" title="解决方案：已修复">已修复</span>}
-                          {b.title}
-                        </td>
-                        <td><Pill tone={st?.tone || 'mute'} dot>{st?.label || b.status || '—'}</Pill></td>
-                        <td>{sev ? <Pill tone={sev.tone}>{sev.label}</Pill> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                        <td className="cell-num">{b.pri || '—'}</td>
-                        <td style={{ color: 'var(--text-muted)', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.productName}>
-                          {b.productName || '—'}
-                        </td>
-                        <td className="cell-num" style={{ color: 'var(--text-muted)' }}>{b.deadline || '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <Panel>
+                <Empty
+                  icon={<Icons.bug size={22} />}
+                  title="还没有 Bug 数据"
+                  desc="填好地址账号后点「拉取我的 Bug」，结果会一直保留，切换页面也不会丢"
+                />
+              </Panel>
             )}
-          </Panel>
+          </>
         )}
 
-        {bugs.length === 0 && (
-          <Panel>
-            <Empty
-              icon={<Icons.bug size={22} />}
-              title="还没有 Bug 数据"
-              desc="填好上面的地址账号后点「拉取我的 Bug」，结果会一直保留，切换页面也不会丢"
-            />
-          </Panel>
+        {tab === 'project' && (
+          <>
+            {projects.length === 0 ? (
+              <Panel>
+                <Empty
+                  icon={<Icons.db size={22} />}
+                  title="还没有项目列表"
+                  desc="点右上角「刷新项目列表」，会读取禅道里你能看到的全部产品/项目"
+                  action={<button className="btn btn-primary btn-sm" onClick={loadProjects}>读取项目列表</button>}
+                />
+              </Panel>
+            ) : (
+              <>
+                <Panel title="选择项目" meta={`${filteredProjects.length} / ${projects.length} 个`} tools={
+                  <SearchBox value={projQuery} onChange={setProjQuery} placeholder="搜索项目名" />
+                }>
+                  <div className="zt-proj-pick">
+                    <select value={activeProject} onChange={e => loadProjectBugs(e.target.value)}>
+                      <option value="">请选择项目</option>
+                      {filteredProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <button className="btn btn-secondary btn-sm" onClick={() => activeProject && loadProjectBugs(activeProject)} disabled={!activeProject || busy === 'pb'}>
+                      <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
+                    </button>
+                    {projName && <Pill tone="info">{projName}</Pill>}
+                    {pBugs.length > 0 && (
+                      <span className="pg-sub" style={{ margin: 0 }}>
+                        该项目共 <strong>{pTotal || pBugs.length}</strong> 条缺陷{pFetchedAt ? ` · ${pFetchedAt.slice(11, 16)} 拉取` : ''}
+                      </span>
+                    )}
+                  </div>
+                </Panel>
+
+                {pBugs.length > 0 && (
+                  <Panel
+                    title="项目统计（点击筛选）"
+                    meta={hasPFilter ? `${visibleProject.length} / ${pBugs.length} 条` : `${pBugs.length} 条`}
+                    tools={hasPFilter ? (
+                      <button className="btn btn-ghost btn-sm" onClick={() => setPFilter({ pStatus: '', pSeverity: '', pQuery: '' })}>清除筛选</button>
+                    ) : undefined}
+                  >
+                    <StatRow
+                      overall={pStats} severityCount={pSeverityCount}
+                      status={pStatus} severity={pSeverity}
+                      onStatus={v => setPFilter({ pStatus: pStatus === v ? '' : v })}
+                      onSeverity={v => setPFilter({ pSeverity: pSeverity === v ? '' : v })}
+                    />
+                    <div className="pg-sub" style={{ marginTop: 12 }}>
+                      这里是「整个项目」的缺陷，包含所有指派人 —— 和「我的 Bug」互补。
+                    </div>
+                  </Panel>
+                )}
+
+                {pBugs.length > 0 ? (
+                  <Panel
+                    title={projName ? `${projName} · 全部 Bug` : '全部 Bug'}
+                    meta={`${visibleProject.length} / ${pBugs.length} 条`}
+                    tools={
+                      <div className="zt-filters">
+                        <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })}>
+                          <option value="">全部状态</option>
+                          {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                        </select>
+                        <select value={pSeverity} onChange={e => setPFilter({ pSeverity: e.target.value })}>
+                          <option value="">全部严重程度</option>
+                          {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                        </select>
+                        <SearchBox value={pQuery} onChange={v => setPFilter({ pQuery: v })} placeholder="标题 / 指派给" />
+                      </div>
+                    }
+                    flush
+                  >
+                    <FilterBar
+                      chips={[
+                        pStatus && { label: dimLabel(pStatus), tone: 'warn' as PillTone, clear: () => setPFilter({ pStatus: '' }) },
+                        pSeverity && { label: SEVERITY[pSeverity]?.label || pSeverity, tone: SEVERITY[pSeverity]?.tone || 'mute', clear: () => setPFilter({ pSeverity: '' }) },
+                        pQuery.trim() && { label: `“${pQuery.trim()}”`, tone: 'mute' as PillTone, clear: () => setPFilter({ pQuery: '' }) },
+                      ].filter(Boolean) as { label: string; tone: PillTone; clear: () => void }[]}
+                    />
+                    <BugTable bugs={visibleProject} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee />
+                  </Panel>
+                ) : (
+                  <Panel>
+                    <Empty
+                      icon={<Icons.bug size={22} />}
+                      title={activeProject ? (busy === 'pb' ? '正在拉取…' : '这个项目下没有缺陷') : '选一个项目看全部 Bug'}
+                      desc={activeProject ? '换个项目试试，或去禅道里确认该项目是否有缺陷' : '项目列表来自禅道产品，选中后会拉取该项目所有指派人下的 Bug'}
+                    />
+                  </Panel>
+                )}
+              </>
+            )}
+          </>
         )}
       </Page>
     </div>
   );
 }
 
-function StatCard({
-  label, value, tone, active, onClick,
+/* ---------------- 子组件 ---------------- */
+
+function StatRow({
+  overall, severityCount, status, severity, onStatus, onSeverity,
 }: {
-  label: string;
-  value: number;
-  tone: PillTone;
-  active?: boolean;
-  onClick: () => void;
+  overall: Record<string, number>;
+  severityCount: Record<string, number>;
+  status: string;
+  severity: string;
+  onStatus: (key: string) => void;
+  onSeverity: (key: string) => void;
 }) {
+  return (
+    <div className="zt-cards">
+      <StatCard label="全部" value={overall.total} tone="info" active={!status && !severity} onClick={() => { onStatus(''); onSeverity(''); }} />
+      {DIMS.map(d => (
+        <StatCard key={d.key} label={d.label} value={overall[d.key] || 0} tone={d.tone} active={status === d.key} onClick={() => onStatus(d.key)} />
+      ))}
+      {Object.entries(SEVERITY).map(([k, v]) => (
+        <StatCard key={k} label={v.label} value={severityCount[k] || 0} tone={v.tone} active={severity === k} onClick={() => onSeverity(k)} />
+      ))}
+    </div>
+  );
+}
+
+function StatCard({ label, value, tone, active, onClick }: { label: string; value: number; tone: PillTone; active?: boolean; onClick: () => void }) {
   return (
     <button className={`zt-card is-${tone}${active ? ' is-active' : ''}`} onClick={onClick}>
       <span className="zt-card-num">{value}</span>
       <span className="zt-card-label">{label}</span>
     </button>
+  );
+}
+
+type ProjRow = { name: string; total: number; unclosed: number; active: number; resolved: number; closed: number; fixed: number; fatal: number };
+
+function ProjectTable({ rows, activeName, onPick, onPickFatal }: {
+  rows: ProjRow[];
+  activeName: string;
+  onPick: (name: string, dim?: string) => void;
+  onPickFatal: (name: string) => void;
+}) {
+  return (
+    <div className="zt-proj-wrap">
+      <table className="tbl zt-proj">
+        <thead>
+          <tr>
+            <th style={{ minWidth: 180 }}>项目</th>
+            <th className="num">总计</th>
+            {DIMS.map(d => <th key={d.key} className="num">{d.label}</th>)}
+            <th className="num">致命</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.name} className={activeName === r.name ? 'is-active' : undefined}>
+              <td>
+                <button className="zt-proj-name" onClick={() => onPick(r.name)} title={r.name}>{r.name}</button>
+              </td>
+              <td className="cell-num">
+                <button className="zt-num" onClick={() => onPick(r.name, '')}>{r.total}</button>
+              </td>
+              {DIMS.map(d => (
+                <td key={d.key} className="cell-num">
+                  <button className={`zt-num${r[d.key as keyof ProjRow] ? '' : ' zero'}`} onClick={() => onPick(r.name, d.key)}>
+                    {r[d.key as keyof ProjRow]}
+                  </button>
+                </td>
+              ))}
+              <td className="cell-num">
+                <button className={`zt-num${r.fatal ? ' danger' : ' zero'}`} onClick={() => onPickFatal(r.name)}>{r.fatal}</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FilterBar({ chips }: { chips: { label: string; tone: PillTone; clear: () => void }[] }) {
+  if (chips.length === 0) return null;
+  return (
+    <div className="zt-active-filter">
+      <span>当前筛选：</span>
+      {chips.map((c, i) => (
+        <span key={i} className={`pill pill-${c.tone}`}>
+          {c.label}
+          <button onClick={c.clear}><Icons.close size={11} /></button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function BugTable({ bugs, onOpen, showAssignee }: { bugs: ZentaoBug[]; onOpen: (id: string) => void; showAssignee: boolean }) {
+  return (
+    <table className="tbl">
+      <thead>
+        <tr>
+          <th style={{ width: 78 }}>ID</th>
+          <th>标题</th>
+          <th style={{ width: 96 }}>状态</th>
+          <th style={{ width: 92 }}>严重程度</th>
+          {showAssignee && <th style={{ width: 96 }}>指派给</th>}
+          <th style={{ width: 70 }}>优先级</th>
+          <th style={{ width: 170 }}>项目</th>
+          <th style={{ width: 96 }}>创建日期</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bugs.map(b => {
+          const st = STATUS[b.status || ''];
+          const sev = SEVERITY[String(b.severity)];
+          return (
+            <tr key={b.id} className="zt-row" onClick={() => onOpen(b.id)} title="在浏览器中打开该 Bug">
+              <td className="cell-mono">#{b.id}</td>
+              <td className="cell-strong" style={{ maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.title}>
+                {isFixed(b) && <span className="zt-fixed" title="解决方案：已修复">已修复</span>}
+                {b.title}
+              </td>
+              <td><Pill tone={st?.tone || 'mute'} dot>{st?.label || b.status || '—'}</Pill></td>
+              <td>{sev ? <Pill tone={sev.tone}>{sev.label}</Pill> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+              {showAssignee && <td style={{ color: 'var(--text-muted)' }}>{b.assignedTo || '—'}</td>}
+              <td className="cell-num">{b.pri || '—'}</td>
+              <td style={{ color: 'var(--text-muted)', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.productName}>
+                {b.productName || '—'}
+              </td>
+              <td className="cell-num" style={{ color: 'var(--text-muted)' }}>{b.date || b.deadline || '—'}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

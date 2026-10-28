@@ -1,6 +1,6 @@
 {
   "name": "password-manager",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "测试工具 - 集成网址管理与测试数据生成",
   "main": "electron/main.js",
   "scripts": {

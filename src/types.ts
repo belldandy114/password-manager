@@ -125,6 +125,13 @@ export interface WeeklyFile {
   mtime: string;
 }
 
+/** 禅道「项目」（即产品） */
+export interface ZentaoProject {
+  id: string;
+  name: string;
+  status?: string;
+}
+
 export interface ApiResponseData {
   status: number;
   statusText: string;
@@ -275,6 +282,9 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
+  zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
+  zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
+    Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
 
   // 周报（本地 Markdown 目录，只读）
   weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
@@ -282,6 +292,11 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: { name: string; content: string; mtime: string; size: number }; error?: string }>;
   weeklyPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
   weeklyReveal: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  weeklySave: (dir: string, name: string, content: string) =>
+    Promise<{ success: boolean; data?: WeeklyFile; error?: string }>;
+  weeklyRename: (dir: string, name: string, nextName: string) =>
+    Promise<{ success: boolean; data?: { name: string }; error?: string }>;
+  weeklyDelete: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
 
   // Update
   updateCheck: () => Promise<{

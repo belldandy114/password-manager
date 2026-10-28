@@ -1,41 +1,67 @@
 import { create } from 'zustand';
-import type { ZentaoBug } from '../types';
+import type { ZentaoBug, ZentaoProject } from '../types';
 
 /**
  * 禅道数据放在 store 里，而不是页面组件的 useState：
  * 侧边栏切走页面会卸载组件，useState 会丢 —— 表现为「拉取完切个页面内容就没了」。
  */
 interface ZentaoState {
+  /* ---- 我的 Bug ---- */
   bugs: ZentaoBug[];
   total: number;
-  loggedIn: boolean;
   fetchedAt: string;
-
-  // 筛选条件（切页回来仍然保留）
   project: string;   // '' = 全部项目
-  status: string;    // '' = 全部状态
+  status: string;    // '' = 全部状态（也可以是 unclosed / fixed）
   severity: string;  // '' = 全部严重程度
   query: string;
 
+  /* ---- 项目 Bug（整个项目，不限指派人） ---- */
+  projects: ZentaoProject[];
+  activeProject: string;      // 产品 id
+  projectBugs: ZentaoBug[];
+  projectTotal: number;
+  projectFetchedAt: string;
+  pStatus: string;
+  pSeverity: string;
+  pQuery: string;
+
   setBugs: (bugs: ZentaoBug[], total: number) => void;
-  setLoggedIn: (v: boolean) => void;
   setFilter: (patch: Partial<Pick<ZentaoState, 'project' | 'status' | 'severity' | 'query'>>) => void;
+  setProjects: (list: ZentaoProject[]) => void;
+  setActiveProject: (id: string) => void;
+  setProjectBugs: (bugs: ZentaoBug[], total: number) => void;
+  setPFilter: (patch: Partial<Pick<ZentaoState, 'pStatus' | 'pSeverity' | 'pQuery'>>) => void;
   clear: () => void;
 }
 
 export const useZentaoStore = create<ZentaoState>((set) => ({
   bugs: [],
   total: 0,
-  loggedIn: false,
   fetchedAt: '',
-
   project: '',
   status: '',
   severity: '',
   query: '',
 
+  projects: [],
+  activeProject: '',
+  projectBugs: [],
+  projectTotal: 0,
+  projectFetchedAt: '',
+  pStatus: '',
+  pSeverity: '',
+  pQuery: '',
+
   setBugs: (bugs, total) => set({ bugs, total, fetchedAt: new Date().toISOString() }),
-  setLoggedIn: (loggedIn) => set({ loggedIn }),
   setFilter: (patch) => set(patch),
-  clear: () => set({ bugs: [], total: 0, loggedIn: false, fetchedAt: '', project: '', status: '', severity: '', query: '' }),
+  setProjects: (list) => set({ projects: list }),
+  // 切换项目时清掉上一个项目的筛选与数据，避免看起来「没数据」
+  setActiveProject: (id) => set({ activeProject: id, pStatus: '', pSeverity: '', pQuery: '', projectBugs: [], projectTotal: 0 }),
+  setProjectBugs: (bugs, total) => set({ projectBugs: bugs, projectTotal: total, projectFetchedAt: new Date().toISOString() }),
+  setPFilter: (patch) => set(patch),
+  clear: () => set({
+    bugs: [], total: 0, fetchedAt: '', project: '', status: '', severity: '', query: '',
+    projects: [], activeProject: '', projectBugs: [], projectTotal: 0, projectFetchedAt: '',
+    pStatus: '', pSeverity: '', pQuery: '',
+  }),
 }));

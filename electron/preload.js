@@ -74,12 +74,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apiSend: (data) => ipcRenderer.invoke('api:send', data),
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
   zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
+  zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
+  zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
 
   // 周报（本地 Markdown 目录）
   weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),
   weeklyRead: (dir, name) => ipcRenderer.invoke('weekly:read', { dir, name }),
   weeklyPickDir: () => ipcRenderer.invoke('weekly:pick-dir'),
   weeklyReveal: (dir, name) => ipcRenderer.invoke('weekly:reveal', { dir, name }),
+  weeklySave: (dir, name, content) => ipcRenderer.invoke('weekly:save', { dir, name, content }),
+  weeklyRename: (dir, name, nextName) => ipcRenderer.invoke('weekly:rename', { dir, name, nextName }),
+  weeklyDelete: (dir, name) => ipcRenderer.invoke('weekly:delete', { dir, name }),
 
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),

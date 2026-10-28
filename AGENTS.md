@@ -267,3 +267,24 @@ vault 从 `{ entries, tags }` 扩展为：
 侧边栏切页是 `switch` 直接换组件，旧组件会卸载 —— 页面里的 `useState` 全丢。
 禅道这类「拉取一次、多处查看」的数据必须放 store：`src/store/zentaoStore.ts`
 （数据 + 筛选条件都在里面，切页/切回来都还在）。
+
+### 禅道 REST API（api.php/v1）—— 取「整个项目」的 Bug
+
+网页端只给「我的 Bug」，全量要靠 REST（Zentao 18+ 内置）：
+1. `POST {base}/api.php/v1/tokens`，body `{"account":"...","password":"..."}` → `{"token":"..."}`
+2. 之后所有请求带 **`Token: <token>`** 头（不是 `Authorization: Bearer`，用错会 401）
+3. `GET api.php/v1/products?limit=1000` → 产品（= 界面上的「项目」）列表
+4. `GET api.php/v1/bugs?product=58&limit=1000&page=1` → `{total, bugs:[...]}`，>1000 条要翻页
+
+- `assignedTo` / `openedBy` 是对象 `{account, realname}`，渲染前要取 `realname`。
+- token 有有效期，主进程里缓存 token；遇到 401 强制换新 token 重试一次（`ztApiGet`）。
+- 实测该实例：31 个产品、产品 58（资产管理系统-管理后台V2.0.0）共 271 条 Bug。
+- 项目列表排序：把「我有 Bug 的项目」排前面，默认选中即可看到自己正在测的项目。
+
+### 周报（本地 Markdown）约定
+
+- 主进程只暴露 `weekly:list / read / save / rename / delete / pick-dir / reveal`，
+  **所有路径都过 `weeklyResolve()` 做目录穿越校验**，只允许操作指定目录内的 .md/.markdown/.txt。
+- 删除用 `shell.trashItem()`（进回收站可恢复），不要用 `fs.unlink`。
+- 渲染用自写的 `utils/markdown.tsx`（周报语法固定：`**一、xxx**` / `1.` / `（1）` / 空行分段）。
+- 页面回归脚本：`scripts/ui-round2-test.js`（用临时目录测新建/修改/删除，不动真实周报）。

@@ -8,13 +8,15 @@ import { Page, PageHead, Panel, Icons } from '../components/ui';
    工具箱：时间戳 / 编码 / 哈希&JWT / 正则 / 文本对比 / 数据校验
    ============================================================= */
 
-type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'diff' | 'validate';
+type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonExtract' | 'diff' | 'validate';
 
 const TOOLS: { id: ToolId; label: string; icon: React.ReactNode; desc: string }[] = [
   { id: 'timestamp', label: '时间戳', icon: <Icons.refresh size={13} />, desc: 'Unix 时间戳与日期互转，造数和看日志时最常用' },
   { id: 'encode', label: '编码转换', icon: <Icons.terminal size={13} />, desc: 'Base64 / URL / HTML / Unicode / Hex 互转' },
   { id: 'hash', label: '哈希 & JWT', icon: <Icons.key size={13} />, desc: 'MD5 / SHA 摘要，JWT 解析（看 token 过期时间）' },
   { id: 'regex', label: '正则测试', icon: <Icons.search size={13} />, desc: '实时匹配高亮，内置常用正则' },
+  { id: 'regexExtract', label: '正则提取', icon: <Icons.list size={13} />, desc: '按正则批量抽取内容，可只取分组、去重、拼成 JSON' },
+  { id: 'jsonExtract', label: 'JSON 提取', icon: <Icons.db size={13} />, desc: '按路径 a.b[0].c / a[*].name 取值，或递归提取某个 key' },
   { id: 'diff', label: '文本对比', icon: <Icons.list size={13} />, desc: '两段文本逐行差异，回归比对很实用' },
   { id: 'validate', label: '数据校验', icon: <Icons.check size={13} />, desc: '身份证 / 手机号 / 银行卡 / 统一社会信用代码' },
 ];
@@ -398,6 +400,222 @@ function RegexTool() {
   );
 }
 
+/* ---------------- 正则提取 ---------------- */
+const PRESET_EXTRACT: { name: string; pattern: string; group: number }[] = [
+  { name: 'URL', pattern: 'https?://[^\s"\'<>]+', group: 0 },
+  { name: '邮箱', pattern: '[\w.+-]+@[\w-]+\.[\w.-]+', group: 0 },
+  { name: '手机号', pattern: '1[3-9]\d{9}', group: 0 },
+  { name: 'IPv4', pattern: '(?:\d{1,3}\.){3}\d{1,3}', group: 0 },
+  { name: 'JSON 里的 id', pattern: '"id"\s*:\s*"?(\d+)"?', group: 1 },
+  { name: '中文片段', pattern: '[\u4e00-\u9fa5]{2,}', group: 0 },
+  { name: '日期', pattern: '\d{4}-\d{2}-\d{2}', group: 0 },
+];
+
+function RegexExtractTool() {
+  const [pattern, setPattern] = useState('');
+  const [flags, setFlags] = useState('g');
+  const [group, setGroup] = useState(0);
+  const [text, setText] = useState('');
+  const [dedupe, setDedupe] = useState(true);
+  const [format, setFormat] = useState<'lines' | 'comma' | 'json'>('lines');
+  const [copied, setCopied] = useState(false);
+
+  const result = useMemo(() => {
+    if (!pattern.trim()) return { error: '', values: [] as string[] };
+    try {
+      const re = new RegExp(pattern, flags.includes('g') ? flags : flags + 'g');
+      const values: string[] = [];
+      let m: RegExpExecArray | null;
+      let guard = 0;
+      while ((m = re.exec(text)) !== null && guard++ < 5000) {
+        const v = group > 0 ? (m[group] ?? '') : m[0];
+        if (v !== '') values.push(v);
+        if (m[0] === '') re.lastIndex++;
+      }
+      return { error: '', values: dedupe ? Array.from(new Set(values)) : values };
+    } catch (e: any) {
+      return { error: e.message || '正则语法错误', values: [] as string[] };
+    }
+  }, [pattern, flags, group, text, dedupe]);
+
+  const output = useMemo(() => {
+    if (format === 'lines') return result.values.join('\n');
+    if (format === 'comma') return result.values.join(', ');
+    return JSON.stringify(result.values, null, 2);
+  }, [result.values, format]);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-field">
+        <label>正则表达式</label>
+        <div className="tool-inline">
+          <span className="regex-slash">/</span>
+          <input value={pattern} onChange={e => setPattern(e.target.value)} placeholder={'例如 "id"\\s*:\\s*"?(\\d+)"?'} />
+          <span className="regex-slash">/</span>
+          <input className="regex-flags" value={flags} onChange={e => setFlags(e.target.value)} placeholder="gi" />
+          <select value={group} onChange={e => setGroup(Number(e.target.value))} title="只取第几个分组">
+            <option value={0}>整个匹配</option>
+            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>第 {n} 个分组</option>)}
+          </select>
+        </div>
+        <div className="regex-presets">
+          {PRESET_EXTRACT.map(p => (
+            <button key={p.name} className="btn btn-sm btn-secondary" onClick={() => { setPattern(p.pattern); setGroup(p.group); }}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="tool-field">
+        <label>源文本</label>
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={7} placeholder="粘贴接口响应 / 日志 / 表格内容" />
+      </div>
+
+      <div className="tool-inline">
+        <label className="wk-check">
+          <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} /> 去重
+        </label>
+        <select value={format} onChange={e => setFormat(e.target.value as 'lines' | 'comma' | 'json')}>
+          <option value="lines">每行一条</option>
+          <option value="comma">逗号分隔</option>
+          <option value="json">JSON 数组</option>
+        </select>
+        <span className="text-sm text-muted">共 {result.values.length} 条</span>
+        <button className="btn btn-sm btn-secondary" onClick={copy} disabled={!output}>{copied ? '已复制' : '复制结果'}</button>
+      </div>
+
+      {result.error
+        ? <div className="input-hint" style={{ color: 'var(--danger)' }}>{result.error}</div>
+        : <pre className="code2" style={{ maxHeight: '38vh' }}>{output || '（还没有提取结果）'}</pre>}
+    </div>
+  );
+}
+
+/* ---------------- JSON 提取 ---------------- */
+/** 把 a.b[0].c、a[*].name 这类路径解析成数组（* 为通配） */
+function pickByPath(root: any, path: string): any {
+  const clean = path.trim().replace(/^\$\.?/, '');
+  if (!clean) return root;
+  const tokens = clean.replace(/\[(\d+|\*)\]/g, '.$1').split('.').filter(t => t !== '');
+  let cur: any[] = [root];
+  for (const t of tokens) {
+    const next: any[] = [];
+    for (const v of cur) {
+      if (v === null || v === undefined) continue;
+      if (t === '*') {
+        if (Array.isArray(v)) next.push(...v);
+        else if (typeof v === 'object') next.push(...Object.values(v));
+      } else if (Array.isArray(v) && /^\d+$/.test(t)) {
+        if (v[Number(t)] !== undefined) next.push(v[Number(t)]);
+      } else if (typeof v === 'object' && (v as any)[t] !== undefined) {
+        next.push((v as any)[t]);
+      }
+    }
+    cur = next;
+  }
+  return cur.length === 1 ? cur[0] : cur;
+}
+
+/** 递归收集某个 key 的所有值（不管嵌套多深） */
+function collectKey(root: any, key: string, out: any[] = []): any[] {
+  if (Array.isArray(root)) {
+    root.forEach(v => collectKey(v, key, out));
+  } else if (root && typeof root === 'object') {
+    for (const [k, v] of Object.entries(root)) {
+      if (k === key) out.push(v);
+      collectKey(v, key, out);
+    }
+  }
+  return out;
+}
+
+function JsonExtractTool() {
+  const [json, setJson] = useState('');
+  const [path, setPath] = useState('');
+  const [mode, setMode] = useState<'path' | 'key'>('path');
+  const [pretty, setPretty] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const parsed = useMemo(() => {
+    if (!json.trim()) return { error: '', value: undefined as any };
+    try {
+      return { error: '', value: JSON.parse(json) };
+    } catch (e: any) {
+      return { error: 'JSON 解析失败：' + (e.message || '').slice(0, 120), value: undefined };
+    }
+  }, [json]);
+
+  const output = useMemo(() => {
+    if (parsed.error) return '';
+    if (parsed.value === undefined) return '';
+    try {
+      const v = mode === 'path' ? pickByPath(parsed.value, path) : collectKey(parsed.value, path.trim());
+      if (v === undefined) return '';
+      return typeof v === 'string' ? v : JSON.stringify(v, null, pretty ? 2 : 0);
+    } catch {
+      return '';
+    }
+  }, [parsed, path, mode, pretty]);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const formatJson = () => {
+    if (parsed.error) return;
+    setJson(JSON.stringify(parsed.value, null, 2));
+  };
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-field">
+        <label>原始 JSON</label>
+        <textarea value={json} onChange={e => setJson(e.target.value)} rows={7} placeholder='{"code":0,"data":{"list":[{"id":1,"name":"a"}]}}' />
+        <div className="tool-inline">
+          <button className="btn btn-sm btn-secondary" onClick={formatJson} disabled={!!parsed.error}>格式化</button>
+          <button className="btn btn-sm btn-secondary" onClick={() => { setJson(''); setPath(''); }}>清空</button>
+        </div>
+      </div>
+
+      <div className="tool-field">
+        <label>{mode === 'path' ? '取值路径（空 = 全部）' : '要提取的字段名'}</label>
+        <div className="tool-inline">
+          <select value={mode} onChange={e => setMode(e.target.value as 'path' | 'key')}>
+            <option value="path">按路径取</option>
+            <option value="key">按字段名递归提取</option>
+          </select>
+          <input
+            value={path}
+            onChange={e => setPath(e.target.value)}
+            placeholder={mode === 'path' ? 'data.list[0].name   或   data.list[*].id' : 'id'}
+            spellCheck={false}
+          />
+          <label className="wk-check">
+            <input type="checkbox" checked={pretty} onChange={e => setPretty(e.target.checked)} /> 格式化
+          </label>
+          <button className="btn btn-sm btn-secondary" onClick={copy} disabled={!output}>{copied ? '已复制' : '复制结果'}</button>
+        </div>
+        <div className="pg-sub" style={{ marginTop: 4 }}>
+          路径支持 <code>a.b[0].c</code>；<code>[*]</code> 表示取数组每一项，<code>data.list[*].name</code> 会得到名字数组。
+        </div>
+      </div>
+
+      {parsed.error
+        ? <div className="input-hint" style={{ color: 'var(--danger)' }}>{parsed.error}</div>
+        : <pre className="code2" style={{ maxHeight: '38vh' }}>{output || '（没有取到内容：检查路径是否正确）'}</pre>}
+    </div>
+  );
+}
+
 /* ---------------- 文本对比 ---------------- */
 function diffLines(a: string, b: string) {
   const A = a.split('\n');
@@ -590,6 +808,8 @@ export function Toolbox() {
           {active === 'encode' && <EncodeTool />}
           {active === 'hash' && <HashTool />}
           {active === 'regex' && <RegexTool />}
+          {active === 'regexExtract' && <RegexExtractTool />}
+          {active === 'jsonExtract' && <JsonExtractTool />}
           {active === 'diff' && <DiffTool />}
           {active === 'validate' && <ValidateTool />}
         </Panel>

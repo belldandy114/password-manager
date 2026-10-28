@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WeeklyFile } from '../types';
+import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
 
@@ -7,6 +8,25 @@ const DEFAULT_DIR = '';
 const LS_KEY = 'weekly.report.dir';
 
 const fmtSize = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+
+const today = () => {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+const TEMPLATE = `**一、本周工作**
+
+1. 
+
+**二、问题与风险**
+
+1. 
+
+**三、下周计划**
+
+1. 
+`;
 
 export function WeeklyReport() {
   const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
@@ -24,6 +44,12 @@ export function WeeklyReport() {
   const [copied, setCopied] = useState(false);
   const [dirDraft, setDirDraft] = useState(dir);
 
+  // 编辑器：draft=null 表示查看模式
+  const [draft, setDraft] = useState<{ name: string; text: string; isNew: boolean } | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   useEffect(() => { setDirDraft(dir); }, [dir]);
 
   const load = useCallback(async (target: string) => {
@@ -38,27 +64,26 @@ export function WeeklyReport() {
     }
     const list = (res.data || []).slice().sort((a, b) => (a.name < b.name ? 1 : -1));
     setFiles(list);
-    // 默认打开最新一篇
     if (list.length && !list.some(f => f.name === current)) setCurrent(list[0].name);
   }, [current]);
 
   useEffect(() => { load(dir); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [dir]);
 
-  useEffect(() => {
-    if (!current) return;
-    (async () => {
-      setReading(true);
-      const res = await window.electronAPI.weeklyRead(dir, current);
-      setReading(false);
-      if (res.success && res.data) {
-        setContent(res.data.content);
-        setMtime(res.data.mtime);
-      } else {
-        setContent('');
-        setError(res.error || '读取失败');
-      }
-    })();
-  }, [current, dir]);
+  const readFile = useCallback(async (name: string) => {
+    if (!name) return;
+    setReading(true);
+    const res = await window.electronAPI.weeklyRead(dir, name);
+    setReading(false);
+    if (res.success && res.data) {
+      setContent(res.data.content);
+      setMtime(res.data.mtime);
+    } else {
+      setContent('');
+      setError(res.error || '读取失败');
+    }
+  }, [dir]);
+
+  useEffect(() => { if (!draft) readFile(current); }, [current, dir, draft, readFile]);
 
   const pickDir = async () => {
     const res = await window.electronAPI.weeklyPickDir();
@@ -110,12 +135,10 @@ export function WeeklyReport() {
 
   const meta = useMemo(() => {
     const dates = files.map(f => dateFromName(f.name)).filter(Boolean).sort();
-    return {
-      count: files.length,
-      from: dates[0] || '',
-      to: dates[dates.length - 1] || '',
-    };
+    return { count: files.length, from: dates[0] || '', to: dates[dates.length - 1] || '' };
   }, [files]);
+
+  const curDate = dateFromName(current);
 
   const copyAll = async () => {
     try {
@@ -127,7 +150,61 @@ export function WeeklyReport() {
 
   const reveal = () => { if (current) window.electronAPI.weeklyReveal(dir, current); };
 
-  const curDate = dateFromName(current);
+  /* ---------------- 新建 / 编辑 / 删除 ---------------- */
+
+  const startNew = () => {
+    setError('');
+    setShowPreview(false);
+    setDraft({ name: `${today()}.md`, text: TEMPLATE, isNew: true });
+  };
+
+  const startEdit = () => {
+    if (!current) return;
+    setError('');
+    setShowPreview(false);
+    setDraft({ name: current, text: content, isNew: false });
+  };
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setError('');
+    const name = draft.name.trim();
+    const target = draft.isNew && !/\.(md|markdown|txt)$/i.test(name) ? `${name}.md` : name;
+
+    if (!draft.isNew && target !== current) {
+      const rn = await window.electronAPI.weeklyRename(dir, current, target);
+      if (!rn.success) { setSaving(false); setError(rn.error || '重命名失败'); return; }
+    }
+    const res = await window.electronAPI.weeklySave(dir, target, draft.text);
+    setSaving(false);
+    if (!res.success) { setError(res.error || '保存失败'); return; }
+    setDraft(null);
+    setBodyIndex(b => { const n = { ...b }; delete n[current]; return n; });
+    setCurrent(target);
+    setFiles(prev => {
+      const rest = prev.filter(f => f.name !== current && f.name !== target);
+      return [{ name: target, size: res.data?.size || 0, mtime: res.data?.mtime || new Date().toISOString() }, ...rest]
+        .sort((a, b) => (a.name < b.name ? 1 : -1));
+    });
+    await load(dir);
+    await readFile(target);
+  };
+
+  const doDelete = async () => {
+    if (!current) return;
+    const name = current;
+    const res = await window.electronAPI.weeklyDelete(dir, name);
+    setConfirmDelete(false);
+    if (!res.success) { setError(res.error || '删除失败'); return; }
+    const rest = files.filter(f => f.name !== name);
+    setFiles(rest);
+    setBodyIndex(b => { const n = { ...b }; delete n[name]; return n; });
+    setCurrent(rest[0]?.name || '');
+    if (rest.length === 0) setContent('');
+  };
+
+  const editing = !!draft;
 
   return (
     <div className="content-area">
@@ -135,7 +212,7 @@ export function WeeklyReport() {
         <PageHead
           icon={<Icons.note size={16} />}
           title="周报"
-          desc="直接读取本地工作记录目录里的周报文件，按周查看详细内容"
+          desc="直接读写本地工作记录目录里的周报（Markdown），可以新建、修改、删除"
           tools={
             <>
               {meta.count > 0 && (
@@ -145,6 +222,9 @@ export function WeeklyReport() {
               )}
               <button className="btn btn-secondary btn-sm" onClick={() => load(dir)} disabled={loading}>
                 <Icons.refresh size={13} /> {loading ? '刷新中…' : '刷新'}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={startNew} disabled={editing}>
+                <Icons.plus size={13} /> 新建周报
               </button>
             </>
           }
@@ -169,8 +249,8 @@ export function WeeklyReport() {
             <button className="btn btn-primary btn-sm" onClick={applyDir}>打开</button>
           </div>
           <div className="pg-sub" style={{ marginTop: 10 }}>
-            默认读取 <code></code>，支持 .md / .markdown / .txt；
-            目录路径会记在本机，下次打开自动定位。
+            默认 <code></code>，支持 .md / .markdown / .txt；
+            新建与修改直接写文件，删除走系统回收站（可找回）。
           </div>
         </Panel>
 
@@ -179,7 +259,16 @@ export function WeeklyReport() {
             title="周报列表"
             meta={`${visible.length} / ${files.length}`}
             flush
-            tools={<IconToggle on={searchBody} onClick={() => setSearchBody(!searchBody)} title="搜索正文内容" />}
+            tools={
+              <button
+                className={`ibtn${searchBody ? ' is-active' : ''}`}
+                title="搜索正文内容"
+                aria-label="搜索正文内容"
+                onClick={() => setSearchBody(!searchBody)}
+              >
+                {searchBody ? <Icons.eye size={14} /> : <Icons.search size={14} />}
+              </button>
+            }
           >
             <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
               <SearchBox
@@ -195,7 +284,7 @@ export function WeeklyReport() {
                 compact
                 icon={<Icons.note size={20} />}
                 title={files.length === 0 ? '目录里没有周报文件' : '没有匹配项'}
-                desc={files.length === 0 ? '检查上面的目录路径是否正确' : '换个关键词，或关掉正文搜索'}
+                desc={files.length === 0 ? '点右上角「新建周报」写第一篇' : '换个关键词，或关掉正文搜索'}
               />
             ) : (
               <div className="wk-list">
@@ -206,13 +295,11 @@ export function WeeklyReport() {
                     <button
                       key={f.name}
                       className={`wk-item${active ? ' is-active' : ''}`}
-                      onClick={() => setCurrent(f.name)}
+                      onClick={() => { setDraft(null); setCurrent(f.name); }}
                       title={f.name}
                     >
                       <span className="wk-date">{d || f.name}</span>
-                      <span className="wk-sub">
-                        {d ? `${weekdayOf(d)} · 第 ${weekNoOf(d)} 周` : fmtSize(f.size)}
-                      </span>
+                      <span className="wk-sub">{d ? `${weekdayOf(d)} · 第 ${weekNoOf(d)} 周` : fmtSize(f.size)}</span>
                     </button>
                   );
                 })}
@@ -221,26 +308,71 @@ export function WeeklyReport() {
           </Panel>
 
           <Panel
-            title={curDate ? `${curDate} ${weekdayOf(curDate)}` : (current || '周报内容')}
-            meta={current ? `${current}${mtime ? ` · 更新于 ${mtime.slice(0, 10)}` : ''}` : undefined}
-            tools={
-              current ? (
-                <>
-                  <button className="btn btn-secondary btn-sm" onClick={reveal}>
-                    <Icons.extern size={12} /> 打开文件位置
-                  </button>
-                  <button className="btn btn-secondary btn-sm" onClick={copyAll}>
-                    <Icons.copy size={12} /> {copied ? '已复制' : '复制全文'}
-                  </button>
-                </>
-              ) : undefined
-            }
+            title={editing
+              ? (draft.isNew ? '新建周报' : `编辑 · ${current}`)
+              : (curDate ? `${curDate} ${weekdayOf(curDate)}` : (current || '周报内容'))}
+            meta={!editing && current ? `${current}${mtime ? ` · 更新于 ${mtime.slice(0, 10)}` : ''}` : undefined}
+            tools={editing ? (
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowPreview(v => !v)}>
+                  {showPreview ? '继续编辑' : '预览'}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => { setDraft(null); setError(''); }}>取消</button>
+                <button className="btn btn-primary btn-sm" onClick={saveDraft} disabled={saving}>
+                  {saving ? '保存中…' : '保存'}
+                </button>
+              </>
+            ) : current ? (
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={startEdit}>
+                  <Icons.pencil size={12} /> 编辑
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={reveal}>
+                  <Icons.extern size={12} /> 打开文件位置
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={copyAll}>
+                  <Icons.copy size={12} /> {copied ? '已复制' : '复制全文'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(true)} title="删除到回收站">
+                  <Icons.trash size={12} /> 删除
+                </button>
+              </>
+            ) : undefined}
           >
-            {!current ? (
+            {editing ? (
+              <div className="wk-editor">
+                <div className="field">
+                  <span className="field-label">文件名（日期建议用周五）</span>
+                  <input
+                    value={draft.name}
+                    onChange={e => setDraft({ ...draft, name: e.target.value })}
+                    placeholder="2026-10-30.md"
+                    spellCheck={false}
+                  />
+                </div>
+                {showPreview ? (
+                  <article className="md-body wk-preview">{renderMarkdown(draft.text)}</article>
+                ) : (
+                  <textarea
+                    className="wk-md-input"
+                    value={draft.text}
+                    onChange={e => setDraft({ ...draft, text: e.target.value })}
+                    spellCheck={false}
+                    placeholder={'**一、本周工作**\n\n1. ...'}
+                  />
+                )}
+                <div className="wk-editor-foot">
+                  <span className="pg-sub" style={{ margin: 0 }}>
+                    支持 Markdown：<code>**小节**</code>、<code>1.</code>、<code>-</code>、<code>（1）</code>、<code># 标题</code>
+                  </span>
+                  <span className="pg-sub" style={{ margin: 0 }}>{draft.text.length} 字</span>
+                </div>
+              </div>
+            ) : !current ? (
               <Empty
                 icon={<Icons.note size={22} />}
-                title="选择一篇周报"
-                desc="左侧列表按日期倒序排列，点一下即可查看详细内容"
+                title="选择或新建一篇周报"
+                desc="左侧列表按日期倒序，点一下查看；右上角可以新建"
               />
             ) : reading ? (
               <div className="tbl-empty">读取中…</div>
@@ -258,19 +390,25 @@ export function WeeklyReport() {
           </Panel>
         </div>
       </Page>
-    </div>
-  );
-}
 
-function IconToggle({ on, onClick, title }: { on: boolean; onClick: () => void; title: string }) {
-  return (
-    <button
-      className={`ibtn${on ? ' is-active' : ''}`}
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-    >
-      {on ? <Icons.eye size={14} /> : <Icons.search size={14} />}
-    </button>
+      <Modal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="删除周报"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setConfirmDelete(false)}>取消</button>
+            <button className="btn btn-primary" onClick={doDelete}>删除到回收站</button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+          确定删除 <strong>{current}</strong> ？
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+            文件会被移到系统回收站，需要时可以恢复。
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 }

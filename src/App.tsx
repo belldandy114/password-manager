@@ -7,7 +7,6 @@ import { Sidebar } from './components/Sidebar';
 import { DataGenerator } from './pages/DataGenerator';
 import { JsonConverter } from './pages/JsonConverter';
 import { Toolbox } from './pages/Toolbox';
-import { Environments } from './pages/Environments';
 import { Accounts } from './pages/Accounts';
 import { WeeklyReport } from './pages/WeeklyReport';
 import { Snippets } from './pages/Snippets';
@@ -291,7 +290,6 @@ function App() {
       case 'settings': return <Settings />;
       case 'jsonConverter': return <JsonConverter />;
       case 'toolbox': return <Toolbox />;
-      case 'environments': return <Environments />;
       case 'accounts': return <Accounts />;
       case 'weeklyReport': return <WeeklyReport />;
       case 'snippets': return <Snippets />;

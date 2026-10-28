@@ -1598,8 +1598,161 @@ function setupIpcHandlers() {
     }
   });
 
-  // ---- 周报（本地 Markdown 目录，只读） ----
-  // 只做「列目录 + 读文件」，不写不删，避免误改用户的真实工作记录。
+  // ---- 禅道 REST API（api.php/v1）----
+  // 用来取「整个项目（产品）」的全部 Bug —— 网页版只给「我的 Bug」，REST 能按产品拉全量。
+  // 认证：POST api.php/v1/tokens {account,password} → {token}，之后每个请求带 Token 头。
+  let ztApiToken = '';
+  let ztApiTokenKey = '';
+  const ztProductCache = new Map();   // base|account → { [productId]: name }
+
+  const ztApiCacheKey = (cfg) => `${String(cfg.baseUrl || '').replace(/\/+$/, '')}|${cfg.account || ''}`;
+
+  async function ztApiTokenGet(cfg, force = false) {
+    const key = ztApiCacheKey(cfg);
+    if (!force && ztApiToken && ztApiTokenKey === key) return ztApiToken;
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    let res;
+    try {
+      res = await fetch(`${base}/api.php/v1/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account: cfg.account, password: cfg.password }),
+        signal: AbortSignal.timeout(20000),
+      });
+    } catch (e) {
+      throw new Error(e.name === 'TimeoutError' ? '连接禅道 API 超时（20 秒）' : '无法连接禅道 API，请检查地址');
+    }
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* 不是 JSON */ }
+    if (!json || !json.token) {
+      const msg = (json && (json.error || json.message)) || '';
+      if (/unauthor|denied|password|account/i.test(msg) || res.status === 401 || res.status === 400) {
+        throw new Error('禅道 API 认证失败，请检查账号密码');
+      }
+      throw new Error(msg || `获取禅道 API Token 失败（HTTP ${res.status}）`);
+    }
+    ztApiToken = json.token;
+    ztApiTokenKey = key;
+    return ztApiToken;
+  }
+
+  async function ztApiGet(cfg, apiPath) {
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const token = await ztApiTokenGet(cfg, attempt > 0);
+      let res;
+      try {
+        res = await fetch(`${base}/${String(apiPath).replace(/^\/+/, '')}`, {
+          headers: { Token: token, Accept: 'application/json' },
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (e) {
+        throw new Error(e.name === 'TimeoutError' ? '禅道 API 请求超时（30 秒）' : '无法连接禅道 API');
+      }
+      // token 过期：换一个再试一次
+      if (res.status === 401 && attempt === 0) continue;
+      const text = await res.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* 不是 JSON */ }
+      if (!json) throw new Error(`禅道 API 返回异常（HTTP ${res.status}）`);
+      if (res.status >= 400) throw new Error(json.error || `禅道 API 返回 HTTP ${res.status}`);
+      return json;
+    }
+    throw new Error('禅道 API 认证失败，请重试');
+  }
+
+  /** REST 里 assignedTo / openedBy 是对象 {account, realname} */
+  const ztUserName = (v) => {
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    return String(v.realname || v.account || '');
+  };
+
+  /** 拉产品清单（禅道里「产品」就是大家口中的项目，如「资产管理系统-管理后台V2.0.0」） */
+  async function ztApiProducts(cfg) {
+    const key = ztApiCacheKey(cfg);
+    const json = await ztApiGet(cfg, 'api.php/v1/products?limit=1000');
+    const list = Array.isArray(json.products) ? json.products : [];
+    const map = {};
+    for (const p of list) map[String(p.id)] = ztStripTags(p.name || '');
+    ztProductCache.set(key, map);
+    return list.map(p => ({
+      id: String(p.id),
+      name: ztStripTags(p.name || ''),
+      status: String(p.status || ''),
+      program: String(p.program || ''),
+    })).filter(p => p.name);
+  }
+
+  function ztMapApiBug(b, nameMap) {
+    return {
+      id: String(b.id || ''),
+      title: ztStripTags(b.title || ''),
+      status: String(b.status || ''),
+      severity: String(b.severity || ''),
+      pri: String(b.pri || ''),
+      type: String(b.type || ''),
+      product: String(b.product || ''),
+      productName: nameMap[String(b.product)] || '',
+      assignedTo: ztUserName(b.assignedTo),
+      openedBy: ztUserName(b.openedBy),
+      date: String(b.openedDate || '').slice(0, 10),
+      deadline: b.deadline ? String(b.deadline).slice(0, 10) : '',
+      resolution: String(b.resolution || ''),
+    };
+  }
+
+  ipcMain.handle('zentao:projects', async (_event, cfg) => {
+    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
+      return { success: false, error: '请先填写地址、账号和密码' };
+    }
+    cfg = ztNormalizeCfg(cfg);
+    try {
+      const data = await ztApiProducts(cfg);
+      return { success: true, data };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 某个产品（项目）下的全部 Bug，不分指派人 */
+  ipcMain.handle('zentao:project-bugs', async (_event, { cfg, productId } = {}) => {
+    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
+      return { success: false, error: '请先填写地址、账号和密码' };
+    }
+    if (!productId) return { success: false, error: '请选择项目' };
+    cfg = ztNormalizeCfg(cfg);
+    try {
+      const key = ztApiCacheKey(cfg);
+      let nameMap = ztProductCache.get(key);
+      if (!nameMap) {
+        await ztApiProducts(cfg);
+        nameMap = ztProductCache.get(key) || {};
+      }
+      const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&limit=1000&page=1`);
+      let bugs = Array.isArray(first.bugs) ? first.bugs.slice() : [];
+      const total = Number(first.total || bugs.length);
+      // 超过 1000 条时继续翻页（最多 5 页，够用且不至于把内存打爆）
+      if (total > bugs.length) {
+        const pages = Math.min(5, Math.ceil(total / 1000));
+        for (let p = 2; p <= pages; p++) {
+          const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&limit=1000&page=${p}`);
+          const arr = Array.isArray(more.bugs) ? more.bugs : [];
+          if (arr.length === 0) break;
+          bugs = bugs.concat(arr);
+          if (arr.length < 1000) break;
+        }
+      }
+      const data = bugs.map(b => ztMapApiBug(b, nameMap)).filter(b => b.id);
+      return { success: true, data, total };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- 周报（本地 Markdown 目录） ----
+  // 列表/读取/写入/删除都限制在指定目录内，删除走系统回收站（可恢复）。
   const WEEKLY_EXTS = ['.md', '.markdown', '.txt'];
 
   const weeklyResolve = (dir, name) => {
@@ -1658,6 +1811,58 @@ function setupIpcHandlers() {
       const { file, error } = weeklyResolve(dir, name);
       if (error) return { success: false, error };
       shell.showItemInFolder(file);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 新建 / 修改：直接写 .md 文件（UTF-8，不覆盖非 md 文件） */
+  ipcMain.handle('weekly:save', async (_event, { dir, name, content } = {}) => {
+    try {
+      if (!dir) return { success: false, error: '未指定周报目录' };
+      let fileName = String(name || '').trim();
+      if (!fileName) return { success: false, error: '请填写文件名（例如 2026-10-28.md）' };
+      if (!/\.(md|markdown|txt)$/i.test(fileName)) fileName += '.md';
+      if (/[\\/:*?"<>|]/.test(fileName)) return { success: false, error: '文件名不能包含 \\ / : * ? " < > |' };
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const { file, error } = weeklyResolve(dir, fileName);
+      if (error) return { success: false, error };
+      fs.writeFileSync(file, String(content == null ? '' : content), 'utf8');
+      const st = fs.statSync(file);
+      return { success: true, data: { name: fileName, size: st.size, mtime: st.mtime.toISOString() } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 重命名（改日期/文件名） */
+  ipcMain.handle('weekly:rename', async (_event, { dir, name, nextName } = {}) => {
+    try {
+      let target = String(nextName || '').trim();
+      if (!target) return { success: false, error: '请填写新的文件名' };
+      if (!/\.(md|markdown|txt)$/i.test(target)) target += '.md';
+      if (/[\\/:*?"<>|]/.test(target)) return { success: false, error: '文件名不能包含 \\ / : * ? " < > |' };
+      const a = weeklyResolve(dir, name);
+      const b = weeklyResolve(dir, target);
+      if (a.error) return { success: false, error: a.error };
+      if (b.error) return { success: false, error: b.error };
+      if (!fs.existsSync(a.file)) return { success: false, error: '原文件不存在' };
+      if (a.file !== b.file && fs.existsSync(b.file)) return { success: false, error: '同名文件已存在' };
+      fs.renameSync(a.file, b.file);
+      return { success: true, data: { name: target } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 删除：走系统回收站，误删可从回收站找回 */
+  ipcMain.handle('weekly:delete', async (_event, { dir, name } = {}) => {
+    try {
+      const { file, error } = weeklyResolve(dir, name);
+      if (error) return { success: false, error };
+      if (!fs.existsSync(file)) return { success: false, error: '文件已不存在' };
+      await shell.trashItem(file);
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };

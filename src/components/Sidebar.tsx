@@ -71,14 +71,6 @@ const pmIcon = (
   </svg>
 );
 
-const envIcon = (
-  <svg {...S}>
-    <circle cx="12" cy="12" r="9"/>
-    <line x1="3" y1="12" x2="21" y2="12"/>
-    <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>
-  </svg>
-);
-
 const accountIcon = (
   <svg {...S}>
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -179,7 +171,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '测试工作',
     items: [
-      { id: 'environments', label: '环境地址', icon: envIcon },
       { id: 'accounts', label: '测试账号', icon: accountIcon },
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
       { id: 'snippets', label: 'SQL 片段', icon: dbIcon },

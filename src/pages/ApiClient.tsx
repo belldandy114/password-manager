@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ApiRequest, ApiResponseData } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons } from '../components/ui';
@@ -18,6 +18,103 @@ function applyVars(text: string, vars: string): string {
     if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
   });
   return (text || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) => map[k] !== undefined ? map[k] : m);
+}
+
+/* ---------------- 每行一个的 key/value 编辑器 ---------------- */
+
+export interface KvRow { k: string; v: string }
+
+function parseKv(text: string, sep: ':' | '='): KvRow[] {
+  return String(text || '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(line => {
+      const i = line.search(sep === ':' ? /:/ : /=/);
+      if (i < 0) return { k: line, v: '' };
+      return { k: line.slice(0, i).trim(), v: line.slice(i + 1).trim() };
+    });
+}
+
+function serializeKv(rows: KvRow[], sep: ':' | '='): string {
+  return rows
+    .filter(r => r.k.trim() || r.v.trim())
+    .map(r => `${r.k.trim()}${sep === ':' ? ': ' : '='}${r.v.trim()}`)
+    .join('\n');
+}
+
+/** 一行一个输入框：key ｜ value ｜ 删除；末尾常留一个空行用于新增 */
+function KvEditor({
+  value, onChange, keyPlaceholder, valuePlaceholder, sep,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  sep: ':' | '=';
+}) {
+  const [rows, setRows] = useState<KvRow[]>(() => [...parseKv(value, sep), { k: '', v: '' }]);
+
+  // 切换到另一条已保存请求时，外部值变化 → 重建行
+  useEffect(() => {
+    if (String(value || '') !== serializeKv(rows, sep)) {
+      setRows([...parseKv(value, sep), { k: '', v: '' }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const commit = (next: KvRow[]) => {
+    const list = next.slice();
+    const last = list[list.length - 1];
+    if (!last || last.k.trim() || last.v.trim()) list.push({ k: '', v: '' });
+    setRows(list);
+    onChange(serializeKv(list, sep));
+  };
+
+  const setCell = (i: number, patch: Partial<KvRow>) => {
+    const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
+    commit(next);
+  };
+
+  const filled = rows.filter(r => r.k.trim() || r.v.trim()).length;
+
+  return (
+    <div className="kv-rows">
+      {rows.map((r, i) => (
+        <div className="kv-row" key={i}>
+          <input
+            value={r.k}
+            onChange={e => setCell(i, { k: e.target.value })}
+            placeholder={keyPlaceholder}
+            spellCheck={false}
+          />
+          <span className="kv-sep">{sep}</span>
+          <input
+            value={r.v}
+            onChange={e => setCell(i, { v: e.target.value })}
+            placeholder={valuePlaceholder}
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            className="ibtn"
+            title="删除这一行"
+            aria-label="删除这一行"
+            disabled={i === rows.length - 1 && !r.k && !r.v}
+            onClick={() => commit(rows.filter((_, idx) => idx !== i))}
+          >
+            <Icons.close size={12} />
+          </button>
+        </div>
+      ))}
+      <div className="kv-rows-foot">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => commit([...rows, { k: '', v: '' }])}>
+          <Icons.plus size={12} /> 添加一行
+        </button>
+        <span className="text-sm text-muted">{filled} 条</span>
+      </div>
+    </div>
+  );
 }
 
 export function ApiClient() {
@@ -156,25 +253,26 @@ export function ApiClient() {
 
                 {showVars && (
                   <div className="field">
-                    <span className="field-label">变量（每行 key=value，请求地址/请求头里用 {'{{名字}}'} 引用）</span>
-                    <textarea
+                    <span className="field-label">变量（一行一个，地址/请求头里用 {'{{名字}}'} 引用）</span>
+                    <KvEditor
                       value={req.variables || ''}
-                      onChange={e => setReq({ ...req, variables: e.target.value })}
-                      rows={3}
-                      style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
-                      placeholder={'baseUrl=https://test.example.com\ntoken=abc123'}
+                      onChange={v => setReq({ ...req, variables: v })}
+                      keyPlaceholder="变量名，如 baseUrl"
+                      valuePlaceholder="值，如 https://test.example.com"
+                      sep="="
                     />
                   </div>
                 )}
 
                 <div className="api-io">
                   <div className="field">
-                    <span className="field-label">请求头（每行 key: value）</span>
-                    <textarea
+                    <span className="field-label">请求头（一行一个）</span>
+                    <KvEditor
                       value={req.headers}
-                      onChange={e => setReq({ ...req, headers: e.target.value })}
-                      rows={7}
-                      placeholder={'Content-Type: application/json\nAuthorization: Bearer {{token}}'}
+                      onChange={v => setReq({ ...req, headers: v })}
+                      keyPlaceholder="Header，如 Authorization"
+                      valuePlaceholder="值，如 Bearer {{token}}"
+                      sep=":"
                     />
                   </div>
                   <div className="field">
