@@ -3,7 +3,7 @@ import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
-import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
+import { buildWeeklyDraft, weekRange, compareWeeks, buildGroupMessage } from '../utils/weeklyDraft';
 import { useZentaoStore } from '../store/zentaoStore';
 import { useStore } from '../store/useStore';
 
@@ -61,6 +61,9 @@ export function WeeklyReport() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 禅道数据（周报草稿用）
   const ztBugs = useZentaoStore(s => s.bugs);
+  // 本周 vs 上周对比（跟草稿选的那一周同步）
+  const cmp = useMemo(() => compareWeeks(ztBugs, draftOffset), [ztBugs, draftOffset]);
+  const [msgCopied, setMsgCopied] = useState(false);
   // 命令面板「生成周报草稿」
   const cmdSignal = useStore(s => s.cmdSignal);
 
@@ -293,6 +296,67 @@ export function WeeklyReport() {
           <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', whiteSpace: 'pre-wrap', fontWeight: 400 }}>
             {error}
           </div>
+        )}
+
+        {/* 本周 vs 上周：同一套口径的硬数字，省得每周手算「比上周多了几条」 */}
+        {ztBugs.length > 0 && (
+          <Panel
+            title="本周 vs 上周"
+            meta={`${cmp.cur.start} ~ ${cmp.cur.end}　对比 ${cmp.prev.start} ~ ${cmp.prev.end}`}
+            tools={
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(buildGroupMessage(ztBugs, cmp.cur.start, cmp.cur.end));
+                    setMsgCopied(true);
+                    setTimeout(() => setMsgCopied(false), 1600);
+                  } catch { setError('复制失败，请检查剪贴板权限'); }
+                }}
+                title="复制成一段可以直接发群里的纯文本"
+              >
+                <Icons.copy size={12} /> {msgCopied ? '已复制' : '复制群消息'}
+              </button>
+            }
+          >
+            <div className="wk-cmp">
+              <div className="wk-cmp-head">
+                <span />
+                <span>本周</span>
+                <span>上周</span>
+                <span>变化</span>
+              </div>
+              {[
+                { label: '新提', cur: cmp.cur.created, prev: cmp.prev.created, lowerBetter: true },
+                { label: '解决', cur: cmp.cur.resolved, prev: cmp.prev.resolved, lowerBetter: false },
+                { label: '关闭', cur: cmp.cur.closed, prev: cmp.prev.closed, lowerBetter: false },
+                { label: '未关闭', cur: cmp.cur.unclosed, prev: cmp.prev.unclosed, lowerBetter: true },
+              ].map(r => {
+                const d = r.cur - r.prev;
+                const tone = d === 0 ? 'flat' : (d > 0) === r.lowerBetter ? 'bad' : 'good';
+                return (
+                  <div className="wk-cmp-row" key={r.label}>
+                    <span className="wk-cmp-label">{r.label}</span>
+                    <b>{r.cur}</b>
+                    <span className="wk-cmp-prev">{r.prev}</span>
+                    <span className={`wk-delta is-${tone}`}>
+                      {d === 0 ? '持平' : d > 0 ? `↑ ${d}` : `↓ ${-d}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {cmp.cur.byProject.length > 0 && (
+              <div className="wk-cmp-proj">
+                {cmp.cur.byProject.slice(0, 5).map(p => (
+                  <span key={p.name} className="chip">
+                    {p.name}：{p.created}/{p.resolved}/{p.closed}
+                  </span>
+                ))}
+                <span className="drawer-hint-inline">（按项目：新提/解决/关闭）</span>
+              </div>
+            )}
+          </Panel>
         )}
 
         <Panel title="周报目录" meta={dir} collapsible defaultOpen={false}>

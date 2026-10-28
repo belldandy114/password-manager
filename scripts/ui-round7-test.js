@@ -375,6 +375,13 @@ const check = (name, ok, extra = '') => {
   const unreadNow = await api(`window.electronAPI.zentaoUnread()`);
   check('侧边栏：进禅道页后红点清零', !dotAfter && unreadNow.data === 0, `红点=${dotAfter || '(无)'} 计数=${unreadNow.data}`);
 
+  /* ================= D. 周报 ================= */
+  await navTo('周报');
+  await sleep(900);
+  const wkTitle = await ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.innerText.trim() : ''; })()`);
+  const wkCmp = await ev(`(() => document.querySelectorAll('.wk-cmp').length)()`);
+  check('周报：页面正常渲染（没禅道数据时不显示对比块）', wkTitle.includes('周报') && Number(wkCmp) === 0, `${wkTitle} / 对比块 ${wkCmp} 个`);
+
   /* ================= 结果 ================= */
   srv.close();
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

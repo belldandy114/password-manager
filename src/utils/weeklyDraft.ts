@@ -23,10 +23,83 @@ const inRange = (d: string | undefined, start: string, end: string) =>
 const isClosed = (b: ZentaoBug) => String(b.status) === 'closed';
 const isFixed = (b: ZentaoBug) => String(b.resolution) === 'fixed';
 
+/** 一周的缺陷统计（本周/上周共用同一套口径，才能横向比） */
+export interface WeekStats {
+  start: string;
+  end: string;
+  created: number;
+  resolved: number;
+  closed: number;
+  /** 截至区间末仍未关闭的总数 */
+  unclosed: number;
+  fatal: number;
+  serious: number;
+  byProject: { name: string; created: number; resolved: number; closed: number }[];
+}
+
+export function weekStats(bugs: ZentaoBug[], start: string, end: string): WeekStats {
+  const created = bugs.filter(b => inRange(b.date, start, end));
+  const resolved = bugs.filter(b => inRange(b.resolvedDate, start, end));
+  const closed = bugs.filter(b => inRange(b.closedDate, start, end));
+
+  const map = new Map<string, { created: number; resolved: number; closed: number }>();
+  const touch = (name: string) => {
+    const cur = map.get(name) || { created: 0, resolved: 0, closed: 0 };
+    map.set(name, cur);
+    return cur;
+  };
+  for (const b of created) touch(b.productName || '未分类').created++;
+  for (const b of resolved) touch(b.productName || '未分类').resolved++;
+  for (const b of closed) touch(b.productName || '未分类').closed++;
+
+  const unclosed = bugs.filter(b => !isClosed(b));
+  return {
+    start, end,
+    created: created.length,
+    resolved: resolved.length,
+    closed: closed.length,
+    unclosed: unclosed.length,
+    fatal: unclosed.filter(b => String(b.severity) === '1').length,
+    serious: unclosed.filter(b => String(b.severity) === '2').length,
+    byProject: Array.from(map.entries())
+      .map(([name, c]) => ({ name, ...c }))
+      .sort((a, b) => (b.created + b.resolved + b.closed) - (a.created + a.resolved + a.closed)),
+  };
+}
+
+/** 本周 vs 上周：负值 = 比上周少 */
+export function compareWeeks(bugs: ZentaoBug[], offset = 0): { cur: WeekStats; prev: WeekStats } {
+  const a = weekRange(offset);
+  const b = weekRange(offset + 1);
+  return {
+    cur: weekStats(bugs, a.start, a.end),
+    prev: weekStats(bugs, b.start, b.end),
+  };
+}
+
 /**
- * 用「我的 Bug」生成本周周报草稿。
- * 只看指派人是我、且发生时间落在区间内的记录：新提 / 解决 / 关闭。
+ * 群消息文案：短、整行、不依赖 Markdown。
+ * 直接粘到企微/钉钉群里就能看，不用再手动删格式。
  */
+export function buildGroupMessage(bugs: ZentaoBug[], start: string, end: string): string {
+  const s = weekStats(bugs, start, end);
+  const mmdd = (d: string) => d.slice(5).replace('-', '.');
+  const lines: string[] = [];
+  lines.push(`【测试周报 ${mmdd(start)}-${mmdd(end)}】`);
+  lines.push(`缺陷：新提 ${s.created} / 解决 ${s.resolved} / 关闭 ${s.closed}`);
+  lines.push(`未关闭：${s.unclosed}（致命 ${s.fatal}、严重 ${s.serious}）`);
+  const top = s.byProject.filter(p => p.created + p.resolved + p.closed > 0).slice(0, 3);
+  if (top.length) {
+    lines.push('重点：');
+    top.forEach(p => lines.push(`· ${p.name}：新提 ${p.created}、解决 ${p.resolved}、关闭 ${p.closed}`));
+  }
+  const fatalList = bugs.filter(b => !isClosed(b) && String(b.severity) === '1').slice(0, 3);
+  if (fatalList.length) {
+    lines.push('待处理：');
+    fatalList.forEach(b => lines.push(`· #${b.id} ${b.title}`));
+  }
+  return lines.join('\n');
+}
 export function buildWeeklyDraft(bugs: ZentaoBug[], start: string, end: string): string {
   const created = bugs.filter(b => inRange(b.date, start, end));
   const resolved = bugs.filter(b => inRange(b.resolvedDate, start, end));
