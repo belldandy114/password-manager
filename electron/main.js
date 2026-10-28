@@ -1565,7 +1565,10 @@ function setupIpcHandlers() {
               fd.append(key, val);
             }
           }
-          // 不要手动设 Content-Type，fetch 会自动带 boundary
+          // 不要手动设 Content-Type：fetch 会按 FormData 自动带 boundary。
+          // 用户如果自己写了 Content-Type（常见从别处粘过来的 multipart/form-data 无 boundary），
+          // 会让请求体解析失败，这里直接去掉，交给 fetch 生成。
+          Object.keys(hdrs).forEach(k => { if (k.toLowerCase() === 'content-type') delete hdrs[k]; });
           init.body = fd;
         } else if (bodyType === 'raw') {
           init.body = body;

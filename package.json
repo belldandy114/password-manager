@@ -8,7 +8,7 @@
     "dev:renderer": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron .",
     "build:renderer": "vite build",
-    "build:sub-apps": "cd sub-apps/test-data-generator && (test -d node_modules || npm install) && npx vite build",
+    "build:sub-apps": "node scripts/build-subapp.js",
     "build:all": "npm run build:renderer && npm run build:sub-apps",
     "start": "electron .",
     "preview": "vite preview",

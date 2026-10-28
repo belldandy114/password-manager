@@ -159,13 +159,13 @@ export function Notes() {
     setDirSaving(true);
     setDirError('');
     let name = dirEditing.name;
-    const want = fileOf(title);
     if (!name) {
-      // 新建：文件名由标题生成，重名时主进程会自动加 -2 后缀
-      const r = await window.electronAPI.notesSave(dir, want, dirEditing.content, title);
-      name = r.success && r.data ? r.data.name : want;
+      // 新建：文件名交给主进程按标题生成（重名会自动加 -2，不会覆盖已有笔记）
+      const r = await window.electronAPI.notesSave(dir, '', dirEditing.content, title);
+      name = r.success && r.data ? r.data.name : fileOf(title);
       if (!r.success) setDirError(r.error || '保存失败');
     } else {
+      const want = fileOf(title);
       if (want !== name) {
         const rr = await window.electronAPI.notesRename(dir, name, want);
         if (rr.success && rr.data) name = rr.data.name;

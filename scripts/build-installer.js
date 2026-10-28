@@ -28,6 +28,18 @@ function step(label, cmd) {
   }
 }
 
+// 0. Electron-builder 的下载缓存：不指定时它会去 GitHub 拉 nsis/winCodeSign，
+//    公司网络下会卡到超时（1.5.0 构建卡住的第二个诱因）。本机缓存默认在这里。
+if (!process.env.ELECTRON_BUILDER_CACHE) {
+  const cache = path.join(process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local'), 'electron-builder', 'Cache');
+  if (fs.existsSync(cache)) {
+    process.env.ELECTRON_BUILDER_CACHE = cache;
+    console.log(`${GREEN}✓ 使用本机 electron-builder 缓存：${cache}${RESET}`);
+  } else {
+    console.log(`${YELLOW}⚠ 未找到 electron-builder 缓存，NSIS 阶段可能需要联网下载${RESET}`);
+  }
+}
+
 // 0. Clean
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
 console.log(`${CYAN}  测试工具 - 自动化构建${RESET}`);
@@ -64,7 +76,9 @@ patchElectronDist('add');
 step('构建 Renderer (Vite)', 'npx vite build');
 
 // 2. Build sub-app (test-data-generator)
-step('构建子应用 (test-data-generator)', 'cd sub-apps/test-data-generator && (test -d node_modules || npm install) && npx vite build');
+//    用 node 脚本而不是 `cd ... && (test -d node_modules || npm install)`：
+//    后者是 bash 语法，Windows 的 cmd.exe 没有 test，会被判成缺依赖 → 每次重装 → 卡在联网。
+step('构建子应用 (test-data-generator)', 'node scripts/build-subapp.js');
 
 // 3. Pack Electron app
 step('打包 Electron 应用', 'npx electron-builder --dir --publish never');

@@ -18,7 +18,9 @@ const PASSWORD = 'Shots#2026';
 const PAGES = [
   ['网址管理', 'passwordManager'],
   ['周报', 'weekly'],
+  ['测试笔记', 'notes'],
   ['禅道', 'zentao'],
+  ['JSON 转化', 'json'],
   ['工具箱', 'toolbox'],
   ['接口调试', 'api'],
   ['设置', 'settings'],

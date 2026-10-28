@@ -153,6 +153,7 @@ export function JsonConverter() {
         {/* Input panel */}
         <div style={{
           flex: 1,
+          boxSizing: 'border-box',
           display: 'flex',
           flexDirection: 'column',
           borderRight: '1px solid var(--border)',
@@ -213,6 +214,7 @@ export function JsonConverter() {
         {/* Output panel */}
         <div style={{
           flex: 1,
+          boxSizing: 'border-box',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

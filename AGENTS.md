@@ -458,3 +458,38 @@ npx asar pack _asar-tmp release/win-unpacked/resources/app.asar
 ```
 
 （要出安装包仍然必须让 electron-builder 完整跑通，asar 手工打包只能用于验证。）
+
+## 1.5.0 构建卡死根因与三个坑（2026-10-28）
+
+**现象**：`npm run dist` 跑到「构建子应用」就长时间无输出，exe 一直出不来（日志里像是「卡在下载」）。
+
+**根因**：`package.json` 和 `scripts/build-installer.js` 里的子应用步骤写的是 bash 语法
+
+```bash
+cd sub-apps/test-data-generator && (test -d node_modules || npm install) && npx vite build
+```
+
+Windows 的 npm 用 `cmd.exe` 执行脚本，**cmd 里没有 `test` 命令**，于是每次都进 `|| npm install` 分支：
+在公司网络下这一步会长时间卡住 → 整个构建停在子应用阶段。
+
+已改为 `node scripts/build-subapp.js`：用 `fs.existsSync` 判断依赖、直接调用本地 `vite/bin/vite.js`，
+不联网、跨平台；`package.json` 的 `build:sub-apps` 也指向它。
+
+**另外两条必须记住**：
+
+- `scripts/build-installer.js` 现在会**自动探测** `ELECTRON_BUILDER_CACHE`
+  （`%LOCALAPPDATA%\electron-builder\Cache`），有就直接用，避免 NSIS 阶段去 GitHub 拉资源超时；
+  已经设了环境变量则不覆盖。electron 仍走 `-c.electronDist=node_modules/electron/dist`。
+- **`multipart` 请求体不能带用户自己的 Content-Type**：`api:send` 里会先删掉该头，
+  由 `fetch(FormData)` 生成带 boundary 的值。用户从别处粘来的 `multipart/form-data`（无 boundary）
+  会让服务端解析失败。
+
+**笔记新建的约定（容易写错）**：
+
+- 新建笔记必须给 `notes:save` 传**空文件名**，让主进程 `notesFileName()` 生成名字（重名自动加 `-2`）；
+  一旦传了文件名就走「沿用」分支，会覆盖同名笔记 —— 1.5.0 初版就是踩了这个，同名新建会吃掉原文件。
+- 改标题走 `notes:rename`，目标已存在时主进程返回错误（不会覆盖），内容仍写回原文件。
+
+**本次全链路验证**：`npm run typecheck` 0 错 → `npx vite build` → `npm run dist` 一把过
+（96.1 MB / 100,750,785 B）→ `check:integrity` 7 项全 Medium → `npm run smoke` 13/13 →
+`ui-round6-test` 28/28（新增「同名新建不覆盖」断言）→ round2/3/4/5 全绿。

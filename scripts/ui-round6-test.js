@@ -280,6 +280,32 @@ const server = http.createServer((req, res) => {
   const cardTitles = await ev(`(() => [...document.querySelectorAll('.card2-title')].map(x => x.textContent))()`);
   check('笔记：目录里的文件在页面上列出', (cardTitles || []).some((t) => t.includes('登录偶发500排查')), JSON.stringify(cardTitles));
 
+  // 同名再建一篇 → 自动加 -2，不能覆盖已有笔记（原内容是「登录偶发 500」）
+  await clickHas('新建笔记');
+  await sleep(600);
+  await ev(`(() => {
+    const s = ${SETVAL};
+    const m = document.querySelector('.modal');
+    s([...m.querySelectorAll('input')][0], '登录偶发500排查');
+    s(m.querySelector('textarea'), '## 现象\\n第二篇同名笔记');
+    return 1;
+  })()`);
+  await sleep(300);
+  await clickHas('保存到目录');
+  await sleep(1200);
+  const dup2 = path.join(notesDir, '登录偶发500排查-2.md');
+  check('笔记：同名新建不覆盖（自动加 -2）',
+    fs.existsSync(dup2) && fs.readFileSync(path.join(notesDir, '登录偶发500排查.md'), 'utf8').includes('登录偶发 500'),
+    fs.existsSync(dup2) ? '已生成 登录偶发500排查-2.md' : '未生成 -2 文件');
+  if (fs.existsSync(dup2)) {
+    // 顺手清掉这一篇（走界面删除，进回收站可找回），让后面的重命名用例还是针对第一篇
+    await ev(`(() => { const b = [...document.querySelectorAll('.card2-actions button')][1]; if (b) b.click(); return !!b; })()`);
+    await sleep(600);
+    await clickHas('删除');
+    await sleep(1200);
+  }
+  await sleep(400);
+
   // 改标题 → 文件重命名
   await ev(`(() => { const b = [...document.querySelectorAll('.card2-actions button')][0]; if (b) b.click(); return !!b; })()`);
   await sleep(700);
