@@ -17,6 +17,20 @@ export function weekRange(offset = 0): { start: string; end: string; friday: str
   return { start: fmt(monday), end: fmt(sunday), friday: fmt(friday) };
 }
 
+/**
+ * 下拉选项：offset 是「几周前」。
+ * 1.6.0 这里写成 -i（0,-1,-2…），而 weekRange 的方向是「减去 offset*7 天」，
+ * 于是「上周」实际取到了下一周（11.02~11.08），整份草稿/对比全错。
+ * 现在把映射收进这里，并配了单测钉住顺序。
+ */
+export function weekOptions(count = 9): { offset: number; label: string; start: string; end: string }[] {
+  return Array.from({ length: count }, (_, i) => {
+    const { start, end } = weekRange(i);
+    const label = i === 0 ? '本周' : i === 1 ? '上周' : `${i} 周前`;
+    return { offset: i, label, start, end };
+  });
+}
+
 const inRange = (d: string | undefined, start: string, end: string) =>
   !!d && d.slice(0, 10) >= start && d.slice(0, 10) <= end;
 

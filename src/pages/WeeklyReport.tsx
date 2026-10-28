@@ -3,7 +3,7 @@ import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
-import { buildWeeklyDraft, weekRange, compareWeeks, buildGroupMessage } from '../utils/weeklyDraft';
+import { buildWeeklyDraft, weekRange, weekOptions, compareWeeks, buildGroupMessage } from '../utils/weeklyDraft';
 import { useZentaoStore } from '../store/zentaoStore';
 import { useStore } from '../store/useStore';
 
@@ -35,10 +35,11 @@ const TEMPLATE = `**一、本周工作**
 
 export function WeeklyReport() {
   const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
-  // 上次生成草稿选的是哪一周（0=本周，-1=上周…）
+  // 生成草稿选的是「几周前」：0=本周、1=上周、2=两周前…
+  // 旧版本把 0 存成 0、把「上周」错存成 -1（那时 weekRange 的方向反了），这里把负数一律当 0。
   const [draftOffset, setDraftOffset] = useState(() => {
     const v = Number(localStorage.getItem('pm.weekly.draftOffset'));
-    return Number.isFinite(v) && v <= 0 && v >= -8 ? v : 0;
+    return Number.isFinite(v) && v >= 0 && v <= 8 ? v : 0;
   });
   const [files, setFiles] = useState<WeeklyFile[]>([]);
   const [current, setCurrent] = useState<string>('');
@@ -271,11 +272,9 @@ export function WeeklyReport() {
                 disabled={editing}
                 title="选哪一周生成草稿"
               >
-                {Array.from({ length: 9 }, (_, i) => -i).map(off => {
-                  const { start, end } = weekRange(off);
-                  const label = off === 0 ? '本周' : off === -1 ? '上周' : `${-off} 周前`;
-                  return <option key={off} value={off}>{label}（{start.slice(5)} ~ {end.slice(5)}）</option>;
-                })}
+                {weekOptions(9).map(o => (
+                  <option key={o.offset} value={o.offset}>{o.label}（{o.start.slice(5)} ~ {o.end.slice(5)}）</option>
+                ))}
               </select>
               <button
                 className="btn btn-secondary btn-sm"
@@ -301,8 +300,9 @@ export function WeeklyReport() {
         {/* 本周 vs 上周：同一套口径的硬数字，省得每周手算「比上周多了几条」 */}
         {ztBugs.length > 0 && (
           <Panel
-            title="本周 vs 上周"
+            title={`${draftOffset === 0 ? '本周' : draftOffset === 1 ? '上周' : `${draftOffset} 周前`} vs ${draftOffset === 0 ? '上周' : draftOffset === 1 ? '前两周' : `${draftOffset + 1} 周前`}`}
             meta={`${cmp.cur.start} ~ ${cmp.cur.end}　对比 ${cmp.prev.start} ~ ${cmp.prev.end}`}
+            collapsible
             tools={
               <button
                 className="btn btn-secondary btn-sm"

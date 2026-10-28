@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { Page, PageHead, Icons } from '../components/ui';
 import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
 import { applyTheme, applyAccent, ACCENTS } from '../utils/theme';
 import { formatDateTime } from '../utils/time';
@@ -30,11 +31,11 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
 
 type SettingsTab = 'security' | 'general' | 'browser' | 'shortcuts';
 
-const TABS: { id: SettingsTab; label: string; icon: string }[] = [
-  { id: 'security', label: '安全', icon: '🔒' },
-  { id: 'general', label: '通用', icon: '⚙️' },
-  { id: 'browser', label: '浏览器', icon: '🌐' },
-  { id: 'shortcuts', label: '快捷键', icon: '⌨️' },
+const TABS: { id: SettingsTab; label: string; icon: string; hint: string }[] = [
+  { id: 'security', label: '安全', icon: '🔒', hint: '主密码 / 自动锁定 / 备份' },
+  { id: 'general', label: '通用', icon: '⚙️', hint: '主题 / 剪贴板 / 启动行为' },
+  { id: 'browser', label: '浏览器', icon: '🌐', hint: '路径与默认浏览器' },
+  { id: 'shortcuts', label: '快捷键', icon: '⌨️', hint: '自定义按键' },
 ];
 
 /** 下载体积显示：1.2 MB / 860 KB */
@@ -902,30 +903,44 @@ export function Settings() {
   return (
     <div className="content-area">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      <div className="settings-page">
-        <h2 style={{ marginBottom: 0, padding: '24px 24px 0' }}>设置</h2>
+      <Page>
+        <PageHead
+          icon={<Icons.tool size={16} />}
+          title="设置"
+          desc="安全、通用、浏览器与快捷键；改完点右下角「保存设置」生效"
+        />
 
-        {/* Tab bar */}
-        <div className="settings-tabs">
-          {TABS.map(tab => (
-            <div
-              key={tab.id}
-              className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              <span className="settings-tab-icon">{tab.icon}</span>
-              <span>{tab.label}</span>
+        {/* 左侧竖排菜单 + 右侧内容：以前是顶部横排 tab + 600px 居中窄栏，右边大片留白 */}
+        <div className="set-shell">
+          <nav className="set-rail" aria-label="设置分组">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`set-nav${activeTab === tab.id ? ' is-active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+                title={tab.hint}
+              >
+                <span className="set-nav-icon">{tab.icon}</span>
+                <span className="set-nav-text">
+                  <b>{tab.label}</b>
+                  <i>{tab.hint}</i>
+                </span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="set-main">
+            {renderTabContent()}
+            <div className="set-foot">
+              <span className="set-foot-hint">改动只在本页临时保存，点右侧按钮写入设置</span>
+              <button className="btn btn-primary" onClick={handleSave}>
+                保存设置
+              </button>
             </div>
-          ))}
+          </div>
         </div>
-
-        {/* Tab content */}
-        {renderTabContent()}
-
-        <button className="btn btn-primary" onClick={handleSave} style={{ marginTop: 16, marginLeft: 24 }}>
-          保存设置
-        </button>
-      </div>
+      </Page>
 
       {/* Security Word Modal */}
       <Modal open={showSecurityWord} onClose={() => setShowSecurityWord(false)} title={hasSecurityWord ? '修改安全词' : '设置安全词'}

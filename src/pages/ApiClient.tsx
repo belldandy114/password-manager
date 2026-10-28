@@ -701,7 +701,7 @@ export function ApiClient() {
                     );
                   })()}
 
-                  <div className="field">
+                  <div className={`field api-sec`}>
                     <button
                       type="button"
                       className="assert-toggle"
