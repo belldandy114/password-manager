@@ -1751,6 +1751,60 @@ function setupIpcHandlers() {
     }
   });
 
+  /** 所有项目（产品）的全部 Bug —— 用于「全部」视图看总数与跨项目统计 */
+  ipcMain.handle('zentao:all-bugs', async (_event, cfg) => {
+    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
+      return { success: false, error: '请先填写地址、账号和密码' };
+    }
+    cfg = ztNormalizeCfg(cfg);
+    try {
+      const key = ztApiCacheKey(cfg);
+      const products = await ztApiProducts(cfg);
+      const nameMap = ztProductCache.get(key) || {};
+      const perPage = 1000;
+      const maxPages = 3;               // 单个项目最多翻 3 页，避免异常数据把内存打爆
+      const queue = products.slice();
+      const collected = [];
+      let reported = 0;
+
+      const worker = async () => {
+        for (;;) {
+          const p = queue.shift();
+          if (!p) return;
+          const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&limit=${perPage}&page=1`);
+          const total = Number(first.total || 0);
+          reported += total;
+          let bugs = Array.isArray(first.bugs) ? first.bugs : [];
+          const pages = Math.min(maxPages, Math.ceil(total / perPage));
+          for (let pg = 2; pg <= pages; pg++) {
+            const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&limit=${perPage}&page=${pg}`);
+            const arr = Array.isArray(more.bugs) ? more.bugs : [];
+            if (!arr.length) break;
+            bugs = bugs.concat(arr);
+            if (arr.length < perPage) break;
+          }
+          for (const b of bugs) collected.push(b);
+        }
+      };
+      // 6 个并发：31 个产品大约 3~5 秒
+      await Promise.all(Array.from({ length: 6 }, worker));
+
+      const seen = new Map();
+      for (const b of collected) {
+        const id = String(b.id || '');
+        if (id && !seen.has(id)) seen.set(id, b);
+      }
+      const data = [...seen.values()]
+        .map(b => ztMapApiBug(b, nameMap))
+        .filter(b => b.id)
+        .sort((a, b) => Number(b.id) - Number(a.id));
+      // total 用去重后的实际条数，避免和表格行数不一致（reported 仅作参考）
+      return { success: true, data, total: data.length, reported, products: products.length };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // ---- 周报（本地 Markdown 目录） ----
   // 列表/读取/写入/删除都限制在指定目录内，删除走系统回收站（可恢复）。
   const WEEKLY_EXTS = ['.md', '.markdown', '.txt'];

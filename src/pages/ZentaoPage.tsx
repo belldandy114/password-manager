@@ -52,6 +52,12 @@ const QUICK_LINKS: { label: string; page: string }[] = [
 
 type TabId = 'mine' | 'project';
 
+/** 项目 Bug 里的「全部项目」伪 id */
+const ALL_PROJECT = '__all__';
+
+/** 明细表最多渲染多少行（全部项目时数据量大，避免卡顿） */
+const MAX_ROWS = 300;
+
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
   const cfg = useMemo(() => items.find(i => i.id === 'zentao'), [items]);
@@ -165,7 +171,9 @@ export function ZentaoPage() {
     setError('');
     setActiveProject(productId);
     setBusy('pb');
-    const res = await window.electronAPI.zentaoProjectBugs(currentCfg(), productId);
+    const res = productId === ALL_PROJECT
+      ? await window.electronAPI.zentaoAllBugs(currentCfg())
+      : await window.electronAPI.zentaoProjectBugs(currentCfg(), productId);
     setBusy('');
     if (res.success && res.data) setProjectBugs(res.data, res.total || res.data.length);
     else setError(res.error || '拉取项目 Bug 失败');
@@ -259,7 +267,35 @@ export function ZentaoPage() {
     });
   }, [pBugs, pStatus, pSeverity, pQuery]);
 
-  const projName = useMemo(() => projects.find(p => p.id === activeProject)?.name || '', [projects, activeProject]);
+  const projName = useMemo(
+    () => (activeProject === ALL_PROJECT ? '全部项目' : projects.find(p => p.id === activeProject)?.name || ''),
+    [projects, activeProject],
+  );
+
+  /** 「全部项目」时按项目汇总，点一行就能跳到该项目 */
+  const allProjectRows = useMemo(() => {
+    const map = new Map<string, ProjRow>();
+    for (const b of pBugs) {
+      const name = b.productName || '未分类';
+      const row = map.get(name) || { name, total: 0, unclosed: 0, active: 0, resolved: 0, closed: 0, fixed: 0, fatal: 0 };
+      row.total++;
+      if (isUnclosed(b)) row.unclosed++;
+      if (String(b.status) === 'active') row.active++;
+      if (String(b.status) === 'resolved') row.resolved++;
+      if (isClosed(b)) row.closed++;
+      if (isFixed(b)) row.fixed++;
+      if (String(b.severity) === '1') row.fatal++;
+      map.set(name, row);
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [pBugs]);
+
+  /** 从「全部」的项目行跳到具体项目 */
+  const jumpToProject = (name: string, dim?: string) => {
+    const target = projects.find(p => p.name === name);
+    setPFilter({ pStatus: dim || '', pSeverity: '', pQuery: '' });
+    if (target) loadProjectBugs(target.id);
+  };
 
   const filteredProjects = useMemo(() => {
     const q = projQuery.trim().toLowerCase();
@@ -301,7 +337,14 @@ export function ZentaoPage() {
           </div>
         )}
 
-        <Panel title="连接配置" meta={form.baseUrl ? form.baseUrl.replace(/^https?:\/\//, '') : '未配置'}>
+        {/* 已配置 → 默认折叠；未配置 → 默认展开，避免用户找不到输入框 */}
+        <Panel
+          key={cfg && cfg.baseUrl ? 'cfg-yes' : 'cfg-no'}
+          title="连接配置"
+          meta={form.baseUrl ? form.baseUrl.replace(/^https?:\/\//, '') : '未配置 · 点此展开填写'}
+          collapsible
+          defaultOpen={!(cfg && cfg.baseUrl)}
+        >
           <div className="grid3" style={{ gridTemplateColumns: '1.7fr 1fr 1fr' }}>
             <Field label="禅道地址">
               <input value={form.baseUrl} onChange={e => setForm({ ...form, baseUrl: e.target.value })}
@@ -431,6 +474,7 @@ export function ZentaoPage() {
                 }>
                   <div className="zt-proj-pick">
                     <select value={activeProject} onChange={e => loadProjectBugs(e.target.value)}>
+                      <option value={ALL_PROJECT}>全部项目（查看总 Bug 数）</option>
                       <option value="">请选择项目</option>
                       {filteredProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
@@ -460,8 +504,18 @@ export function ZentaoPage() {
                       onStatus={v => setPFilter({ pStatus: pStatus === v ? '' : v })}
                       onSeverity={v => setPFilter({ pSeverity: pSeverity === v ? '' : v })}
                     />
+                    {activeProject === ALL_PROJECT && allProjectRows.length > 0 && (
+                      <ProjectTable
+                        rows={allProjectRows}
+                        activeName=""
+                        onPick={jumpToProject}
+                        onPickFatal={name => jumpToProject(name, '1')}
+                      />
+                    )}
                     <div className="pg-sub" style={{ marginTop: 12 }}>
-                      这里是「整个项目」的缺陷，包含所有指派人 —— 和「我的 Bug」互补。
+                      {activeProject === ALL_PROJECT
+                        ? `这里是所有项目的全部缺陷（共 ${allProjectRows.length} 个项目），点项目行可跳到该项目。`
+                        : '这里是「整个项目」的缺陷，包含所有指派人 —— 和「我的 Bug」互补。'}
                     </div>
                   </Panel>
                 )}
@@ -492,7 +546,12 @@ export function ZentaoPage() {
                         pQuery.trim() && { label: `“${pQuery.trim()}”`, tone: 'mute' as PillTone, clear: () => setPFilter({ pQuery: '' }) },
                       ].filter(Boolean) as { label: string; tone: PillTone; clear: () => void }[]}
                     />
-                    <BugTable bugs={visibleProject} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee />
+                    <BugTable bugs={visibleProject.slice(0, MAX_ROWS)} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee />
+                    {visibleProject.length > MAX_ROWS && (
+                      <div className="tbl-more">
+                        已显示前 {MAX_ROWS} 条，还有 {visibleProject.length - MAX_ROWS} 条 —— 用上面的搜索或筛选缩小范围
+                      </div>
+                    )}
                   </Panel>
                 ) : (
                   <Panel>

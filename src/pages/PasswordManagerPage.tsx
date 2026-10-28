@@ -5,6 +5,7 @@ import { TrashPage } from './TrashPage';
 import { ImportPage } from './ImportPage';
 import { ExportPage } from './ExportPage';
 import { TagSidebar } from '../components/TagSidebar';
+import { Page, PageHead, Icons } from '../components/ui';
 
 type SubPage = 'dashboard' | 'trash' | 'import' | 'export';
 
@@ -30,41 +31,32 @@ export function PasswordManagerPage() {
   };
 
   return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
-      {/* Sub-navigation tab bar */}
-      <div className="pm-tab-bar">
-        {subNavItems.map(item => (
-          <div
-            key={item.key}
-            className={`pm-tab-item ${subPage === item.key ? 'active' : ''}`}
-            onClick={() => setSubPage(item.key)}
-          >
-            {item.label}
-            {item.key === 'trash' && trash.length > 0 && (
-              <span className="pm-tab-badge">{trash.length}</span>
-            )}
-          </div>
-        ))}
-      </div>
+    <div className="content-area">
+      <Page>
+        <PageHead
+          icon={<Icons.key size={16} />}
+          title="网址管理"
+          desc="按环境与标签整理账号密码，支持搜索、批量操作、安全体检与加密备份"
+        />
 
-      {/* Content: TagSidebar (only on dashboard) + page content */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'row',
-        overflow: 'hidden',
-      }}>
-        {subPage === 'dashboard' && <TagSidebar />}
-        <div className="main-content" style={{ border: 'none', flex: 1 }}>
-          {renderSubPage()}
+        <div className="tabs">
+          {subNavItems.map(item => (
+            <button
+              key={item.key}
+              className={`tab2${subPage === item.key ? ' is-active' : ''}`}
+              onClick={() => setSubPage(item.key)}
+            >
+              <span>{item.label}</span>
+              {item.key === 'trash' && trash.length > 0 && <span className="tab-count">{trash.length}</span>}
+            </button>
+          ))}
         </div>
-      </div>
+
+        <div className="pm-shell">
+          {subPage === 'dashboard' && <TagSidebar />}
+          <div className="pm-main">{renderSubPage()}</div>
+        </div>
+      </Page>
     </div>
   );
 }

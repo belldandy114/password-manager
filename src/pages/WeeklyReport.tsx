@@ -236,7 +236,7 @@ export function WeeklyReport() {
           </div>
         )}
 
-        <Panel title="周报目录" meta={dir}>
+        <Panel title="周报目录" meta={dir} collapsible defaultOpen={false}>
           <div className="wk-dir">
             <input
               value={dirDraft}

@@ -285,6 +285,8 @@ export interface ElectronAPI {
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
     Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
+  zentaoAllBugs: (cfg: ZentaoConfig) =>
+    Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; products?: number; error?: string }>;
 
   // 周报（本地 Markdown 目录，只读）
   weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;

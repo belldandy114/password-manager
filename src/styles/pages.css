@@ -1683,3 +1683,740 @@
   min-width: 320px;
   max-width: 100%;
 }
+
+/* ================================================================
+   19. 视觉重设计 v2（2026-10-28）
+   —— 统一 token + 重做侧边栏 / 页面头 / 卡片 / 表格 / 控件 / 标签页，
+      目标：层级清楚、留白舒展、深色浅色都耐看。
+      只覆盖样式，不动任何布局结构与业务逻辑。
+   ================================================================ */
+
+:root {
+  --pm-gap: 20px;
+  --pm-radius: 14px;
+  --pm-radius-sm: 9px;
+  --pm-ring: 3px;
+  --pm-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 14px 32px -22px rgba(0, 0, 0, 0.6);
+  --pm-shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.24), 0 18px 40px -22px rgba(0, 0, 0, 0.65);
+  --pm-line: color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+[data-theme="light"] {
+  --pm-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 14px 32px -24px rgba(16, 24, 40, 0.22);
+  --pm-shadow-hover: 0 2px 6px rgba(16, 24, 40, 0.06), 0 18px 40px -24px rgba(16, 24, 40, 0.28);
+  --pm-line: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* ---------------- 19.1 侧边栏 ---------------- */
+.sidebar {
+  width: 232px;
+  min-width: 232px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 260px),
+    var(--bg-sidebar);
+  border-right: 1px solid var(--pm-line);
+}
+
+.sidebar-logo {
+  padding: 18px 18px 16px;
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  border-bottom: 1px solid var(--pm-line);
+}
+
+.sidebar-logo-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.sidebar-nav {
+  padding: 10px 10px 4px;
+}
+
+.sidebar-group + .sidebar-group {
+  margin-top: 14px;
+}
+
+.sidebar-group-title {
+  padding: 0 8px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.nav-item {
+  gap: 9px;
+  padding: 7px 10px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  font-size: 12.8px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
+  border-left: 0;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-item svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.7;
+}
+
+.sidebar-system {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--pm-line);
+}
+
+/* ---------------- 19.2 页面骨架 ---------------- */
+.pg {
+  padding: 24px 28px 40px;
+  gap: var(--pm-gap);
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.pg-head {
+  align-items: center;
+  gap: 18px;
+  padding-bottom: 2px;
+}
+
+.pg-title {
+  gap: 10px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: 0.1px;
+}
+
+.pg-title .pg-ico {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+}
+
+.pg-sub {
+  margin-top: 7px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text-muted);
+  max-width: 900px;
+}
+
+.pg-tools {
+  gap: 8px;
+}
+
+/* ---------------- 19.3 卡片 / 面板 ---------------- */
+.pnl {
+  background: var(--bg-card);
+  border: 1px solid var(--pm-line);
+  border-radius: var(--pm-radius);
+  box-shadow: var(--pm-shadow);
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.pnl-head {
+  padding: 13px 18px;
+  gap: 10px;
+  border-bottom: 1px solid var(--pm-line);
+  background: transparent;
+}
+
+.pnl-title {
+  font-size: 13.5px;
+  font-weight: 620;
+  letter-spacing: 0.1px;
+  color: var(--text-primary);
+}
+
+.pnl-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnl-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pnl-body {
+  padding: 18px;
+}
+
+.pnl-body.flush {
+  padding: 0;
+}
+
+.pnl-foot {
+  padding: 10px 18px;
+  border-top: 1px solid var(--pm-line);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-input) 40%, transparent);
+}
+
+/* ---------------- 19.4 按钮 ---------------- */
+.btn {
+  border-radius: var(--pm-radius-sm);
+  font-weight: 550;
+  font-size: 12.5px;
+  padding: 8px 14px;
+  gap: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+
+.btn-sm {
+  padding: 6px 11px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, #000);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(180deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 10px 22px -10px color-mix(in srgb, var(--accent) 85%, transparent);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.btn-secondary {
+  background: color-mix(in srgb, var(--bg-input) 70%, transparent);
+  border: 1px solid var(--pm-line);
+  color: var(--text-secondary);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  color: var(--text-primary);
+}
+
+.btn-ghost {
+  color: var(--text-muted);
+}
+
+.btn-ghost:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* ---------------- 19.5 表单控件 ---------------- */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), textarea, select) {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: var(--pm-radius-sm);
+  font-size: 13px;
+  background: color-mix(in srgb, var(--bg-input) 82%, transparent);
+  border: 1px solid var(--pm-line);
+}
+
+:where(input, textarea, select):focus {
+  background: var(--bg-input);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  box-shadow: 0 0 0 var(--pm-ring) color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.field-label,
+.field > label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.15px;
+}
+
+/* ---------------- 19.6 表格 ---------------- */
+.tbl {
+  font-size: 12.8px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.tbl th {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-input) 55%, transparent);
+  border-bottom: 1px solid var(--pm-line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  backdrop-filter: blur(6px);
+}
+
+.tbl td {
+  padding: 10px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  vertical-align: middle;
+}
+
+.tbl tbody tr {
+  transition: background 0.13s ease;
+}
+
+.tbl tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tbl .cell-strong {
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.tbl .cell-mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.tbl .cell-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tbl-more {
+  padding: 10px 16px;
+  border-top: 1px solid var(--pm-line);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-input) 40%, transparent);
+}
+
+/* ---------------- 19.7 标签页 ---------------- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  border-bottom: 1px solid var(--pm-line);
+  background: transparent;
+  overflow-x: auto;
+}
+
+.tab2 {
+  position: relative;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.8px;
+  font-weight: 500;
+  gap: 6px;
+}
+
+.tab2::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.tab2:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.tab2.is-active {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 620;
+}
+
+.tab2.is-active::after {
+  background: var(--accent);
+}
+
+/* ---------------- 19.8 空状态 ---------------- */
+.empty {
+  padding: 52px 24px;
+  gap: 8px;
+}
+
+.empty-ico {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.empty-desc {
+  font-size: 12.3px;
+  line-height: 1.75;
+  color: var(--text-muted);
+  max-width: 420px;
+}
+
+/* ---------------- 19.9 徽标 / 搜索框 / 图标按钮 ---------------- */
+.pill {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11.3px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.search {
+  border-radius: var(--pm-radius-sm);
+}
+
+.search input {
+  height: 34px;
+  border-radius: var(--pm-radius-sm);
+}
+
+.ibtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--text-muted);
+}
+
+.ibtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ---------------- 19.10 禅道统计卡 ---------------- */
+.zt-cards {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.zt-card {
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--pm-line);
+  background: color-mix(in srgb, var(--bg-input) 55%, transparent);
+  gap: 1px;
+}
+
+.zt-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+}
+
+.zt-card.is-active {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: var(--accent-light);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent) inset;
+}
+
+.zt-card-num {
+  font-size: 21px;
+  font-weight: 680;
+  letter-spacing: -0.2px;
+}
+
+.zt-card-label {
+  font-size: 11.3px;
+}
+
+/* ---------------- 19.11 列表 / 侧栏条目 ---------------- */
+.wk-list {
+  padding: 8px;
+  gap: 3px;
+}
+
+.wk-item {
+  padding: 9px 11px;
+  border-radius: 9px;
+}
+
+.wk-item.is-active {
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.api-list-item {
+  border-radius: 8px;
+  padding: 8px 9px;
+}
+
+/* ---------------- 19.12 内容区 / 滚动条 ---------------- */
+.content-area {
+  background:
+    radial-gradient(1000px 460px at 82% -8%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    var(--bg-primary);
+}
+
+.content-area::-webkit-scrollbar {
+  width: 10px;
+}
+
+.content-area::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.content-area::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 60%, transparent);
+  background-clip: content-box;
+}
+
+/* 请求头 / 请求体改为上下排布：KV 行在半宽列里太挤 */
+.api-io {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.kv-row {
+  grid-template-columns: minmax(0, 200px) 14px minmax(0, 1fr) 28px;
+  gap: 8px;
+}
+
+.kv-row input {
+  height: 32px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.kv-sep {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ---------------- 19.13 网址管理页与工作台统一 ---------------- */
+.pm-shell {
+  display: flex;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pm-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pm-main > .content-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 2px 8px;
+  background: transparent;
+}
+
+/* 工具栏 → 卡片 */
+.pm-main .toolbar {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--pm-line);
+  border-radius: var(--pm-radius);
+  box-shadow: var(--pm-shadow);
+  min-height: 0;
+}
+
+/* 标签栏 → 卡片 */
+.tag-sidebar {
+  width: 210px;
+  min-width: 210px;
+  background: var(--bg-card);
+  border: 1px solid var(--pm-line);
+  border-right: 1px solid var(--pm-line);
+  border-radius: var(--pm-radius);
+  box-shadow: var(--pm-shadow);
+  overflow: visible;
+  max-height: 100%;
+}
+
+.tag-sidebar.collapsed {
+  width: 30px;
+  min-width: 30px;
+}
+
+.tag-sidebar-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--pm-line);
+}
+
+.tag-sidebar-title {
+  font-size: 13.5px;
+  font-weight: 620;
+}
+
+.tag-sidebar-search {
+  border-bottom: 1px solid var(--pm-line);
+}
+
+/* 条目卡片 */
+.entry-card {
+  border-radius: var(--pm-radius);
+  border: 1px solid var(--pm-line);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.entry-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: var(--pm-shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* 环境分组标题 */
+.env-section-header {
+  margin: 4px 0 10px;
+  padding: 4px 2px;
+}
+
+.env-section-header .count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* 子页 tab 里的数量角标 */
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+/* ---------------- 19.14 折叠面板 + 尺寸再提一档 ---------------- */
+.pnl-head.is-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.pnl-head.is-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.pnl-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+  transform: rotate(0deg);
+}
+
+.pnl-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.pnl.is-collapsed .pnl-head {
+  border-bottom: 0;
+}
+
+.pg {
+  padding: 26px 32px 44px;
+  gap: 22px;
+}
+
+.pg-title {
+  font-size: 23px;
+}
+
+.pnl {
+  border-radius: 16px;
+}
+
+.pnl-body {
+  padding: 20px;
+}
+
+.tbl td {
+  padding: 11px 16px;
+}
+
+.tbl th {
+  padding: 11px 16px;
+}
+
+.zt-card-num {
+  font-size: 23px;
+}
+
+.zt-cards {
+  gap: 11px;
+}
+
+/* 禅道统计卡：一行放得下（全部 / 5 个状态 / 4 个严重度） */
+.zt-cards {
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.zt-card {
+  padding: 10px 11px;
+}
+
+.zt-card-num {
+  font-size: 21px;
+}

@@ -77,7 +77,7 @@ export function PageHead({
 /* ---------------- 面板 ---------------- */
 
 export function Panel({
-  title, meta, tools, children, flush, foot,
+  title, meta, tools, children, flush, foot, collapsible, defaultOpen = true,
 }: {
   title?: React.ReactNode;
   meta?: React.ReactNode;
@@ -85,18 +85,32 @@ export function Panel({
   children: React.ReactNode;
   flush?: boolean;
   foot?: React.ReactNode;
+  /** 可折叠：标题栏整行可点，右侧出现箭头 */
+  collapsible?: boolean;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  const showed = !collapsible || open;
+
   return (
-    <section className="pnl">
+    <section className={`pnl${collapsible && !open ? ' is-collapsed' : ''}`}>
       {(title || tools) && (
-        <header className="pnl-head">
+        <header
+          className={`pnl-head${collapsible ? ' is-clickable' : ''}`}
+          onClick={collapsible ? () => setOpen(o => !o) : undefined}
+        >
+          {collapsible && (
+            <span className={`pnl-caret${open ? ' is-open' : ''}`}>
+              <Icons.chevron size={13} />
+            </span>
+          )}
           {title && <div className="pnl-title">{title}</div>}
           {meta !== undefined && meta !== null && <span className="pnl-meta">{meta}</span>}
-          {tools && <div className="pnl-tools">{tools}</div>}
+          {tools && <div className="pnl-tools" onClick={e => e.stopPropagation()}>{tools}</div>}
         </header>
       )}
-      <div className={flush ? 'pnl-body flush' : 'pnl-body'}>{children}</div>
-      {foot && <div className="pnl-foot">{foot}</div>}
+      {showed && <div className={flush ? 'pnl-body flush' : 'pnl-body'}>{children}</div>}
+      {showed && foot && <div className="pnl-foot">{foot}</div>}
     </section>
   );
 }

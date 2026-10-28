@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
   zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
+  zentaoAllBugs: (cfg) => ipcRenderer.invoke('zentao:all-bugs', cfg),
 
   // 周报（本地 Markdown 目录）
   weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),
