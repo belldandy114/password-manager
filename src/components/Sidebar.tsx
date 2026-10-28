@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface Props {
   currentPage: string;
@@ -15,6 +15,26 @@ interface NavItem {
 
 
 export function Sidebar({ currentPage, onNavigate, onLock }: Props) {
+  // 禅道「我的 Bug」未读数：主进程定时检查到新 Bug 时推过来，进页面即清零
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await window.electronAPI.zentaoUnread();
+      if (alive && r.success && typeof r.data === 'number') setUnread(r.data);
+    })();
+    const off = window.electronAPI.onZentaoUnread((n) => setUnread(Number(n) || 0));
+    return () => { alive = false; off(); };
+  }, []);
+
+  // 打开禅道页就等于「看了」，红点清零
+  useEffect(() => {
+    if (currentPage !== 'zentao' || unread === 0) return;
+    setUnread(0);
+    window.electronAPI.zentaoUnreadClear().catch(() => { /* ignore */ });
+  }, [currentPage, unread]);
+
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
@@ -35,6 +55,11 @@ export function Sidebar({ currentPage, onNavigate, onLock }: Props) {
               >
                 {item.icon}
                 <span>{item.label}</span>
+                {item.id === 'zentao' && unread > 0 && (
+                  <span className="nav-dot" title={`${unread} 个新 Bug 未看`}>
+                    {unread > 99 ? '99+' : unread}
+                  </span>
+                )}
               </div>
             ))}
           </div>

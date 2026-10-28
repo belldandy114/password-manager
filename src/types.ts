@@ -77,6 +77,8 @@ export interface AppSettings {
   zentaoNotify: boolean;
   /** 提醒检查间隔（分钟） */
   zentaoNotifyInterval: number;
+  /** 多套禅道配置里当前使用哪一套（id；老数据默认 'zentao'） */
+  zentaoActiveId?: string;
   /** 自动备份保留份数（1~60） */
   backupKeep: number;
   browserPaths: { [key: string]: string };
@@ -157,12 +159,18 @@ export interface NotifyStatus {
   lastCheck: { at: string; ok: boolean; total?: number; fresh?: number; error?: string } | null;
 }
 
+/** 禅道 Bug 附件（url 是要带登录态才能取的 file-download / file-read 地址） */
+export interface ZentaoAttachment {
+  name: string;
+  url: string;
+}
+
 export interface ZentaoBugDetail {
   id: string;
   title: string;
   productName?: string;
   steps: string;
-  attachments: string[];
+  attachments: ZentaoAttachment[];
   url: string;
   /** 重现步骤里的截图（主进程带登录态取回后转成 dataURL，渲染层才能直接显示） */
   images?: { src: string; name: string; dataUrl: string }[];
@@ -484,12 +492,20 @@ export interface ElectronAPI {
     }>;
   zentaoBugDetail: (cfg: ZentaoConfig, bugId: string) =>
     Promise<{ success: boolean; data?: ZentaoBugDetail; error?: string }>;
+  /** 下载 Bug 附件（主进程带登录态取二进制）；mode=open 直接打开，save 另存为 */
+  zentaoAttachment: (cfg: ZentaoConfig, url: string, name: string, mode?: 'open' | 'save') =>
+    Promise<{ success: boolean; canceled?: boolean; data?: { path: string; size: number; name: string }; error?: string }>;
   /** 立即检查一次新 Bug（设置页「立即检查」） */
   zentaoNotifyNow: () => Promise<{ success: boolean; data?: NotifyStatus['lastCheck'] }>;
   /** 提醒运行状态：是否开启/已配置/解锁中/上次检查结果 */
   zentaoNotifyStatus: () => Promise<{ success: boolean; data?: NotifyStatus }>;
   /** 点系统通知 → 跳到禅道页 */
   onZentaoOpen: (cb: () => void) => () => void;
+  /** 禅道未读数（侧边栏红点） */
+  zentaoUnread: () => Promise<{ success: boolean; data?: number }>;
+  zentaoUnreadClear: () => Promise<{ success: boolean; data?: number }>;
+  /** 主进程发现新 Bug 时推送未读数 */
+  onZentaoUnread: (cb: (n: number) => void) => () => void;
 
   // 周报（本地 Markdown 目录，只读）
   weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;

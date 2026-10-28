@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { ZentaoBug, ZentaoBugDetail, ZentaoConfig } from '../types';
+import type { ZentaoBug, ZentaoBugDetail, ZentaoAttachment, ZentaoConfig } from '../types';
 import { Icons, Pill } from './ui';
 import { bugToText } from '../utils/bugText';
 
@@ -20,6 +20,9 @@ export function BugDrawer({
   const [copied, setCopied] = useState(false);
   // 点缩略图放大查看
   const [preview, setPreview] = useState<string>('');
+  // 附件下载状态（同一时刻只处理一个，避免并下发一堆请求）
+  const [busyFile, setBusyFile] = useState('');
+  const [fileTip, setFileTip] = useState('');
 
   useEffect(() => {
     if (!bug || !cfg) { setDetail(null); return; }
@@ -60,6 +63,21 @@ export function BugDrawer({
     await navigator.clipboard.writeText(bugToText(bug, base));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  /** 取附件：主进程带登录态下载；open=直接打开，save=另存为 */
+  const getAttachment = async (a: ZentaoAttachment, mode: 'open' | 'save') => {
+    if (!cfg) return;
+    setBusyFile(a.url);
+    setFileTip('');
+    const res = await window.electronAPI.zentaoAttachment(cfg, a.url, a.name, mode);
+    setBusyFile('');
+    if (res.canceled) return;
+    if (res.success) {
+      setFileTip(mode === 'save' ? `已保存：${res.data?.path}` : `已打开：${res.data?.name}`);
+    } else {
+      setFileTip(res.error || '附件下载失败');
+    }
   };
 
   return (
@@ -136,8 +154,28 @@ export function BugDrawer({
                 {detail.attachments.length > 0 && (
                   <div className="drawer-files">
                     <span>附件：</span>
-                    {detail.attachments.map(a => <span key={a} className="chip">{a}</span>)}
-                    <span className="drawer-hint-inline">（在浏览器中打开可下载）</span>
+                    {detail.attachments.map(a => (
+                      <span key={a.url} className="drawer-file">
+                        <span className="chip">{a.name}</span>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={busyFile === a.url}
+                          title="带登录态取回，用系统默认程序打开"
+                          onClick={() => getAttachment(a, 'open')}
+                        >
+                          {busyFile === a.url ? '取回中…' : '打开'}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={busyFile === a.url}
+                          title="另存到指定位置"
+                          onClick={() => getAttachment(a, 'save')}
+                        >
+                          另存
+                        </button>
+                      </span>
+                    ))}
+                    {fileTip && <span className="drawer-hint-inline">{fileTip}</span>}
                   </div>
                 )}
               </>

@@ -30,6 +30,8 @@ const check = (name, ok, extra = '') => {
 
 (async () => {
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r7-'));
+  // 预置「上次还有 3 个新 Bug 没看」的状态，用来验证侧边栏红点
+  fs.writeFileSync(path.join(ud, 'zentao-notify-state.json'), JSON.stringify({ ids: [], unread: 3 }), 'utf8');
   const env = { ...process.env, PM_USE_DIST: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   const cwd = usePacked ? APP_DIR : ROOT;
@@ -333,6 +335,45 @@ const check = (name, ok, extra = '') => {
   await sleep(500);
   const mdText = await ev(`(() => { const p = [...document.querySelectorAll('pre.code2')].pop(); return p ? p.innerText : ''; })()`);
   check('生成：Markdown 表格有表头与分隔行', mdText.includes('| --- |') && mdText.includes('code'), mdText.split('\n')[0] || '');
+
+  /* ================= C. 禅道 ================= */
+  // C11 未读红点：启动前写入了 unread=3，还没进禅道页时应该亮着
+  const dotBefore = await ev(`(() => { const d = document.querySelector('.nav-dot'); return d ? d.textContent.trim() : ''; })()`);
+  check('侧边栏：未读红点显示上次没看的数量', dotBefore === '3', `红点=${dotBefore || '(无)'}`);
+
+  // C9 多套配置：先塞两套进去，再切着看
+  await api(`window.electronAPI.wsSet('integrations', ${JSON.stringify([
+    { id: 'zentao', baseUrl: 'http://a.example.com/zentao', account: 'alice', password: 'pa', updatedAt: new Date().toISOString() },
+    { id: 'cfg-b', baseUrl: 'http://b.example.com/zentao', account: 'bob', password: 'pb', updatedAt: new Date().toISOString() },
+  ])})`);
+  await navTo('禅道');
+  await sleep(900);
+  // 已配置时面板默认折叠（折叠即不渲染子节点），先展开标题栏
+  await ev(`(() => {
+    const h = [...document.querySelectorAll('.pnl-head')].find(x => x.textContent.includes('连接配置'));
+    if (h) { h.click(); return true; }
+    return false;
+  })()`);
+  await sleep(400);
+  const chipCount = await ev(`(() => document.querySelectorAll('.zt-cfg-chip').length)()`);
+  check('禅道：配置胶囊按套列出（2 套 + 新建）', Number(chipCount) === 3, `${chipCount} 个`);
+  const urlVal = async () => ev(`(() => { const el = document.querySelector('.grid3 input'); return el ? el.value : ''; })()`);
+  check('禅道：默认用第一套配置', (await urlVal()).includes('a.example.com'), await urlVal());
+  await ev(`(() => { const c = [...document.querySelectorAll('.zt-cfg-chip')].find(x => x.textContent.includes('b.example.com')); if (c) { c.click(); return true; } return false; })()`);
+  await sleep(600);
+  check('禅道：点另一套就切过去', (await urlVal()).includes('b.example.com'), await urlVal());
+  const st = await api(`window.electronAPI.settingsGet()`);
+  check('禅道：当前用的那套写进设置（定时提醒跟着它）', st.zentaoActiveId === 'cfg-b', String(st.zentaoActiveId));
+
+  // C10 附件：没有地址时要有明确报错（真实下载需连禅道，纯解析逻辑在单测里覆盖）
+  const attErr = await api(`window.electronAPI.zentaoAttachment({ id:'zentao', baseUrl:'http://a.example.com/zentao', account:'alice', password:'pa' }, '', 'x.txt', 'open')`);
+  check('禅道附件：缺地址时报错而不是静默', attErr.success === false && /附件地址/.test(attErr.error || ''), attErr.error || '');
+
+  // 进了禅道页，红点应该被清掉
+  await sleep(600);
+  const dotAfter = await ev(`(() => { const d = document.querySelector('.nav-dot'); return d ? d.textContent.trim() : ''; })()`);
+  const unreadNow = await api(`window.electronAPI.zentaoUnread()`);
+  check('侧边栏：进禅道页后红点清零', !dotAfter && unreadNow.data === 0, `红点=${dotAfter || '(无)'} 计数=${unreadNow.data}`);
 
   /* ================= 结果 ================= */
   srv.close();

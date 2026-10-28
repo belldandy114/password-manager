@@ -171,6 +171,22 @@ body {
   color: var(--accent);
 }
 
+/* 侧边栏未读红点（禅道「我的 Bug」） */
+.nav-dot {
+  margin-left: auto;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
 .nav-item.active {
   background: var(--accent-light);
   color: var(--accent);

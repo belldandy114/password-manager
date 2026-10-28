@@ -9,6 +9,7 @@ import { bugsToText, bugsToCsv } from '../utils/bugText';
 import { Pager } from '../components/Pager';
 import { BugTrend } from '../components/BugTrend';
 import { useStore } from '../store/useStore';
+import { useConfirm } from '../components/confirm';
 import { formatHm } from '../utils/time';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
@@ -71,7 +72,23 @@ let lastCmdAt = 0;
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
   const { items: presets, save: savePresets } = useCollection<ZentaoPreset>('ztPresets');
-  const cfg = useMemo(() => items.find(i => i.id === 'zentao'), [items]);
+  const { ask, confirmNode } = useConfirm();
+  // 多套禅道配置：items 里每条都是一套 {baseUrl, account, password}，
+  // editingId 指向「当前正在看/用」的那套（新建时先是一个还不存在的 uuid）。
+  const [editingId, setEditingId] = useState<string>(() => {
+    try { return localStorage.getItem('pm.zentao.active') || 'zentao'; } catch { return 'zentao'; }
+  });
+  const cfg = useMemo(
+    () => items.find(i => i.id === editingId) || items.find(i => i.id === 'zentao'),
+    [items, editingId],
+  );
+  // 老库里没有 'zentao' 这条（或删光了）时，自动落到第一条已保存配置
+  useEffect(() => {
+    if (items.length === 0) return;
+    if (items.some(i => i.id === editingId)) return;
+    if (items.some(i => i.id === 'zentao')) return;
+    setEditingId(items[0].id);
+  }, [items, editingId]);
 
   /* ---------- store：我的 Bug ---------- */
   const bugs = useZentaoStore(s => s.bugs);
@@ -123,10 +140,52 @@ export function ZentaoPage() {
     if (cfg) setForm({ baseUrl: cfg.baseUrl, account: cfg.account, password: cfg.password });
   }, [cfg]);
 
+  // 记住当前用的是哪套配置（下次打开还是它，主进程的定时提醒也跟着它）
+  useEffect(() => {
+    try { localStorage.setItem('pm.zentao.active', editingId); } catch { /* ignore */ }
+    window.electronAPI.settingsSave({ zentaoActiveId: editingId }).catch(() => { /* 配置还没落库时忽略 */ });
+  }, [editingId]);
+
   const persist = async (next: { baseUrl: string; account: string; password: string }) => {
-    const entry: ZentaoConfig = { id: 'zentao', ...next, updatedAt: new Date().toISOString() };
-    const others = items.filter(i => i.id !== 'zentao');
+    const id = editingId || 'zentao';
+    const entry: ZentaoConfig = { id, ...next, updatedAt: new Date().toISOString() };
+    const others = items.filter(i => i.id !== id);
     await save([...others, entry]);
+    // 新建的配置第一次保存后才有 id，这里把「活跃配置」钉在它上面
+    if (editingId !== id) setEditingId(id);
+  };
+
+  /** 切到另一套已保存配置 */
+  const switchCfg = (id: string) => {
+    setError('');
+    setEditingId(id);
+  };
+
+  /** 新建一套（先只清空表单，保存/登录成功后才真正落库） */
+  const addCfg = () => {
+    setError('');
+    setEditingId(crypto.randomUUID());
+    setForm({ baseUrl: '', account: '', password: '' });
+  };
+
+  const removeCfg = () => {
+    if (!cfg) return;
+    const target = cfg;
+    ask({
+      title: '删除这套禅道配置？',
+      message: `${target.baseUrl}\n${target.account}\n\n只删配置本身，已拉取的 Bug 数据不受影响。`,
+      confirmText: '删除',
+      danger: true,
+      onOk: async () => {
+        const rest = items.filter(i => i.id !== target.id);
+        await save(rest);
+        const nextCfg = rest[0];
+        setEditingId(nextCfg ? nextCfg.id : 'zentao');
+        setForm(nextCfg
+          ? { baseUrl: nextCfg.baseUrl, account: nextCfg.account, password: nextCfg.password }
+          : { baseUrl: '', account: '', password: '' });
+      },
+    });
   };
 
   useEffect(() => {
@@ -141,7 +200,7 @@ export function ZentaoPage() {
   useEffect(() => { setPageProj(1); }, [activeProject, pStatus, pSeverity, pQuery]);
 
   const currentCfg = (): ZentaoConfig => ({
-    id: 'zentao',
+    id: editingId || 'zentao',
     baseUrl: form.baseUrl.trim(),
     account: form.account.trim(),
     password: form.password,
@@ -458,12 +517,38 @@ export function ZentaoPage() {
 
         {/* 已配置 → 默认折叠；未配置 → 默认展开，避免用户找不到输入框 */}
         <Panel
-          key={cfg && cfg.baseUrl ? 'cfg-yes' : 'cfg-no'}
+          key={items.length > 0 ? 'cfg-yes' : 'cfg-no'}
           title="连接配置"
           meta={form.baseUrl ? form.baseUrl.replace(/^https?:\/\//, '') : '未配置 · 点此展开填写'}
           collapsible
           defaultOpen={!(cfg && cfg.baseUrl)}
         >
+          {/* 多套配置：点一下即切换「拉取哪个地址的禅道」 */}
+          <div className="zt-cfg-row">
+            <span className="zt-cfg-label">已保存配置</span>
+            <div className="zt-cfg-list">
+              {items.map(i => (
+                <button
+                  key={i.id}
+                  className={`zt-cfg-chip${i.id === (cfg ? cfg.id : editingId) ? ' is-active' : ''}`}
+                  onClick={() => switchCfg(i.id)}
+                  title={`${i.baseUrl}　${i.account}`}
+                >
+                  <span className="zt-cfg-url">{i.baseUrl.replace(/^https?:\/\//, '') || '未填地址'}</span>
+                  <span className="zt-cfg-acc">{i.account || '-'}</span>
+                </button>
+              ))}
+              <button className="zt-cfg-chip zt-cfg-add" onClick={addCfg} title="新建一套禅道地址/账号">
+                ＋ 新建
+              </button>
+            </div>
+            {cfg && (
+              <button className="btn btn-ghost btn-sm" onClick={removeCfg} title="只删配置，不动已拉取的数据">
+                删除当前
+              </button>
+            )}
+          </div>
+
           <div className="grid3" style={{ gridTemplateColumns: '1.7fr 1fr 1fr' }}>
             <Field label="禅道地址">
               <input value={form.baseUrl} onChange={e => setForm({ ...form, baseUrl: e.target.value })}
@@ -748,6 +833,7 @@ export function ZentaoPage() {
 
       {/* Bug 详情抽屉 */}
       <BugDrawer bug={detailBug} cfg={cfg || null} onClose={() => setDetailBug(null)} />
+      {confirmNode}
 
       {/* 筛选预设 */}
       <Modal

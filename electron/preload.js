@@ -90,8 +90,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
   zentaoAllBugs: (cfg, force) => ipcRenderer.invoke('zentao:all-bugs', cfg, { force: !!force }),
   zentaoBugDetail: (cfg, bugId) => ipcRenderer.invoke('zentao:bug-detail', { cfg, bugId }),
+  zentaoAttachment: (cfg, url, name, mode) => ipcRenderer.invoke('zentao:attachment', { cfg, url, name, mode }),
   zentaoNotifyNow: () => ipcRenderer.invoke('zentao:notify-now'),
   zentaoNotifyStatus: () => ipcRenderer.invoke('zentao:notify-status'),
+  zentaoUnread: () => ipcRenderer.invoke('zentao:unread'),
+  zentaoUnreadClear: () => ipcRenderer.invoke('zentao:unread-clear'),
+  onZentaoUnread: (cb) => {
+    const h = (_e, n) => cb(n);
+    ipcRenderer.on('zentao:unread', h);
+    return () => ipcRenderer.removeListener('zentao:unread', h);
+  },
   onZentaoOpen: (cb) => {
     const h = () => cb();
     ipcRenderer.on('zentao:open', h);

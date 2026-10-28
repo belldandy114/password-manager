@@ -1038,6 +1038,8 @@ function setupIpcHandlers() {
     lastActivity = Date.now();
     // 解锁后启动禅道新 Bug 提醒（内部会检查开关）
     setTimeout(() => { try { ztRestartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
+    // 侧边栏红点：把上次没看的未读数推给界面
+    setTimeout(() => { try { ztLoadSeen(); ztPushUnread(); } catch { /* 忽略 */ } }, 0);
     // 解锁即补一次当日备份：只改密码不改数据的日子也能有快照
     setTimeout(() => { try { backupVaultOncePerDay(); } catch { /* 忽略 */ } }, 400);
     return { success: true, data: vault };
@@ -1230,6 +1232,8 @@ function setupIpcHandlers() {
       lastPage: s.lastPage || DEFAULT_SETTINGS.lastPage,
       zentaoNotify: !!s.zentaoNotify,
       zentaoNotifyInterval: Number(s.zentaoNotifyInterval) || DEFAULT_SETTINGS.zentaoNotifyInterval,
+      // 多套禅道配置里「当前用哪套」：主进程的定时提醒也要跟着它走
+      zentaoActiveId: String(s.zentaoActiveId || 'zentao'),
       backupKeep: Math.min(60, Math.max(1, Number(s.backupKeep) || DEFAULT_SETTINGS.backupKeep)),
       browserPaths: s.browserPaths || { ...DEFAULT_SETTINGS.browserPaths },
       keybindings: s.keybindings || { ...DEFAULT_SETTINGS.keybindings },
@@ -2130,13 +2134,14 @@ function setupIpcHandlers() {
       }
     }
 
-    // 附件
+    // 附件（保存 href，渲染层才能点开下载；只留名字时没法取文件）
     const attachments = [];
     const re = /href="([^"]*file-(?:download|read)[^"]*)"[^>]*>([^<]{1,120})</g;
     let fm;
     while ((fm = re.exec(html)) !== null) {
       const name = ztStripTags(fm[2]);
-      if (name && !attachments.includes(name)) attachments.push(name);
+      const url = abs(fm[1]);
+      if (name && url && !attachments.some(a => a.url === url)) attachments.push({ name, url });
     }
 
     return {
@@ -2379,18 +2384,71 @@ function setupIpcHandlers() {
     }
   });
 
+  /**
+   * 下载 Bug 附件：禅道的 file-download 与 file-read 链接必须带登录 Cookie，
+   * 渲染层的 <a href> 点了只会 302 到登录页，所以由主进程带 Cookie 取二进制。
+   * mode=open → 存临时文件并直接打开；mode=save → 让用户选保存路径。
+   */
+  ipcMain.handle('zentao:attachment', async (_event, { cfg, url, name, mode = 'open' } = {}) => {
+    if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
+    if (!url) return { success: false, error: '缺少附件地址' };
+    cfg = ztNormalizeCfg(cfg);
+    try {
+      const login = await ztEnsureLogin(cfg);
+      if (!login.ok) return { success: false, error: login.error };
+      const res = await ztFetchBinary(cfg, url, 100 * 1024 * 1024);
+      if (!res.buffer) {
+        return { success: false, error: res.tooLarge ? '附件超过 100MB，请到浏览器里下载' : `附件取回失败（HTTP ${res.status}）` };
+      }
+      const safeName = String(name || path.basename(String(url).split('?')[0]) || 'attachment')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .slice(0, 120);
+      let target = '';
+      if (mode === 'save') {
+        const r = await dialog.showSaveDialog(mainWindow, { title: '保存附件', defaultPath: safeName });
+        if (r.canceled || !r.filePath) return { success: false, canceled: true };
+        target = r.filePath;
+      } else {
+        const dir = path.join(app.getPath('temp'), 'pm-zt-attach');
+        fs.mkdirSync(dir, { recursive: true });
+        target = path.join(dir, safeName);
+        // 同名文件加序号，别互相覆盖
+        if (fs.existsSync(target)) {
+          const dot = safeName.lastIndexOf('.');
+          const stem = dot > 0 ? safeName.slice(0, dot) : safeName;
+          const ext = dot > 0 ? safeName.slice(dot) : '';
+          let i = 2;
+          while (fs.existsSync(target)) target = path.join(dir, `${stem}-${i++}${ext}`);
+        }
+      }
+      fs.writeFileSync(target, res.buffer);
+      if (mode === 'save') {
+        shell.showItemInFolder(target);
+      } else {
+        const err = await shell.openPath(target);
+        if (err) return { success: false, error: `文件已保存到 ${target}，但打开失败：${err}`, data: { path: target } };
+      }
+      return { success: true, data: { path: target, size: res.buffer.length, name: safeName } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // ---- 新 Bug 提醒（后台定时检查「我的 Bug」） ----
   let ztNotifyTimer = null;
   let ztNotifyBusy = false;
   let ztSeenIds = null;
+  /** 未读数（侧边栏红点）：新 Bug 累加，打开禅道页清零 */
+  let ztUnread = 0;
 
-  const ztNotifyStateFile = () => path.join(app.getPath('userData'), 'zentao-notify-state.json');
+  const ztNotifyStateFile = () => path.join(DATA_DIR, 'zentao-notify-state.json');
 
   function ztLoadSeen() {
     if (ztSeenIds) return ztSeenIds;
     try {
       const j = JSON.parse(fs.readFileSync(ztNotifyStateFile(), 'utf8'));
       ztSeenIds = new Set(Array.isArray(j.ids) ? j.ids.map(String) : []);
+      ztUnread = Number(j.unread) || 0;
     } catch {
       ztSeenIds = new Set();
     }
@@ -2399,18 +2457,44 @@ function setupIpcHandlers() {
 
   function ztSaveSeen() {
     try {
-      fs.writeFileSync(ztNotifyStateFile(), JSON.stringify({ ids: [...(ztSeenIds || [])], at: new Date().toISOString() }), 'utf8');
+      fs.writeFileSync(ztNotifyStateFile(), JSON.stringify({
+        ids: [...(ztSeenIds || [])], unread: ztUnread, at: new Date().toISOString(),
+      }), 'utf8');
     } catch { /* 忽略 */ }
   }
+
+  /** 把未读数推给渲染层（侧边栏红点） */
+  function ztPushUnread() {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('zentao:unread', ztUnread);
+  }
+
+  ipcMain.handle('zentao:unread', () => ({ success: true, data: ztUnread }));
+
+  ipcMain.handle('zentao:unread-clear', () => {
+    ztUnread = 0;
+    ztSaveSeen();
+    ztPushUnread();
+    return { success: true, data: 0 };
+  });
+
+  // 启动就读一次：上次退出时还没看的未读数要能在侧边栏立刻显示
+  try { ztLoadSeen(); } catch { /* 忽略 */ }
 
   /** 从 vault 里取禅道配置（只有解锁后才有） */
   function ztCfgFromVault() {
     if (!currentPassword) return null;
     const vault = loadVault(currentPassword);
     const list = vault && Array.isArray(vault.integrations) ? vault.integrations : [];
-    const cfg = list.find(i => i && i.id === 'zentao');
-    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) return null;
-    return cfg;
+    const settings = loadSettings() || {};
+    const activeId = String(settings.zentaoActiveId || 'zentao');
+    const complete = (c) => c && c.baseUrl && c.account && c.password;
+    // 优先用「当前选中的那套」；它被删了就退回老的单配置，最后退回任意一套填全的
+    const active = list.find(i => i && i.id === activeId);
+    if (complete(active)) return active;
+    const legacy = list.find(i => i && i.id === 'zentao');
+    if (complete(legacy)) return legacy;
+    const any = list.find(complete);
+    return any || null;
   }
 
   /** 最近一次提醒检查的结果（设置页展示，避免「开了但不知道有没有跑」） */
@@ -2452,6 +2536,10 @@ function setupIpcHandlers() {
           n.show();
         } catch { /* 系统不支持通知时忽略 */ }
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
+        // 侧边栏红点：未读数累加并推给渲染层
+        ztUnread += fresh.length;
+        ztSaveSeen();
+        ztPushUnread();
       }
       ztLastCheck = { at: new Date().toISOString(), ok: true, total: r.data.length, fresh: fresh.length };
       ztSeenIds = ids;
