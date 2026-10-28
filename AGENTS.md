@@ -318,3 +318,22 @@ product=58&status=all        → total 680（active 190 + resolved 29 + closed 4
 `browseType=all` / `/products/58/bugs` 都是 219，只有 `status=all` 是网页上看到的全量。
 实测该实例：产品 58 = 681 条；31 个产品合计 9881 条（其中 9358 已关闭）。
 明细表仍限制渲染 300 行（`.tbl-more` 提示），别整表渲染上万行。
+
+### 发布新版本（远程更新完全依赖 GitHub Releases）
+
+应用内「检查更新」读的是 `https://api.github.com/repos/belldandy114/password-manager/releases/latest`，
+**只提交 git 是不够的**，必须发 Release 并挂上安装包，否则所有人的「检查更新」永远停在旧版本（之前停在 v1.0.2）。
+
+```bash
+npm run dist                                     # → release/测试工具 Setup 1.2.6.exe
+cp "release/测试工具 Setup 1.2.6.exe" "release/PasswordManager-Setup-1.2.6.exe"
+gh release create v1.2.6 "release/PasswordManager-Setup-1.2.6.exe" \
+  --title "测试工具 v1.2.6" --notes-file notes.md --latest --target master
+```
+
+- ⚠️ **上传前必须改成英文文件名**：中文名会被 GitHub 改写（`测试工具 Setup 1.2.6.exe` → `Setup.1.2.6.exe`）。
+- `release/` 在 `.gitignore` 里，exe 不进 git，只能通过 Release 附件分发。
+- 发布后自检：`gh release view v1.2.6 --json assets`（state=uploaded、size 对得上）；
+  `curl -s .../releases/latest | grep tag_name` 应为 `v1.2.6`。
+- 应用端 `updateCheck()` 会返回 `{current, latest, hasUpdate, url, notes}`，`url` 指向 Release 页；
+  安装包是 NSIS，`/S /currentuser` 可静默覆盖安装，密码库数据不受影响。
