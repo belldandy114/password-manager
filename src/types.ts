@@ -135,6 +135,11 @@ export interface ZentaoBugDetail {
   steps: string;
   attachments: string[];
   url: string;
+  /** 重现步骤里的截图（主进程带登录态取回后转成 dataURL，渲染层才能直接显示） */
+  images?: { src: string; name: string; dataUrl: string }[];
+  /** 正文里一共几张图 / 其中几张没取到 */
+  imageTotal?: number;
+  imageFailed?: number;
 }
 
 /** 禅道筛选预设 */

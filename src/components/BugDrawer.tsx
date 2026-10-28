@@ -18,6 +18,8 @@ export function BugDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  // 点缩略图放大查看
+  const [preview, setPreview] = useState<string>('');
 
   useEffect(() => {
     if (!bug || !cfg) { setDetail(null); return; }
@@ -25,6 +27,7 @@ export function BugDrawer({
     setLoading(true);
     setError('');
     setDetail(null);
+    setPreview('');
     (async () => {
       const res = await window.electronAPI.zentaoBugDetail(cfg, bug.id);
       if (!alive) return;
@@ -90,6 +93,34 @@ export function BugDrawer({
             {!loading && !error && detail && (
               <>
                 <pre className="drawer-steps">{detail.steps}</pre>
+
+                {!!detail.images?.length && (
+                  <div className="drawer-shots">
+                    <div className="drawer-shots-head">
+                      <span>截图 {detail.images.length} 张</span>
+                      <span className="drawer-hint-inline">点图片放大</span>
+                    </div>
+                    <div className="shot-grid">
+                      {detail.images.map((img, i) => (
+                        <button
+                          key={img.src || i}
+                          className="shot-thumb"
+                          onClick={() => setPreview(img.dataUrl)}
+                          title={`查看大图（图${i + 1}）`}
+                        >
+                          <img src={img.dataUrl} alt={`图${i + 1}`} loading="lazy" />
+                          <span className="shot-idx">{i + 1}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(detail.imageFailed || 0) > 0 && (
+                  <div className="drawer-hint-inline" style={{ marginTop: 8 }}>
+                    有 {detail.imageFailed} 张图片没取到（可能被权限限制或体积过大），可在浏览器中查看原图。
+                  </div>
+                )}
+
                 {detail.attachments.length > 0 && (
                   <div className="drawer-files">
                     <span>附件：</span>
@@ -109,6 +140,13 @@ export function BugDrawer({
           </button>
         </footer>
       </aside>
+
+      {preview && (
+        <div className="shot-viewer" onClick={() => setPreview('')}>
+          <img src={preview} alt="大图" onClick={e => e.stopPropagation()} />
+          <button className="shot-viewer-close" onClick={() => setPreview('')} title="关闭">×</button>
+        </div>
+      )}
     </>
   );
 }

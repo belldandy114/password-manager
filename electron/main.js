@@ -1408,6 +1408,54 @@ function setupIpcHandlers() {
     return { status: 0, loc: null, text: '', url };
   }
 
+  /** 抓二进制（Bug 重现步骤里的截图）：带登录 cookie，跟随跳转 */
+  async function ztFetchBinary(cfg, pathOrUrl, maxBytes = 8 * 1024 * 1024) {
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    let url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${base}/${String(pathOrUrl).replace(/^\/+/, '')}`;
+    for (let hop = 0; hop < 6; hop++) {
+      const headers = { 'User-Agent': 'Mozilla/5.0', Accept: 'image/*,*/*' };
+      const cookie = ztCookieHeader();
+      if (cookie) headers.Cookie = cookie;
+      const res = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
+      ztAbsorbCookies(res);
+      const loc = res.headers.get('location');
+      if (res.status >= 300 && res.status < 400 && loc) {
+        url = /^https?:\/\//i.test(loc) ? loc : new URL(loc, url).toString();
+        continue;
+      }
+      if (!res.ok) return { status: res.status, buffer: null, contentType: '' };
+      const len = Number(res.headers.get('content-length') || 0);
+      if (len > maxBytes) return { status: 200, buffer: null, contentType: '', tooLarge: true };
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return { status: res.status, buffer, contentType: String(res.headers.get('content-type') || '') };
+    }
+    return { status: 0, buffer: null, contentType: '' };
+  }
+
+  /**
+   * 把重现步骤里的图片取回来转成 dataURL：
+   * 渲染层直接 <img src=".../file-read-x.png"> 带不上禅道登录 cookie，只会显示裂图。
+   */
+  async function ztLoadDetailImages(cfg, images) {
+    const list = Array.isArray(images) ? images.slice(0, 12) : [];
+    const out = [];
+    let failed = 0;
+    await Promise.all(list.map(async (img) => {
+      try {
+        const r = await ztFetchBinary(cfg, img.src, 8 * 1024 * 1024);
+        if (!r.buffer || r.buffer.length < 64) { failed++; return; }
+        const ct = /^image\//i.test(r.contentType) ? r.contentType : 'image/png';
+        out.push({ src: img.src, name: String(img.src.split('/').pop() || ''), dataUrl: `data:${ct};base64,${r.buffer.toString('base64')}` });
+      } catch {
+        failed++;
+      }
+    }));
+    // 保持与正文 [图N] 一致的顺序
+    const order = new Map(list.map((x, i) => [x.src, i]));
+    out.sort((a, b) => (order.get(a.src) ?? 99) - (order.get(b.src) ?? 99));
+    return { images: out, failed, total: list.length };
+  }
+
   function ztParseJson(text) {
     if (!text) return null;
     const t = String(text).trim();
@@ -1470,13 +1518,13 @@ function setupIpcHandlers() {
     .trim();
 
   /** 富文本 HTML → 纯文本（保留换行，图片留占位） */
-  function ztHtmlToText(html) {
+  function ztHtmlToText(html, imgTag) {
     let t = String(html || '');
     t = t.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '');
     t = t.replace(/<br\s*\/?>/gi, '\n');
     t = t.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n');
     t = t.replace(/<li[^>]*>/gi, '· ');
-    t = t.replace(/<img[^>]*>/gi, '[图片]');
+    t = t.replace(/<img[^>]*>/gi, (tag) => (typeof imgTag === 'function' ? imgTag(tag) : '[图片]'));
     t = t.replace(/<[^>]+>/g, '');
     t = t.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&');
@@ -1494,6 +1542,17 @@ function setupIpcHandlers() {
 
     // 「重现步骤」区块：从标题到下一个 section 之间
     let steps = '';
+    // 正文里内嵌的图片（禅道存在 file-read-*.png，需要带登录态才能取）
+    const images = [];
+    const abs = (raw) => {
+      if (!raw) return '';
+      if (/^data:/i.test(raw)) return '';
+      try {
+        return new URL(raw, `${String(base || '').replace(/\/+$/, '')}/`).toString();
+      } catch {
+        return '';
+      }
+    };
     const idx = html.indexOf('zui-key="重现步骤"');
     if (idx > 0) {
       const cls = html.indexOf('detail-section-content', idx);
@@ -1503,7 +1562,25 @@ function setupIpcHandlers() {
         const from = gt > 0 ? gt + 1 : cls;
         const nextSec = html.indexOf('zui-key="historyWrapper"', from);
         const to = nextSec > from ? html.lastIndexOf('<', nextSec) : Math.min(html.length, from + 30000);
-        steps = ztHtmlToText(html.slice(from, to > from ? to : from + 30000));
+        const chunk = html.slice(from, to > from ? to : from + 30000);
+
+        // 先按出现顺序收集图片（同一张只留一次），正文里用 [图N] 对应
+        const imgRe = /<img[^>]*>/gi;
+        let im;
+        while ((im = imgRe.exec(chunk)) !== null) {
+          const sm = im[0].match(/src=["']([^"']+)["']/i);
+          const src = abs(sm && sm[1]);
+          if (src && !images.some(x => x.src === src)) images.push({ src });
+        }
+        const numOf = (src) => {
+          const i = images.findIndex(x => x.src === src);
+          return i >= 0 ? i + 1 : 0;
+        };
+        steps = ztHtmlToText(chunk, (tag) => {
+          const sm = tag.match(/src=["']([^"']+)["']/i);
+          const n = numOf(abs(sm && sm[1]));
+          return n ? `[图${n}]` : '[图片]';
+        });
       }
     }
 
@@ -1522,6 +1599,7 @@ function setupIpcHandlers() {
       productName,
       steps: steps || '（该 Bug 没有填写重现步骤）',
       attachments,
+      images,
       url: `${String(base || '').replace(/\/+$/, '')}/bug-view-${bugId}.html`,
     };
   }
@@ -1737,7 +1815,18 @@ function setupIpcHandlers() {
       if (!res.text || res.text.length < 500) {
         return { success: false, error: `Bug #${bugId} 页面内容异常` };
       }
-      return { success: true, data: ztParseBugDetail(res.text, bugId, cfg.baseUrl) };
+      const detail = ztParseBugDetail(res.text, bugId, cfg.baseUrl);
+      if (detail.images && detail.images.length > 0) {
+        const loaded = await ztLoadDetailImages(cfg, detail.images);
+        detail.images = loaded.images;
+        detail.imageTotal = loaded.total;
+        detail.imageFailed = loaded.failed;
+      } else {
+        detail.images = [];
+        detail.imageTotal = 0;
+        detail.imageFailed = 0;
+      }
+      return { success: true, data: detail };
     } catch (e) {
       return { success: false, error: e.message };
     }

@@ -337,3 +337,17 @@ gh release create v1.2.6 "release/PasswordManager-Setup-1.2.6.exe" \
   `curl -s .../releases/latest | grep tag_name` 应为 `v1.2.6`。
 - 应用端 `updateCheck()` 会返回 `{current, latest, hasUpdate, url, notes}`，`url` 指向 Release 页；
   安装包是 NSIS，`/S /currentuser` 可静默覆盖安装，密码库数据不受影响。
+
+### 禅道 Bug 重现步骤里的截图（file-read-*.png 需要登录态）
+
+页面里的 `<img src="/zentao/file-read-29218.png">` **不能在渲染层直接当 src 用** ——
+渲染进程的 `<img>` 不会带禅道的 Cookie，只会显示裂图/空白，所以之前只能显示 `[图片]` 占位。
+
+正确做法（已实现，`zentao:bug-detail` 内）：
+1. 解析时把 `img src` 转绝对地址，按出现顺序去重，正文里用 `[图1] [图2]` 占位对应；
+2. 主进程 `ztFetchBinary(cfg, url)` 带上 `ztCookieHeader()` 取二进制（跟随 302，单张上限 8MB）；
+3. 转 `data:image/png;base64,...` 返回给渲染层，抽屉里直接 `<img src={dataUrl}>` 显示；
+4. 最多取 12 张，失败数放进 `imageFailed` 提示用户去浏览器看原图。
+
+验证脚本：`node scripts/ui-bug-image-test.js`（断言 steps 里有 `[图N]`、images 长度、`naturalWidth > 0`）。
+实测 Bug #14171：2 张图均取回（1920×953），dataURL 约 210KB / 50KB。
