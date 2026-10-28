@@ -53,8 +53,7 @@
       "installerIcon": "buildResources/icon.ico",
       "uninstallerIcon": "buildResources/icon.ico",
       "installerHeaderIcon": "buildResources/icon.ico"
-    },
-    "electronDist": "node_modules/electron/dist"
+    }
   },
   "keywords": [
     "password-manager",

@@ -84,7 +84,16 @@ const check = (name, ok, detail) => {
     el.dispatchEvent(new Event(isSel ? 'change' : 'input', { bubbles: true }));
   }`;
   const setInputs = `(root, vals) => { const set = ${SETVAL}; const ins = Array.from(root.querySelectorAll('input:not([type=checkbox]),textarea')); vals.forEach((v,i)=>{ if(ins[i]) set(ins[i], v); }); return ins.length; }`;
-  const nav = (label) => evaluate(`(() => { const n = Array.from(document.querySelectorAll('.nav-item')).find(e => e.textContent.includes(${JSON.stringify(label)})); if (n) { n.click(); return true; } return false; })()`);
+  const nav = async (label) => {
+    const clicked = await evaluate(`(() => { const n = Array.from(document.querySelectorAll('.nav-item')).find(e => e.textContent.includes(${JSON.stringify(label)})); if (n) { n.click(); return true; } return false; })()`);
+    // 页面是懒加载 chunk：等占位消失、真正的页面渲染出来，否则后面的选择器会抓到上一页
+    for (let i = 0; i < 40; i++) {
+      const ready = await evaluate(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
+      if (ready) break;
+      await sleep(100);
+    }
+    return clicked;
+  };
   const clickText = (text, scope = 'document') => evaluate(`(() => { const b = Array.from(${scope}.querySelectorAll('button')).find(x => x.textContent.trim() === ${JSON.stringify(text)}); if (b) { b.click(); return true; } return false; })()`);
   const setSelect = (sel, val) => evaluate(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return false; const d = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; d.call(s, ${JSON.stringify(val)}); s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
 

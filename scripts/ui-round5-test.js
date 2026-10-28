@@ -148,8 +148,11 @@ const check = (name, ok, extra = '') => {
   // 打开断言面板
   await ev(`(() => { const b = [...document.querySelectorAll('.assert-toggle')].find(x => x.textContent.includes('断言')); if (b) b.click(); return !!b; })()`);
   await sleep(400);
-  const assertUi = await ev(`(() => document.querySelectorAll('.assert-grid input').length)()`);
-  check('接口调试：断言面板 5 个输入', assertUi === 5, `${assertUi} 个`);
+  // 1.6.0 起断言从 5 个固定槽位改成可增删的规则行
+  await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('添加断言')); if (b) b.click(); return !!b; })()`);
+  await sleep(350);
+  const assertUi = await ev(`(() => document.querySelectorAll('.assert-rule').length)()`);
+  check('接口调试：断言改成可增删的规则行', assertUi >= 1, `${assertUi} 行`);
 
   // 用 127.0.0.1 的本地服务做一次真实请求：起一个临时 HTTP 服务不方便，改用 data 不现实
   // 直接调用 apiSend 走 httpbin 之类不稳定，改为对 GitHub API 发一次 GET 并断言
@@ -160,13 +163,13 @@ const check = (name, ok, extra = '') => {
     return inputs.length;
   })()`);
   await sleep(300);
-  // 填断言：状态码 200
+  // 填断言：状态码 200（新格式第一行就是状态码）
   await ev(`(() => {
     const s = ${SETVAL};
-    const g = document.querySelector('.assert-grid');
-    if (!g) return 'no-grid';
-    const ins = [...g.querySelectorAll('input')];
-    s(ins[0], '200');
+    const row = document.querySelector('.assert-rule');
+    if (!row) return 'no-row';
+    const ins = [...row.querySelectorAll('input:not([disabled])')];
+    if (ins[0]) s(ins[0], '200');
     return 'filled';
   })()`);
   await sleep(200);
