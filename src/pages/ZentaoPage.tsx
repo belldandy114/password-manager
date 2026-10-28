@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ZentaoBug, ZentaoConfig } from '../types';
+import type { ZentaoBug, ZentaoConfig, ZentaoPreset } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useZentaoStore } from '../store/zentaoStore';
 import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, type PillTone } from '../components/ui';
+import { Modal } from '../components/Modal';
+import { BugDrawer } from '../components/BugDrawer';
+import { bugsToText } from '../utils/bugText';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
   active: { label: '激活', tone: 'bad' },
@@ -60,6 +63,7 @@ const MAX_ROWS = 300;
 
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
+  const { items: presets, save: savePresets } = useCollection<ZentaoPreset>('ztPresets');
   const cfg = useMemo(() => items.find(i => i.id === 'zentao'), [items]);
 
   /* ---------- store：我的 Bug ---------- */
@@ -91,6 +95,14 @@ export function ZentaoPage() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [projQuery, setProjQuery] = useState('');
+  // Bug 详情抽屉
+  const [detailBug, setDetailBug] = useState<ZentaoBug | null>(null);
+  // 批量选择
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // 预设管理弹窗
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [copiedTip, setCopiedTip] = useState('');
 
   useEffect(() => {
     if (cfg) setForm({ baseUrl: cfg.baseUrl, account: cfg.account, password: cfg.password });
@@ -275,6 +287,62 @@ export function ZentaoPage() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [pBugs]);
 
+  /* ---------- 预设 ---------- */
+  const applyPreset = (id: string) => {
+    const p = presets.find(x => x.id === id);
+    if (!p) return;
+    if (tab === 'mine') {
+      setFilter({ project: p.project || '', status: p.status || '', severity: p.severity || '', query: p.query || '' });
+    } else {
+      setPFilter({ pStatus: p.status || '', pSeverity: p.severity || '', pQuery: p.query || '' });
+    }
+  };
+
+  const savePreset = async () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const entry: ZentaoPreset = {
+      id: `p-${Date.now().toString(36)}`,
+      name,
+      project: tab === 'mine' ? project : '',
+      status: tab === 'mine' ? status : pStatus,
+      severity: tab === 'mine' ? severity : pSeverity,
+      query: tab === 'mine' ? query : pQuery,
+      updatedAt: new Date().toISOString(),
+    };
+    const exist = presets.find(p => p.name === name);
+    const next = exist ? presets.map(p => (p.name === name ? { ...entry, id: p.id } : p)) : [...presets, entry];
+    await savePresets(next);
+    setPresetOpen(false);
+    setPresetName('');
+  };
+
+  const removePreset = async (id: string) => {
+    await savePresets(presets.filter(p => p.id !== id));
+  };
+
+  /* ---------- 复制汇报文本 ---------- */
+  const copyBugs = async (list: ZentaoBug[], format: 'list' | 'table' = 'list') => {
+    const picked = selected.size > 0 ? list.filter(b => selected.has(b.id)) : list.slice(0, 50);
+    if (picked.length === 0) return;
+    await navigator.clipboard.writeText(bugsToText(picked, form.baseUrl, format));
+    setCopiedTip(`已复制 ${picked.length} 条`);
+    setTimeout(() => setCopiedTip(''), 1800);
+    setSelected(new Set());
+  };
+
+  const toggleOne = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (list: ZentaoBug[]) => {
+    setSelected(prev => (prev.size >= list.length ? new Set() : new Set(list.map(b => b.id))));
+  };
+
   /** 从「全部」的项目行跳到具体项目 */
   const jumpToProject = (name: string, dim?: string) => {
     const target = projects.find(p => p.name === name);
@@ -393,6 +461,11 @@ export function ZentaoPage() {
                 meta={`${visibleMine.length} / ${bugs.length} 条`}
                 tools={
                   <div className="zt-filters">
+                    <select className="zt-preset" value="" onChange={e => { if (e.target.value) applyPreset(e.target.value); }} title="筛选预设">
+                      <option value="">预设…</option>
+                      {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setPresetName(''); setPresetOpen(true); }} title="把当前筛选保存为预设">存预设</button>
                     <select value={project} onChange={e => setFilter({ project: e.target.value })}>
                       <option value="">全部项目</option>
                       {myProjects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
@@ -406,6 +479,9 @@ export function ZentaoPage() {
                       {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                     </select>
                     <SearchBox value={query} onChange={v => setFilter({ query: v })} placeholder="标题 / ID" />
+                    <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleMine)} title="复制为汇报文本">
+                      <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
+                    </button>
                   </div>
                 }
                 flush
@@ -418,10 +494,24 @@ export function ZentaoPage() {
                     query.trim() && { label: `“${query.trim()}”`, tone: 'mute' as PillTone, clear: () => setFilter({ query: '' }) },
                   ].filter(Boolean) as { label: string; tone: PillTone; clear: () => void }[]}
                 />
+                {selected.size > 0 && (
+                  <div className="zt-selectbar">
+                    <span>已选 {selected.size} 条</span>
+                    <button className="btn btn-ghost btn-sm" onClick={() => copyBugs(visibleMine, 'table')}>复制为表格</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>取消选择</button>
+                  </div>
+                )}
                 {visibleMine.length === 0 ? (
                   <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部" />
                 ) : (
-                  <BugTable bugs={visibleMine} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee={false} />
+                  <BugTable
+                    bugs={visibleMine}
+                    onOpen={bug => setDetailBug(bug)}
+                    showAssignee={false}
+                    selected={selected}
+                    onToggle={toggleOne}
+                    onToggleAll={() => toggleAll(visibleMine)}
+                  />
                 )}
               </Panel>
             ) : (
@@ -506,6 +596,11 @@ export function ZentaoPage() {
                     meta={`${visibleProject.length} / ${pBugs.length} 条`}
                     tools={
                       <div className="zt-filters">
+                        <select className="zt-preset" value="" onChange={e => { if (e.target.value) applyPreset(e.target.value); }} title="筛选预设">
+                          <option value="">预设…</option>
+                          {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <button className="btn btn-ghost btn-sm" onClick={() => { setPresetName(''); setPresetOpen(true); }}>存预设</button>
                         <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })}>
                           <option value="">全部状态</option>
                           {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
@@ -515,6 +610,9 @@ export function ZentaoPage() {
                           {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                         </select>
                         <SearchBox value={pQuery} onChange={v => setPFilter({ pQuery: v })} placeholder="标题 / 指派给" />
+                        <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleProject)} title="复制为汇报文本">
+                          <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
+                        </button>
                       </div>
                     }
                     flush
@@ -526,7 +624,21 @@ export function ZentaoPage() {
                         pQuery.trim() && { label: `“${pQuery.trim()}”`, tone: 'mute' as PillTone, clear: () => setPFilter({ pQuery: '' }) },
                       ].filter(Boolean) as { label: string; tone: PillTone; clear: () => void }[]}
                     />
-                    <BugTable bugs={visibleProject.slice(0, MAX_ROWS)} onOpen={id => openUrl(`bug-view-${id}.html`)} showAssignee />
+                    {selected.size > 0 && (
+                      <div className="zt-selectbar">
+                        <span>已选 {selected.size} 条</span>
+                        <button className="btn btn-ghost btn-sm" onClick={() => copyBugs(visibleProject, 'table')}>复制为表格</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>取消选择</button>
+                      </div>
+                    )}
+                    <BugTable
+                      bugs={visibleProject.slice(0, MAX_ROWS)}
+                      onOpen={bug => setDetailBug(bug)}
+                      showAssignee
+                      selected={selected}
+                      onToggle={toggleOne}
+                      onToggleAll={() => toggleAll(visibleProject.slice(0, MAX_ROWS))}
+                    />
                     {visibleProject.length > MAX_ROWS && (
                       <div className="tbl-more">
                         已显示前 {MAX_ROWS} 条，还有 {visibleProject.length - MAX_ROWS} 条 —— 用上面的搜索或筛选缩小范围
@@ -547,6 +659,54 @@ export function ZentaoPage() {
           </>
         )}
       </Page>
+
+      {/* Bug 详情抽屉 */}
+      <BugDrawer bug={detailBug} cfg={cfg || null} onClose={() => setDetailBug(null)} />
+
+      {/* 筛选预设 */}
+      <Modal
+        open={presetOpen}
+        onClose={() => setPresetOpen(false)}
+        title="筛选预设"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setPresetOpen(false)}>取消</button>
+            <button className="btn btn-primary" onClick={savePreset} disabled={!presetName.trim()}>保存</button>
+          </>
+        }
+      >
+        <div className="form-group">
+          <label>预设名称</label>
+          <input
+            value={presetName}
+            onChange={e => setPresetName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') savePreset(); }}
+            placeholder="例如：我的未关闭致命/严重"
+            autoFocus
+          />
+        </div>
+        <div className="pg-sub" style={{ marginTop: 8 }}>
+          会保存当前的「项目 / 状态 / 严重程度 / 搜索词」，下次从筛选栏的「预设…」一键套用。
+        </div>
+        {presets.length > 0 && (
+          <div className="preset-list">
+            {presets.map(p => (
+              <div key={p.id} className="preset-row">
+                <span className="preset-name">{p.name}</span>
+                <span className="preset-desc">
+                  {[p.project, dimLabel(p.status || ''), p.severity ? (SEVERITY[p.severity]?.label || p.severity) : '', p.query]
+                    .filter(Boolean).join(' · ') || '无筛选条件'}
+                </span>
+                <button className="ibtn" title="删除预设" onClick={() => removePreset(p.id)}>
+                  <Icons.trash size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {copiedTip && <div className="toast-inline">{copiedTip}</div>}
     </div>
   );
 }
@@ -646,11 +806,24 @@ function FilterBar({ chips }: { chips: { label: string; tone: PillTone; clear: (
   );
 }
 
-function BugTable({ bugs, onOpen, showAssignee }: { bugs: ZentaoBug[]; onOpen: (id: string) => void; showAssignee: boolean }) {
+function BugTable({
+  bugs, onOpen, showAssignee, selected, onToggle, onToggleAll,
+}: {
+  bugs: ZentaoBug[];
+  onOpen: (bug: ZentaoBug) => void;
+  showAssignee: boolean;
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  onToggleAll: () => void;
+}) {
+  const allChecked = bugs.length > 0 && bugs.every(b => selected.has(b.id));
   return (
     <table className="tbl">
       <thead>
         <tr>
+          <th style={{ width: 34 }}>
+            <input type="checkbox" className="tbl-check" checked={allChecked} onChange={onToggleAll} aria-label="全选" />
+          </th>
           <th style={{ width: 78 }}>ID</th>
           <th>标题</th>
           <th style={{ width: 96 }}>状态</th>
@@ -666,7 +839,16 @@ function BugTable({ bugs, onOpen, showAssignee }: { bugs: ZentaoBug[]; onOpen: (
           const st = STATUS[b.status || ''];
           const sev = SEVERITY[String(b.severity)];
           return (
-            <tr key={b.id} className="zt-row" onClick={() => onOpen(b.id)} title="在浏览器中打开该 Bug">
+            <tr key={b.id} className={`zt-row${selected.has(b.id) ? ' is-selected' : ''}`} onClick={() => onOpen(b)} title="查看详情">
+              <td onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  className="tbl-check"
+                  checked={selected.has(b.id)}
+                  onChange={() => onToggle(b.id)}
+                  aria-label={`选择 #${b.id}`}
+                />
+              </td>
               <td className="cell-mono">#{b.id}</td>
               <td className="cell-strong" style={{ maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.title}>
                 {isFixed(b) && <span className="zt-fixed" title="解决方案：已修复">已修复</span>}

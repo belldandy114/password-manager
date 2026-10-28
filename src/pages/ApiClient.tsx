@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ApiRequest, ApiResponseData } from '../types';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem } from '../types';
 import { useCollection } from '../hooks/useCollection';
-import { Page, PageHead, Panel, Empty, IconBtn, Icons } from '../components/ui';
+import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
+import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
@@ -120,8 +121,14 @@ function KvEditor({
 
 export function ApiClient() {
   const { items, save } = useCollection<ApiRequest>('apiRequests');
+  const { items: envs, save: saveEnvs } = useCollection<ApiEnv>('apiEnvs');
+  const { items: history, save: saveHistory } = useCollection<ApiHistoryItem>('apiHistory');
   const [req, setReq] = useState<ApiRequest>(emptyReq);
   const { ask, confirmNode } = useConfirm();
+  const [sideTab, setSideTab] = useState<'saved' | 'history'>('saved');
+  const [activeEnvId, setActiveEnvId] = useState('');
+  const [envOpen, setEnvOpen] = useState(false);
+  const [envDraft, setEnvDraft] = useState<ApiEnv | null>(null);
   const [response, setResponse] = useState<ApiResponseData | null>(null);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -137,6 +144,47 @@ export function ApiClient() {
     }
   }, [response]);
 
+  /** 选环境：把环境变量合并进变量表（同名覆盖） */
+  const applyEnv = (id: string) => {
+    setActiveEnvId(id);
+    const env = envs.find(e => e.id === id);
+    if (!env) return;
+    const map = new Map<string, string>();
+    parseKv(req.variables || '', '=').forEach(r => { if (r.k) map.set(r.k, r.v); });
+    parseKv(env.vars || '', '=').forEach(r => { if (r.k) map.set(r.k, r.v); });
+    setReq({ ...req, variables: [...map].map(([k, v]) => `${k}=${v}`).join('\n') });
+  };
+
+  const saveEnv = async () => {
+    if (!envDraft || !envDraft.name.trim()) return;
+    const entry: ApiEnv = {
+      ...envDraft,
+      id: envDraft.id || `env-${Date.now().toString(36)}`,
+      name: envDraft.name.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    const next = envs.some(e => e.id === entry.id)
+      ? envs.map(e => (e.id === entry.id ? entry : e))
+      : [...envs, entry];
+    await saveEnvs(next);
+    setEnvOpen(false);
+    setEnvDraft(null);
+    if (!activeEnvId) setActiveEnvId(entry.id);
+  };
+
+  const removeEnv = async (id: string) => {
+    await saveEnvs(envs.filter(e => e.id !== id));
+    if (activeEnvId === id) setActiveEnvId('');
+  };
+
+  const pushHistory = async (method: string, url: string, status: number, timeMs: number) => {
+    const entry: ApiHistoryItem = {
+      id: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      method, url, status, timeMs, at: new Date().toISOString(),
+    };
+    await saveHistory([entry, ...history].slice(0, 50));
+  };
+
   const send = async () => {
     if (!req.url.trim()) { setError('请输入 URL'); return; }
     setSending(true);
@@ -147,8 +195,13 @@ export function ApiClient() {
     const body = applyVars(req.body, req.variables || '');
     const res = await window.electronAPI.apiSend({ method: req.method, url, headers, body });
     setSending(false);
-    if (res.success && res.data) setResponse(res.data);
-    else setError(res.error || '请求失败');
+    if (res.success && res.data) {
+      setResponse(res.data);
+      pushHistory(req.method, url, res.data.status, res.data.timeMs);
+    } else {
+      setError(res.error || '请求失败');
+      pushHistory(req.method, url, 0, 0);
+    }
   };
 
   const saveRequest = async () => {
@@ -187,8 +240,45 @@ export function ApiClient() {
         />
 
         <div className="split" style={{ gridTemplateColumns: '248px minmax(0, 1fr)' }}>
-          <Panel title="已保存" meta={items.length} flush>
+          <Panel
+            title={sideTab === 'saved' ? '已保存' : '请求历史'}
+            meta={sideTab === 'saved' ? items.length : history.length}
+            flush
+            tools={
+              <div className="resp-tabs">
+                <button className={`tab2${sideTab === 'saved' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('saved')}>保存</button>
+                <button className={`tab2${sideTab === 'history' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('history')}>历史</button>
+              </div>
+            }
+          >
             <div className="api-side" style={{ padding: 8 }}>
+              {sideTab === 'history' && (
+                history.length === 0 ? (
+                  <div style={{ padding: '18px 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                    还没有请求记录。<br />发送一次请求后会自动记录（保留最近 50 条）。
+                  </div>
+                ) : (
+                  history.map(h => (
+                    <div
+                      key={h.id}
+                      className="api-list-item"
+                      onClick={() => {
+                        setReq({ ...emptyReq(), method: h.method, url: h.url });
+                        setResponse(null);
+                        setError('');
+                      }}
+                      title={`${h.method} ${h.url}`}
+                    >
+                      <span className={`method m-${h.method}`}>{h.method}</span>
+                      <span className="api-name">{h.url.replace(/^https?:\/\//, '')}</span>
+                      <span className={`api-hist${h.status >= 200 && h.status < 400 ? ' is-ok' : ' is-bad'}`}>
+                        {h.status || 'ERR'}
+                      </span>
+                    </div>
+                  ))
+                )
+              )}
+              {sideTab === 'saved' && (<>
               {items.length === 0 ? (
                 <div style={{ padding: '18px 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
                   还没有保存的请求。<br />填好地址后点右上角「保存请求」。
@@ -221,6 +311,7 @@ export function ApiClient() {
                   </div>
                 ))
               )}
+              </>)}
             </div>
           </Panel>
 
@@ -240,6 +331,21 @@ export function ApiClient() {
               }
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="api-env-row">
+                  <span className="api-env-label">环境</span>
+                  <select value={activeEnvId} onChange={e => applyEnv(e.target.value)}>
+                    <option value="">不使用环境</option>
+                    {envs.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setEnvDraft({ id: '', name: '', vars: 'baseUrl=https://test.example.com', updatedAt: '' }); setEnvOpen(true); }}
+                  >
+                    <Icons.plus size={12} /> 环境
+                  </button>
+                  {activeEnvId && <span className="api-env-tip">变量已合并到下方变量表</span>}
+                </div>
+
                 <div className="url-bar">
                   <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })}>
                     {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -359,6 +465,63 @@ export function ApiClient() {
           </div>
         </div>
       </Page>
+
+      {/* 环境变量管理 */}
+      <Modal
+        open={envOpen}
+        onClose={() => { setEnvOpen(false); setEnvDraft(null); }}
+        title="环境变量"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => { setEnvOpen(false); setEnvDraft(null); }}>取消</button>
+            <button className="btn btn-primary" onClick={saveEnv} disabled={!envDraft || !envDraft.name.trim()}>保存</button>
+          </>
+        }
+      >
+        {envs.length > 0 && (
+          <div className="preset-list" style={{ marginBottom: 16 }}>
+            {envs.map(e => (
+              <div key={e.id} className="preset-row">
+                <button className="preset-name" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => setEnvDraft(e)}>
+                  {e.name}
+                </button>
+                <span className="preset-desc">{e.vars.split('\n').filter(Boolean).join(' · ') || '（无变量）'}</span>
+                <button className="ibtn" title="删除环境" onClick={() => removeEnv(e.id)}>
+                  <Icons.trash size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {envDraft ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="form-group">
+              <label>环境名称</label>
+              <input
+                value={envDraft.name}
+                onChange={ev => setEnvDraft({ ...envDraft, name: ev.target.value })}
+                placeholder="例如：测试环境"
+                autoFocus
+              />
+            </div>
+            <div className="form-group">
+              <label>变量（每行 key=value）</label>
+              <textarea
+                value={envDraft.vars}
+                onChange={ev => setEnvDraft({ ...envDraft, vars: ev.target.value })}
+                rows={6}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                placeholder={'baseUrl=https://test.example.com\ntoken=abc123'}
+              />
+            </div>
+          </div>
+        ) : (
+          <button className="btn btn-secondary btn-sm" onClick={() => setEnvDraft({ id: '', name: '', vars: 'baseUrl=', updatedAt: '' })}>
+            <Icons.plus size={12} /> 新建环境
+          </button>
+        )}
+      </Modal>
 
       {confirmNode}
     </div>

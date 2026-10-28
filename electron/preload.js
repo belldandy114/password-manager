@@ -77,6 +77,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
   zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
   zentaoAllBugs: (cfg) => ipcRenderer.invoke('zentao:all-bugs', cfg),
+  zentaoBugDetail: (cfg, bugId) => ipcRenderer.invoke('zentao:bug-detail', { cfg, bugId }),
+  zentaoNotifyNow: () => ipcRenderer.invoke('zentao:notify-now'),
+  onZentaoOpen: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('zentao:open', h);
+    return () => ipcRenderer.removeListener('zentao:open', h);
+  },
 
   // 周报（本地 Markdown 目录）
   weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),
@@ -89,6 +96,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateDownload: (url) => ipcRenderer.invoke('update:download', { url }),
+  updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),
+  onUpdateProgress: (cb) => {
+    const h = (_e, p) => cb(p);
+    ipcRenderer.on('update:progress', h);
+    return () => ipcRenderer.removeListener('update:progress', h);
+  },
 
   // Import/Export
   importCsvJson: (data) => ipcRenderer.invoke('import:csv-json', data),

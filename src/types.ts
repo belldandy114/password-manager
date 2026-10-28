@@ -73,6 +73,10 @@ export interface AppSettings {
   launchAtLogin: boolean;
   /** 上次停留的页面 */
   lastPage: string;
+  /** 禅道新 Bug 提醒（后台定时检查） */
+  zentaoNotify: boolean;
+  /** 提醒检查间隔（分钟） */
+  zentaoNotifyInterval: number;
   browserPaths: { [key: string]: string };
   keybindings: Record<KeybindingId, string>;
 }
@@ -93,7 +97,8 @@ export interface PasswordGenOptions {
 }
 
 /** 与主进程 VAULT_COLLECTIONS 对应 */
-export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations';
+export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations'
+  | 'ztPresets' | 'apiEnvs' | 'apiHistory';
 
 export interface ZentaoConfig {
   id: string;
@@ -117,6 +122,49 @@ export interface ZentaoBug {
   date?: string;
   deadline?: string;
   resolution?: string;
+  /** 解决日期 / 关闭日期（周报统计用） */
+  resolvedDate?: string;
+  closedDate?: string;
+}
+
+/** 禅道 Bug 详情（从 bug-view 页面解析） */
+export interface ZentaoBugDetail {
+  id: string;
+  title: string;
+  productName?: string;
+  steps: string;
+  attachments: string[];
+  url: string;
+}
+
+/** 禅道筛选预设 */
+export interface ZentaoPreset {
+  id: string;
+  name: string;
+  project?: string;
+  status?: string;
+  severity?: string;
+  query?: string;
+  updatedAt: string;
+}
+
+/** 接口调试：环境（一组变量） */
+export interface ApiEnv {
+  id: string;
+  name: string;
+  /** 每行 key=value */
+  vars: string;
+  updatedAt: string;
+}
+
+/** 接口调试：请求历史 */
+export interface ApiHistoryItem {
+  id: string;
+  method: string;
+  url: string;
+  status: number;
+  timeMs: number;
+  at: string;
 }
 
 export interface WeeklyFile {
@@ -287,6 +335,12 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
   zentaoAllBugs: (cfg: ZentaoConfig) =>
     Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; products?: number; error?: string }>;
+  zentaoBugDetail: (cfg: ZentaoConfig, bugId: string) =>
+    Promise<{ success: boolean; data?: ZentaoBugDetail; error?: string }>;
+  /** 立即检查一次新 Bug（设置页「立即检查」） */
+  zentaoNotifyNow: () => Promise<{ success: boolean }>;
+  /** 点系统通知 → 跳到禅道页 */
+  onZentaoOpen: (cb: () => void) => () => void;
 
   // 周报（本地 Markdown 目录，只读）
   weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
@@ -303,9 +357,14 @@ export interface ElectronAPI {
   // Update
   updateCheck: () => Promise<{
     success: boolean;
-    data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string };
+    data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string; downloadUrl?: string };
     error?: string;
   }>;
+  /** 下载新版本安装包（进度通过 onUpdateProgress 推送） */
+  updateDownload: (url: string) => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string }>;
+  /** 启动静默安装并退出应用 */
+  updateInstall: (file: string) => Promise<{ success: boolean; error?: string }>;
+  onUpdateProgress: (cb: (p: { received: number; total: number }) => void) => () => void;
 
   // Import
   importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;

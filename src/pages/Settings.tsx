@@ -52,10 +52,42 @@ export function Settings() {
   const [closeToTray, setCloseToTray] = useState(settings.closeToTray);
   const [contentProtection, setContentProtection] = useState(settings.contentProtection);
   const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
+  const [zentaoNotify, setZentaoNotify] = useState(settings.zentaoNotify);
+  const [zentaoNotifyInterval, setZentaoNotifyInterval] = useState(settings.zentaoNotifyInterval);
   const [backups, setBackups] = useState<BackupFile[]>([]);
   const [backupDir, setBackupDir] = useState('');
-  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string } | null>(null);
   const [checking, setChecking] = useState(false);
+  // 应用内更新：下载进度 / 已下载文件
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState({ received: 0, total: 0 });
+  const [downloadedFile, setDownloadedFile] = useState('');
+
+  useEffect(() => {
+    const off = window.electronAPI.onUpdateProgress?.((p) => setProgress(p));
+    return off;
+  }, []);
+
+  const downloadUpdate = async () => {
+    const url = updateInfo?.downloadUrl;
+    if (!url) { addToast('这个版本没有可用的安装包，请到发布页手动下载', 'error'); return; }
+    setDownloading(true);
+    setProgress({ received: 0, total: 0 });
+    const res = await window.electronAPI.updateDownload(url);
+    setDownloading(false);
+    if (res.success && res.data) {
+      setDownloadedFile(res.data.file);
+      addToast('下载完成，点「安装并重启」即可更新', 'success');
+    } else {
+      addToast(res.error || '下载失败', 'error');
+    }
+  };
+
+  const installUpdate = async () => {
+    if (!downloadedFile) return;
+    const res = await window.electronAPI.updateInstall(downloadedFile);
+    if (!res.success) addToast(res.error || '启动安装失败', 'error');
+  };
 
   const checkUpdate = async () => {
     setChecking(true);
@@ -112,6 +144,8 @@ export function Settings() {
       minimizeToTray,
       closeToTray,
       browserPaths,
+      zentaoNotify,
+      zentaoNotifyInterval: Math.max(2, Math.min(120, zentaoNotifyInterval)),
       theme: settings.theme,
       keybindings: localKeybindings,
     };
@@ -356,6 +390,65 @@ export function Settings() {
               </div>
             </div>
 
+            <h3 style={{ marginTop: 24 }}>禅道提醒</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">新 Bug 提醒</div>
+                <div className="setting-desc">
+                  后台定时检查「我的 Bug」，有新的指派给我就弹系统通知（需先在禅道页保存过账号密码）
+                </div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!zentaoNotify}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setZentaoNotify(val);
+                      updateSettings({ zentaoNotify: val });
+                      await window.electronAPI.settingsSave({ zentaoNotify: val });
+                      addToast(val ? '已开启新 Bug 提醒' : '已关闭新 Bug 提醒', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">检查间隔（分钟）</div>
+                <div className="setting-desc">最少 2 分钟；改完点「保存设置」生效</div>
+              </div>
+              <div className="setting-control">
+                <input
+                  type="number"
+                  value={zentaoNotifyInterval}
+                  onChange={e => setZentaoNotifyInterval(Number(e.target.value))}
+                  min={2}
+                  max={120}
+                />
+                <span className="text-sm text-muted">分钟</span>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">立即检查一次</div>
+                <div className="setting-desc">手动触发，用来确认配置是否可用（结果以系统通知呈现）</div>
+              </div>
+              <div className="setting-control">
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    await window.electronAPI.zentaoNotifyNow();
+                    addToast('已检查一次', 'success');
+                  }}
+                >
+                  检查一次
+                </button>
+              </div>
+            </div>
+
             <h3 style={{ marginTop: 24 }}>窗口与托盘</h3>
             <div className="setting-row">
               <div>
@@ -460,14 +553,34 @@ export function Settings() {
                       : `已是最新版本（${updateInfo.current}）`)
                     : '从 GitHub Releases 检查是否有新版本'}
                 </div>
+                {downloading && (
+                  <div className="dl-bar">
+                    <div
+                      className="dl-bar-fill"
+                      style={{ width: progress.total ? `${Math.min(100, (progress.received / progress.total) * 100)}%` : '20%' }}
+                    />
+                  </div>
+                )}
+                {downloadedFile && <div className="setting-desc">已下载：{downloadedFile.split('\\').pop()}</div>}
               </div>
-              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
-                {updateInfo?.hasUpdate && updateInfo.url && (
-                  <button className="btn btn-sm btn-primary" onClick={() => window.electronAPI.browserOpen({ browser: 'default', url: updateInfo.url })}>
-                    去下载
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {downloadedFile ? (
+                  <button className="btn btn-sm btn-primary" onClick={installUpdate}>安装并重启</button>
+                ) : updateInfo?.hasUpdate && (
+                  <button className="btn btn-sm btn-primary" onClick={downloadUpdate} disabled={downloading}>
+                    {downloading
+                      ? (progress.total
+                        ? `下载中 ${Math.floor((progress.received / progress.total) * 100)}%`
+                        : `已下载 ${(progress.received / 1024 / 1024).toFixed(1)} MB`)
+                      : '下载并安装'}
                   </button>
                 )}
-                <button className="btn btn-sm btn-secondary" onClick={checkUpdate} disabled={checking}>
+                {updateInfo?.url && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => window.electronAPI.browserOpen({ browser: 'default', url: updateInfo.url })}>
+                    发布页
+                  </button>
+                )}
+                <button className="btn btn-sm btn-secondary" onClick={checkUpdate} disabled={checking || downloading}>
                   {checking ? '检查中…' : '检查更新'}
                 </button>
               </div>

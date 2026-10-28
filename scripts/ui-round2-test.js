@@ -224,7 +224,7 @@ const check = (name, ok, detail) => {
         if (pRows > 0) { console.log('  命中项目:', pid); break; }
       }
     }
-    const assignees = await evaluate(`(() => { const ts = document.querySelectorAll('.tbl'); const rows = ts.length ? Array.from(ts[ts.length-1].querySelectorAll('tbody tr')).slice(0, 40) : []; const names = new Set(); rows.forEach(r => { const c = r.children[4]; if (c) names.add(c.textContent.trim()); }); return Array.from(names).join(','); })()`);
+    const assignees = await evaluate(`(() => { const ts = document.querySelectorAll('.tbl'); const rows = ts.length ? Array.from(ts[ts.length-1].querySelectorAll('tbody tr')).slice(0, 40) : []; const names = new Set(); rows.forEach(r => { const c = r.children[5]; if (c) names.add(c.textContent.trim()); }); return Array.from(names).join(','); })()`);
     check('禅道：项目 Bug 是全量（多个指派人）', pRows > 0 && String(assignees).split(',').filter(Boolean).length > 1, `${pRows} 条，指派人：${assignees}`);
 
     // 切页回来数据还在

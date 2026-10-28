@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -256,6 +256,8 @@ const DEFAULT_SETTINGS = {
   contentProtection: false,
   launchAtLogin: false,
   lastPage: 'passwordManager',
+  zentaoNotify: false,
+  zentaoNotifyInterval: 10,
   browserPaths: { chrome: '', msedge: '', firefox: '', brave: '', opera: '', vivaldi: '', '360': '', qq: '', quark: '' },
   keybindings: {
     newEntry: 'Ctrl+N',
@@ -622,7 +624,8 @@ function normalizeImportRecords(records) {
 // ----------------------------------------------------------------
 // 新增模块（SQL 片段 / 笔记 / 检查清单 / 账号池 / 环境总览 / 接口调试）都放在同一个
 // 加密文件里，随密码库一起加密，不额外增加新的密码。旧数据缺少这些字段时补空数组。
-const VAULT_COLLECTIONS = ['snippets', 'notes', 'checklists', 'accounts', 'environments', 'apiRequests', 'integrations'];
+const VAULT_COLLECTIONS = ['snippets', 'notes', 'checklists', 'accounts', 'environments', 'apiRequests', 'integrations',
+  'ztPresets', 'apiEnvs', 'apiHistory'];
 
 function normalizeVault(v) {
   const src = v && typeof v === 'object' ? v : {};
@@ -862,12 +865,15 @@ function setupIpcHandlers() {
     if (!vault) return { success: false };
     currentPassword = password;
     lastActivity = Date.now();
+    // 解锁后启动禅道新 Bug 提醒（内部会检查开关）
+    setTimeout(() => { try { ztRestartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
     return { success: true, data: vault };
   });
 
   ipcMain.handle('session:lock', () => {
     currentPassword = null;
     clearCaches();
+    try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
     return { success: true };
   });
 
@@ -1049,6 +1055,8 @@ function setupIpcHandlers() {
       contentProtection: !!s.contentProtection,
       launchAtLogin: !!s.launchAtLogin,
       lastPage: s.lastPage || DEFAULT_SETTINGS.lastPage,
+      zentaoNotify: !!s.zentaoNotify,
+      zentaoNotifyInterval: Number(s.zentaoNotifyInterval) || DEFAULT_SETTINGS.zentaoNotifyInterval,
       browserPaths: s.browserPaths || { ...DEFAULT_SETTINGS.browserPaths },
       keybindings: s.keybindings || { ...DEFAULT_SETTINGS.keybindings },
     };
@@ -1060,6 +1068,11 @@ function setupIpcHandlers() {
     saveSettings(s);
     // Keep the tray icon in sync: create it as soon as a tray behaviour is enabled,
     // remove it when both are off so the user is not left with a stray icon.
+    if (prefs && (Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotify')
+      || Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotifyInterval'))) {
+      try { ztRestartNotify(); } catch { /* 忽略 */ }
+    }
+
     const p = getWindowPrefs();
     if (p.minimizeToTray || p.closeToTray) createTray();
     else {
@@ -1154,11 +1167,58 @@ function setupIpcHandlers() {
           latest,
           hasUpdate: !!latest && cmpVersion(latest, current) > 0,
           url: json.html_url || '',
+          // 优先给安装包直链，供「下载并安装」用
+          downloadUrl: (Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null)?.browser_download_url || '',
           notes: (json.body || '').slice(0, 2000),
         },
       };
     } catch (e) {
       return { success: false, error: e.name === 'AbortError' ? '请求超时' : e.message };
+    }
+  });
+
+  // ---- 应用内更新：下载安装包并重启安装 ----
+  ipcMain.handle('update:download', async (event, { url } = {}) => {
+    try {
+      if (!url) return { success: false, error: '没有可用的下载地址' };
+      const dir = path.join(app.getPath('temp'), 'pm-update');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `PasswordManager-Setup-${Date.now()}.exe`);
+      const res = await fetch(url, {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'password-manager-app' },
+        signal: AbortSignal.timeout(30 * 60 * 1000),
+      });
+      if (!res.ok || !res.body) return { success: false, error: `下载失败（HTTP ${res.status}）` };
+      const total = Number(res.headers.get('content-length') || 0);
+      let received = 0;
+      const out = fs.createWriteStream(file);
+      for await (const chunk of res.body) {
+        received += chunk.length;
+        if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
+        try { event.sender.send('update:progress', { received, total }); } catch { /* 窗口已关 */ }
+      }
+      await new Promise(r => out.end(r));
+      if (received < 1024 * 1024) {
+        try { fs.unlinkSync(file); } catch { /* 忽略 */ }
+        return { success: false, error: '下载内容异常（文件过小），请改用浏览器下载' };
+      }
+      return { success: true, data: { file, size: received } };
+    } catch (e) {
+      const reason = e.name === 'TimeoutError' ? '下载超时' : e.message;
+      return { success: false, error: reason };
+    }
+  });
+
+  ipcMain.handle('update:install', async (_event, { file } = {}) => {
+    try {
+      if (!file || !fs.existsSync(file)) return { success: false, error: '安装包不存在，请重新下载' };
+      // 静默安装到当前用户；安装完成后应用会自己退出
+      spawn(file, ['/S', '/currentuser'], { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 900);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
     }
   });
 
@@ -1409,6 +1469,63 @@ function setupIpcHandlers() {
     .replace(/\s+/g, ' ')
     .trim();
 
+  /** 富文本 HTML → 纯文本（保留换行，图片留占位） */
+  function ztHtmlToText(html) {
+    let t = String(html || '');
+    t = t.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '');
+    t = t.replace(/<br\s*\/?>/gi, '\n');
+    t = t.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n');
+    t = t.replace(/<li[^>]*>/gi, '· ');
+    t = t.replace(/<img[^>]*>/gi, '[图片]');
+    t = t.replace(/<[^>]+>/g, '');
+    t = t.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&');
+    t = t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return t;
+  }
+
+  /** 解析 bug-view 页面：标题、产品、重现步骤、附件；列表里没有的字段在这里补 */
+  function ztParseBugDetail(html, bugId, base) {
+    const titleTag = ztStripTags((html.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '');
+    let title = titleTag;
+    let productName = '';
+    const m = titleTag.match(/^BUG\s*#\d+\s*([\s\S]*?)\s+-\s+(.+?)\s+-\s+禅道$/);
+    if (m) { title = m[1].trim(); productName = m[2].trim(); }
+
+    // 「重现步骤」区块：从标题到下一个 section 之间
+    let steps = '';
+    const idx = html.indexOf('zui-key="重现步骤"');
+    if (idx > 0) {
+      const cls = html.indexOf('detail-section-content', idx);
+      if (cls > 0) {
+        // 从该标签的 > 之后开始，别把 class 属性当正文
+        const gt = html.indexOf('>', cls);
+        const from = gt > 0 ? gt + 1 : cls;
+        const nextSec = html.indexOf('zui-key="historyWrapper"', from);
+        const to = nextSec > from ? html.lastIndexOf('<', nextSec) : Math.min(html.length, from + 30000);
+        steps = ztHtmlToText(html.slice(from, to > from ? to : from + 30000));
+      }
+    }
+
+    // 附件
+    const attachments = [];
+    const re = /href="([^"]*file-(?:download|read)[^"]*)"[^>]*>([^<]{1,120})</g;
+    let fm;
+    while ((fm = re.exec(html)) !== null) {
+      const name = ztStripTags(fm[2]);
+      if (name && !attachments.includes(name)) attachments.push(name);
+    }
+
+    return {
+      id: String(bugId),
+      title: title || `BUG #${bugId}`,
+      productName,
+      steps: steps || '（该 Bug 没有填写重现步骤）',
+      attachments,
+      url: `${String(base || '').replace(/\/+$/, '')}/bug-view-${bugId}.html`,
+    };
+  }
+
   function ztMapBug(b) {
     return {
       id: String(b.id || ''),
@@ -1424,6 +1541,8 @@ function setupIpcHandlers() {
       date: String(b.openedDate || '').slice(0, 10),
       deadline: /^0{4}-0{2}-0{2}/.test(String(b.deadline || '')) ? '' : String(b.deadline || ''),
       resolution: String(b.resolution || ''),
+      resolvedDate: /^0{4}-0{2}-0{2}/.test(String(b.resolvedDate || '')) ? '' : String(b.resolvedDate || '').slice(0, 10),
+      closedDate: /^0{4}-0{2}-0{2}/.test(String(b.closedDate || '')) ? '' : String(b.closedDate || '').slice(0, 10),
     };
   }
 
@@ -1531,7 +1650,8 @@ function setupIpcHandlers() {
     }
   });
 
-  ipcMain.handle('zentao:my-bugs', async (_event, cfg) => {
+  /** 拉「我的 Bug」：页面抓取（定时提醒也复用这个） */
+  async function ztLoadMyBugs(cfg) {
     if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
     cfg = ztNormalizeCfg(cfg);
     try {
@@ -1596,6 +1716,121 @@ function setupIpcHandlers() {
     } catch (e) {
       return { success: false, error: e.message };
     }
+  }
+
+  ipcMain.handle('zentao:my-bugs', async (_event, cfg) => {
+    if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
+    return ztLoadMyBugs(cfg);
+  });
+
+  ipcMain.handle('zentao:bug-detail', async (_event, { cfg, bugId } = {}) => {
+    if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
+    if (!bugId) return { success: false, error: '缺少 Bug ID' };
+    cfg = ztNormalizeCfg(cfg);
+    try {
+      const login = await ztEnsureLogin(cfg);
+      if (!login.ok) return { success: false, error: login.error };
+      const res = await ztFetch(cfg, `bug-view-${bugId}.html`);
+      if (res.status >= 300 && res.status < 400) {
+        return { success: false, error: `打开 Bug #${bugId} 失败（HTTP ${res.status}），可能没有查看权限` };
+      }
+      if (!res.text || res.text.length < 500) {
+        return { success: false, error: `Bug #${bugId} 页面内容异常` };
+      }
+      return { success: true, data: ztParseBugDetail(res.text, bugId, cfg.baseUrl) };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- 新 Bug 提醒（后台定时检查「我的 Bug」） ----
+  let ztNotifyTimer = null;
+  let ztNotifyBusy = false;
+  let ztSeenIds = null;
+
+  const ztNotifyStateFile = () => path.join(app.getPath('userData'), 'zentao-notify-state.json');
+
+  function ztLoadSeen() {
+    if (ztSeenIds) return ztSeenIds;
+    try {
+      const j = JSON.parse(fs.readFileSync(ztNotifyStateFile(), 'utf8'));
+      ztSeenIds = new Set(Array.isArray(j.ids) ? j.ids.map(String) : []);
+    } catch {
+      ztSeenIds = new Set();
+    }
+    return ztSeenIds;
+  }
+
+  function ztSaveSeen() {
+    try {
+      fs.writeFileSync(ztNotifyStateFile(), JSON.stringify({ ids: [...(ztSeenIds || [])], at: new Date().toISOString() }), 'utf8');
+    } catch { /* 忽略 */ }
+  }
+
+  /** 从 vault 里取禅道配置（只有解锁后才有） */
+  function ztCfgFromVault() {
+    if (!currentPassword) return null;
+    const vault = loadVault(currentPassword);
+    const list = vault && Array.isArray(vault.integrations) ? vault.integrations : [];
+    const cfg = list.find(i => i && i.id === 'zentao');
+    if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) return null;
+    return cfg;
+  }
+
+  async function ztCheckNewBugs() {
+    if (ztNotifyBusy || !currentPassword) return;
+    const settings = loadSettings() || {};
+    if (!settings.zentaoNotify) return;
+    const cfg = ztCfgFromVault();
+    if (!cfg) return;
+    ztNotifyBusy = true;
+    try {
+      const r = await ztLoadMyBugs(cfg);
+      if (!r || !r.success || !Array.isArray(r.data)) return;
+      const ids = new Set(r.data.map(b => String(b.id)));
+      const seen = ztLoadSeen();
+      const isFirstRun = seen.size === 0;
+      const fresh = r.data.filter(b => !seen.has(String(b.id)));
+      // 首次只记录基线，不弹一堆通知
+      if (!isFirstRun && fresh.length > 0) {
+        const body = fresh.slice(0, 3).map(b => `#${b.id} ${b.title}`).join('\n')
+          + (fresh.length > 3 ? `\n…还有 ${fresh.length - 3} 条` : '');
+        try {
+          const n = new Notification({ title: `禅道：${fresh.length} 个新 Bug`, body });
+          n.on('click', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.show();
+              mainWindow.focus();
+              mainWindow.webContents.send('zentao:open');
+            }
+          });
+          n.show();
+        } catch { /* 系统不支持通知时忽略 */ }
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
+      }
+      ztSeenIds = ids;
+      ztSaveSeen();
+    } catch { /* 提醒失败不打扰用户 */ } finally {
+      ztNotifyBusy = false;
+    }
+  }
+
+  /** 按设置启停定时器；锁定后 currentPassword 为空自然不再拉取 */
+  function ztRestartNotify() {
+    if (ztNotifyTimer) {
+      clearInterval(ztNotifyTimer);
+      ztNotifyTimer = null;
+    }
+    const settings = loadSettings() || {};
+    if (!settings.zentaoNotify || !currentPassword) return;
+    const min = Math.max(2, Number(settings.zentaoNotifyInterval) || 10);
+    ztNotifyTimer = setInterval(ztCheckNewBugs, min * 60 * 1000);
+    setTimeout(ztCheckNewBugs, 8000);
+  }
+
+  ipcMain.handle('zentao:notify-now', async () => {
+    await ztCheckNewBugs();
+    return { success: true };
   });
 
   // ---- 禅道 REST API（api.php/v1）----

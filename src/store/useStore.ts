@@ -125,6 +125,8 @@ export const useStore = create<AppState>((set, get) => ({
     contentProtection: false,
     launchAtLogin: false,
     lastPage: 'passwordManager',
+    zentaoNotify: false,
+    zentaoNotifyInterval: 10,
     browserPaths: {},
     keybindings: {
       newEntry: 'Ctrl+N',

@@ -4,6 +4,7 @@ import { Login } from './pages/Login';
 import { Settings } from './pages/Settings';
 import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
+import { CommandPalette } from './components/CommandPalette';
 import { DataGenerator } from './pages/DataGenerator';
 import { JsonConverter } from './pages/JsonConverter';
 import { Toolbox } from './pages/Toolbox';
@@ -24,6 +25,7 @@ function App() {
   const setSettings = useStore(s => s.setSettings);
   const setPmSubPage = useStore(s => s.setPmSubPage);
   const [currentPage, setCurrentPage] = useState('passwordManager');
+  const [cmdkOpen, setCmdkOpen] = useState(false);
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const lastActivityRef = useRef(Date.now());
   // 锁定时会把页面切回主页，那次切换不应该覆盖「上次停留页面」
@@ -132,6 +134,13 @@ function App() {
       const shift = e.shiftKey;
       const pressedKey = e.key === ',' ? ',' : e.key.toLowerCase();
 
+      // 全局命令面板：Ctrl+K / Cmd+K
+      if (ctrl && !shift && pressedKey === 'k') {
+        e.preventDefault();
+        setCmdkOpen(v => !v);
+        return;
+      }
+
       const kb = useStore.getState().settings.keybindings;
       if (!kb) return;
 
@@ -206,6 +215,12 @@ function App() {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [isLocked]);
+
+  // 系统通知「有新 Bug」→ 跳到禅道页
+  useEffect(() => {
+    const off = window.electronAPI.onZentaoOpen?.(() => setCurrentPage('zentao'));
+    return off;
+  }, []);
 
   // Tray menu → 锁定（窗口可能处于隐藏/后台状态，锁定时不需要弹窗）
   useEffect(() => {
@@ -303,6 +318,12 @@ function App() {
   return (
     <div className="app-layout">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} />
+      <CommandPalette
+        open={cmdkOpen}
+        onClose={() => setCmdkOpen(false)}
+        onNavigate={setCurrentPage}
+        onLock={handleLock}
+      />
       <div className="main-content">
         {currentPage !== 'dataGenerator' && renderPage()}
         {tdgMounted && (

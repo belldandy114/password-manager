@@ -3,6 +3,8 @@ import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
+import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
+import { useZentaoStore } from '../store/zentaoStore';
 
 const DEFAULT_DIR = '';
 const LS_KEY = 'weekly.report.dir';
@@ -49,6 +51,8 @@ export function WeeklyReport() {
   const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 禅道数据（周报草稿用）
+  const ztBugs = useZentaoStore(s => s.bugs);
 
   useEffect(() => { setDirDraft(dir); }, [dir]);
 
@@ -152,6 +156,18 @@ export function WeeklyReport() {
 
   /* ---------------- 新建 / 编辑 / 删除 ---------------- */
 
+  /** 从禅道「我的 Bug」生成一周草稿 */
+  const genDraft = (offset = 0) => {
+    if (ztBugs.length === 0) {
+      setError('还没有禅道数据：请先到「禅道 → 我的 Bug」点一次「拉取我的 Bug」');
+      return;
+    }
+    const { start, end, friday } = weekRange(offset);
+    setError('');
+    setShowPreview(false);
+    setDraft({ name: `${friday}.md`, text: buildWeeklyDraft(ztBugs, start, end), isNew: true });
+  };
+
   const startNew = () => {
     setError('');
     setShowPreview(false);
@@ -222,6 +238,9 @@ export function WeeklyReport() {
               )}
               <button className="btn btn-secondary btn-sm" onClick={() => load(dir)} disabled={loading}>
                 <Icons.refresh size={13} /> {loading ? '刷新中…' : '刷新'}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => genDraft(0)} disabled={editing} title="用禅道「我的 Bug」生成本周草稿">
+                <Icons.bug size={13} /> 生成草稿
               </button>
               <button className="btn btn-primary btn-sm" onClick={startNew} disabled={editing}>
                 <Icons.plus size={13} /> 新建周报

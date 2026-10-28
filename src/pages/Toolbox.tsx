@@ -8,7 +8,7 @@ import { Page, PageHead, Panel, Icons } from '../components/ui';
    工具箱：时间戳 / 编码 / 哈希&JWT / 正则 / 文本对比 / 数据校验
    ============================================================= */
 
-type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonExtract' | 'diff' | 'validate';
+type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonExtract' | 'aes' | 'cron' | 'timezone' | 'urlParams' | 'diff' | 'validate';
 
 const TOOLS: { id: ToolId; label: string; icon: React.ReactNode; desc: string }[] = [
   { id: 'timestamp', label: '时间戳', icon: <Icons.refresh size={13} />, desc: 'Unix 时间戳与日期互转，造数和看日志时最常用' },
@@ -17,6 +17,10 @@ const TOOLS: { id: ToolId; label: string; icon: React.ReactNode; desc: string }[
   { id: 'regex', label: '正则测试', icon: <Icons.search size={13} />, desc: '实时匹配高亮，内置常用正则' },
   { id: 'regexExtract', label: '正则提取', icon: <Icons.list size={13} />, desc: '按正则批量抽取内容，可只取分组、去重、拼成 JSON' },
   { id: 'jsonExtract', label: 'JSON 提取', icon: <Icons.db size={13} />, desc: '按路径 a.b[0].c / a[*].name 取值，或递归提取某个 key' },
+  { id: 'aes', label: 'AES 加解密', icon: <Icons.lock size={13} />, desc: 'AES-256-GCM + PBKDF2 口令派生，本地完成' },
+  { id: 'cron', label: 'Cron 解析', icon: <Icons.refresh size={13} />, desc: '把 cron 表达式翻成中文，并算出接下来 5 次执行时间' },
+  { id: 'timezone', label: '时区换算', icon: <Icons.clock size={13} />, desc: '一个时间同时看多个时区，排国际联调最有用' },
+  { id: 'urlParams', label: 'URL 参数', icon: <Icons.terminal size={13} />, desc: '拆解 URL 的 query 参数，原始值 / 解码值对照' },
   { id: 'diff', label: '文本对比', icon: <Icons.list size={13} />, desc: '两段文本逐行差异，回归比对很实用' },
   { id: 'validate', label: '数据校验', icon: <Icons.check size={13} />, desc: '身份证 / 手机号 / 银行卡 / 统一社会信用代码' },
 ];
@@ -616,6 +620,406 @@ function JsonExtractTool() {
   );
 }
 
+/* ---------------- AES 加解密 ---------------- */
+const toB64 = (buf: Uint8Array) => {
+  let bin = '';
+  buf.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+};
+
+const fromB64 = (s: string) => Uint8Array.from(atob(s.trim()), c => c.charCodeAt(0));
+
+async function deriveAesKey(pass: string, salt: Uint8Array): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: 120000, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+function AesTool() {
+  const [mode, setMode] = useState<'enc' | 'dec'>('enc');
+  const [text, setText] = useState('');
+  const [pass, setPass] = useState('');
+  const [out, setOut] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setErr('');
+    setOut('');
+    if (!pass) { setErr('请先输入口令'); return; }
+    setBusy(true);
+    try {
+      if (mode === 'enc') {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await deriveAesKey(pass, salt);
+        const ct = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: iv as unknown as BufferSource },
+          key,
+          new TextEncoder().encode(text) as unknown as BufferSource,
+        );
+        const all = new Uint8Array(16 + 12 + ct.byteLength);
+        all.set(salt, 0);
+        all.set(iv, 16);
+        all.set(new Uint8Array(ct), 28);
+        setOut(toB64(all));
+      } else {
+        const raw = fromB64(text);
+        if (raw.length < 29) throw new Error('short');
+        const salt = raw.slice(0, 16);
+        const iv = raw.slice(16, 28);
+        const body = raw.slice(28);
+        const key = await deriveAesKey(pass, salt);
+        const pt = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: iv as unknown as BufferSource },
+          key,
+          body as unknown as BufferSource,
+        );
+        setOut(new TextDecoder().decode(pt));
+      }
+    } catch {
+      setErr(mode === 'dec' ? '解密失败：口令不对，或密文被改动过' : '加密失败，请检查输入');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-inline">
+        <button className={`btn btn-sm ${mode === 'enc' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('enc')}>加密模式</button>
+        <button className={`btn btn-sm ${mode === 'dec' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('dec')}>解密模式</button>
+        <input
+          type="password"
+          value={pass}
+          onChange={e => setPass(e.target.value)}
+          placeholder="口令（不保存、不上传）"
+          style={{ maxWidth: 260 }}
+        />
+        <button className="btn btn-sm btn-primary aes-run" onClick={run} disabled={busy || !text.trim()}>
+          {busy ? '处理中…' : mode === 'enc' ? '加密' : '解密'}
+        </button>
+      </div>
+
+      <div className="tool-field">
+        <label>{mode === 'enc' ? '明文' : '密文（Base64）'}</label>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={6}
+          placeholder={mode === 'enc' ? '要加密的内容' : '粘贴 Base64 密文'}
+        />
+      </div>
+
+      {err && <div className="input-hint" style={{ color: 'var(--danger)' }}>{err}</div>}
+
+      <div className="tool-field">
+        <label>结果</label>
+        <textarea value={out} readOnly rows={6} placeholder="结果会显示在这里" />
+        {out && (
+          <button className="btn btn-sm btn-secondary" style={{ alignSelf: 'flex-start' }} onClick={() => navigator.clipboard.writeText(out)}>
+            复制结果
+          </button>
+        )}
+      </div>
+
+      <div className="pg-sub">
+        AES-256-GCM，PBKDF2-SHA256（12 万次）派生密钥；输出 = salt(16) + iv(12) + 密文，Base64 编码。
+        同一份密文每次结果不同属正常。
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Cron 解析 ---------------- */
+function cronValues(expr: string, min: number, max: number): number[] | null {
+  const out = new Set<number>();
+  for (const part of expr.split(',')) {
+    if (!part) return null;
+    const [range, stepRaw] = part.split('/');
+    const step = stepRaw === undefined ? 1 : Number(stepRaw);
+    if (!Number.isInteger(step) || step <= 0) return null;
+    let lo = min;
+    let hi = max;
+    if (range !== '*') {
+      if (range.includes('-')) {
+        const [a, b] = range.split('-').map(Number);
+        if (!Number.isInteger(a) || !Number.isInteger(b)) return null;
+        lo = a; hi = b;
+      } else {
+        const v = Number(range);
+        if (!Number.isInteger(v)) return null;
+        lo = v; hi = v;
+      }
+    }
+    if (lo < min || hi > max || lo > hi) return null;
+    for (let v = lo; v <= hi; v += step) out.add(v);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+interface CronSpec { minutes: number[]; hours: number[]; days: number[]; months: number[]; dows: number[] }
+
+function parseCron(expr: string): CronSpec | null {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [mi, ho, da, mo, dw] = parts;
+  const minutes = cronValues(mi, 0, 59);
+  const hours = cronValues(ho, 0, 23);
+  const days = cronValues(da, 1, 31);
+  const months = cronValues(mo, 1, 12);
+  const dows = cronValues(dw.replace(/7/g, '0'), 0, 6);
+  if (!minutes || !hours || !days || !months || !dows) return null;
+  return { minutes, hours, days, months, dows };
+}
+
+function cronMatches(spec: CronSpec, d: Date): boolean {
+  return spec.minutes.includes(d.getMinutes())
+    && spec.hours.includes(d.getHours())
+    && spec.months.includes(d.getMonth() + 1)
+    && spec.days.includes(d.getDate())
+    && spec.dows.includes(d.getDay());
+}
+
+function describeCron(expr: string, spec: CronSpec): string {
+  const p = expr.trim().split(/\s+/);
+  const seg: string[] = [];
+  const f = (v: number[], unit: string) => (v.length === 1 ? `${v[0]}${unit}` : `${v.join(',')}${unit}`);
+
+  if (p[0].startsWith('*/')) seg.push(`每 ${p[0].slice(2)} 分钟`);
+  else if (p[0] === '*') seg.push('每分钟');
+  else if (!p[0].includes(',') && !p[0].includes('-')) seg.push(`${f(spec.minutes, '分')}`);
+
+  if (p[1] === '*') { if (p[0] !== '*') seg.push('每小时'); }
+  else if (p[1].startsWith('*/')) seg.push(`每 ${p[1].slice(2)} 小时`);
+  else seg.push(`${f(spec.hours, '点')}`);
+
+  if (p[2] !== '*') seg.push(`${f(spec.days, '号')}`);
+  if (p[3] !== '*') seg.push(`${f(spec.months, '月')}`);
+  if (p[4] !== '*') {
+    const names = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    seg.push(spec.dows.map(d => names[d]).join(','));
+  }
+  return seg.join(' · ') || '每分钟';
+}
+
+function CronTool() {
+  const [expr, setExpr] = useState('0 9 * * 1-5');
+
+  const result = useMemo(() => {
+    const spec = parseCron(expr);
+    if (!spec) return { error: '表达式应为 5 段：分 时 日 月 周（例如 0 9 * * 1-5）', runs: [] as string[], desc: '' };
+    const runs: string[] = [];
+    const cur = new Date();
+    cur.setSeconds(0, 0);
+    cur.setMinutes(cur.getMinutes() + 1);
+    for (let i = 0; i < 60 * 24 * 366 && runs.length < 5; i++) {
+      if (cronMatches(spec, cur)) runs.push(cur.toLocaleString('zh-CN', { hour12: false }));
+      cur.setMinutes(cur.getMinutes() + 1);
+    }
+    return { error: '', runs, desc: describeCron(expr, spec) };
+  }, [expr]);
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-field">
+        <label>Cron 表达式（分 时 日 月 周）</label>
+        <div className="tool-inline">
+          <input value={expr} onChange={e => setExpr(e.target.value)} placeholder="0 9 * * 1-5" spellCheck={false} />
+        </div>
+        <div className="regex-presets">
+          {[
+            ['每分钟', '* * * * *'],
+            ['每天 9 点', '0 9 * * *'],
+            ['工作日 9 点', '0 9 * * 1-5'],
+            ['每 30 分钟', '*/30 * * * *'],
+            ['每月 1 号 0 点', '0 0 1 * *'],
+          ].map(([label, value]) => (
+            <button key={value} className="btn btn-sm btn-secondary" onClick={() => setExpr(value)}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {result.error
+        ? <div className="input-hint" style={{ color: 'var(--danger)' }}>{result.error}</div>
+        : (
+          <>
+            <div className="tool-result">
+              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{result.desc}</div>
+            </div>
+            <div className="tool-field">
+              <label>接下来 5 次执行时间</label>
+              <table className="kv-table">
+                <tbody>
+                  {result.runs.map((r, i) => (
+                    <tr key={i}><td>{i + 1}</td><td><code>{r}</code></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+    </div>
+  );
+}
+
+/* ---------------- 时区换算 ---------------- */
+const ZONES: [string, string][] = [
+  ['Asia/Shanghai', '北京'],
+  ['UTC', 'UTC'],
+  ['Asia/Tokyo', '东京'],
+  ['Asia/Singapore', '新加坡'],
+  ['Europe/London', '伦敦'],
+  ['Europe/Berlin', '柏林'],
+  ['America/New_York', '纽约'],
+  ['America/Los_Angeles', '洛杉矶'],
+];
+
+/** 把「某时区的本地时间」换算成真实 UTC 时刻 */
+function zonedToUtc(local: string, tz: string): Date {
+  const naive = new Date(`${local}:00Z`);
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  const parts = fmt.formatToParts(naive).reduce<Record<string, string>>((acc, p) => {
+    if (p.type !== 'literal') acc[p.type] = p.value;
+    return acc;
+  }, {});
+  const asIfLocal = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+  );
+  return new Date(naive.getTime() - (asIfLocal - naive.getTime()));
+}
+
+function TimezoneTool() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const [local, setLocal] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+  const [tz, setTz] = useState('Asia/Shanghai');
+
+  const rows = useMemo(() => {
+    if (!local) return [];
+    const utc = zonedToUtc(local, tz);
+    return ZONES.map(([zone, name]) => ({
+      name,
+      zone,
+      time: new Intl.DateTimeFormat('zh-CN', {
+        timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
+      }).format(utc),
+    }));
+  }, [local, tz]);
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-inline">
+        <input type="datetime-local" value={local} onChange={e => setLocal(e.target.value)} />
+        <select value={tz} onChange={e => setTz(e.target.value)}>
+          {ZONES.map(([zone, name]) => <option key={zone} value={zone}>{name}（{zone}）</option>)}
+        </select>
+        <span className="text-sm text-muted">上面这个时间按所选时区理解</span>
+      </div>
+
+      <table className="kv-table">
+        <thead><tr><th>时区</th><th>当地时间</th><th>IANA</th></tr></thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.zone}>
+              <td>{r.name}</td>
+              <td><code>{r.time}</code></td>
+              <td style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>{r.zone}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ---------------- URL 参数解析 ---------------- */
+function UrlParamsTool() {
+  const [input, setInput] = useState('');
+
+  const parsed = useMemo(() => {
+    const raw = input.trim();
+    if (!raw) return null;
+    try {
+      const u = new URL(raw);
+      const rows: { key: string; value: string; enc: string }[] = [];
+      u.searchParams.forEach((value, key) => {
+        rows.push({ key, value, enc: encodeURIComponent(value) });
+      });
+      return { ok: true as const, u, rows };
+    } catch {
+      return { ok: false as const };
+    }
+  }, [input]);
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-field">
+        <label>URL</label>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          rows={4}
+          placeholder="https://api.example.com/users?page=1&size=20&keyword=%E6%B5%8B%E8%AF%95"
+        />
+      </div>
+
+      {!parsed && <div className="text-sm text-muted">粘贴一个完整 URL，自动拆出协议、主机、路径与查询参数</div>}
+      {parsed && !parsed.ok && <div className="input-hint" style={{ color: 'var(--danger)' }}>不是合法的 URL（记得带 http:// 或 https://）</div>}
+
+      {parsed && parsed.ok && (
+        <>
+          <table className="kv-table">
+            <tbody>
+              <tr><td>协议</td><td><code>{parsed.u.protocol.replace(':', '')}</code></td></tr>
+              <tr><td>主机</td><td><code>{parsed.u.host}</code></td></tr>
+              <tr><td>路径</td><td><code>{parsed.u.pathname}</code></td></tr>
+              {parsed.u.hash && <tr><td>Hash</td><td><code>{parsed.u.hash}</code></td></tr>}
+            </tbody>
+          </table>
+
+          <div className="tool-field">
+            <label>查询参数（{parsed.rows.length} 个）</label>
+            {parsed.rows.length === 0 ? (
+              <div className="text-sm text-muted">这个 URL 没有查询参数</div>
+            ) : (
+              <table className="kv-table">
+                <thead><tr><th>参数</th><th>值</th><th>URL 编码</th></tr></thead>
+                <tbody>
+                  {parsed.rows.map((r, i) => (
+                    <tr key={`${r.key}-${i}`}>
+                      <td><code>{r.key}</code></td>
+                      <td>{r.value || <span style={{ color: 'var(--text-muted)' }}>（空）</span>}</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: 11.5 }}><code>{r.enc}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <button
+            className="btn btn-sm btn-secondary"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() => navigator.clipboard.writeText(JSON.stringify(Object.fromEntries(parsed.rows.map(r => [r.key, r.value])), null, 2))}
+          >
+            复制为 JSON
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- 文本对比 ---------------- */
 function diffLines(a: string, b: string) {
   const A = a.split('\n');
@@ -810,6 +1214,10 @@ export function Toolbox() {
           {active === 'regex' && <RegexTool />}
           {active === 'regexExtract' && <RegexExtractTool />}
           {active === 'jsonExtract' && <JsonExtractTool />}
+          {active === 'aes' && <AesTool />}
+          {active === 'cron' && <CronTool />}
+          {active === 'timezone' && <TimezoneTool />}
+          {active === 'urlParams' && <UrlParamsTool />}
           {active === 'diff' && <DiffTool />}
           {active === 'validate' && <ValidateTool />}
         </Panel>

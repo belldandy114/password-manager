@@ -1,0 +1,114 @@
+import React, { useEffect, useState } from 'react';
+import type { ZentaoBug, ZentaoBugDetail, ZentaoConfig } from '../types';
+import { Icons, Pill } from './ui';
+import { bugToText } from '../utils/bugText';
+
+/**
+ * Bug 详情抽屉：点列表行直接在这里看重现步骤，不用来回切浏览器。
+ * 列表里已有的字段直接用，缺的（重现步骤/附件）走 zentao:bug-detail 现拉。
+ */
+export function BugDrawer({
+  bug, cfg, onClose,
+}: {
+  bug: ZentaoBug | null;
+  cfg: ZentaoConfig | null;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<ZentaoBugDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!bug || !cfg) { setDetail(null); return; }
+    let alive = true;
+    setLoading(true);
+    setError('');
+    setDetail(null);
+    (async () => {
+      const res = await window.electronAPI.zentaoBugDetail(cfg, bug.id);
+      if (!alive) return;
+      setLoading(false);
+      if (res.success && res.data) setDetail(res.data);
+      else setError(res.error || '读取详情失败');
+    })();
+    return () => { alive = false; };
+  }, [bug, cfg]);
+
+  if (!bug) return null;
+
+  const base = cfg?.baseUrl || '';
+  const openBrowser = () => {
+    window.electronAPI.browserOpen({ browser: 'default', url: `${base.replace(/\/+$/, '')}/bug-view-${bug.id}.html` });
+  };
+  const copy = async () => {
+    await navigator.clipboard.writeText(bugToText(bug, base));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <>
+      <div className="drawer-mask" onClick={onClose} />
+      <aside className="drawer">
+        <header className="drawer-head">
+          <div className="drawer-title">
+            <span className="cell-mono">#{bug.id}</span>
+            <span className="drawer-title-text" title={bug.title}>{bug.title}</span>
+          </div>
+          <button className="ibtn" onClick={onClose} title="关闭" aria-label="关闭">
+            <Icons.close size={14} />
+          </button>
+        </header>
+
+        <div className="drawer-body">
+          <div className="drawer-meta">
+            <Pill tone={bug.status === 'active' ? 'bad' : bug.status === 'resolved' ? 'ok' : 'mute'} dot>
+              {{ active: '激活', resolved: '已解决', closed: '已关闭', postponed: '已延期' }[String(bug.status)] || bug.status || '—'}
+            </Pill>
+            {bug.severity && (
+              <Pill tone={String(bug.severity) === '1' ? 'bad' : String(bug.severity) === '2' ? 'warn' : 'mute'}>
+                {{ '1': '致命', '2': '严重', '3': '一般', '4': '轻微' }[String(bug.severity)] || `严重度 ${bug.severity}`}
+              </Pill>
+            )}
+            {bug.resolution === 'fixed' && <Pill tone="ok">已修复</Pill>}
+          </div>
+
+          <dl className="drawer-kv">
+            <div><dt>项目</dt><dd>{bug.productName || '—'}</dd></div>
+            <div><dt>指派给</dt><dd>{bug.assignedTo || '—'}</dd></div>
+            <div><dt>创建者</dt><dd>{bug.openedBy || '—'}</dd></div>
+            <div><dt>创建日期</dt><dd>{bug.date || '—'}</dd></div>
+            <div><dt>截止日期</dt><dd>{bug.deadline || '—'}</dd></div>
+            <div><dt>优先级</dt><dd>{bug.pri || '—'}</dd></div>
+          </dl>
+
+          <div className="drawer-section">
+            <h5>重现步骤</h5>
+            {loading && <div className="drawer-hint">读取中…</div>}
+            {!loading && error && <div className="drawer-hint is-bad">{error}</div>}
+            {!loading && !error && detail && (
+              <>
+                <pre className="drawer-steps">{detail.steps}</pre>
+                {detail.attachments.length > 0 && (
+                  <div className="drawer-files">
+                    <span>附件：</span>
+                    {detail.attachments.map(a => <span key={a} className="chip">{a}</span>)}
+                    <span className="drawer-hint-inline">（在浏览器中打开可下载）</span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <footer className="drawer-foot">
+          <button className="btn btn-secondary btn-sm" onClick={copy}>{copied ? '已复制' : '复制汇报文本'}</button>
+          <button className="btn btn-primary btn-sm" onClick={openBrowser}>
+            <Icons.extern size={12} /> 浏览器打开
+          </button>
+        </footer>
+      </aside>
+    </>
+  );
+}
