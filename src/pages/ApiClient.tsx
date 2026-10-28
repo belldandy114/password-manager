@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem } from '../types';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
@@ -162,6 +162,11 @@ export function ApiClient() {
   const [sending, setSending] = useState(false);
   const [showVars, setShowVars] = useState(false);
   const [respTab, setRespTab] = useState<'body' | 'headers'>('body');
+  // 会话保持：把响应 Set-Cookie 收进主进程内存 Cookie 罐，后续请求自动补 Cookie 头
+  const [autoSession, setAutoSession] = useState(() => {
+    try { return localStorage.getItem('pm.api.autosession') !== '0'; } catch { return true; }
+  });
+  const [jar, setJar] = useState<ApiJarCookie[]>([]);
   // 断言结果 / 断言编辑区展开
   const [assertResults, setAssertResults] = useState<AssertResult[]>([]);
   const [showAssert, setShowAssert] = useState(false);
@@ -247,6 +252,13 @@ export function ApiClient() {
     setReq({ ...req, body: `${base ? `${base}\n` : ''}file=@${res.data.file}` });
   };
 
+  const refreshJar = async () => {
+    const r = await window.electronAPI.apiCookies();
+    if (r.success) setJar(r.data || []);
+  };
+
+  useEffect(() => { refreshJar(); }, []);
+
   const send = async () => {
     if (!req.url.trim()) { setError('请输入 URL'); return; }
     setSending(true);
@@ -259,12 +271,14 @@ export function ApiClient() {
     const res = await window.electronAPI.apiSend({
       method: req.method, url, headers, body,
       bodyType: req.bodyType || 'json', rawContentType: req.rawContentType || '',
+      autoSession,
     });
     setSending(false);
     if (res.success && res.data) {
       setResponse(res.data);
       setAssertResults(runAssertions(req.assertions, res.data));
       pushHistory(req.method, url, res.data.status, res.data.timeMs);
+      if (res.data.setCookies && res.data.setCookies.length) refreshJar();
     } else {
       setError(res.error || '请求失败');
       pushHistory(req.method, url, 0, 0);
@@ -284,6 +298,7 @@ export function ApiClient() {
       const res = await window.electronAPI.apiSend({
         method: r.method, url, headers, body,
         bodyType: r.bodyType || 'json', rawContentType: r.rawContentType || '',
+        autoSession,
       });
       const asserts = res.success && res.data ? runAssertions(r.assertions, res.data) : [];
       const ok = !!(res.success && res.data) && (asserts.length === 0 || asserts.every(a => a.ok));
@@ -509,6 +524,43 @@ export function ApiClient() {
                   <button className="btn btn-primary btn-sm" onClick={send} disabled={sending} style={{ minWidth: 76 }}>
                     {sending ? '发送中…' : '发送'}
                   </button>
+                </div>
+
+                {/* 会话保持：响应里的 Set-Cookie 收进内存 Cookie 罐，下次请求自动带上 */}
+                <div className="api-session-row">
+                  <label className="api-session-toggle" title="开启后，响应里的 Set-Cookie 会收进内存 Cookie 罐，后续请求自动补 Cookie 头（仅本次运行有效，锁定即清空）">
+                    <input
+                      type="checkbox"
+                      checked={autoSession}
+                      onChange={e => {
+                        const v = e.target.checked;
+                        setAutoSession(v);
+                        try { localStorage.setItem('pm.api.autosession', v ? '1' : '0'); } catch { /* ignore */ }
+                      }}
+                    />
+                    <span>自动保持会话</span>
+                  </label>
+                  {jar.length > 0 ? (
+                    <>
+                      <span className="pill pill-ok" style={{ padding: '2px 8px', fontSize: 11 }}>
+                        Cookie 罐 {jar.length} 个
+                      </span>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={async () => {
+                          await window.electronAPI.apiCookiesClear();
+                          setJar([]);
+                        }}
+                      >
+                        清空
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-sm text-muted">Cookie 罐为空（登录接口返回 Set-Cookie 后自动填充）</span>
+                  )}
+                  {response?.setCookies && response.setCookies.length > 0 && (
+                    <span className="text-sm text-muted">本次收到 {response.setCookies.length} 个 Set-Cookie</span>
+                  )}
                 </div>
 
                 <div className="field">

@@ -95,6 +95,67 @@ function clearCaches() {
   keyCache = null;
   vaultCache = { password: null, data: null };
   trashCache = { password: null, data: null };
+  apiJar.clear();
+}
+
+// ----------------------------------------------------------------
+// API 调试的「会话 Cookie 罐」（api:send 用）
+// 只放内存、不落盘：这些是别人的登录态 token，落盘就等于把凭证明文写在磁盘上。
+// 锁定 / 退出时由 clearCaches() 一并清空，所以重启或锁定后需要重新登录一次。
+// ----------------------------------------------------------------
+const apiJar = new Map(); // origin -> Map(name -> { value, expiresAt })
+
+function apiJarAbsorb(origin, setCookieList) {
+  let jar = apiJar.get(origin);
+  if (!jar) { jar = new Map(); apiJar.set(origin, jar); }
+  for (const raw of setCookieList || []) {
+    const parts = String(raw).split(';');
+    const first = parts.shift() || '';
+    const i = first.indexOf('=');
+    if (i <= 0) continue;
+    const name = first.slice(0, i).trim();
+    const value = first.slice(i + 1).trim();
+    let expiresAt = 0; // 0 = 会话级
+    let expireFlag = 0; // -1 = 立即删除
+    for (const p of parts) {
+      const eq = p.indexOf('=');
+      const k = (eq > 0 ? p.slice(0, eq) : p).trim().toLowerCase();
+      const v = eq > 0 ? p.slice(eq + 1).trim() : '';
+      if (k === 'max-age') {
+        const n = Number(v);
+        if (Number.isFinite(n)) expireFlag = n <= 0 ? -1 : 0, expiresAt = n <= 0 ? 0 : Date.now() + n * 1000;
+      } else if (k === 'expires') {
+        const t = Date.parse(v);
+        if (Number.isFinite(t)) { expiresAt = t; expireFlag = t <= Date.now() ? -1 : 0; }
+      }
+    }
+    if (expireFlag === -1) jar.delete(name);
+    else jar.set(name, { value, expiresAt });
+  }
+  if (!jar.size) apiJar.delete(origin);
+}
+
+function apiJarHeader(origin) {
+  const jar = apiJar.get(origin);
+  if (!jar || !jar.size) return '';
+  const out = [];
+  for (const [name, v] of jar) {
+    if (v.expiresAt > 0 && v.expiresAt <= Date.now()) { jar.delete(name); continue; }
+    out.push(`${name}=${v.value}`);
+  }
+  return out.join('; ');
+}
+
+function apiJarList(origin) {
+  const rows = [];
+  for (const [o, jar] of apiJar) {
+    if (origin && o !== origin) continue;
+    for (const [name, v] of jar) {
+      if (v.expiresAt > 0 && v.expiresAt <= Date.now()) continue;
+      rows.push({ origin: o, name, expiresAt: v.expiresAt });
+    }
+  }
+  return rows;
 }
 
 // ----------------------------------------------------------------
@@ -1686,18 +1747,27 @@ function setupIpcHandlers() {
 
   // ---- HTTP client for the API debugger ----
   ipcMain.handle('api:send', async (_event, {
-    method = 'GET', url, headers = '', body = '', bodyType = 'json', rawContentType = '',
+    method = 'GET', url, headers = '', body = '', bodyType = 'json', rawContentType = '', autoSession = true,
   }) => {
     if (!/^https?:\/\//i.test(String(url || ''))) {
       return { success: false, error: 'URL 必须以 http:// 或 https:// 开头' };
     }
     const started = Date.now();
+    let origin = '';
+    try { origin = new URL(url).origin; } catch { /* 上面已校验过 */ }
     try {
       const hdrs = {};
       String(headers || '').split('\n').forEach(line => {
         const idx = line.indexOf(':');
         if (idx > 0) hdrs[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
       });
+      // 会话保持：把 Cookie 罐里该站点的 cookie 合并进请求头。
+      // 用户手写的 Cookie 优先级更高（同名不覆盖），并且手写时整体不注入，避免意外改动请求。
+      if (autoSession) {
+        const jar = apiJarHeader(origin);
+        const ckKey = Object.keys(hdrs).find(k => k.toLowerCase() === 'cookie');
+        if (!ckKey && jar) hdrs['Cookie'] = jar;
+      }
       // 用户自己写了 Content-Type 就不覆盖
       const hasCT = () => Object.keys(hdrs).some(k => k.toLowerCase() === 'content-type');
       const setCT = (v) => { if (!hasCT()) hdrs['Content-Type'] = v; };
@@ -1756,12 +1826,19 @@ function setupIpcHandlers() {
       const text = await res.text();
       const resHeaders = {};
       res.headers.forEach((v, k) => { resHeaders[k] = v; });
+      // undici 的 getSetCookie() 才能拿到「一条一条」的 Set-Cookie；
+      // forEach 会把多个 Set-Cookie 用逗号拼成一条，Expires 里的逗号会让解析全乱。
+      const setCookies = typeof res.headers.getSetCookie === 'function'
+        ? res.headers.getSetCookie()
+        : (resHeaders['set-cookie'] ? [resHeaders['set-cookie']] : []);
+      if (autoSession && setCookies.length && origin) apiJarAbsorb(origin, setCookies);
       return {
         success: true,
         data: {
           status: res.status,
           statusText: res.statusText,
           headers: resHeaders,
+          setCookies,
           body: text.length > 500000 ? text.slice(0, 500000) + '\n...（响应过大，已截断）' : text,
           size: Buffer.byteLength(text),
           timeMs: Date.now() - started,
@@ -1770,6 +1847,15 @@ function setupIpcHandlers() {
     } catch (e) {
       return { success: false, error: e.name === 'AbortError' ? '请求超时（30 秒）' : e.message };
     }
+  });
+
+  // ---- 会话 Cookie 罐（接口调试用） ----
+  ipcMain.handle('api:cookies', (_event, { origin } = {}) => ({ success: true, data: apiJarList(origin) }));
+
+  ipcMain.handle('api:cookies-clear', (_event, { origin } = {}) => {
+    if (origin) apiJar.delete(origin);
+    else apiJar.clear();
+    return { success: true, data: apiJarList() };
   });
 
   // ---- Zentao (禅道) ----

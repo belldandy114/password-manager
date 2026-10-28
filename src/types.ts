@@ -223,6 +223,16 @@ export interface ApiResponseData {
   body: string;
   size: number;
   timeMs: number;
+  /** 响应里的原始 Set-Cookie（已被收进会话罐） */
+  setCookies?: string[];
+}
+
+/** 会话 Cookie 罐里的一条（只在内存，锁定即清） */
+export interface ApiJarCookie {
+  origin: string;
+  name: string;
+  /** 0 = 会话级 */
+  expiresAt: number;
 }
 
 export interface Snippet {
@@ -400,7 +410,12 @@ export interface ElectronAPI {
     method: string; url: string; headers?: string; body?: string;
     bodyType?: 'json' | 'form' | 'multipart' | 'raw' | 'none';
     rawContentType?: string;
+    /** 默认 true：自动收 Set-Cookie，并在后续请求里补 Cookie 头 */
+    autoSession?: boolean;
   }) => Promise<{ success: boolean; data?: ApiResponseData; error?: string }>;
+  /** 会话 Cookie 罐（仅内存） */
+  apiCookies: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
+  apiCookiesClear: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;

@@ -3279,6 +3279,35 @@
   color: var(--text-muted);
 }
 
+/* 会话保持开关 + Cookie 罐计数（接口调试页） */
+.api-session-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: -2px;
+  padding: 0 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.api-session-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+}
+
+.api-session-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* 断言结果条 */
 .assert-bar {
   padding: 9px 12px;

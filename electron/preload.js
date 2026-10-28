@@ -82,6 +82,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // API debugger / Zentao
   apiSend: (data) => ipcRenderer.invoke('api:send', data),
+  apiCookies: (origin) => ipcRenderer.invoke('api:cookies', { origin }),
+  apiCookiesClear: (origin) => ipcRenderer.invoke('api:cookies-clear', { origin }),
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
   zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),

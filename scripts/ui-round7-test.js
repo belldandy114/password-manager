@@ -180,6 +180,50 @@ const check = (name, ok, extra = '') => {
   check('数据目录：能读到真实路径', okInfo && path.resolve(info.data.dataDir) === path.resolve(ud), okInfo ? info.data.dataDir : JSON.stringify(info).slice(0, 80));
   check('数据目录：识别为默认位置而非自定义', okInfo && info.data.isCustom === false);
 
+  /* ================= B. 接口调试 ================= */
+  // B5 会话保持：本地假服务返回 Set-Cookie，后续请求要自动带上
+  const http = require('http');
+  const srv = http.createServer((rq, rs) => {
+    rs.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (rq.url === '/login') {
+      rs.setHeader('Set-Cookie', ['sid=abc123; Path=/; HttpOnly; Max-Age=3600', 'uid=7; Path=/']);
+      rs.end('{"ok":true,"msg":"login"}');
+    } else if (rq.url === '/me') {
+      const ck = rq.headers.cookie || '';
+      rs.end(JSON.stringify({ cookie: ck, ok: ck.includes('sid=abc123') }));
+    } else {
+      rs.statusCode = 404;
+      rs.end('{"ok":false}');
+    }
+  });
+  await new Promise((r) => srv.listen(9811, '127.0.0.1', r));
+  const base = 'http://127.0.0.1:9811';
+  const sendReq = (extra) => api(`window.electronAPI.apiSend({ method:'GET', url:'${base}/me', body:'', bodyType:'none', autoSession:true, ${extra} })`);
+
+  const r1 = await api(`window.electronAPI.apiSend({ method:'GET', url:'${base}/login', body:'', bodyType:'none', autoSession:true })`);
+  check('会话：响应带回 Set-Cookie', !!(r1.data && r1.data.setCookies && r1.data.setCookies.length === 2),
+    r1.data && r1.data.setCookies ? r1.data.setCookies.length + ' 条' : JSON.stringify(r1).slice(0, 80));
+  const jarRows = await api(`window.electronAPI.apiCookies()`);
+  check('会话：Cookie 已进内存罐', jarRows.data && jarRows.data.length === 2, jarRows.data ? jarRows.data.map(c => c.name).join(',') : '');
+  check('会话：只记名字不落盘（无 value 字段）', jarRows.data && jarRows.data.every(c => !('value' in c)));
+
+  const r2 = await sendReq('');
+  const body2 = r2.data ? JSON.parse(r2.data.body) : {};
+  check('会话：后续请求自动带 Cookie', body2.ok === true, body2.cookie || '');
+
+  const r3 = await api(`window.electronAPI.apiSend({ method:'GET', url:'${base}/me', body:'', bodyType:'none', autoSession:false })`);
+  const body3 = r3.data ? JSON.parse(r3.data.body) : {};
+  check('会话：关掉开关就不带 Cookie', body3.ok === false, body3.cookie || '(空)');
+
+  // 手写 Cookie 时不被罐覆盖
+  const r4 = await api(`window.electronAPI.apiSend({ method:'GET', url:'${base}/me', headers:'Cookie: sid=manual', body:'', bodyType:'none', autoSession:true })`);
+  const body4 = r4.data ? JSON.parse(r4.data.body) : {};
+  check('会话：手写 Cookie 优先于罐', body4.cookie === 'sid=manual', body4.cookie || '');
+
+  const cleared = await api(`window.electronAPI.apiCookiesClear()`);
+  check('会话：可一键清空', !cleared.data || cleared.data.length === 0);
+  srv.close();
+
   /* ================= 结果 ================= */
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   try { ws.close(); } catch { /* ignore */ }
