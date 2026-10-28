@@ -77,6 +77,8 @@ export interface AppSettings {
   zentaoNotify: boolean;
   /** 提醒检查间隔（分钟） */
   zentaoNotifyInterval: number;
+  /** 自动备份保留份数（1~60） */
+  backupKeep: number;
   browserPaths: { [key: string]: string };
   keybindings: Record<KeybindingId, string>;
 }
@@ -128,6 +130,20 @@ export interface ZentaoBug {
 }
 
 /** 禅道 Bug 详情（从 bug-view 页面解析） */
+export interface AuditEntry {
+  at: string;
+  action: string;
+  detail?: string;
+}
+
+export interface NotifyStatus {
+  enabled: boolean;
+  interval: number;
+  configured: boolean;
+  unlocked: boolean;
+  lastCheck: { at: string; ok: boolean; total?: number; fresh?: number; error?: string } | null;
+}
+
 export interface ZentaoBugDetail {
   id: string;
   title: string;
@@ -137,6 +153,8 @@ export interface ZentaoBugDetail {
   url: string;
   /** 重现步骤里的截图（主进程带登录态取回后转成 dataURL，渲染层才能直接显示） */
   images?: { src: string; name: string; dataUrl: string }[];
+  /** 流转记录（谁在什么时候做了什么） */
+  history?: { action: string; label: string; time: string; who: string; text: string }[];
   /** 正文里一共几张图 / 其中几张没取到 */
   imageTotal?: number;
   imageFailed?: number;
@@ -244,6 +262,20 @@ export interface EnvEntry {
   updatedAt: string;
 }
 
+/** 接口断言：只断言填了的项 */
+export interface ApiAssertions {
+  /** 期望状态码：200 精确，2xx 通配，空=不断言 */
+  status?: string;
+  /** 响应时间上限（ms） */
+  maxMs?: string;
+  /** JSON 取值路径，如 data.list[0].id */
+  jsonPath?: string;
+  /** 路径值需包含的内容（空 = 只要求该路径存在） */
+  jsonValue?: string;
+  /** 响应正文必须包含的关键字 */
+  contains?: string;
+}
+
 export interface ApiRequest {
   id: string;
   name: string;
@@ -253,6 +285,10 @@ export interface ApiRequest {
   body: string;
   /** KEY=VALUE 每行一个，用于 {{变量}} 替换 */
   variables?: string;
+  /** Cookie，每行 key=value（发送时自动拼 Cookie 头） */
+  cookies?: string;
+  /** 断言配置 */
+  assertions?: ApiAssertions;
   updatedAt: string;
 }
 
@@ -311,7 +347,11 @@ export interface ElectronAPI {
   passwordGenerate: (opts?: PasswordGenOptions) => Promise<{ success: boolean; data?: string; error?: string }>;
 
   // Backups
-  backupList: () => Promise<{ success: boolean; data: BackupFile[]; dir: string }>;
+  backupList: () => Promise<{ success: boolean; data: BackupFile[]; dir: string; keep?: number; lastAt?: string }>;
+  /** 写一条审计日志（复制密码/导出等） */
+  auditLog: (action: string, detail?: string) => Promise<{ success: boolean }>;
+  auditList: (limit?: number) => Promise<{ success: boolean; data?: AuditEntry[] }>;
+  auditClear: () => Promise<{ success: boolean; error?: string }>;
   backupOpenFolder: () => Promise<{ success: boolean; error?: string }>;
 
   // Generic collection storage
@@ -337,13 +377,33 @@ export interface ElectronAPI {
   zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
-    Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
-  zentaoAllBugs: (cfg: ZentaoConfig) =>
-    Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; products?: number; error?: string }>;
+    Promise<{
+      success: boolean;
+      data?: ZentaoBug[];
+      total?: number;
+      error?: string;
+      cached?: boolean;
+      ageMs?: number;
+      fetchedAt?: string;
+    }>;
+  zentaoAllBugs: (cfg: ZentaoConfig, force?: boolean) =>
+    Promise<{
+      success: boolean;
+      data?: ZentaoBug[];
+      total?: number;
+      products?: number;
+      error?: string;
+      /** 命中了主进程 10 分钟缓存 */
+      cached?: boolean;
+      ageMs?: number;
+      fetchedAt?: string;
+    }>;
   zentaoBugDetail: (cfg: ZentaoConfig, bugId: string) =>
     Promise<{ success: boolean; data?: ZentaoBugDetail; error?: string }>;
   /** 立即检查一次新 Bug（设置页「立即检查」） */
-  zentaoNotifyNow: () => Promise<{ success: boolean }>;
+  zentaoNotifyNow: () => Promise<{ success: boolean; data?: NotifyStatus['lastCheck'] }>;
+  /** 提醒运行状态：是否开启/已配置/解锁中/上次检查结果 */
+  zentaoNotifyStatus: () => Promise<{ success: boolean; data?: NotifyStatus }>;
   /** 点系统通知 → 跳到禅道页 */
   onZentaoOpen: (cb: () => void) => () => void;
 
@@ -373,6 +433,9 @@ export interface ElectronAPI {
     canMirror?: boolean;
     detail?: string;
   }>;
+  /** 保存文本到文件（导出 CSV 等），自动加 BOM */
+  saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[]) =>
+    Promise<{ success: boolean; data?: { file: string }; error?: string; canceled?: boolean }>;
   /** 手动选择已下载的安装包（网络下不动时的兜底） */
   updatePickFile: () => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string; canceled?: boolean }>;
   /** 启动静默安装并退出应用 */

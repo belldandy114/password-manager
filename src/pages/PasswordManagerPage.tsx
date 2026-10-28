@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Dashboard } from './Dashboard';
 import { TrashPage } from './TrashPage';
@@ -6,6 +6,7 @@ import { ImportPage } from './ImportPage';
 import { ExportPage } from './ExportPage';
 import { TagSidebar } from '../components/TagSidebar';
 import { Page, PageHead, Icons } from '../components/ui';
+import { SecurityAudit } from '../components/SecurityAudit';
 
 type SubPage = 'dashboard' | 'trash' | 'import' | 'export';
 
@@ -20,6 +21,8 @@ export function PasswordManagerPage() {
   const subPage = useStore(s => s.pmSubPage) as SubPage;
   const setSubPage = useStore(s => s.setPmSubPage);
   const trash = useStore(s => s.trash);
+  const setSearchQuery = useStore(s => s.setSearchQuery);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   const renderSubPage = () => {
     switch (subPage) {
@@ -37,6 +40,11 @@ export function PasswordManagerPage() {
           icon={<Icons.key size={16} />}
           title="网址管理"
           desc="按环境与标签整理账号密码，支持搜索、批量操作、安全体检与加密备份"
+          tools={
+            <button className="btn btn-secondary btn-sm" onClick={() => setAuditOpen(true)}>
+              <Icons.check size={13} /> 安全体检
+            </button>
+          }
         />
 
         <div className="tabs">
@@ -57,6 +65,12 @@ export function PasswordManagerPage() {
           <div className="pm-main">{renderSubPage()}</div>
         </div>
       </Page>
+
+      <SecurityAudit
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        onPick={name => { setSubPage('dashboard'); setSearchQuery(name); }}
+      />
     </div>
   );
 }

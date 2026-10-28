@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Icons } from './ui';
+import { applyTheme } from '../utils/theme';
 
 type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account';
 
@@ -46,6 +47,9 @@ export function CommandPalette({
   const setSearchQuery = useStore(s => s.setSearchQuery);
   const setPmSubPage = useStore(s => s.setPmSubPage);
   const signalNewEntry = useStore(s => s.signalNewEntry);
+  const signalCmd = useStore(s => s.signalCmd);
+  const settings = useStore(s => s.settings);
+  const updateSettings = useStore(s => s.updateSettings);
 
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
@@ -89,6 +93,32 @@ export function CommandPalette({
         run: () => { onNavigate('passwordManager'); setPmSubPage('dashboard'); signalNewEntry(); },
       },
       { id: 'action:lock', title: '锁定密码库', sub: '立即锁屏', kind: 'action', run: onLock },
+      {
+        id: 'action:zt-refresh',
+        title: '刷新：我的 Bug',
+        sub: '重新拉禅道「我的 Bug」',
+        kind: 'action',
+        run: () => { onNavigate('zentao'); signalCmd('zentao:refresh-mine'); },
+      },
+      {
+        id: 'action:weekly-draft',
+        title: '生成周报草稿',
+        sub: '用禅道「我的 Bug」生成本周草稿',
+        kind: 'action',
+        run: () => { onNavigate('weeklyReport'); signalCmd('weekly:draft'); },
+      },
+      {
+        id: 'action:theme',
+        title: settings.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+        sub: '立即切换界面配色',
+        kind: 'action',
+        run: () => {
+          const next = settings.theme === 'dark' ? 'light' : 'dark';
+          applyTheme(next);
+          updateSettings({ theme: next });
+          window.electronAPI.settingsSave({ theme: next });
+        },
+      },
       { id: 'action:zentao', title: '禅道：我的 Bug', sub: '打开禅道页', kind: 'action', run: () => onNavigate('zentao') },
       { id: 'action:api', title: '发一个接口请求', sub: '打开接口调试', kind: 'action', run: () => onNavigate('apiClient') },
     ];
@@ -130,7 +160,7 @@ export function CommandPalette({
     }));
 
     return [...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts];
-  }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry]);
+  }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, settings.theme, updateSettings]);
 
   const filtered = useMemo(() => {
     const key = q.trim().toLowerCase();
@@ -144,6 +174,16 @@ export function CommandPalette({
   }, [cmds, q]);
 
   useEffect(() => { setIdx(0); }, [q]);
+
+  // 焦点不在输入框（点过列表）时 Esc 也要能关
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 

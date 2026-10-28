@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Backups
   backupList: () => ipcRenderer.invoke('backup:list'),
+  auditLog: (action, detail) => ipcRenderer.invoke('audit:log', { action, detail }),
+  auditList: (limit) => ipcRenderer.invoke('audit:list', limit),
+  auditClear: () => ipcRenderer.invoke('audit:clear'),
   backupOpenFolder: () => ipcRenderer.invoke('backup:open-folder'),
 
   // Generic collection storage (snippets / notes / checklists / accounts / environments / apiRequests)
@@ -76,9 +79,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoMyBugs: (cfg) => ipcRenderer.invoke('zentao:my-bugs', cfg),
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
   zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
-  zentaoAllBugs: (cfg) => ipcRenderer.invoke('zentao:all-bugs', cfg),
+  zentaoAllBugs: (cfg, force) => ipcRenderer.invoke('zentao:all-bugs', cfg, { force: !!force }),
   zentaoBugDetail: (cfg, bugId) => ipcRenderer.invoke('zentao:bug-detail', { cfg, bugId }),
   zentaoNotifyNow: () => ipcRenderer.invoke('zentao:notify-now'),
+  zentaoNotifyStatus: () => ipcRenderer.invoke('zentao:notify-status'),
   onZentaoOpen: (cb) => {
     const h = () => cb();
     ipcRenderer.on('zentao:open', h);
@@ -98,6 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: (url, useMirror) => ipcRenderer.invoke('update:download', { url, useMirror }),
   updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
+  saveText: (content, defaultName, filters) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters }),
   updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),
   onUpdateProgress: (cb) => {
     const h = (_e, p) => cb(p);

@@ -90,6 +90,14 @@ export function TagSidebar() {
     return () => window.removeEventListener('keydown', handler);
   }, [contextMenu, filterTags, tags]);
 
+  // Esc 关闭右键菜单
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [contextMenu]);
+
   // Ctrl+A keyboard shortcut — select all / deselect all
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

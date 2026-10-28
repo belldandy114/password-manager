@@ -32,9 +32,12 @@ interface AppState {
   // Signals (for keyboard shortcuts / cross-component triggers)
   triggerNewEntry: number;
   pmSubPage: string;
+  /** 命令面板触发的跨页动作（kind + 时间戳，页面监听变化后执行） */
+  cmdSignal: { kind: string; at: number } | null;
 
   // Actions
   signalNewEntry: () => void;
+  signalCmd: (kind: string) => void;
   setPmSubPage: (page: string) => void;
   setLocked: (locked: boolean) => void;
   setIsSetup: (setup: boolean) => void;
@@ -97,6 +100,7 @@ export const useStore = create<AppState>((set, get) => ({
   isSetup: null,
   masterPassword: '',
   triggerNewEntry: 0,
+  cmdSignal: null,
   pmSubPage: 'dashboard',
   entries: [],
   tags: [],
@@ -127,6 +131,7 @@ export const useStore = create<AppState>((set, get) => ({
     lastPage: 'passwordManager',
     zentaoNotify: false,
     zentaoNotifyInterval: 10,
+    backupKeep: 7,
     browserPaths: {},
     keybindings: {
       newEntry: 'Ctrl+N',
@@ -140,6 +145,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   signalNewEntry: () => set((s) => ({ triggerNewEntry: s.triggerNewEntry + 1 })),
+  signalCmd: (kind) => set({ cmdSignal: { kind, at: Date.now() } }),
   setPmSubPage: (page) => set({ pmSubPage: page }),
   setLocked: (locked) => set({ isLocked: locked }),
   setIsSetup: (setup) => set({ isSetup: setup }),

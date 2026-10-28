@@ -3,8 +3,9 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor } from '../types';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, NotifyStatus, AuditEntry } from '../types';
 import { applyTheme, applyAccent, ACCENTS } from '../utils/theme';
+import { formatDateTime } from '../utils/time';
 
 interface BrowserInfo {
   id: string;
@@ -54,8 +55,13 @@ export function Settings() {
   const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
   const [zentaoNotify, setZentaoNotify] = useState(settings.zentaoNotify);
   const [zentaoNotifyInterval, setZentaoNotifyInterval] = useState(settings.zentaoNotifyInterval);
+  // 提醒运行状态（是否已配置/解锁/上次检查）
+  const [notifyStatus, setNotifyStatus] = useState<NotifyStatus | null>(null);
   const [backups, setBackups] = useState<BackupFile[]>([]);
   const [backupDir, setBackupDir] = useState('');
+  const [backupKeep, setBackupKeep] = useState(settings.backupKeep || 7);
+  const [backupLastAt, setBackupLastAt] = useState('');
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string } | null>(null);
   const [checking, setChecking] = useState(false);
   // 应用内更新：下载进度 / 已下载文件
@@ -71,6 +77,25 @@ export function Settings() {
     const off = window.electronAPI.onUpdateProgress?.((p) => setProgress(p));
     return off;
   }, []);
+
+  const loadAudit = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.auditList?.(30);
+      if (r && r.success) setAudit(r.data || []);
+    } catch { /* 忽略 */ }
+  }, []);
+
+  const refreshNotifyStatus = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.zentaoNotifyStatus?.();
+      if (r && r.success) setNotifyStatus(r.data || null);
+    } catch { /* 忽略 */ }
+  }, []);
+
+  useEffect(() => {
+    refreshNotifyStatus();
+    loadAudit();
+  }, [refreshNotifyStatus, loadAudit]);
 
   const downloadUpdate = async (mirror = false) => {
     const url = updateInfo?.downloadUrl;
@@ -169,6 +194,7 @@ export function Settings() {
       browserPaths,
       zentaoNotify,
       zentaoNotifyInterval: Math.max(2, Math.min(120, zentaoNotifyInterval)),
+      backupKeep: Math.max(1, Math.min(60, backupKeep)),
       theme: settings.theme,
       keybindings: localKeybindings,
     };
@@ -309,12 +335,24 @@ export function Settings() {
               <div>
                 <div className="setting-label">自动备份</div>
                 <div className="setting-desc">
-                  每次修改数据时，若当天尚无备份则自动保存一份加密副本，保留最近 7 份
+                  每次修改数据时，若当天尚无备份则自动保存一份加密副本；
+                  {backupLastAt ? `上次备份 ${formatDateTime(backupLastAt)}` : '还没有备份（首次修改数据后生成）'}
                 </div>
               </div>
-              <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.backupOpenFolder()}>
-                打开备份目录
-              </button>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={backupKeep}
+                  min={1}
+                  max={60}
+                  onChange={e => setBackupKeep(Number(e.target.value))}
+                  style={{ width: 70 }}
+                />
+                <span className="text-sm text-muted">份</span>
+                <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.backupOpenFolder()}>
+                  打开备份目录
+                </button>
+              </div>
             </div>
             <div className="backup-list">
               {backups.length === 0 ? (
@@ -328,6 +366,42 @@ export function Settings() {
                 ))
               )}
               {backupDir && <div className="backup-dir text-sm text-muted" title={backupDir}>{backupDir}</div>}
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>审计日志</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">敏感操作记录</div>
+                <div className="setting-desc">
+                  记录复制密码等操作（只记条目名与时间，不记密码内容），最多保留 2000 条，仅存本机
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm btn-secondary" onClick={loadAudit}>刷新</button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={async () => {
+                    await window.electronAPI.auditClear();
+                    setAudit([]);
+                    addToast('审计日志已清空', 'success');
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+            <div className="audit-list">
+              {audit.length === 0 ? (
+                <div className="text-sm text-muted">暂无记录（复制过一次密码就会出现）</div>
+              ) : (
+                audit.map((a, i) => (
+                  <div key={`${a.at}-${i}`} className="audit-row">
+                    <span className="audit-time">{formatDateTime(a.at)}</span>
+                    <span className="audit-action">{a.action}</span>
+                    <span className="audit-detail">{a.detail || ''}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         );
@@ -457,14 +531,28 @@ export function Settings() {
             <div className="setting-row">
               <div>
                 <div className="setting-label">立即检查一次</div>
-                <div className="setting-desc">手动触发，用来确认配置是否可用（结果以系统通知呈现）</div>
+                <div className="setting-desc">
+                  {notifyStatus
+                    ? [
+                      notifyStatus.configured ? '禅道账号已保存' : '⚠ 还没在禅道页保存账号密码',
+                      notifyStatus.unlocked ? '已解锁' : '未解锁（锁定状态下不检查）',
+                      notifyStatus.lastCheck
+                        ? `上次检查 ${formatDateTime(notifyStatus.lastCheck.at)} · ${notifyStatus.lastCheck.ok
+                          ? `成功，${notifyStatus.lastCheck.total} 条，新增 ${notifyStatus.lastCheck.fresh ?? 0} 条`
+                          : `失败：${notifyStatus.lastCheck.error || '未知原因'}`}`
+                        : '还没检查过',
+                    ].join(' · ')
+                    : '手动触发，用来确认配置是否可用'}
+                </div>
               </div>
               <div className="setting-control">
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={async () => {
-                    await window.electronAPI.zentaoNotifyNow();
-                    addToast('已检查一次', 'success');
+                    const r = await window.electronAPI.zentaoNotifyNow();
+                    await refreshNotifyStatus();
+                    if (r.data?.ok) addToast(`检查完成：${r.data.total} 条，新增 ${r.data.fresh ?? 0} 条`, 'success');
+                    else addToast(r.data?.error || '检查未执行（确认已开启提醒并已解锁）', 'error');
                   }}
                 >
                   检查一次
@@ -545,7 +633,10 @@ export function Settings() {
             <div className="setting-row">
               <div>
                 <div className="setting-label">开机自动启动</div>
-                <div className="setting-desc">登录 Windows 后自动启动（可配合「最小化到托盘」使用）</div>
+                <div className="setting-desc">
+                  登录 Windows 后自动启动，启动时静默驻留托盘不弹窗（需同时开启「最小化到托盘」或「关闭时最小化到托盘」；
+                  这样新 Bug 提醒才能持续工作）
+                </div>
               </div>
               <div className="setting-control">
                 <label className="switch">

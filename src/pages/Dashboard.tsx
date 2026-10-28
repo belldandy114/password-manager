@@ -90,9 +90,13 @@ export function Dashboard() {
   }, []);
 
   // Copy handler
-  const handleCopy = useCallback(async (text: string, label: string) => {
+  const handleCopy = useCallback(async (text: string, label: string, entryName?: string) => {
     const delay = label === '密码' ? store.settings.clipboardClearDelay * 1000 : 0;
     await window.electronAPI.clipboardCopy({ text, delay });
+    // 审计：复制密码属于敏感操作，记一笔（不写内容，只写条目名）
+    if (label === '密码') {
+      window.electronAPI.auditLog?.('复制密码', entryName || '').catch(() => { /* 忽略 */ });
+    }
     addToast(`${label}已复制到剪贴板`, 'success');
     if (label === '密码' && delay > 0) {
       addToast(`剪贴板将在 ${store.settings.clipboardClearDelay} 秒后自动清空`, 'info', 2000);

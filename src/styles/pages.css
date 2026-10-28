@@ -3084,3 +3084,552 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+/* ---------------- 19.19 分页器 ---------------- */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--pm-line);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-input) 35%, transparent);
+}
+
+.pager-info {
+  font-variant-numeric: tabular-nums;
+}
+
+.pager-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pager-size {
+  height: 26px;
+  min-height: 0;
+  padding: 2px 22px 2px 8px;
+  font-size: 11.5px;
+  border-radius: 7px;
+}
+
+.pager-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--pm-line);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+
+.pager-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+
+.pager-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pager-cur {
+  min-width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* 周报：生成草稿的周次选择 */
+.wk-draft-week {
+  height: 30px;
+  min-height: 0;
+  padding: 3px 24px 3px 9px;
+  font-size: 12px;
+  border-radius: 8px;
+  max-width: 210px;
+}
+
+/* ---------------- 19.20 接口调试：断言 / Cookie / 批量 ---------------- */
+.assert-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assert-badge {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 17px;
+}
+
+.assert-badge.is-on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.assert-caret {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.assert-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-input) 45%, transparent);
+}
+
+.assert-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.assert-grid label.span2 {
+  grid-column: span 2;
+}
+
+.assert-grid input {
+  height: 30px;
+  min-height: 0;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.assert-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* 断言结果条 */
+.assert-bar {
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--pm-line);
+  font-size: 12px;
+}
+
+.assert-bar.is-ok {
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 7%, transparent);
+}
+
+.assert-bar.is-bad {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.assert-bar-head {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.assert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.assert-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-secondary);
+}
+
+.assert-flag {
+  width: 12px;
+  flex: none;
+  font-weight: 700;
+}
+
+.assert-row.is-ok .assert-flag { color: var(--success); }
+.assert-row.is-bad .assert-flag { color: var(--danger); }
+
+.assert-name { flex: none; }
+
+.assert-detail {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 批量运行 */
+.api-pick {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+}
+
+.api-batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--pm-line);
+  background: color-mix(in srgb, var(--bg-input) 35%, transparent);
+}
+
+.batch-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.batch-pass {
+  font-size: 20px;
+  font-weight: 680;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+.batch-pass.is-all { color: var(--success); }
+
+.batch-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+}
+
+.batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 12px;
+}
+
+.batch-row:last-child { border-bottom: 0; }
+
+.batch-flag { width: 12px; flex: none; font-weight: 700; }
+.batch-row.is-ok .batch-flag { color: var(--success); }
+.batch-row.is-bad .batch-flag { color: var(--danger); }
+
+.batch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.batch-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.batch-asserts {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 抽屉：流转记录 */
+.hist-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.hist-row {
+  padding: 8px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 12px;
+}
+
+.hist-row:last-child { border-bottom: 0; }
+
+.hist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hist-tag {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 17px;
+}
+
+.hist-tag.is-opened,
+.hist-tag.is-confirmed { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.hist-tag.is-resolved,
+.hist-tag.is-closed { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.hist-tag.is-activated { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.hist-tag.is-assigned { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+
+.hist-who {
+  color: var(--text-secondary);
+}
+
+.hist-time {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.hist-text {
+  margin-top: 3px;
+  color: var(--text-muted);
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+/* ---------------- 19.21 禅道趋势图 ---------------- */
+.trend {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--pm-line);
+  color: var(--text-muted);
+}
+
+.trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.trend-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11.5px;
+}
+
+.trend-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.trend-legend-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.trend-legend-item em {
+  font-style: normal;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-range {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.trend-svg {
+  width: 100%;
+  height: 168px;
+  display: block;
+}
+
+/* 设置：审计日志 */
+.audit-list {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.audit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.audit-row:last-child { border-bottom: 0; }
+
+.audit-time {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.audit-action {
+  flex: none;
+  color: var(--text-primary);
+}
+
+.audit-detail {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- 19.22 安全体检 ---------------- */
+.audit-summary {
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.audit-summary strong {
+  color: var(--danger);
+  font-size: 15px;
+  padding: 0 2px;
+}
+
+.audit-ok {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: var(--success);
+}
+
+.audit-ok-title {
+  font-size: 13.5px;
+  font-weight: 620;
+  color: var(--text-primary);
+}
+
+.audit-group + .audit-group {
+  margin-top: 14px;
+}
+
+.audit-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.audit-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+}
+
+.audit-tag.is-bad {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.audit-tag.is-warn {
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  color: var(--warning);
+}
+
+.audit-tag.is-mute {
+  background: var(--bg-input);
+  color: var(--text-muted);
+}
+
+.audit-count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-group-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.audit-items {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.audit-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 11px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  background: transparent;
+  font-family: var(--font);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.audit-item:last-child { border-bottom: 0; }
+
+.audit-item:hover {
+  background: var(--bg-hover);
+}
+
+.audit-item-name {
+  color: var(--text-primary);
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-item-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

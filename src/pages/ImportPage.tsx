@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
@@ -11,6 +11,7 @@ export function ImportPage() {
   const [records, setRecords] = useState<any[]>([]);
   const [mappedEntries, setMappedEntries] = useState<any[]>([]);
   const [conflictStrategy, setConflictStrategy] = useState<ConflictStrategy>('skip');
+  const entries = useStore(s => s.entries);
   const [envType, setEnvType] = useState('production');
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({
     name: 'name',
@@ -96,6 +97,19 @@ export function ImportPage() {
       addToast(`读取失败: ${e.message}`, 'error');
     }
   };
+
+  /** 预计重复条数：与现有数据按 url + 用户名比对 */
+  const dupCount = useMemo(() => {
+    if (mappedEntries.length === 0) return 0;
+    const key = (e: any) => {
+      const url = String(e && e.url || '').trim().toLowerCase().replace(/\/+$/, '');
+      const user = String(e && e.username || '').trim().toLowerCase();
+      const name = String(e && e.name || '').trim().toLowerCase();
+      return url ? `${url}||${user}` : `name||${name}||${user}`;
+    };
+    const known = new Set(entries.map(key));
+    return mappedEntries.filter(e => known.has(key(e))).length;
+  }, [mappedEntries, entries]);
 
   const doImportEncrypted = async () => {
     if (!importPassword) { addToast('请输入加密密码', 'error'); return; }
@@ -300,10 +314,15 @@ export function ImportPage() {
             <div className="form-group">
               <label>冲突处理策略</label>
               <select value={conflictStrategy} onChange={e => setConflictStrategy(e.target.value as ConflictStrategy)}>
-                <option value="skip">跳过重复（依据URL）</option>
-                <option value="overwrite">覆盖更新</option>
-                <option value="duplicate">重复新增</option>
+                <option value="skip">跳过重复（网址 + 账号相同）</option>
+                <option value="overwrite">覆盖更新（用导入内容覆盖已有条目）</option>
+                <option value="duplicate">全部新增（保留重复）</option>
               </select>
+              <div className="pg-sub" style={{ marginTop: 6 }}>
+                {dupCount > 0
+                  ? `检测到 ${dupCount} 条与现有数据重复（共 ${mappedEntries.length} 条待导入）`
+                  : `这 ${mappedEntries.length} 条都是新数据，不会产生重复`}
+              </div>
             </div>
             <div className="flex gap-8 mt-16">
               <button className="btn btn-secondary" onClick={() => { setStep('select'); setRecords([]); setFilePath(''); setImportPassword(''); }}>返回</button>

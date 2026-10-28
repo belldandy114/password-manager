@@ -5,6 +5,9 @@ import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../compone
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
 import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
 import { useZentaoStore } from '../store/zentaoStore';
+import { useStore } from '../store/useStore';
+
+let lastCmdAt = 0;
 
 const DEFAULT_DIR = '';
 const LS_KEY = 'weekly.report.dir';
@@ -32,6 +35,11 @@ const TEMPLATE = `**一、本周工作**
 
 export function WeeklyReport() {
   const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
+  // 上次生成草稿选的是哪一周（0=本周，-1=上周…）
+  const [draftOffset, setDraftOffset] = useState(() => {
+    const v = Number(localStorage.getItem('pm.weekly.draftOffset'));
+    return Number.isFinite(v) && v <= 0 && v >= -8 ? v : 0;
+  });
   const [files, setFiles] = useState<WeeklyFile[]>([]);
   const [current, setCurrent] = useState<string>('');
   const [content, setContent] = useState('');
@@ -53,6 +61,8 @@ export function WeeklyReport() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 禅道数据（周报草稿用）
   const ztBugs = useZentaoStore(s => s.bugs);
+  // 命令面板「生成周报草稿」
+  const cmdSignal = useStore(s => s.cmdSignal);
 
   useEffect(() => { setDirDraft(dir); }, [dir]);
 
@@ -157,7 +167,7 @@ export function WeeklyReport() {
   /* ---------------- 新建 / 编辑 / 删除 ---------------- */
 
   /** 从禅道「我的 Bug」生成一周草稿 */
-  const genDraft = (offset = 0) => {
+  const genDraft = (offset = draftOffset) => {
     if (ztBugs.length === 0) {
       setError('还没有禅道数据：请先到「禅道 → 我的 Bug」点一次「拉取我的 Bug」');
       return;
@@ -167,6 +177,14 @@ export function WeeklyReport() {
     setShowPreview(false);
     setDraft({ name: `${friday}.md`, text: buildWeeklyDraft(ztBugs, start, end), isNew: true });
   };
+
+  // 命令面板「生成周报草稿」
+  useEffect(() => {
+    if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
+    if (cmdSignal.kind !== 'weekly:draft') return;
+    lastCmdAt = cmdSignal.at;
+    genDraft(draftOffset);
+  }, [cmdSignal, draftOffset]);
 
   const startNew = () => {
     setError('');
@@ -239,7 +257,29 @@ export function WeeklyReport() {
               <button className="btn btn-secondary btn-sm" onClick={() => load(dir)} disabled={loading}>
                 <Icons.refresh size={13} /> {loading ? '刷新中…' : '刷新'}
               </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => genDraft(0)} disabled={editing} title="用禅道「我的 Bug」生成本周草稿">
+              <select
+                className="wk-draft-week"
+                value={draftOffset}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  setDraftOffset(v);
+                  localStorage.setItem('pm.weekly.draftOffset', String(v));
+                }}
+                disabled={editing}
+                title="选哪一周生成草稿"
+              >
+                {Array.from({ length: 9 }, (_, i) => -i).map(off => {
+                  const { start, end } = weekRange(off);
+                  const label = off === 0 ? '本周' : off === -1 ? '上周' : `${-off} 周前`;
+                  return <option key={off} value={off}>{label}（{start.slice(5)} ~ {end.slice(5)}）</option>;
+                })}
+              </select>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => genDraft(draftOffset)}
+                disabled={editing}
+                title="用禅道「我的 Bug」生成所选周的草稿"
+              >
                 <Icons.bug size={13} /> 生成草稿
               </button>
               <button className="btn btn-primary btn-sm" onClick={startNew} disabled={editing}>

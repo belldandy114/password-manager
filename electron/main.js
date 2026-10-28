@@ -144,25 +144,73 @@ function loadVault(password) {
 // Automatic backups (one encrypted copy per day, keep the newest N)
 // ----------------------------------------------------------------
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const BACKUP_KEEP = 7;
+const BACKUP_KEEP_DEFAULT = 7;
+
+/** 保留份数来自设置（1~60），设置读不到就用默认 7 */
+function backupKeepCount() {
+  try {
+    const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    const n = Number(s && s.backupKeep);
+    return Number.isFinite(n) && n >= 1 && n <= 60 ? Math.floor(n) : BACKUP_KEEP_DEFAULT;
+  } catch {
+    return BACKUP_KEEP_DEFAULT;
+  }
+}
 
 function backupVaultOncePerDay() {
   try {
-    if (!fs.existsSync(DATA_FILE)) return;
+    if (!fs.existsSync(DATA_FILE)) return false;
     const day = new Date().toISOString().slice(0, 10);
     const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
-    if (fs.existsSync(target)) return; // already backed up today
+    if (fs.existsSync(target)) return false; // already backed up today
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     fs.copyFileSync(DATA_FILE, target);
 
+    const keep = backupKeepCount();
     const files = fs.readdirSync(BACKUP_DIR)
       .filter(f => /^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(f))
       .sort();
-    while (files.length > BACKUP_KEEP) {
+    while (files.length > keep) {
       const oldest = files.shift();
       try { fs.unlinkSync(path.join(BACKUP_DIR, oldest)); } catch { /* ignore */ }
     }
-  } catch { /* a failed backup must never block the save path */ }
+    return true;
+  } catch {
+    // a failed backup must never block the save path
+    return false;
+  }
+}
+
+// ----------------------------------------------------------------
+// Audit log（本地 JSONL：谁在什么时候复制了密码 / 导出 / 删除）
+// ----------------------------------------------------------------
+const AUDIT_FILE = path.join(DATA_DIR, 'audit.log');
+const AUDIT_MAX = 2000;
+
+function appendAudit(entry) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const line = JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n';
+    fs.appendFileSync(AUDIT_FILE, line, 'utf8');
+    // 太大就截断到最近 1000 条，避免无限增长
+    const st = fs.statSync(AUDIT_FILE);
+    if (st.size > 512 * 1024) {
+      const lines = fs.readFileSync(AUDIT_FILE, 'utf8').split('\n').filter(Boolean).slice(-AUDIT_MAX);
+      fs.writeFileSync(AUDIT_FILE, lines.join('\n') + '\n', 'utf8');
+    }
+  } catch { /* 审计失败不影响主流程 */ }
+}
+
+function readAudit(limit = 200) {
+  try {
+    if (!fs.existsSync(AUDIT_FILE)) return [];
+    const lines = fs.readFileSync(AUDIT_FILE, 'utf8').split('\n').filter(Boolean);
+    return lines.slice(-limit).reverse().map(l => {
+      try { return JSON.parse(l); } catch { return null; }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function listBackups() {
@@ -258,6 +306,7 @@ const DEFAULT_SETTINGS = {
   lastPage: 'passwordManager',
   zentaoNotify: false,
   zentaoNotifyInterval: 10,
+  backupKeep: 7,
   browserPaths: { chrome: '', msedge: '', firefox: '', brave: '', opera: '', vivaldi: '', '360': '', qq: '', quark: '' },
   keybindings: {
     newEntry: 'Ctrl+N',
@@ -469,7 +518,14 @@ function createWindow() {
   // Privacy: keep the vault out of screen captures/recordings when enabled.
   if ((loadSettings() || {}).contentProtection) mainWindow.setContentProtection(true);
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    // 开机自启（--hidden）：不弹窗，直接驻留托盘；点托盘图标再显示
+    if (process.argv.includes('--hidden') && (getWindowPrefs().minimizeToTray || getWindowPrefs().closeToTray)) {
+      createTray();
+      return;
+    }
+    mainWindow.show();
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -867,6 +923,8 @@ function setupIpcHandlers() {
     lastActivity = Date.now();
     // 解锁后启动禅道新 Bug 提醒（内部会检查开关）
     setTimeout(() => { try { ztRestartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
+    // 解锁即补一次当日备份：只改密码不改数据的日子也能有快照
+    setTimeout(() => { try { backupVaultOncePerDay(); } catch { /* 忽略 */ } }, 400);
     return { success: true, data: vault };
   });
 
@@ -1057,6 +1115,7 @@ function setupIpcHandlers() {
       lastPage: s.lastPage || DEFAULT_SETTINGS.lastPage,
       zentaoNotify: !!s.zentaoNotify,
       zentaoNotifyInterval: Number(s.zentaoNotifyInterval) || DEFAULT_SETTINGS.zentaoNotifyInterval,
+      backupKeep: Math.min(60, Math.max(1, Number(s.backupKeep) || DEFAULT_SETTINGS.backupKeep)),
       browserPaths: s.browserPaths || { ...DEFAULT_SETTINGS.browserPaths },
       keybindings: s.keybindings || { ...DEFAULT_SETTINGS.keybindings },
     };
@@ -1090,7 +1149,12 @@ function setupIpcHandlers() {
     // Start with Windows (only meaningful for the installed app).
     if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'launchAtLogin') && app.isPackaged) {
       try {
-        app.setLoginItemSettings({ openAtLogin: !!prefs.launchAtLogin, args: [] });
+        // 带 --hidden：开机启动时不弹窗，直接驻留托盘（否则每次开机都蹦一个窗口）
+        app.setLoginItemSettings({
+          openAtLogin: !!prefs.launchAtLogin,
+          path: process.execPath,
+          args: ['--hidden'],
+        });
       } catch { /* ignore */ }
     }
     return { success: true };
@@ -1125,7 +1189,25 @@ function setupIpcHandlers() {
   });
 
   // ---- Backups ----
-  ipcMain.handle('backup:list', () => ({ success: true, data: listBackups(), dir: BACKUP_DIR }));
+  ipcMain.handle('backup:list', () => ({
+    success: true,
+    data: listBackups(),
+    dir: BACKUP_DIR,
+    keep: backupKeepCount(),
+    lastAt: (listBackups()[0] || {}).mtime || '',
+  }));
+
+  ipcMain.handle('audit:log', (_event, entry) => {
+    if (!entry || !entry.action) return { success: false };
+    appendAudit({ action: String(entry.action).slice(0, 40), detail: String(entry.detail || '').slice(0, 200) });
+    return { success: true };
+  });
+
+  ipcMain.handle('audit:list', (_event, limit) => ({ success: true, data: readAudit(Number(limit) || 200) }));
+
+  ipcMain.handle('audit:clear', () => {
+    try { fs.writeFileSync(AUDIT_FILE, '', 'utf8'); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+  });
   ipcMain.handle('backup:open-folder', async () => {
     try {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -1312,6 +1394,21 @@ function setupIpcHandlers() {
       spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
       setTimeout(() => app.quit(), 1200);
       return { success: true, data: { silent: !!silent } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 保存文本文件（导出 CSV 等）：带 UTF-8 BOM，Excel 打开不乱码 */
+  ipcMain.handle('file:save-text', async (_event, { content, defaultName, filters } = {}) => {
+    try {
+      const r = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: defaultName || 'export.csv',
+        filters: filters || [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (r.canceled || !r.filePath) return { success: false, canceled: true };
+      fs.writeFileSync(r.filePath, '\uFEFF' + String(content ?? ''), 'utf8');
+      return { success: true, data: { file: r.filePath } };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -1627,6 +1724,42 @@ function setupIpcHandlers() {
     return t;
   }
 
+  const ZT_ACTION_LABEL = {
+    opened: '创建', edited: '编辑', assigned: '指派', resolved: '解决',
+    closed: '关闭', activated: '激活', commented: '备注', confirmed: '确认',
+    deleted: '删除', undeleted: '还原', moved: '移动', duplicated: '重复',
+    postponed: '延期', restored: '还原',
+  };
+
+  /** 从 zui-create-historyPanel 属性里取流转记录（禅道把 JSON 塞在属性里） */
+  function ztParseBugHistory(html) {
+    const m = html.match(/zui-create-historyPanel="([^"]*)"/);
+    if (!m) return [];
+    let json;
+    try {
+      const raw = m[1]
+        .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      json = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+    const actions = Array.isArray(json.actions) ? json.actions : [];
+    return actions.map(a => {
+      const text = ztHtmlToText(a.content || '').replace(/\s+/g, ' ').trim();
+      // 内容形如「2026-10-27 17:36:32, 由 梁金龙 创建。」，把时间与「由 X」拆出来做结构化展示
+      const tm = text.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)[,，]?\s*(.*)$/);
+      const who = (text.match(/由\s*([^\s，,。]{1,20})/) || [])[1] || '';
+      return {
+        action: String(a.action || ''),
+        label: ZT_ACTION_LABEL[String(a.action || '')] || String(a.action || '变更'),
+        time: tm ? tm[1] : '',
+        who,
+        text: tm ? tm[2] : text,
+      };
+    });
+  }
+
   /** 解析 bug-view 页面：标题、产品、重现步骤、附件；列表里没有的字段在这里补 */
   function ztParseBugDetail(html, bugId, base) {
     const titleTag = ztStripTags((html.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '');
@@ -1695,6 +1828,7 @@ function setupIpcHandlers() {
       steps: steps || '（该 Bug 没有填写重现步骤）',
       attachments,
       images,
+      history: ztParseBugHistory(html),
       url: `${String(base || '').replace(/\/+$/, '')}/bug-view-${bugId}.html`,
     };
   }
@@ -1961,16 +2095,25 @@ function setupIpcHandlers() {
     return cfg;
   }
 
+  /** 最近一次提醒检查的结果（设置页展示，避免「开了但不知道有没有跑」） */
+  let ztLastCheck = null;
+
   async function ztCheckNewBugs() {
     if (ztNotifyBusy || !currentPassword) return;
     const settings = loadSettings() || {};
     if (!settings.zentaoNotify) return;
     const cfg = ztCfgFromVault();
-    if (!cfg) return;
+    if (!cfg) {
+      ztLastCheck = { at: new Date().toISOString(), ok: false, error: '还没在禅道页保存账号密码' };
+      return;
+    }
     ztNotifyBusy = true;
     try {
       const r = await ztLoadMyBugs(cfg);
-      if (!r || !r.success || !Array.isArray(r.data)) return;
+      if (!r || !r.success || !Array.isArray(r.data)) {
+        ztLastCheck = { at: new Date().toISOString(), ok: false, error: (r && r.error) || '拉取失败' };
+        return;
+      }
       const ids = new Set(r.data.map(b => String(b.id)));
       const seen = ztLoadSeen();
       const isFirstRun = seen.size === 0;
@@ -1992,6 +2135,7 @@ function setupIpcHandlers() {
         } catch { /* 系统不支持通知时忽略 */ }
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
       }
+      ztLastCheck = { at: new Date().toISOString(), ok: true, total: r.data.length, fresh: fresh.length };
       ztSeenIds = ids;
       ztSaveSeen();
     } catch { /* 提醒失败不打扰用户 */ } finally {
@@ -2014,7 +2158,22 @@ function setupIpcHandlers() {
 
   ipcMain.handle('zentao:notify-now', async () => {
     await ztCheckNewBugs();
-    return { success: true };
+    return { success: true, data: ztLastCheck };
+  });
+
+  ipcMain.handle('zentao:notify-status', () => {
+    const settings = loadSettings() || {};
+    const cfg = ztCfgFromVault();
+    return {
+      success: true,
+      data: {
+        enabled: !!settings.zentaoNotify,
+        interval: Number(settings.zentaoNotifyInterval) || 10,
+        configured: !!cfg,
+        unlocked: !!currentPassword,
+        lastCheck: ztLastCheck,
+      },
+    };
   });
 
   // ---- 禅道 REST API（api.php/v1）----
@@ -2172,11 +2331,20 @@ function setupIpcHandlers() {
   });
 
   /** 所有项目（产品）的全部 Bug —— 用于「全部」视图看总数与跨项目统计 */
-  ipcMain.handle('zentao:all-bugs', async (_event, cfg) => {
+  // 全量 Bug 缓存：切项目/切页回来不必重新拉 31 个产品（TTL 10 分钟，force 可绕过）
+  const ztAllBugsCache = new Map();
+  const ZT_ALL_TTL = 10 * 60 * 1000;
+
+  ipcMain.handle('zentao:all-bugs', async (_event, cfg, opts = {}) => {
     if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
       return { success: false, error: '请先填写地址、账号和密码' };
     }
     cfg = ztNormalizeCfg(cfg);
+    const cacheKey = `${cfg.baseUrl}|${cfg.account}`;
+    const hit = ztAllBugsCache.get(cacheKey);
+    if (!(opts && opts.force) && hit && Date.now() - hit.at < ZT_ALL_TTL) {
+      return { success: true, ...hit.value, cached: true, ageMs: Date.now() - hit.at };
+    }
     try {
       const key = ztApiCacheKey(cfg);
       const products = await ztApiProducts(cfg);
@@ -2219,7 +2387,12 @@ function setupIpcHandlers() {
         .filter(b => b.id)
         .sort((a, b) => Number(b.id) - Number(a.id));
       // total 用去重后的实际条数，避免和表格行数不一致（reported 仅作参考）
-      return { success: true, data, total: data.length, reported, products: products.length };
+      const value = {
+        data, total: data.length, reported, products: products.length,
+        fetchedAt: new Date().toISOString(),
+      };
+      ztAllBugsCache.set(cacheKey, { at: Date.now(), value });
+      return { success: true, ...value, cached: false, ageMs: 0 };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -2425,14 +2598,21 @@ function setupIpcHandlers() {
     const vault = loadVault(currentPassword);
     if (!vault) return { success: false, error: '数据损坏' };
 
-    const existingUrls = new Map();
-    vault.entries.forEach(e => existingUrls.set(e.url, e));
+    // 判重键：url + 用户名（同一网址不同账号不算重复；没有 url 时退回 name + 用户名）
+    const dupKey = (e) => {
+      const url = String(e && e.url || '').trim().toLowerCase().replace(/\/+$/, '');
+      const user = String(e && e.username || '').trim().toLowerCase();
+      const name = String(e && e.name || '').trim().toLowerCase();
+      return url ? `${url}||${user}` : `name||${name}||${user}`;
+    };
+    const existingMap = new Map();
+    vault.entries.forEach(e => existingMap.set(dupKey(e), e));
 
     const now = new Date().toISOString();
     let importedCount = 0;
 
     entries.forEach(entry => {
-      const existing = existingUrls.get(entry.url);
+      const existing = existingMap.get(dupKey(entry));
       if (existing) {
         if (conflictStrategy === 'skip') return;
         if (conflictStrategy === 'overwrite') {

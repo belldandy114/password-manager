@@ -38,6 +38,18 @@ export function BugDrawer({
     return () => { alive = false; };
   }, [bug, cfg]);
 
+  // Esc：先关大图，再关抽屉
+  useEffect(() => {
+    if (!bug) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (preview) { setPreview(''); return; }
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [bug, preview, onClose]);
+
   if (!bug) return null;
 
   const base = cfg?.baseUrl || '';
@@ -131,6 +143,23 @@ export function BugDrawer({
               </>
             )}
           </div>
+          {!!detail?.history?.length && (
+            <div className="drawer-section">
+              <h5>流转记录（{detail.history.length}）</h5>
+              <div className="hist-list">
+                {detail.history.map((h, i) => (
+                  <div className="hist-row" key={`${h.time}-${i}`}>
+                    <div className="hist-head">
+                      <span className={`hist-tag is-${h.action || 'other'}`}>{h.label}</span>
+                      {h.who && <span className="hist-who">{h.who}</span>}
+                      {h.time && <span className="hist-time">{h.time}</span>}
+                    </div>
+                    {h.text && <div className="hist-text">{h.text}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <footer className="drawer-foot">

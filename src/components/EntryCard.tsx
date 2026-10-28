@@ -7,7 +7,7 @@ import { TotpBadge } from './EntryExtras';
 interface Props {
   entry: PasswordEntry;
   onEdit: (entry: PasswordEntry) => void;
-  onCopy: (text: string, label: string) => void;
+  onCopy: (text: string, label: string, entryName?: string) => void;
   /** 安全体检标记：弱密码 / 重复密码 */
   security?: { weak: boolean; duplicate: boolean };
   onToggleFavorite?: (entry: PasswordEntry) => void;
@@ -73,7 +73,7 @@ export function EntryCard({ entry, onEdit, onCopy, security, onToggleFavorite }:
       {/* Row 3.5: TOTP 动态验证码 */}
       {entry.totpSecret && (
         <div className="card-totp-row">
-          <TotpBadge secret={entry.totpSecret} onCopy={code => onCopy(code, '两步验证码')} />
+          <TotpBadge secret={entry.totpSecret} onCopy={code => onCopy(code, '两步验证码', entry.name)} />
         </div>
       )}
 

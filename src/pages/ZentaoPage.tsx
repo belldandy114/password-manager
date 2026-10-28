@@ -5,7 +5,10 @@ import { useZentaoStore } from '../store/zentaoStore';
 import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, type PillTone } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { BugDrawer } from '../components/BugDrawer';
-import { bugsToText } from '../utils/bugText';
+import { bugsToText, bugsToCsv } from '../utils/bugText';
+import { Pager } from '../components/Pager';
+import { BugTrend } from '../components/BugTrend';
+import { useStore } from '../store/useStore';
 import { formatHm } from '../utils/time';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
@@ -59,8 +62,11 @@ type TabId = 'mine' | 'project';
 /** 项目 Bug 里的「全部项目」伪 id */
 const ALL_PROJECT = '__all__';
 
-/** 明细表最多渲染多少行（全部项目时数据量大，避免卡顿） */
-const MAX_ROWS = 300;
+/** 明细表每页条数（分页渲染，避免上万行一次性上屏） */
+const PAGE_SIZES = [50, 100, 200];
+
+/** 命令面板信号的「已处理」标记：放模块级，页面重新挂载也不会重复执行 */
+let lastCmdAt = 0;
 
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
@@ -104,6 +110,14 @@ export function ZentaoPage() {
   const [presetOpen, setPresetOpen] = useState(false);
   const [presetName, setPresetName] = useState('');
   const [copiedTip, setCopiedTip] = useState('');
+  // 分页（两个 tab 各记各的）
+  const [pageMine, setPageMine] = useState(1);
+  const [pageProj, setPageProj] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  // 全量 Bug 缓存状态（命中时显示「缓存 · N 分钟前」）
+  const [cacheInfo, setCacheInfo] = useState('');
+  // 命令面板「刷新我的 Bug」
+  const cmdSignal = useStore(s => s.cmdSignal);
 
   useEffect(() => {
     if (cfg) setForm({ baseUrl: cfg.baseUrl, account: cfg.account, password: cfg.password });
@@ -114,6 +128,17 @@ export function ZentaoPage() {
     const others = items.filter(i => i.id !== 'zentao');
     await save([...others, entry]);
   };
+
+  useEffect(() => {
+    if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
+    if (cmdSignal.kind !== 'zentao:refresh-mine') return;
+    lastCmdAt = cmdSignal.at;
+    loadMine();
+  }, [cmdSignal]);
+
+  // 筛选条件变了就回到第一页
+  useEffect(() => { setPageMine(1); }, [project, status, severity, query]);
+  useEffect(() => { setPageProj(1); }, [activeProject, pStatus, pSeverity, pQuery]);
 
   const currentCfg = (): ZentaoConfig => ({
     id: 'zentao',
@@ -178,17 +203,27 @@ export function ZentaoPage() {
     }
   };
 
-  const loadProjectBugs = async (productId: string) => {
+  const loadProjectBugs = async (productId: string, force = false) => {
     if (!productId) return;
     setError('');
     setActiveProject(productId);
     setBusy('pb');
+    setCacheInfo('');
     const res = productId === ALL_PROJECT
-      ? await window.electronAPI.zentaoAllBugs(currentCfg())
+      ? await window.electronAPI.zentaoAllBugs(currentCfg(), force)
       : await window.electronAPI.zentaoProjectBugs(currentCfg(), productId);
     setBusy('');
-    if (res.success && res.data) setProjectBugs(res.data, res.total || res.data.length);
-    else setError(res.error || '拉取项目 Bug 失败');
+    if (res.success && res.data) {
+      setProjectBugs(res.data, res.total || res.data.length);
+      if (res.cached) {
+        const min = Math.max(1, Math.round((res.ageMs || 0) / 60000));
+        setCacheInfo(`缓存 · ${min} 分钟前`);
+      } else if (res.fetchedAt) {
+        setCacheInfo(`刚更新 · ${formatHm(res.fetchedAt)}`);
+      }
+    } else {
+      setError(res.error || '拉取项目 Bug 失败');
+    }
   };
 
   const openUrl = (path: string) => {
@@ -288,6 +323,29 @@ export function ZentaoPage() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [pBugs]);
 
+  /* ---------- 分页切片 ---------- */
+  const minePage = useMemo(
+    () => visibleMine.slice((pageMine - 1) * pageSize, pageMine * pageSize),
+    [visibleMine, pageMine, pageSize],
+  );
+  const projPage = useMemo(
+    () => visibleProject.slice((pageProj - 1) * pageSize, pageProj * pageSize),
+    [visibleProject, pageProj, pageSize],
+  );
+
+  /** 导出当前筛选结果为 CSV（不受分页限制） */
+  const exportCsv = async (list: ZentaoBug[], tag: string) => {
+    if (list.length === 0) { setCopiedTip('没有可导出的数据'); setTimeout(() => setCopiedTip(''), 1600); return; }
+    const res = await window.electronAPI.saveText(bugsToCsv(list, form.baseUrl), `${tag}-${new Date().toISOString().slice(0, 10)}.csv`);
+    if (res.success) {
+      setCopiedTip(`已导出 ${list.length} 条`);
+      setTimeout(() => setCopiedTip(''), 1800);
+    } else if (!res.canceled) {
+      setCopiedTip(res.error || '导出失败');
+      setTimeout(() => setCopiedTip(''), 2400);
+    }
+  };
+
   /* ---------- 预设 ---------- */
   const applyPreset = (id: string) => {
     const p = presets.find(x => x.id === id);
@@ -377,9 +435,16 @@ export function ZentaoPage() {
                   <Icons.refresh size={13} /> {busy === 'mine' ? '拉取中…' : '拉取我的 Bug'}
                 </button>
               ) : (
-                <button className="btn btn-primary btn-sm" onClick={loadProjects} disabled={busy === 'projects'}>
-                  <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
-                </button>
+                <>
+                  {activeProject === ALL_PROJECT && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => loadProjectBugs(ALL_PROJECT, true)} disabled={busy === 'pb'} title="忽略缓存，重新拉全部项目">
+                      <Icons.refresh size={13} /> 强制刷新
+                    </button>
+                  )}
+                  <button className="btn btn-primary btn-sm" onClick={loadProjects} disabled={busy === 'projects'}>
+                    <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
+                  </button>
+                </>
               )}
             </>
           }
@@ -453,6 +518,7 @@ export function ZentaoPage() {
                   onStatus={v => setFilter({ status: status === v ? '' : v })}
                   onSeverity={v => setFilter({ severity: severity === v ? '' : v })}
                 />
+                {bugs.length > 0 && <BugTrend bugs={bugs} weeks={8} />}
               </Panel>
             )}
 
@@ -483,6 +549,9 @@ export function ZentaoPage() {
                     <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleMine)} title="复制为汇报文本">
                       <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
                     </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => exportCsv(visibleMine, '我的Bug')} title="导出为 CSV（当前筛选全部）">
+                      <Icons.download size={12} /> 导出
+                    </button>
                   </div>
                 }
                 flush
@@ -505,14 +574,24 @@ export function ZentaoPage() {
                 {visibleMine.length === 0 ? (
                   <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部" />
                 ) : (
-                  <BugTable
-                    bugs={visibleMine}
-                    onOpen={bug => setDetailBug(bug)}
-                    showAssignee={false}
-                    selected={selected}
-                    onToggle={toggleOne}
-                    onToggleAll={() => toggleAll(visibleMine)}
-                  />
+                  <>
+                    <BugTable
+                      bugs={minePage}
+                      onOpen={bug => setDetailBug(bug)}
+                      showAssignee={false}
+                      selected={selected}
+                      onToggle={toggleOne}
+                      onToggleAll={() => toggleAll(minePage)}
+                    />
+                    <Pager
+                      total={visibleMine.length}
+                      page={pageMine}
+                      pageSize={pageSize}
+                      onPage={setPageMine}
+                      onPageSize={setPageSize}
+                      pageSizes={PAGE_SIZES}
+                    />
+                  </>
                 )}
               </Panel>
             ) : (
@@ -555,7 +634,7 @@ export function ZentaoPage() {
                     {projName && <Pill tone="info">{projName}</Pill>}
                     {pBugs.length > 0 && (
                       <span className="pg-sub" style={{ margin: 0 }}>
-                        该项目共 <strong>{pTotal || pBugs.length}</strong> 条缺陷{pFetchedAt ? ` · ${pFetchedAt.slice(11, 16)} 拉取` : ''}
+                        该项目共 <strong>{pTotal || pBugs.length}</strong> 条缺陷{pFetchedAt ? ` · ${formatHm(pFetchedAt)} 拉取` : ''}{cacheInfo ? ` · ${cacheInfo}` : ''}
                       </span>
                     )}
                   </div>
@@ -614,6 +693,9 @@ export function ZentaoPage() {
                         <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleProject)} title="复制为汇报文本">
                           <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
                         </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => exportCsv(visibleProject, projName || '项目Bug')} title="导出为 CSV（当前筛选全部）">
+                          <Icons.download size={12} /> 导出
+                        </button>
                       </div>
                     }
                     flush
@@ -633,18 +715,21 @@ export function ZentaoPage() {
                       </div>
                     )}
                     <BugTable
-                      bugs={visibleProject.slice(0, MAX_ROWS)}
+                      bugs={projPage}
                       onOpen={bug => setDetailBug(bug)}
                       showAssignee
                       selected={selected}
                       onToggle={toggleOne}
-                      onToggleAll={() => toggleAll(visibleProject.slice(0, MAX_ROWS))}
+                      onToggleAll={() => toggleAll(projPage)}
                     />
-                    {visibleProject.length > MAX_ROWS && (
-                      <div className="tbl-more">
-                        已显示前 {MAX_ROWS} 条，还有 {visibleProject.length - MAX_ROWS} 条 —— 用上面的搜索或筛选缩小范围
-                      </div>
-                    )}
+                    <Pager
+                      total={visibleProject.length}
+                      page={pageProj}
+                      pageSize={pageSize}
+                      onPage={setPageProj}
+                      onPageSize={setPageSize}
+                      pageSizes={PAGE_SIZES}
+                    />
                   </Panel>
                 ) : (
                   <Panel>

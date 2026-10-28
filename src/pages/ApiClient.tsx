@@ -4,14 +4,25 @@ import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { formatRecent } from '../utils/time';
+import { runAssertions, hasAssertions, type AssertResult } from '../utils/apiAssert';
 import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
 const emptyReq = (): ApiRequest => ({
   id: '', name: '', method: 'GET', url: '', headers: '', body: '', variables: '',
+  cookies: '', assertions: {},
   updatedAt: new Date().toISOString(),
 });
+
+/** 把 cookies（每行 key=value）拼成 Cookie 头；已有 Cookie 头时不覆盖 */
+function withCookies(headers: string, cookies?: string): string {
+  const ck = String(cookies || '').split('\n').map(l => l.trim()).filter(Boolean).join('; ');
+  if (!ck) return headers;
+  if (/^cookie\s*:/im.test(headers || '')) return headers;
+  const base = String(headers || '').replace(/\n+$/, '');
+  return `${base ? `${base}\n` : ''}Cookie: ${ck}`;
+}
 
 /** 把 {{var}} 替换成变量表里的值 */
 function applyVars(text: string, vars: string): string {
@@ -135,6 +146,17 @@ export function ApiClient() {
   const [sending, setSending] = useState(false);
   const [showVars, setShowVars] = useState(false);
   const [respTab, setRespTab] = useState<'body' | 'headers'>('body');
+  // 断言结果 / 断言编辑区展开
+  const [assertResults, setAssertResults] = useState<AssertResult[]>([]);
+  const [showAssert, setShowAssert] = useState(false);
+  // 批量运行
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchRows, setBatchRows] = useState<{
+    id: string; name: string; method: string; url: string; ok: boolean;
+    status: number; timeMs: number; error?: string; asserts: AssertResult[];
+  }[]>([]);
 
   const prettyBody = useMemo(() => {
     if (!response) return '';
@@ -191,18 +213,43 @@ export function ApiClient() {
     setSending(true);
     setError('');
     setResponse(null);
+    setAssertResults([]);
     const url = applyVars(req.url, req.variables || '');
-    const headers = applyVars(req.headers, req.variables || '');
+    const headers = withCookies(applyVars(req.headers, req.variables || ''), req.cookies);
     const body = applyVars(req.body, req.variables || '');
     const res = await window.electronAPI.apiSend({ method: req.method, url, headers, body });
     setSending(false);
     if (res.success && res.data) {
       setResponse(res.data);
+      setAssertResults(runAssertions(req.assertions, res.data));
       pushHistory(req.method, url, res.data.status, res.data.timeMs);
     } else {
       setError(res.error || '请求失败');
       pushHistory(req.method, url, 0, 0);
     }
+  };
+
+  /** 批量跑一组已保存请求（顺序执行，避免把对方服务打满） */
+  const runBatch = async (list: ApiRequest[]) => {
+    if (list.length === 0) return;
+    setBatchRunning(true);
+    setBatchRows([]);
+    const rows: typeof batchRows = [];
+    for (const r of list) {
+      const url = applyVars(r.url, r.variables || '');
+      const headers = withCookies(applyVars(r.headers, r.variables || ''), r.cookies);
+      const body = applyVars(r.body, r.variables || '');
+      const res = await window.electronAPI.apiSend({ method: r.method, url, headers, body });
+      const asserts = res.success && res.data ? runAssertions(r.assertions, res.data) : [];
+      const ok = !!(res.success && res.data) && (asserts.length === 0 || asserts.every(a => a.ok));
+      rows.push({
+        id: r.id, name: r.name, method: r.method, url,
+        ok, status: res.data?.status || 0, timeMs: res.data?.timeMs || 0,
+        error: res.success ? undefined : res.error, asserts,
+      });
+      setBatchRows([...rows]);
+    }
+    setBatchRunning(false);
   };
 
   const saveRequest = async () => {
@@ -293,6 +340,19 @@ export function ApiClient() {
                     onClick={() => { setReq(i); setResponse(null); setError(''); }}
                     title={i.url}
                   >
+                    <span className="api-pick" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="tbl-check"
+                        checked={picked.has(i.id)}
+                        onChange={() => setPicked(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i.id)) next.delete(i.id); else next.add(i.id);
+                          return next;
+                        })}
+                        title="勾选后批量运行"
+                      />
+                    </span>
                     <span className={`method m-${i.method}`}>{i.method}</span>
                     <span className="api-name">{i.name}</span>
                     <IconBtn
@@ -315,6 +375,28 @@ export function ApiClient() {
               )}
               </>)}
             </div>
+            {sideTab === 'saved' && items.length > 0 && (
+              <div className="api-batch-bar">
+                <label className="wk-check">
+                  <input
+                    type="checkbox"
+                    checked={picked.size > 0 && picked.size === items.length}
+                    onChange={() => setPicked(picked.size === items.length ? new Set() : new Set(items.map(x => x.id)))}
+                  />
+                  全选
+                </label>
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={picked.size === 0 || batchRunning}
+                  onClick={() => {
+                    setBatchOpen(true);
+                    runBatch(items.filter(x => picked.has(x.id)));
+                  }}
+                >
+                  {batchRunning ? `运行中 ${batchRows.length}/${picked.size}` : `批量运行（${picked.size}）`}
+                </button>
+              </div>
+            )}
           </Panel>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
@@ -408,6 +490,78 @@ export function ApiClient() {
                       disabled={['GET', 'HEAD'].includes(req.method)}
                     />
                   </div>
+
+                  <div className="field">
+                    <span className="field-label">Cookie（一行一个，发送时自动拼 Cookie 头）</span>
+                    <KvEditor
+                      value={req.cookies || ''}
+                      onChange={v => setReq({ ...req, cookies: v })}
+                      keyPlaceholder="名称，如 SESSIONID"
+                      valuePlaceholder="值"
+                      sep="="
+                    />
+                  </div>
+
+                  <div className="field">
+                    <button
+                      type="button"
+                      className="assert-toggle"
+                      onClick={() => setShowAssert(v => !v)}
+                    >
+                      <span>断言</span>
+                      <span className={`assert-badge${hasAssertions(req.assertions) ? ' is-on' : ''}`}>
+                        {hasAssertions(req.assertions) ? '已配置' : '未配置'}
+                      </span>
+                      <span className="assert-caret">{showAssert ? '收起' : '展开'}</span>
+                    </button>
+                    {showAssert && (
+                      <div className="assert-grid">
+                        <label>
+                          <span>状态码</span>
+                          <input
+                            value={req.assertions?.status || ''}
+                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, status: e.target.value } })}
+                            placeholder="200 或 2xx"
+                          />
+                        </label>
+                        <label>
+                          <span>耗时 ≤ (ms)</span>
+                          <input
+                            value={req.assertions?.maxMs || ''}
+                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, maxMs: e.target.value } })}
+                            placeholder="1000"
+                          />
+                        </label>
+                        <label>
+                          <span>JSON 路径</span>
+                          <input
+                            value={req.assertions?.jsonPath || ''}
+                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, jsonPath: e.target.value } })}
+                            placeholder="data.list[0].id"
+                          />
+                        </label>
+                        <label>
+                          <span>期望包含</span>
+                          <input
+                            value={req.assertions?.jsonValue || ''}
+                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, jsonValue: e.target.value } })}
+                            placeholder="留空 = 只要求路径存在"
+                          />
+                        </label>
+                        <label className="span2">
+                          <span>正文包含</span>
+                          <input
+                            value={req.assertions?.contains || ''}
+                            onChange={e => setReq({ ...req, assertions: { ...req.assertions, contains: e.target.value } })}
+                            placeholder='例如 "success":true'
+                          />
+                        </label>
+                      </div>
+                    )}
+                    <div className="assert-hint">
+                      发送后自动校验，通过看「响应」上方的断言条；批量运行时也会按断言判断成败。
+                    </div>
+                  </div>
                 </div>
 
                 {error && (
@@ -448,6 +602,23 @@ export function ApiClient() {
                       {response.timeMs} ms · {(response.size / 1024).toFixed(1)} KB
                     </span>
                   </div>
+                  {assertResults.length > 0 && (
+                    <div className={`assert-bar${assertResults.every(a => a.ok) ? ' is-ok' : ' is-bad'}`}>
+                      <div className="assert-bar-head">
+                        断言 {assertResults.filter(a => a.ok).length} / {assertResults.length}
+                        {assertResults.every(a => a.ok) ? ' 全部通过' : ' 有失败项'}
+                      </div>
+                      <div className="assert-list">
+                        {assertResults.map((a, i) => (
+                          <div key={i} className={`assert-row${a.ok ? ' is-ok' : ' is-bad'}`}>
+                            <span className="assert-flag">{a.ok ? '✓' : '✗'}</span>
+                            <span className="assert-name">{a.name}</span>
+                            <span className="assert-detail">{a.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {respTab === 'body' ? (
                     <pre className="code2" style={{ maxHeight: '46vh' }}>{prettyBody || '（空响应体）'}</pre>
                   ) : (
@@ -522,6 +693,45 @@ export function ApiClient() {
           <button className="btn btn-secondary btn-sm" onClick={() => setEnvDraft({ id: '', name: '', vars: 'baseUrl=', updatedAt: '' })}>
             <Icons.plus size={12} /> 新建环境
           </button>
+        )}
+      </Modal>
+
+      <Modal
+        open={batchOpen}
+        onClose={() => setBatchOpen(false)}
+        title="批量运行结果"
+        footer={<button className="btn btn-secondary" onClick={() => setBatchOpen(false)}>关闭</button>}
+      >
+        {batchRows.length === 0 ? (
+          <div className="pg-sub">正在运行…</div>
+        ) : (
+          <>
+            <div className="batch-summary">
+              <span className={`batch-pass${batchRows.filter(r => r.ok).length === batchRows.length ? ' is-all' : ''}`}>
+                通过 {batchRows.filter(r => r.ok).length} / {batchRows.length}
+              </span>
+              <span className="pg-sub" style={{ marginTop: 0 }}>
+                失败 {batchRows.filter(r => !r.ok).length} 条
+              </span>
+            </div>
+            <div className="batch-list">
+              {batchRows.map(r => (
+                <div key={r.id} className={`batch-row${r.ok ? ' is-ok' : ' is-bad'}`}>
+                  <span className="batch-flag">{r.ok ? '✓' : '✗'}</span>
+                  <span className={`method m-${r.method}`}>{r.method}</span>
+                  <span className="batch-name" title={r.url}>{r.name || r.url}</span>
+                  <span className="batch-meta">
+                    {r.error ? r.error : `${r.status} · ${r.timeMs}ms`}
+                  </span>
+                  {r.asserts.length > 0 && (
+                    <span className="batch-asserts">
+                      断言 {r.asserts.filter(a => a.ok).length}/{r.asserts.length}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </Modal>
 

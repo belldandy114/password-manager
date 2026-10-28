@@ -32,3 +32,25 @@ export function bugsToText(bugs: ZentaoBug[], baseUrl: string, format: 'list' | 
   }
   return bugs.map(b => bugToText(b, baseUrl)).join('\n\n');
 }
+
+/** 导出 CSV（Excel 友好：字段带引号、内部双引号转义） */
+export function bugsToCsv(bugs: ZentaoBug[], baseUrl: string): string {
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const head = ['ID', '项目', '标题', '状态', '严重程度', '优先级', '指派给', '创建者', '创建日期', '解决日期', '截止日期', '链接'];
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  const rows = bugs.map(b => [
+    b.id,
+    b.productName || '',
+    b.title,
+    stat(b),
+    sev(b),
+    b.pri || '',
+    b.assignedTo || '',
+    b.openedBy || '',
+    b.date || '',
+    b.resolvedDate || '',
+    b.deadline || '',
+    base ? `${base}/bug-view-${b.id}.html` : '',
+  ].map(esc).join(','));
+  return [head.map(esc).join(','), ...rows].join('\r\n');
+}

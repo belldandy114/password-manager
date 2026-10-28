@@ -8,7 +8,7 @@ import { getTagHue } from '../utils/tagColors';
 interface Props {
   entries: PasswordEntry[];
   onEdit: (entry: PasswordEntry) => void;
-  onCopy: (text: string, label: string) => void;
+  onCopy: (text: string, label: string, entryName?: string) => void;
   /** 安全体检标记：entry.id → 弱密码/重复密码 */
   securityFlags?: Record<string, { weak: boolean; duplicate: boolean }>;
 }
@@ -91,6 +91,19 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
   const { ask, confirmNode } = useConfirm();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [hoverTagEntry, setHoverTagEntry] = useState<string | null>(null);
+
+  // Esc 关闭行内浮层（标签浮层 / 更多操作）
+  useEffect(() => {
+    if (!openDropdown && !hoverTagEntry) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpenDropdown(null);
+      setHoverTagEntry(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [openDropdown, hoverTagEntry]);
+
   const [recentCopy, setRecentCopy] = useState<{ id: string; field: string } | null>(null);
   const [sortField, setSortField] = useState<'name' | 'envType' | 'url' | 'username' | 'updatedAt'>('updatedAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -125,7 +138,8 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
   }, [settings.passwordAutoHideDelay]);
 
   const handleCopyWithFeedback = useCallback((text: string, label: string, id: string, field: string) => {
-    onCopy(text, label);
+    const name = useStore.getState().entries.find(e => e.id === id)?.name;
+    onCopy(text, label, name);
     setRecentCopy({ id, field });
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     copyTimerRef.current = setTimeout(() => setRecentCopy(null), 2000);
