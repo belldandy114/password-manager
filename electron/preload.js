@@ -57,6 +57,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   auditList: (limit) => ipcRenderer.invoke('audit:list', limit),
   auditClear: () => ipcRenderer.invoke('audit:clear'),
   backupOpenFolder: () => ipcRenderer.invoke('backup:open-folder'),
+  backupRestore: (name) => ipcRenderer.invoke('backup:restore', { name }),
+
+  // 数据目录（可见 / 打开 / 迁移）
+  dataInfo: () => ipcRenderer.invoke('data:info'),
+  dataOpenFolder: (which) => ipcRenderer.invoke('data:open-folder', { which }),
+  dataMigrate: () => ipcRenderer.invoke('data:migrate'),
+  dataResetLocation: () => ipcRenderer.invoke('data:reset-location'),
 
   // Generic collection storage (snippets / notes / checklists / accounts / environments / apiRequests)
   wsGet: (key) => ipcRenderer.invoke('ws:get', key),

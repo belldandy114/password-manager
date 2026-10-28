@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
+import { Modal } from '../components/Modal';
+import type { BackupFile } from '../types';
+import { formatDateTime } from '../utils/time';
 
 interface Props {
   onLogin: () => void;
@@ -21,6 +24,11 @@ export function Login({ onLogin }: Props) {
   const [forgotStep, setForgotStep] = useState<'security' | 'reset'>('security');
   // 连续输错后的冷却倒计时（秒）
   const [lockRemain, setLockRemain] = useState(0);
+  // 从备份恢复（解锁不了时的出口）
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreList, setRestoreList] = useState<BackupFile[]>([]);
+  const [restoreBusy, setRestoreBusy] = useState('');
+  const [restoreDone, setRestoreDone] = useState('');
 
   useEffect(() => {
     if (lockRemain <= 0) return;
@@ -80,6 +88,7 @@ export function Login({ onLogin }: Props) {
         if (result.retryAfterMs && result.retryAfterMs > 0) {
           setLockRemain(Math.ceil(result.retryAfterMs / 1000));
         }
+        if (result.code === 'vault-corrupt') openRestore();
       }
     } catch (e: any) {
       setError(e.message || '验证失败');
@@ -123,6 +132,23 @@ export function Login({ onLogin }: Props) {
     }
   };
 
+  /** 打开「从备份恢复」面板：解不开库时这里是唯一的出口 */
+  const openRestore = async () => {
+    setRestoreOpen(true);
+    setRestoreDone('');
+    const r = await window.electronAPI.backupList();
+    if (r.success) setRestoreList(r.data || []);
+  };
+
+  const doRestore = async (name: string) => {
+    setRestoreBusy(name);
+    const r = await window.electronAPI.backupRestore(name);
+    setRestoreBusy('');
+    if (!r.success) { setError(r.error || '恢复失败'); return; }
+    setRestoreDone(name);
+    setError('');
+  };
+
   const getPasswordStrength = (pw: string): { label: string; color: string; percent: number } => {
     let score = 0;
     if (pw.length >= 8) score++;
@@ -149,6 +175,7 @@ export function Login({ onLogin }: Props) {
   }
 
   return (
+    <>
     <div className="login-page">
       <div className="login-card">
         <img src="./图标.png" alt="测试工具" className="login-logo" />
@@ -276,10 +303,53 @@ export function Login({ onLogin }: Props) {
               }}>
                 忘记密码?
               </button>
+              <button className="btn btn-ghost btn-sm" onClick={openRestore} style={{ marginLeft: 8 }}>
+                从备份恢复
+              </button>
             </div>
           </>
         )}
       </div>
     </div>
+
+    {/* 解锁不了时的出口：用某份加密备份覆盖当前库 */}
+    <Modal open={restoreOpen} onClose={() => setRestoreOpen(false)} title="从备份恢复密码库"
+      footer={<button className="btn btn-secondary" onClick={() => setRestoreOpen(false)}>关闭</button>}
+    >
+      {restoreDone ? (
+        <div>
+          <p style={{ marginTop: 0 }}>已用 <b>{restoreDone}</b> 覆盖当前密码库。</p>
+          <p className="text-sm text-muted">
+            请用<strong>这份备份当时的主密码</strong>重新解锁（如果之后改过主密码，就要用旧密码）。
+            恢复前的库已另存为 <code>vault-prerestore-*.enc</code>，在数据目录的 backups 里可以找回。
+          </p>
+        </div>
+      ) : (
+        <div>
+          <p style={{ marginTop: 0 }} className="text-sm text-muted">
+            这里列出本机现有的加密备份（每天首次改动数据时生成）。恢复会覆盖当前 <code>vault.enc</code>，
+            但会先把当前库另存一份 <code>vault-prerestore-*.enc</code>。
+          </p>
+          {restoreList.length === 0 ? (
+            <div className="text-sm text-muted" style={{ padding: '12px 0' }}>暂无备份</div>
+          ) : (
+            <div className="backup-list" style={{ maxHeight: 260, overflow: 'auto' }}>
+              {restoreList.map(b => (
+                <div key={b.name} className="backup-item">
+                  <span className="backup-name">{b.name}</span>
+                  <span className="text-sm text-muted">{(b.size / 1024).toFixed(1)} KB</span>
+                  <span className="text-sm text-muted">{formatDateTime(b.mtime)}</span>
+                  <button className="btn btn-sm btn-ghost" disabled={!!restoreBusy} onClick={() => doRestore(b.name)}>
+                    {restoreBusy === b.name ? '恢复中…' : '用这份恢复'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {error && <div className="input-hint" style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</div>}
+        </div>
+      )}
+    </Modal>
+    </>
   );
 }

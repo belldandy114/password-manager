@@ -89,6 +89,19 @@ export interface BackupFile {
   mtime: string;
 }
 
+/** 数据目录信息（设置页展示用） */
+export interface DataLocationInfo {
+  dataDir: string;
+  defaultDir: string;
+  isCustom: boolean;
+  vaultFile: string;
+  backupDir: string;
+  attachDir: string;
+  backupCount: number;
+  vault: { size: number; mtime: string } | null;
+  bak: { size: number; mtime: string } | null;
+}
+
 export interface PasswordGenOptions {
   length?: number;
   upper?: boolean;
@@ -310,7 +323,7 @@ export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
   authSetup: (data: { password: string; hint: string }) => Promise<{ success: boolean; error?: string }>;
-  authVerify: (data: { password: string }) => Promise<{ success: boolean; error?: string; hint?: string; retryAfterMs?: number }>;
+  authVerify: (data: { password: string }) => Promise<{ success: boolean; error?: string; hint?: string; retryAfterMs?: number; code?: 'vault-corrupt' }>;
   authGetHint: () => Promise<string>;
   authChangePassword: (data: { oldPassword: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
   authSetSecurityWord: (data: { password: string; securityWord: string }) => Promise<{ success: boolean; error?: string }>;
@@ -357,6 +370,14 @@ export interface ElectronAPI {
   auditList: (limit?: number) => Promise<{ success: boolean; data?: AuditEntry[] }>;
   auditClear: () => Promise<{ success: boolean; error?: string }>;
   backupOpenFolder: () => Promise<{ success: boolean; error?: string }>;
+  /** 用指定备份覆盖当前库；恢复前会自动留一份 pre-restore 快照 */
+  backupRestore: (name: string) => Promise<{ success: boolean; preRestore?: string; error?: string }>;
+
+  // 数据目录
+  dataInfo: () => Promise<{ success: boolean; data?: DataLocationInfo; error?: string }>;
+  dataOpenFolder: (which?: 'data' | 'backups') => Promise<{ success: boolean; error?: string }>;
+  dataMigrate: () => Promise<{ success: boolean; canceled?: boolean; data?: { dir: string; copied: string[] }; error?: string }>;
+  dataResetLocation: () => Promise<{ success: boolean; data?: { dir: string }; error?: string }>;
 
   // Generic collection storage
   wsGet: (key: WorkspaceKey) => Promise<{ success: boolean; data?: any[]; error?: string }>;

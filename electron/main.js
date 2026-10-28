@@ -27,7 +27,22 @@ if (!app.requestSingleInstanceLock()) {
 // ----------------------------------------------------------------
 // Constants
 // ----------------------------------------------------------------
-const DATA_DIR = app.getPath('userData');
+// 数据目录默认是 userData，但允许用户改到别的盘（设置 → 数据目录）。
+// 指针文件必须放在 userData 里（不能放数据目录里，否则换了目录就找不到指针）。
+const USER_DATA_DIR = app.getPath('userData');
+const LOCATION_FILE = path.join(USER_DATA_DIR, 'data-location.json');
+
+function resolveDataDir() {
+  try {
+    if (fs.existsSync(LOCATION_FILE)) {
+      const j = JSON.parse(fs.readFileSync(LOCATION_FILE, 'utf8'));
+      if (j && j.dir && fs.existsSync(j.dir)) return j.dir;
+    }
+  } catch { /* 指针文件坏了/目录被删了就回默认 */ }
+  return USER_DATA_DIR;
+}
+
+const DATA_DIR = resolveDataDir();
 const DATA_FILE = path.join(DATA_DIR, 'vault.enc');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const BIN_FILE = path.join(DATA_DIR, 'trash.enc');
@@ -117,13 +132,51 @@ function decrypt(ciphertextB64, password) {
 // ----------------------------------------------------------------
 // Vault I/O
 // ----------------------------------------------------------------
+// 原子写：先写 <file>.tmp 并 fsync，再 rename 覆盖正式文件。
+// 直接 writeFileSync(正式文件) 时如果中途崩溃/断电/杀进程，正式库就是半截密文 —— 只能等下一次
+// 解锁失败才发现，而备份只有「每天一份」，白天写坏最多回到当天早上。这里顺手留一份 .bak。
+function writeFileAtomic(file, content) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.tmp`;
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+    try { fs.fsyncSync(fd); } catch { /* 部分文件系统/网络盘不支持 fsync */ }
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (fs.existsSync(file)) {
+    try { fs.copyFileSync(file, `${file}.bak`); } catch { /* 备份失败不影响写入 */ }
+  }
+  fs.renameSync(tmp, file);
+}
+
+/** 读取并解密；解不开时尝试 <file>.bak，成功则自动把 .bak 提升回正式文件 */
+function readEncryptedWithBak(file, password) {
+  if (!fs.existsSync(file)) return { raw: null, recovered: false };
+  const raw = fs.readFileSync(file, 'utf8').trim();
+  if (!raw) return { raw: '', recovered: false };
+  if (decrypt(raw, password)) return { raw, recovered: false };
+  const bak = `${file}.bak`;
+  if (fs.existsSync(bak)) {
+    const rawBak = fs.readFileSync(bak, 'utf8').trim();
+    if (rawBak && decrypt(rawBak, password)) {
+      try { writeFileAtomic(file, rawBak); } catch { /* 回写失败也不影响本次解密结果 */ }
+      appendAudit({ action: 'vault-recover-bak', target: path.basename(file) });
+      return { raw: rawBak, recovered: true };
+    }
+  }
+  return { raw, recovered: false };
+}
+
 function loadVault(password) {
   if (vaultCache.password === password && vaultCache.data) return vaultCache.data;
   let result;
   if (!fs.existsSync(DATA_FILE)) {
     result = normalizeVault(null);
   } else {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8').trim();
+    const { raw } = readEncryptedWithBak(DATA_FILE, password);
     if (!raw) {
       result = normalizeVault(null);
     } else {
@@ -234,7 +287,7 @@ function saveVault(vault, password) {
   const encrypted = encrypt(json, password);
   // Snapshot yesterday's file before it is overwritten (once per day).
   backupVaultOncePerDay();
-  fs.writeFileSync(DATA_FILE, encrypted, 'utf8');
+  writeFileAtomic(DATA_FILE, encrypted);
   vaultCache = { password, data: vault };
   scheduleTrayRefresh();
 }
@@ -248,7 +301,7 @@ function loadTrash(password) {
   if (!fs.existsSync(BIN_FILE)) {
     result = [];
   } else {
-    const raw = fs.readFileSync(BIN_FILE, 'utf8').trim();
+    const { raw } = readEncryptedWithBak(BIN_FILE, password);
     if (!raw) {
       result = [];
     } else {
@@ -268,7 +321,7 @@ function loadTrash(password) {
 function saveTrash(trash, password) {
   const json = JSON.stringify(trash);
   const encrypted = encrypt(json, password);
-  fs.writeFileSync(BIN_FILE, encrypted, 'utf8');
+  writeFileAtomic(BIN_FILE, encrypted);
   trashCache = { password, data: trash };
 }
 
@@ -796,7 +849,7 @@ function setupIpcHandlers() {
     }
     // Verify we can decrypt the vault
     const vault = loadVault(password);
-    if (!vault) return { success: false, error: '数据损坏，无法解密' };
+    if (!vault) return { success: false, error: '数据损坏，无法解密（可尝试从备份恢复）', code: 'vault-corrupt' };
     loginFailures = 0;
     loginLockedUntil = 0;
     return { success: true, hint: settings.hint || '' };
@@ -1197,6 +1250,121 @@ function setupIpcHandlers() {
     keep: backupKeepCount(),
     lastAt: (listBackups()[0] || {}).mtime || '',
   }));
+
+  /**
+   * 备份恢复：把指定备份原子写回正式库。
+   * 恢复前先把当前库另存为 vault-prerestore-<时间>.enc（后悔药），恢复后清缓存并退回登录页
+   * —— 备份可能是旧主密码加密的，必须重新走一次解锁来验证。
+   */
+  ipcMain.handle('backup:restore', async (_event, { name } = {}) => {
+    try {
+      const safe = path.basename(String(name || ''));
+      if (!/^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(safe)) {
+        return { success: false, error: '备份文件名不合法' };
+      }
+      const src = path.join(BACKUP_DIR, safe);
+      if (!fs.existsSync(src)) return { success: false, error: '备份文件不存在' };
+
+      let preRestore = '';
+      if (fs.existsSync(DATA_FILE)) {
+        fs.mkdirSync(BACKUP_DIR, { recursive: true });
+        const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+        preRestore = `vault-prerestore-${ts}.enc`;
+        fs.copyFileSync(DATA_FILE, path.join(BACKUP_DIR, preRestore));
+        // 反悔用的快照只留最近 5 份，避免无限增长
+        const pres = fs.readdirSync(BACKUP_DIR)
+          .filter(f => /^vault-prerestore-.*\.enc$/.test(f))
+          .sort();
+        while (pres.length > 5) {
+          try { fs.unlinkSync(path.join(BACKUP_DIR, pres.shift())); } catch { /* ignore */ }
+        }
+      }
+
+      writeFileAtomic(DATA_FILE, fs.readFileSync(src, 'utf8'));
+      clearCaches();
+      appendAudit({ action: 'vault-restore', entry: safe });
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('lock-request');
+      return { success: true, preRestore };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- 数据目录：看清楚在哪 / 打开 / 迁移到别的盘 ----
+  ipcMain.handle('data:info', () => {
+    const stat = (f) => {
+      try { const s = fs.statSync(f); return { size: s.size, mtime: s.mtime.toISOString() }; } catch { return null; }
+    };
+    return {
+      success: true,
+      data: {
+        dataDir: DATA_DIR,
+        defaultDir: USER_DATA_DIR,
+        isCustom: path.resolve(DATA_DIR) !== path.resolve(USER_DATA_DIR),
+        vaultFile: DATA_FILE,
+        backupDir: BACKUP_DIR,
+        attachDir: ATTACH_DIR,
+        backupCount: listBackups().length,
+        vault: stat(DATA_FILE),
+        bak: stat(`${DATA_FILE}.bak`),
+      },
+    };
+  });
+
+  ipcMain.handle('data:open-folder', async (_event, { which } = {}) => {
+    const target = which === 'backups' ? BACKUP_DIR : DATA_DIR;
+    try {
+      fs.mkdirSync(target, { recursive: true });
+      await shell.openPath(target);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 迁移：只复制不删除，旧目录原样保留；写指针文件后需要重启才生效 */
+  ipcMain.handle('data:migrate', async () => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: '选择新的数据目录',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, canceled: true };
+      const target = r.filePaths[0];
+      if (path.resolve(target) === path.resolve(DATA_DIR)) return { success: false, error: '这就是当前数据目录' };
+
+      const copied = [];
+      for (const f of ['vault.enc', 'vault.enc.bak', 'trash.enc', 'trash.enc.bak', 'settings.json', 'audit.log', 'window-state.json']) {
+        const src = path.join(DATA_DIR, f);
+        if (fs.existsSync(src)) {
+          fs.copyFileSync(src, path.join(target, f));
+          copied.push(f);
+        }
+      }
+      for (const d of ['backups', 'attachments']) {
+        const src = path.join(DATA_DIR, d);
+        if (fs.existsSync(src)) {
+          fs.cpSync(src, path.join(target, d), { recursive: true });
+          copied.push(`${d}/`);
+        }
+      }
+      fs.writeFileSync(LOCATION_FILE, JSON.stringify({ dir: target, from: DATA_DIR, at: new Date().toISOString() }, null, 2), 'utf8');
+      appendAudit({ action: 'data-migrate', entry: target });
+      return { success: true, data: { dir: target, copied } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 改回默认目录（userData） */
+  ipcMain.handle('data:reset-location', () => {
+    try {
+      if (fs.existsSync(LOCATION_FILE)) fs.unlinkSync(LOCATION_FILE);
+      return { success: true, data: { dir: USER_DATA_DIR } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
 
   ipcMain.handle('audit:log', (_event, entry) => {
     if (!entry || !entry.action) return { success: false };

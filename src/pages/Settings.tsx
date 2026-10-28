@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, NotifyStatus, AuditEntry } from '../types';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
 import { applyTheme, applyAccent, ACCENTS } from '../utils/theme';
 import { formatDateTime } from '../utils/time';
 
@@ -61,6 +61,11 @@ export function Settings() {
   const [backupDir, setBackupDir] = useState('');
   const [backupKeep, setBackupKeep] = useState(settings.backupKeep || 7);
   const [backupLastAt, setBackupLastAt] = useState('');
+  /** 待确认恢复的备份文件名（空=不显示确认框） */
+  const [restoreName, setRestoreName] = useState('');
+  const [restoring, setRestoring] = useState(false);
+  /** 数据目录信息（路径 / 体积 / 备份份数） */
+  const [dataInfo, setDataInfo] = useState<DataLocationInfo | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string } | null>(null);
   const [checking, setChecking] = useState(false);
@@ -177,6 +182,8 @@ export function Settings() {
       setBackups(res.data);
       setBackupDir(res.dir);
     }
+    const info = await window.electronAPI.dataInfo();
+    if (info.success && info.data) setDataInfo(info.data);
   }, []);
 
   useEffect(() => {
@@ -362,10 +369,63 @@ export function Settings() {
                   <div key={b.name} className="backup-item">
                     <span className="backup-name">{b.name}</span>
                     <span className="text-sm text-muted">{(b.size / 1024).toFixed(1)} KB</span>
+                    <span className="text-sm text-muted">{formatDateTime(b.mtime)}</span>
+                    <button className="btn btn-sm btn-ghost" onClick={() => setRestoreName(b.name)}>
+                      恢复
+                    </button>
                   </div>
                 ))
               )}
               {backupDir && <div className="backup-dir text-sm text-muted" title={backupDir}>{backupDir}</div>}
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>数据目录</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">当前数据位置</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }} title={dataInfo?.dataDir || ''}>
+                  {dataInfo?.dataDir || '读取中…'}
+                  {dataInfo?.isCustom ? '（自定义）' : '（默认）'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  {dataInfo?.vault ? `密码库 ${(dataInfo.vault.size / 1024).toFixed(1)} KB` : '密码库尚未创建'}
+                  {dataInfo?.bak ? ` · 备用副本 ${(dataInfo.bak.size / 1024).toFixed(1)} KB` : ''}
+                  {dataInfo ? ` · 备份 ${dataInfo.backupCount} 份` : ''}
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.dataOpenFolder('data')}>
+                  打开目录
+                </button>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={async () => {
+                    const r = await window.electronAPI.dataMigrate();
+                    if (r.canceled) return;
+                    if (!r.success) { addToast(r.error || '迁移失败', 'error'); return; }
+                    addToast('已复制到新目录，重启应用后生效', 'success');
+                    refreshBackups();
+                  }}
+                >
+                  迁移到其他盘
+                </button>
+                {dataInfo?.isCustom && (
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    onClick={async () => {
+                      const r = await window.electronAPI.dataResetLocation();
+                      if (!r.success) { addToast(r.error || '操作失败', 'error'); return; }
+                      addToast('已改回默认目录，重启应用后生效', 'success');
+                      refreshBackups();
+                    }}
+                  >
+                    改回默认
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="text-sm text-muted" style={{ marginTop: 6 }}>
+              迁移只复制不删除，原目录会原样保留；确认新目录可用后可自行删除旧文件。
             </div>
 
             <h3 style={{ marginTop: 24 }}>审计日志</h3>
@@ -875,6 +935,36 @@ export function Settings() {
           <label>确认新密码</label>
           <input type="password" value={newPwd2} onChange={e => setNewPwd2(e.target.value)} placeholder="再次输入新密码" />
         </div>
+      </Modal>
+
+      {/* 备份恢复确认 */}
+      <Modal open={!!restoreName} onClose={() => !restoring && setRestoreName('')} title="从备份恢复"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setRestoreName('')} disabled={restoring}>取消</button>
+            <button
+              className="btn btn-primary"
+              disabled={restoring}
+              onClick={async () => {
+                setRestoring(true);
+                const r = await window.electronAPI.backupRestore(restoreName);
+                setRestoring(false);
+                setRestoreName('');
+                if (!r.success) { addToast(r.error || '恢复失败', 'error'); return; }
+                addToast('已恢复，请用这份备份对应的主密码重新解锁', 'success');
+                refreshBackups();
+              }}
+            >
+              {restoring ? '恢复中…' : '确认恢复'}
+            </button>
+          </>
+        }
+      >
+        <p style={{ marginTop: 0 }}>将用 <b>{restoreName}</b> 覆盖当前密码库（vault.enc）。</p>
+        <p className="text-sm text-muted" style={{ marginBottom: 0 }}>
+          恢复前会自动把当前库另存为 <code>vault-prerestore-*.enc</code>（最近 5 份），恢复错了还能再回来。
+          恢复后应用会退回到登录页 —— 这份备份可能是旧主密码加密的，需要用当时的主密码解锁。
+        </p>
       </Modal>
     </div>
   );
