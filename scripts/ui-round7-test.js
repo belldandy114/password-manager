@@ -191,6 +191,11 @@ const check = (name, ok, extra = '') => {
     } else if (rq.url === '/me') {
       const ck = rq.headers.cookie || '';
       rs.end(JSON.stringify({ cookie: ck, ok: ck.includes('sid=abc123') }));
+    } else if (rq.url === '/obj1') {
+      rs.end(JSON.stringify({ code: 0, data: { list: [{ id: 1, name: 'a' }] } }));
+    } else if (rq.url === '/obj2') {
+      // 契约变化：code 变字符串、元素多一个字段、根上多一个字段
+      rs.end(JSON.stringify({ code: '0', data: { list: [{ id: 1, name: 'a', extra: true }] }, added: 1 }));
     } else {
       rs.statusCode = 404;
       rs.end('{"ok":false}');
@@ -282,6 +287,52 @@ const check = (name, ok, extra = '') => {
   await sleep(300);
   const ruleCount2 = await ev(`(() => document.querySelectorAll('.assert-rule').length)()`);
   check('断言：可以删行', Number(ruleCount2) === 4, `${ruleCount2} 行`);
+
+  /* ================= B7. 响应结构快照 ================= */
+  const setUrl = async (u) => {
+    await ev(`(() => {
+      const el = document.querySelector('.url-bar input');
+      if (!el) return false;
+      const s = ${SETVAL};
+      s(el, ${JSON.stringify(u)});
+      return true;
+    })()`);
+  };
+  const sendNow = async () => { await clickHas('发送'); await sleep(1500); };
+  const schemaBar = async () => ev(`(() => {
+    const b = [...document.querySelectorAll('.assert-bar')].find(x => x.innerText.includes('结构比对'));
+    return b ? b.innerText.replace(/\\s+/g, ' ').trim() : '';
+  })()`);
+
+  await setUrl(`${base}/obj1`);
+  await sendNow();
+  await clickHas('存结构快照');
+  await sleep(600);
+  const snapBtn = await ev(`(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('重存快照')))()`);
+  check('快照：可以存下响应结构', snapBtn === true);
+
+  await sendNow();
+  const same = await schemaBar();
+  check('快照：同样的响应判为一致', same.includes('与快照一致'), same.slice(0, 80));
+
+  await setUrl(`${base}/obj2`);
+  await sendNow();
+  const diffText = await schemaBar();
+  check('快照：字段/类型变化能被检出',
+    diffText.includes('新增 2') && diffText.includes('类型变化 1'),
+    diffText.slice(0, 120));
+
+  /* ================= B8. 响应 → TS / Markdown ================= */
+  await clickHas('TS 类型');
+  await sleep(500);
+  const tsText = await ev(`(() => { const p = [...document.querySelectorAll('pre.code2')].pop(); return p ? p.innerText : ''; })()`);
+  check('生成：TS 接口有 Root 与字段', tsText.includes('export interface Root') && tsText.includes('data'), tsText.split('\n')[0] || '');
+  check('生成：嵌套数组元素单独成型', /\[\];/.test(tsText) && tsText.includes('interface RootDataListItem'), (tsText.match(/.*\[\];/) || [''])[0].trim());
+
+  await clickHas('表格');
+  await sleep(500);
+  const mdText = await ev(`(() => { const p = [...document.querySelectorAll('pre.code2')].pop(); return p ? p.innerText : ''; })()`);
+  check('生成：Markdown 表格有表头与分隔行', mdText.includes('| --- |') && mdText.includes('code'), mdText.split('\n')[0] || '');
 
   /* ================= 结果 ================= */
   srv.close();

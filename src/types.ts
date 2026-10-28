@@ -288,6 +288,29 @@ export interface EnvEntry {
 /** 断言的检查类型 */
 export type AssertOp = 'status' | 'time' | 'json' | 'body' | 'header' | 'jsonValid';
 
+/** 响应结构快照：只记类型不记值，用来发现「字段被删/改名/换类型」 */
+export type SchemaType = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null' | 'mixed';
+
+export interface ApiSchemaNode {
+  t: SchemaType;
+  /** t=object 时：字段名 → 子节点 */
+  fields?: Record<string, ApiSchemaNode>;
+  /** t=array 时：元素节点 */
+  item?: ApiSchemaNode;
+}
+
+export interface ApiSnapshot {
+  at: string;
+  schema: ApiSchemaNode;
+}
+
+export interface SchemaDiff {
+  added: string[];
+  removed: string[];
+  changed: { path: string; from: SchemaType; to: SchemaType }[];
+  comparable: boolean;
+}
+
 /** 一条断言（1.6.0 起断言是可加可减的行列表，不再局限于 5 个固定槽位） */
 export interface AssertRule {
   id: string;
@@ -300,7 +323,7 @@ export interface AssertRule {
   negate?: boolean;
 }
 
-/** 接口断言：规则列表 + 1.5.x 旧字段（只读兼容，保存时统一写 rules） */
+/** 断言配置：规则列表 + 1.5.x 旧字段（只读兼容，保存时统一写 rules） */
 export interface ApiAssertions {
   rules?: AssertRule[];
   /** @deprecated 旧数据兼容：期望状态码 */
@@ -332,6 +355,8 @@ export interface ApiRequest {
   rawContentType?: string;
   /** 断言配置 */
   assertions?: ApiAssertions;
+  /** 响应结构快照（存一次，以后每次发送都跟它比结构有没有变） */
+  snapshot?: ApiSnapshot;
   updatedAt: string;
 }
 

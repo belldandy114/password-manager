@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule } from '../types';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { formatRecent } from '../utils/time';
 import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule, ASSERT_OPS, type AssertResult } from '../utils/apiAssert';
+import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema';
+import { codegenFromBody } from '../utils/apiCodegen';
 import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
@@ -161,12 +163,14 @@ export function ApiClient() {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [showVars, setShowVars] = useState(false);
-  const [respTab, setRespTab] = useState<'body' | 'headers'>('body');
+  const [respTab, setRespTab] = useState<'body' | 'headers' | 'ts' | 'md'>('body');
   // 会话保持：把响应 Set-Cookie 收进主进程内存 Cookie 罐，后续请求自动补 Cookie 头
   const [autoSession, setAutoSession] = useState(() => {
     try { return localStorage.getItem('pm.api.autosession') !== '0'; } catch { return true; }
   });
   const [jar, setJar] = useState<ApiJarCookie[]>([]);
+  /** 与已存快照的结构差异（有快照才会算） */
+  const [schemaDiff, setSchemaDiff] = useState<SchemaDiff | null>(null);
   // 断言结果 / 断言编辑区展开
   const [assertResults, setAssertResults] = useState<AssertResult[]>([]);
   const [showAssert, setShowAssert] = useState(false);
@@ -187,6 +191,9 @@ export function ApiClient() {
       return response.body;
     }
   }, [response]);
+
+  // 响应体 → TS 接口 / Markdown 表格（只在切到对应页签时用得上，但算一次就够）
+  const codegen = useMemo(() => (response ? codegenFromBody(response.body) : null), [response]);
 
   /** 选环境：把环境变量合并进变量表（同名覆盖） */
   const applyEnv = (id: string) => {
@@ -281,6 +288,13 @@ export function ApiClient() {
     if (res.success && res.data) {
       setResponse(res.data);
       setAssertResults(runAssertions(req.assertions, res.data));
+      // 有快照就比对结构（只比类型/字段，不比值）
+      const next = schemaFromBody(res.data.body);
+      if (req.snapshot) {
+        setSchemaDiff(next ? diffSchema(req.snapshot.schema, next) : { added: [], removed: [], changed: [], comparable: false });
+      } else {
+        setSchemaDiff(null);
+      }
       pushHistory(req.method, url, res.data.status, res.data.timeMs);
       if (res.data.setCookies && res.data.setCookies.length) refreshJar();
     } else {
@@ -316,6 +330,20 @@ export function ApiClient() {
     setBatchRunning(false);
   };
 
+  /** 把当前响应的结构存成快照（只存类型，不存值） */
+  const saveSnapshot = async () => {
+    if (!response) return;
+    const schema = schemaFromBody(response.body);
+    if (!schema) { setError('响应不是合法 JSON，无法存结构快照'); return; }
+    const snapshot: ApiSnapshot = { at: new Date().toISOString(), schema };
+    const nextReq: ApiRequest = { ...req, snapshot, updatedAt: new Date().toISOString() };
+    setReq(nextReq);
+    setSchemaDiff(null);
+    setError('');
+    // 已经保存过的请求顺手落盘，避免「存了快照但没保存请求」
+    if (nextReq.id) await save(items.map(i => (i.id === nextReq.id ? nextReq : i)));
+  };
+
   const saveRequest = async () => {
     if (!req.url.trim()) return;
     const entry: ApiRequest = {
@@ -331,7 +359,7 @@ export function ApiClient() {
 
   const removeRequest = async (id: string) => {
     await save(items.filter(i => i.id !== id));
-    if (req.id === id) setReq(emptyReq());
+    if (req.id === id) { setReq(emptyReq()); setSchemaDiff(null); }
   };
 
   return (
@@ -343,7 +371,7 @@ export function ApiClient() {
           desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存"
           tools={
             <>
-              <button className="btn btn-secondary btn-sm" onClick={() => setReq(emptyReq())}>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setReq(emptyReq()); setSchemaDiff(null); setResponse(null); }}>
                 <Icons.plus size={13} /> 新建请求
               </button>
               <button className="btn btn-primary btn-sm" onClick={saveRequest}>保存请求</button>
@@ -422,7 +450,7 @@ export function ApiClient() {
                   <div
                     key={i.id}
                     className={`api-list-item${req.id === i.id ? ' is-active' : ''}`}
-                    onClick={() => { setReq(migrateReq(i)); setResponse(null); setError(''); }}
+                    onClick={() => { setReq(migrateReq(i)); setResponse(null); setSchemaDiff(null); setError(''); }}
                     title={i.url}
                   >
                     <span className="api-pick" onClick={e => e.stopPropagation()}>
@@ -764,6 +792,16 @@ export function ApiClient() {
                 <div className="resp-tabs">
                   <button className={`tab2${respTab === 'body' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('body')}>Body</button>
                   <button className={`tab2${respTab === 'headers' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('headers')}>Headers</button>
+                  <button className={`tab2${respTab === 'ts' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('ts')} title="根据响应结构生成 TypeScript 接口">TS 类型</button>
+                  <button className={`tab2${respTab === 'md' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setRespTab('md')} title="把响应转成 Markdown 表格，可直接粘进禅道/群消息">表格</button>
+                  <button
+                    className="tab2"
+                    style={{ padding: '4px 10px', fontSize: 11.5 }}
+                    title="把这次响应的结构存成快照；以后每次发送都会跟它比，字段被删/改名/换类型会提示"
+                    onClick={saveSnapshot}
+                  >
+                    {req.snapshot ? '重存快照' : '存结构快照'}
+                  </button>
                   <IconBtn title="复制响应内容" onClick={() => navigator.clipboard.writeText(response.body)}>
                     <Icons.copy size={13} />
                   </IconBtn>
@@ -804,8 +842,74 @@ export function ApiClient() {
                       </div>
                     </div>
                   )}
+                  {schemaDiff && (
+                    <div className={`assert-bar${!schemaDiff.comparable ? ' is-bad' : isSameStructure(schemaDiff) ? ' is-ok' : ' is-bad'}`}>
+                      <div className="assert-bar-head">
+                        <span>
+                          结构比对：
+                          {!schemaDiff.comparable
+                            ? '响应不是 JSON，无法比对'
+                            : isSameStructure(schemaDiff)
+                              ? '与快照一致'
+                              : `新增 ${schemaDiff.added.length} · 缺失 ${schemaDiff.removed.length} · 类型变化 ${schemaDiff.changed.length}`}
+                        </span>
+                        {req.snapshot && (
+                          <span className="text-sm text-muted" style={{ marginLeft: 'auto', fontWeight: 400 }}>
+                            快照于 {formatRecent(req.snapshot.at)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="assert-list">
+                        {schemaDiff.added.slice(0, 20).map(p => (
+                          <div key={`a-${p}`} className="assert-row">
+                            <span className="assert-flag">＋</span>
+                            <span className="assert-name">{p}</span>
+                            <span className="assert-detail">新增字段</span>
+                          </div>
+                        ))}
+                        {schemaDiff.removed.slice(0, 20).map(p => (
+                          <div key={`r-${p}`} className="assert-row is-bad">
+                            <span className="assert-flag">－</span>
+                            <span className="assert-name">{p}</span>
+                            <span className="assert-detail">快照里有、这次没有</span>
+                          </div>
+                        ))}
+                        {schemaDiff.changed.slice(0, 20).map(c => (
+                          <div key={`c-${c.path}`} className="assert-row is-bad">
+                            <span className="assert-flag">≠</span>
+                            <span className="assert-name">{c.path}</span>
+                            <span className="assert-detail">{c.from} → {c.to}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {respTab === 'body' ? (
                     <pre className="code2" style={{ maxHeight: '46vh' }}>{prettyBody || '（空响应体）'}</pre>
+                  ) : respTab === 'ts' ? (
+                    codegen ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard.writeText(codegen.ts)}>复制类型</button>
+                          <span className="text-sm text-muted" style={{ alignSelf: 'center' }}>按响应结构生成，字段类型冲突时降级为 unknown</span>
+                        </div>
+                        <pre className="code2" style={{ maxHeight: '42vh' }}>{codegen.ts}</pre>
+                      </div>
+                    ) : (
+                      <Empty compact icon={<Icons.terminal size={20} />} title="响应不是 JSON" desc="只有 JSON 响应才能生成 TypeScript 类型" />
+                    )
+                  ) : respTab === 'md' ? (
+                    codegen ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard.writeText(codegen.md)}>复制表格</button>
+                          <span className="text-sm text-muted" style={{ alignSelf: 'center' }}>可直接粘进禅道、周报或群消息</span>
+                        </div>
+                        <pre className="code2" style={{ maxHeight: '42vh' }}>{codegen.md}</pre>
+                      </div>
+                    ) : (
+                      <Empty compact icon={<Icons.terminal size={20} />} title="响应不是 JSON" desc="只有 JSON 响应才能转成表格" />
+                    )
                   ) : (
                     <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
                       <table className="kv">
