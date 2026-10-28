@@ -2420,3 +2420,105 @@
 .zt-card-num {
   font-size: 21px;
 }
+
+/* 搜索框：图标与文字留足间距（禅道筛选栏曾把 padding 覆盖成 10px 导致压字） */
+.search .search-ico {
+  left: 12px;
+}
+
+.search input {
+  padding: 8px 12px 8px 36px;
+}
+
+.zt-filters .search .search-ico {
+  left: 10px;
+}
+
+.zt-filters .search input {
+  padding: 6px 10px 6px 30px;
+}
+
+/* ---------------- 19.15 弹窗统一（含删除确认） ---------------- */
+.modal {
+  width: 520px;
+  border-radius: 16px;
+  border: 1px solid var(--pm-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22), 0 24px 70px -24px rgba(0, 0, 0, 0.65);
+}
+
+[data-theme="light"] .modal {
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06), 0 24px 70px -30px rgba(16, 24, 40, 0.3);
+}
+
+.modal-header {
+  padding: 16px 20px 0;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: 0.1px;
+}
+
+.modal-header .close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  color: var(--text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.modal-header .close-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 16px 20px;
+}
+
+.modal-footer {
+  padding: 4px 20px 18px;
+  gap: 10px;
+}
+
+/* 确认弹窗：窄一些、图标更精致 */
+.modal.confirm-dialog {
+  width: 404px;
+}
+
+.confirm-dialog-content {
+  gap: 9px;
+  padding: 6px 2px 2px;
+}
+
+.confirm-dialog-content .confirm-icon {
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border-radius: 14px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  box-sizing: border-box;
+}
+
+.confirm-dialog-content h4 {
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.confirm-dialog-content p {
+  font-size: 12.8px;
+  line-height: 1.75;
+  color: var(--text-muted);
+  max-width: 320px;
+}
+
+/* tabs 不出现滚动条（内容不宽时也会冒出来的那条横线） */
+.tabs {
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}

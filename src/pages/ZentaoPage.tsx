@@ -658,7 +658,7 @@ function BugTable({ bugs, onOpen, showAssignee }: { bugs: ZentaoBug[]; onOpen: (
           {showAssignee && <th style={{ width: 96 }}>指派给</th>}
           <th style={{ width: 70 }}>优先级</th>
           <th style={{ width: 170 }}>项目</th>
-          <th style={{ width: 96 }}>创建日期</th>
+          <th style={{ width: 108 }}>创建日期</th>
         </tr>
       </thead>
       <tbody>
@@ -679,7 +679,7 @@ function BugTable({ bugs, onOpen, showAssignee }: { bugs: ZentaoBug[]; onOpen: (
               <td style={{ color: 'var(--text-muted)', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.productName}>
                 {b.productName || '—'}
               </td>
-              <td className="cell-num" style={{ color: 'var(--text-muted)' }}>{b.date || b.deadline || '—'}</td>
+              <td className="cell-num" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{b.date || b.deadline || '—'}</td>
             </tr>
           );
         })}

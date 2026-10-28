@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { PasswordEntry } from '../types';
 import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
+import { useConfirm } from './confirm';
 import { getTagHue } from '../utils/tagColors';
 
 interface Props {
@@ -87,6 +88,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
   const selectAll = useStore(s => s.selectAll);
 
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
+  const { ask, confirmNode } = useConfirm();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [hoverTagEntry, setHoverTagEntry] = useState<string | null>(null);
   const [recentCopy, setRecentCopy] = useState<{ id: string; field: string } | null>(null);
@@ -367,26 +369,35 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                           复制全部信息
                         </div>
                         <div className="action-dropdown-sep" />
-                        <div className="action-dropdown-item" onClick={async () => {
-                          if (!window.confirm('\u786E\u5B9A\u8981\u5220\u9664\u8BE5\u7F51\u5740\u5417\uFF1F\u5220\u9664\u540E\u53EF\u5728\u56DE\u6536\u7AD9\u6062\u590D')) return;
-                          const result = await window.electronAPI.entriesDelete({ ids: [entry.id], permanent: false });
-                          if (result.success && result.data) {
-                            useStore.getState().setVaultData(result.data);
-                          }
+                        <div className="action-dropdown-item" onClick={() => {
                           setOpenDropdown(null);
+                          ask({
+                            title: '移入回收站',
+                            message: `确定把「${entry.name}」移入回收站？之后可以在回收站里恢复。`,
+                            confirmText: '移入回收站',
+                            danger: false,
+                            onOk: async () => {
+                              const result = await window.electronAPI.entriesDelete({ ids: [entry.id], permanent: false });
+                              if (result.success && result.data) useStore.getState().setVaultData(result.data);
+                            },
+                          });
                         }}>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
                             <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                           </svg>
                           移入回收站
                         </div>
-                        <div className="action-dropdown-item danger" onClick={async () => {
-                          if (!window.confirm('\u786E\u5B9A\u8981\u5F7B\u5E95\u5220\u9664\u8BE5\u7F51\u5740\u5417\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500')) return;
-                          const result = await window.electronAPI.entriesDelete({ ids: [entry.id], permanent: true });
-                          if (result.success && result.data) {
-                            useStore.getState().setVaultData(result.data);
-                          }
+                        <div className="action-dropdown-item danger" onClick={() => {
                           setOpenDropdown(null);
+                          ask({
+                            title: '彻底删除网址',
+                            message: `确定彻底删除「${entry.name}」？此操作不可撤销，也无法从回收站恢复。`,
+                            confirmText: '彻底删除',
+                            onOk: async () => {
+                              const result = await window.electronAPI.entriesDelete({ ids: [entry.id], permanent: true });
+                              if (result.success && result.data) useStore.getState().setVaultData(result.data);
+                            },
+                          });
                         }}>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
                             <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
@@ -403,6 +414,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
         })}
       </tbody>
     </table>
+    {confirmNode}
     </div>
   );
 }

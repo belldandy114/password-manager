@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { Note } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 
 const emptyNote = (): Note => ({
@@ -47,6 +48,7 @@ export function Notes() {
   const { items, save, loading } = useCollection<Note>('notes');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Note | null>(null);
+  const { ask, confirmNode } = useConfirm();
   const [preview, setPreview] = useState<Note | null>(null);
 
   const filtered = useMemo(() => {
@@ -66,7 +68,6 @@ export function Notes() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('确定删除这篇笔记？')) return;
     await save(items.filter(i => i.id !== id));
   };
 
@@ -110,7 +111,16 @@ export function Notes() {
                   <div className="card2-title" title={n.title}>{n.title}</div>
                   <div className="card2-actions" onClick={e => e.stopPropagation()}>
                     <IconBtn title="编辑" onClick={() => setEditing(n)}><Icons.pencil size={13} /></IconBtn>
-                    <IconBtn title="删除" danger onClick={() => remove(n.id)}><Icons.trash size={13} /></IconBtn>
+                    <IconBtn
+                      title="删除"
+                      danger
+                      onClick={() => ask({
+                        title: '删除笔记',
+                        message: `确定删除「${n.title}」？删除后不可恢复。`,
+                        confirmText: '删除',
+                        onOk: () => remove(n.id),
+                      })}
+                    ><Icons.trash size={13} /></IconBtn>
                   </div>
                 </div>
 
@@ -176,6 +186,8 @@ export function Notes() {
       >
         <div className="markdown-body" dangerouslySetInnerHTML={{ __html: mdToHtml(preview?.content || '') }} />
       </Modal>
+
+      {confirmNode}
     </div>
   );
 }

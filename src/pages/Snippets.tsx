@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { Snippet } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 
 const emptySnippet = (): Snippet => ({
@@ -14,6 +15,7 @@ export function Snippets() {
   const [editing, setEditing] = useState<Snippet | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [toast, setToast] = useState('');
+  const { ask, confirmNode } = useConfirm();
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -39,7 +41,6 @@ export function Snippets() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('确定删除这个片段？')) return;
     await save(items.filter(i => i.id !== id));
   };
 
@@ -118,7 +119,16 @@ export function Snippets() {
                   <div className="card2-actions">
                     <IconBtn title="复制 SQL" onClick={() => copy(s.sql)}><Icons.copy size={13} /></IconBtn>
                     <IconBtn title="编辑" onClick={() => setEditing(s)}><Icons.pencil size={13} /></IconBtn>
-                    <IconBtn title="删除" danger onClick={() => remove(s.id)}><Icons.trash size={13} /></IconBtn>
+                    <IconBtn
+                      title="删除"
+                      danger
+                      onClick={() => ask({
+                        title: '删除 SQL 片段',
+                        message: `确定删除「${s.title}」？删除后不可恢复。`,
+                        confirmText: '删除',
+                        onOk: () => remove(s.id),
+                      })}
+                    ><Icons.trash size={13} /></IconBtn>
                   </div>
                 </div>
 
@@ -196,6 +206,8 @@ export function Snippets() {
           </>
         )}
       </Modal>
+
+      {confirmNode}
     </div>
   );
 }

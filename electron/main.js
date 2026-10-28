@@ -1421,7 +1421,7 @@ function setupIpcHandlers() {
       productName: ztStripTags(b.productName || ''),
       assignedTo: String(b.assignedTo || ''),
       openedBy: String(b.openedBy || ''),
-      date: String(b.openedDate || ''),
+      date: String(b.openedDate || '').slice(0, 10),
       deadline: /^0{4}-0{2}-0{2}/.test(String(b.deadline || '')) ? '' : String(b.deadline || ''),
       resolution: String(b.resolution || ''),
     };

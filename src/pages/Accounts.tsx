@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { TestAccount } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/confirm';
 import { newId } from '../utils/id';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 
@@ -22,6 +23,7 @@ export function Accounts() {
   const { items, save, loading } = useCollection<TestAccount>('accounts');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<TestAccount | null>(null);
+  const { ask, confirmNode } = useConfirm();
   const [showPw, setShowPw] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState('');
 
@@ -56,7 +58,6 @@ export function Accounts() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('确定删除这个账号？')) return;
     await save(items.filter(i => i.id !== id));
   };
 
@@ -149,7 +150,16 @@ export function Accounts() {
                         <td style={{ color: 'var(--text-muted)' }}>{a.note || '—'}</td>
                         <td className="cell-actions">
                           <IconBtn title="编辑" onClick={() => setEditing(a)}><Icons.pencil size={13} /></IconBtn>
-                          <IconBtn title="删除" danger onClick={() => remove(a.id)}><Icons.trash size={13} /></IconBtn>
+                          <IconBtn
+                            title="删除"
+                            danger
+                            onClick={() => ask({
+                              title: '删除测试账号',
+                              message: `确定删除「${a.system || '未分组'} · ${a.username}」？删除后不可恢复。`,
+                              confirmText: '删除',
+                              onOk: () => remove(a.id),
+                            })}
+                          ><Icons.trash size={13} /></IconBtn>
                         </td>
                       </tr>
                     );
@@ -214,6 +224,8 @@ export function Accounts() {
           </>
         )}
       </Modal>
+
+      {confirmNode}
     </div>
   );
 }

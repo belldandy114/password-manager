@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { ApiRequest, ApiResponseData } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons } from '../components/ui';
+import { useConfirm } from '../components/confirm';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -120,6 +121,7 @@ function KvEditor({
 export function ApiClient() {
   const { items, save } = useCollection<ApiRequest>('apiRequests');
   const [req, setReq] = useState<ApiRequest>(emptyReq);
+  const { ask, confirmNode } = useConfirm();
   const [response, setResponse] = useState<ApiResponseData | null>(null);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -163,7 +165,6 @@ export function ApiClient() {
   };
 
   const removeRequest = async (id: string) => {
-    if (!confirm('删除这条请求？')) return;
     await save(items.filter(i => i.id !== id));
     if (req.id === id) setReq(emptyReq());
   };
@@ -202,7 +203,19 @@ export function ApiClient() {
                   >
                     <span className={`method m-${i.method}`}>{i.method}</span>
                     <span className="api-name">{i.name}</span>
-                    <IconBtn title="删除" danger onClick={e => { e.stopPropagation(); removeRequest(i.id); }}>
+                    <IconBtn
+                      title="删除"
+                      danger
+                      onClick={e => {
+                        e.stopPropagation();
+                        ask({
+                          title: '删除请求',
+                          message: `确定删除「${i.name}」？删除后不可恢复。`,
+                          confirmText: '删除',
+                          onOk: () => removeRequest(i.id),
+                        });
+                      }}
+                    >
                       <Icons.trash size={12} />
                     </IconBtn>
                   </div>
@@ -346,6 +359,8 @@ export function ApiClient() {
           </div>
         </div>
       </Page>
+
+      {confirmNode}
     </div>
   );
 }
