@@ -92,7 +92,14 @@ const check = (name, ok, extra = '') => {
   })()`);
   const navTo = async (label) => {
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
-    await sleep(800);
+    await sleep(500);
+    // 页面是懒加载的 chunk：等 loading 占位消失、真正的 .pg 出现再往下走
+    for (let i = 0; i < 40; i++) {
+      const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
+      if (ready) break;
+      await sleep(100);
+    }
+    await sleep(400);
   };
   const unlock = async () => {
     const locked = await ev(`(() => !!document.querySelector('input[type=password]'))()`);

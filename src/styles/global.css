@@ -687,6 +687,17 @@ body {
   overflow: hidden;
 }
 
+/* 页面 chunk 懒加载时的占位：只在真正等待网络的那一下出现 */
+.page-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  letter-spacing: 0.4px;
+}
+
 /* ---- Toolbar (Three-zone layout) ---- */
 .toolbar {
   padding: 12px 24px;

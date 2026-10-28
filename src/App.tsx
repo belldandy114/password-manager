@@ -1,20 +1,26 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
-import { Settings } from './pages/Settings';
-import { PasswordManagerPage } from './pages/PasswordManagerPage';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
-import { DataGenerator } from './pages/DataGenerator';
-import { JsonConverter } from './pages/JsonConverter';
-import { Toolbox } from './pages/Toolbox';
-import { Accounts } from './pages/Accounts';
-import { WeeklyReport } from './pages/WeeklyReport';
-import { Snippets } from './pages/Snippets';
-import { Notes } from './pages/Notes';
-import { ZentaoPage } from './pages/ZentaoPage';
-import { ApiClient } from './pages/ApiClient';
 import { applyTheme, watchSystemTheme, applyAccent } from './utils/theme';
+
+/**
+ * 工作台页面按需加载：首屏只装登录 + 侧边栏，
+ * 点哪个页面才去拉哪个页面的 chunk（否则主 bundle 700KB+，冷启动要等）。
+ * 登录页保持同步引入——它是启动必经之路，拆出去只会多一次往返。
+ */
+const PasswordManagerPage = lazy(() => import('./pages/PasswordManagerPage').then(m => ({ default: m.PasswordManagerPage })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ default: m.DataGenerator })));
+const JsonConverter = lazy(() => import('./pages/JsonConverter').then(m => ({ default: m.JsonConverter })));
+const Toolbox = lazy(() => import('./pages/Toolbox').then(m => ({ default: m.Toolbox })));
+const Accounts = lazy(() => import('./pages/Accounts').then(m => ({ default: m.Accounts })));
+const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
+const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.Snippets })));
+const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
+const ZentaoPage = lazy(() => import('./pages/ZentaoPage').then(m => ({ default: m.ZentaoPage })));
+const ApiClient = lazy(() => import('./pages/ApiClient').then(m => ({ default: m.ApiClient })));
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -325,10 +331,17 @@ function App() {
         onLock={handleLock}
       />
       <div className="main-content">
-        {currentPage !== 'dataGenerator' && renderPage()}
+        {/* 每个页面自己是独立 chunk：切换时只挂一个局部 loading，不牵连保活的子应用 */}
+        {currentPage !== 'dataGenerator' && (
+          <Suspense fallback={<div className="page-loading">正在加载…</div>}>
+            {renderPage()}
+          </Suspense>
+        )}
         {tdgMounted && (
           <div className="keepalive-host" style={{ display: currentPage === 'dataGenerator' ? 'flex' : 'none' }}>
-            <DataGenerator />
+            <Suspense fallback={null}>
+              <DataGenerator />
+            </Suspense>
           </div>
         )}
       </div>
