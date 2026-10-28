@@ -78,7 +78,14 @@ const check = (name, ok, extra = '') => {
   })()`);
   const navTo = async (label) => {
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
-    await sleep(800);
+    await sleep(500);
+    // 页面是懒加载 chunk，等真正渲染出来再断言
+    for (let i = 0; i < 40; i++) {
+      const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
+      if (ready) break;
+      await sleep(100);
+    }
+    await sleep(400);
   };
 
   // 登录

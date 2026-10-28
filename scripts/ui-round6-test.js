@@ -113,7 +113,14 @@ const server = http.createServer((req, res) => {
   })()`);
   const navTo = async (label) => {
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
-    await sleep(800);
+    await sleep(500);
+    // 页面 chunk 是懒加载的：等占位消失、真正的 .pg 出现再继续，避免定长 sleep 引发的偶发失败
+    for (let i = 0; i < 40; i++) {
+      const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
+      if (ready) break;
+      await sleep(100);
+    }
+    await sleep(400);
   };
   const setVal = async (sel, v) => ev(`(() => {
     const s = ${SETVAL};
