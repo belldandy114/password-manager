@@ -644,3 +644,35 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 所以本地/CI 上看到「12/12 通过 + 5 跳过」是正常的，不是漏测；要全量验证时先设环境变量。
 
 `scripts/ui-round9-test.js` 覆盖本轮三项：cURL 导入/复制（含中文与错误输入）、异地备份（真的在第二目录落文件）、禅道三视图（断言 `openedBy=...&status=all` 与 `assignedTo=...&status=resolved`）。可用 `R9_ONLY=curl|backup|zentao` 单跑一段。
+
+## ⚠️ 应用内下载：不要把安装包拼到 %TEMP%（2026-10-29 杀软误报）
+
+**现象**：应用内「下载并安装」下到一半被 360 删除，报 `Trojan/Injector.avv`：
+
+```
+%TEMP%\pm-update\PasswordManager-Setup-<ts>.exe.part0
+操作进程：测试工具.exe
+```
+
+**根因**：旧实现把安装包拆成 `xxx.exe.part0 … part5` 并发写到 `%TEMP%\pm-update`，再拼成 exe。
+`.part0` 的内容就是 NSIS 安装包的 PE 头，「非浏览器进程在临时目录写可执行内容并拼装」
+正是释放器/注入器的行为模式，启发式必中——**不是误报到我们头上，是这种写法本来就像**。
+
+**现在的约定（改这块前务必遵守）**：
+
+| 项 | 做法 |
+|---|---|
+| 落盘位置 | `app.getPath('userData')/update/`，**不要再写 `%TEMP%`** |
+| 文件名 | 用 GitHub 资产名（`assetFileName()`），不要带时间戳/随机串 |
+| 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；分片放 `update/parts-<ts>/chunk-N.bin`，下完即删 |
+| 默认策略 | **单连接顺序下载**（像普通下载器）。多线程必须是用户显式勾选，UI 上写明「部分杀软会误报」 |
+| 完整性 | 下载后算 SHA-256，与 Release asset 的 `digest` 比对，**不一致就删文件并拒绝安装**；返回 `verified` 给 UI 显示「已校验」 |
+| 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速镜像 + 一句杀软排查建议 |
+
+**验证方式**（`R9_ONLY=update node scripts/ui-round9-test.js`，用本地 Range 服务造假安装包）：
+
+- 摘要正确 → `success && verified`，文件名等于官方资产名，路径不含 `pm-update`；
+- 摘要错误 → `success:false` 且错误里带 `SHA-256`，文件被删除；
+- `threads:true` → 走 6 段且校验仍然通过。
+
+GitHub 侧的 `digest` 字段确认可用：v1.7.0 附件的 digest 与本地 exe 的 SHA-256 完全一致。
