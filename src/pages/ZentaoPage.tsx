@@ -100,6 +100,8 @@ export function ZentaoPage() {
   const setBugs = useZentaoStore(s => s.setBugs);
   const mineScope = useZentaoStore(s => s.mineScope);
   const setMineScope = useZentaoStore(s => s.setMineScope);
+  const mineProductIds = useZentaoStore(s => s.mineProductIds);
+  const setMineProductIds = useZentaoStore(s => s.setMineProductIds);
   const setFilter = useZentaoStore(s => s.setFilter);
 
   /* ---------- store：项目 Bug ---------- */
@@ -241,12 +243,48 @@ export function ZentaoPage() {
     verify: '待我验证',
   };
   const scopeLabel = SCOPE_LABEL[mineScope];
+  // 「我提交的 / 待我验证」按项目拉：记住选中的项目，默认挑当前项目
+  const [projOpen, setProjOpen] = useState(false);
+  const [projDraft, setProjDraft] = useState<string[]>([]);
 
-  const loadMine = async (scope: MyBugScope = mineScope) => {
+  /**
+   * 确保「我的 Bug」有选中的项目：没项目列表就先拉一次；没选过就默认选中当前项目（或列表第一个）。
+   * 禅道 REST 强制要 product，而且全量遍历 31 个项目要好几秒，所以不能默认全查。
+   */
+  const ensureMineProjects = async (): Promise<string[]> => {
+    let list = projects;
+    if (!list.length) {
+      const r = await window.electronAPI.zentaoProjects(currentCfg());
+      if (r.success && r.data) { list = r.data; setProjects(list); }
+    }
+    if (!list.length) return [];
+    const valid = mineProductIds.filter(id => list.some(p => String(p.id) === String(id)));
+    if (valid.length) return valid;
+    const fallback = activeProject || String(list[0].id);
+    setMineProductIds([fallback]);
+    return [fallback];
+  };
+
+  const openProjPicker = async () => {
+    const ids = await ensureMineProjects();
+    setProjDraft(ids);
+    setProjOpen(true);
+  };
+
+  const mineProjectLabel = (() => {
+    if (!mineProductIds.length) return "未选择项目";
+    if (mineProductIds.length > 1) return `${mineProductIds.length} 个项目`;
+    const hit = projects.find(p => String(p.id) === String(mineProductIds[0]));
+    return hit ? hit.name : mineProductIds[0];
+  })();
+  const loadMine = async (scope: MyBugScope = mineScope, idsOverride?: string[]) => {
     setError('');
     if (!ready()) return;
     setBusy('mine');
-    const res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope);
+    // 弹窗点「确定」时直接传入选中的 ids：那一瞬间 store 里的 mineProductIds 还是旧值
+    const ids = idsOverride && idsOverride.length ? idsOverride : await ensureMineProjects();
+    if (!ids.length) { setBusy(''); setError('请先选择要查询的项目'); return; }
+    const res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope, ids);
     setBusy('');
     if (res.success && res.data) {
       setBugs(res.data, res.total || res.data.length);
@@ -614,6 +652,24 @@ export function ZentaoPage() {
           </div>
         )}
 
+        {tab === 'mine' && mineScope !== 'assigned' && (
+          <div className="zt-mine-proj">
+            <span className="zt-mine-proj-label">项目</span>
+            <button
+              className="zt-mine-proj-btn"
+              onClick={openProjPicker}
+              title="只查询选中的项目（禅道 REST 要求按项目查询，全量遍历会很慢）"
+            >
+              <Icons.folder size={12} />
+              <span className="zt-mine-proj-name">{mineProjectLabel}</span>
+              <span className="zt-mine-proj-caret">▾</span>
+            </button>
+            <span className="zt-mine-proj-hint">
+              {mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
+            </span>
+          </div>
+        )}
+
         {tab === 'mine' && (
           <>
             <Panel title="快捷入口" meta={`${QUICK_LINKS.length} 个`}>
@@ -870,6 +926,48 @@ export function ZentaoPage() {
       </Page>
 
       {/* Bug 详情抽屉 */}
+      <Modal
+        open={projOpen}
+        title="选择要查询的项目"
+        onClose={() => setProjOpen(false)}
+        footer={(
+          <>
+            <button className="btn btn-secondary" onClick={() => setProjDraft([])}>清空</button>
+            <button className="btn btn-secondary" onClick={() => setProjDraft(projects.map(x => String(x.id)))}>全选</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                if (!projDraft.length) return;
+                setMineProductIds(projDraft);
+                setProjOpen(false);
+                void loadMine(mineScope, projDraft);
+              }}
+            >
+              确定（查 {projDraft.length} 个）
+            </button>
+          </>
+        )}
+      >
+        <div className="zt-proj-list">
+          {projects.length === 0 && <div className="zt-proj-empty">还没有项目列表，请先连接禅道</div>}
+          {projects.map(pr => {
+            const id = String(pr.id);
+            const on = projDraft.includes(id);
+            return (
+              <label key={id} className={`zt-proj-item${on ? ' is-on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => setProjDraft(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+                />
+                <span className="zt-proj-name">{pr.name}</span>
+                <span className="zt-proj-id">#{id}</span>
+              </label>
+            );
+          })}
+        </div>
+      </Modal>
+
       <BugDrawer bug={detailBug} cfg={cfg || null} onClose={() => setDetailBug(null)} />
       {confirmNode}
 

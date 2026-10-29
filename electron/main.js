@@ -2534,7 +2534,7 @@ function setupIpcHandlers() {
    * 所以先取项目列表，再按项目逐个查、按 id 去重合并；
    * 并发 4 个 worker，既压住耗时，也不至于把禅道打满。
    */
-  async function ztLoadMyBugsScoped(cfg, scope) {
+  async function ztLoadMyBugsScoped(cfg, scope, productIds) {
     cfg = ztNormalizeCfg(cfg);
     if (!cfg.account || !cfg.password) return { success: false, error: '请先填写账号和密码' };
     try {
@@ -2559,7 +2559,13 @@ function setupIpcHandlers() {
         return params;
       };
 
-      const queue = products.slice();
+      // 只查用户选中的项目：31 个项目全量遍历要好几秒，而且大多数项目跟当前测试无关。
+      const wanted = Array.isArray(productIds) ? productIds.map(String).filter(Boolean) : [];
+      const queue = wanted.length ? products.filter(p => wanted.includes(String(p.id))) : products.slice();
+      if (!queue.length) {
+        return { success: false, error: `所选项目不在项目列表里（选了 ${wanted.join(", ")}），请重新载入项目后再试` };
+      }
+      const queueSize = queue.length;
       const seen = new Set();
       const all = [];
       let okCount = 0;
@@ -2588,20 +2594,20 @@ function setupIpcHandlers() {
         }
       };
 
-      await Promise.all(Array.from({ length: Math.min(4, products.length) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(4, queueSize) }, () => worker()));
 
       if (!okCount) {
         return { success: false, error: `按项目查询失败：${lastError || '全部请求都未成功'}` };
       }
-      return { success: true, data: all, total: all.length, scope, products: products.length };
+      return { success: true, data: all, total: all.length, scope, products: products.length, queried: wanted.length ? wanted : products.map(p => String(p.id)) };
     } catch (e) {
       return { success: false, error: e.message };
     }
   }
 
-  ipcMain.handle('zentao:my-bugs', async (_event, cfg, scope = 'assigned') => {
+  ipcMain.handle('zentao:my-bugs', async (_event, cfg, scope = 'assigned', productIds) => {
     if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
-    if (scope === 'opened' || scope === 'verify') return ztLoadMyBugsScoped(cfg, scope);
+    if (scope === 'opened' || scope === 'verify') return ztLoadMyBugsScoped(cfg, scope, productIds);
     return ztLoadMyBugs(cfg);
   });
 

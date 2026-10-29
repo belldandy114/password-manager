@@ -88,7 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apiCookies: (origin) => ipcRenderer.invoke('api:cookies', { origin }),
   apiCookiesClear: (origin) => ipcRenderer.invoke('api:cookies-clear', { origin }),
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
-  zentaoMyBugs: (cfg, scope) => ipcRenderer.invoke('zentao:my-bugs', cfg, scope),
+  zentaoMyBugs: (cfg, scope, productIds) => ipcRenderer.invoke('zentao:my-bugs', cfg, scope, productIds),
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
   zentaoProjectBugs: (cfg, productId) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId }),
   zentaoAllBugs: (cfg, force) => ipcRenderer.invoke('zentao:all-bugs', cfg, { force: !!force }),

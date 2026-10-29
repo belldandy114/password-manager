@@ -360,10 +360,23 @@ const echo = http.createServer((req, res) => {
       return 0;
     };
 
-    // 我提交的（REST openedBy + status=all）
+    // 我提交的（REST openedBy + status=all）。1.7.4 起：默认只查选中的项目，不再全量遍历。
     await clickHas('我提交的');
+    const openedRowsDefault = await waitRows();
+    const projHint = await ev(`(() => { const b = document.querySelector('.zt-mine-proj-name'); return b ? b.textContent.trim() : ''; })()`);
+    check('禅道：默认只查 1 个项目（不一次性拉全部）', openedRowsDefault === 1 && !!projHint, `${openedRowsDefault} 行 · ${projHint}`);
+
+    // 打开项目选择：全选 → 确定，应该变成查 2 个项目、拉到 2 条
+    await ev(`(() => { const b = document.querySelector('.zt-mine-proj-btn'); if (b) b.click(); return true; })()`);
+    await sleep(400);
+    const projModal = await ev(`document.querySelectorAll('.zt-proj-item').length`);
+    check('禅道：项目选择弹窗列出全部项目', projModal === 2, `${projModal} 个项目`);
+    await clickHas('全选');
+    await sleep(200);
+    await clickHas('确定');
+    await sleep(900);
     const openedRows = await waitRows();
-    check('禅道：我提交的 → 拉到 2 条', openedRows === 2, `${openedRows} 行`);
+    check('禅道：选 2 个项目后拉到 2 条', openedRows === 2, `${openedRows} 行`);
     const openedHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /openedBy=stub-user/.test(l.url) && /status=all/.test(l.url) && /product=\d+/.test(l.url));
     check('禅道：我提交的用的是 openedBy + status=all + product', openedHit,
       zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
@@ -372,8 +385,8 @@ const echo = http.createServer((req, res) => {
     const bugReqs = zt.log.filter(l => /v1\/bugs/.test(l.url));
     const withoutProduct = bugReqs.filter(l => !/[?&]product=/.test(l.url));
     const productsQueried = new Set(bugReqs.map(l => (/[?&]product=(\d+)/.exec(l.url) || [])[1]).filter(Boolean));
-    check('禅道：按项目逐个查（覆盖 2 个项目、无漏带 product 的请求）',
-      productsQueried.size >= 2 && withoutProduct.length === 0,
+    check('禅道：只查选中的项目（2 个）且无漏带 product 的请求',
+      productsQueried.size === 2 && withoutProduct.length === 0,
       'products=' + [...productsQueried].join(',') + ' 漏带=' + withoutProduct.length);
     check('禅道：切视图后标题跟着变', /我提交的/.test(String(openedTitle)), String(openedTitle).slice(0, 60));
 
