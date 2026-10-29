@@ -807,7 +807,7 @@ registerFileIpc();
 1. 本域没有依赖 main.js 的模块级状态（`loadVault` / `saveVault` / `currentPassword` / `DATA_DIR` / `appendAudit` 等）；
 2. 本域不与其他域共享「内存里的可变状态」（如 `apiJar`、`ztTokenCache`）。
 
-当前状态：`electron/ipc-files.js` = 周报 + 笔记（274 行），`setupIpcHandlers` 由 2963 → 2703 行，main.js 3894 → 3635 行。
+当前状态：`electron/ipc-files.js` = 周报 + 笔记（274 行），`electron/ipc-tools.js` = 密码生成 + TOTP（纯函数 + 注册器，含 RFC 6238 向量单测）；`setupIpcHandlers` 由 2963 → 2703 行，main.js 3894 → 3569 行。
 
 ### 后续候选（按耦合从低到高）
 

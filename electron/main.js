@@ -708,6 +708,7 @@ const { parseCsv, normalizeImportRecords } = require('./csv');
 const { ztDecodeEntities, ztStripTags, ztTableRows } = require('./zentao-parse');
 const { cmpVersion, shouldNotifyUpdate } = require('./update-check');
 const { registerFileIpc } = require('./ipc-files');
+const { registerToolsIpc } = require('./ipc-tools');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -717,37 +718,7 @@ const { registerFileIpc } = require('./ipc-files');
 // 结构归一化抽到 electron/vault-schema.js（带单测）：它是旧库升级的唯一关口，不能靠肉眼保证
 const { VAULT_COLLECTIONS, normalizeVault } = require('./vault-schema');
 
-// ----------------------------------------------------------------
-// TOTP (two-factor codes stored next to the entry)
-// ----------------------------------------------------------------
-function base32Decode(input) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const clean = String(input || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
-  let bits = '';
-  for (const ch of clean) {
-    const idx = alphabet.indexOf(ch);
-    if (idx === -1) continue;
-    bits += idx.toString(2).padStart(5, '0');
-  }
-  const bytes = [];
-  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
-  return Buffer.from(bytes);
-}
-
-function totpAt(secret, atMs, digits = 6, period = 30) {
-  const key = base32Decode(secret);
-  if (!key.length) return null;
-  const counter = BigInt(Math.floor(atMs / 1000 / period));
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64BE(counter);
-  const hmac = crypto.createHmac('sha1', key).update(buf).digest();
-  const offset = hmac[hmac.length - 1] & 0x0f;
-  const bin = ((hmac[offset] & 0x7f) << 24)
-    | (hmac[offset + 1] << 16)
-    | (hmac[offset + 2] << 8)
-    | hmac[offset + 3];
-  return String(bin % (10 ** digits)).padStart(digits, '0');
-}
+// TOTP 辅助函数与 password:generate 已拆到 electron/ipc-tools.js（带 RFC 6238 向量单测）
 
 // ----------------------------------------------------------------
 // Attachments (encrypted at rest with the session key)
@@ -1267,34 +1238,6 @@ function setupIpcHandlers() {
       } catch { /* ignore */ }
     }
     return { success: true };
-  });
-
-  // ---- Password generator ----
-  ipcMain.handle('password:generate', (_event, opts = {}) => {
-    const length = Math.min(128, Math.max(6, Number(opts.length) || 16));
-    const sets = [];
-    const AMBIGUOUS = 'Il1O0o';
-    const clean = (s) => opts.excludeAmbiguous ? s.split('').filter(c => !AMBIGUOUS.includes(c)).join('') : s;
-
-    if (opts.lower !== false) sets.push(clean('abcdefghijklmnopqrstuvwxyz'));
-    if (opts.upper !== false) sets.push(clean('ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
-    if (opts.digits !== false) sets.push(clean('0123456789'));
-    if (opts.symbols) sets.push(clean('!@#$%^&*()-_=+[]{};:,.?/'));
-
-    const usable = sets.filter(s => s.length > 0);
-    if (usable.length === 0) return { success: false, error: '请至少选择一种字符类型' };
-
-    const chars = [];
-    // Guarantee at least one character from every selected set.
-    for (const set of usable) chars.push(set[crypto.randomInt(set.length)]);
-    const all = usable.join('');
-    while (chars.length < length) chars.push(all[crypto.randomInt(all.length)]);
-    // Fisher–Yates with crypto randomness so the guaranteed characters are not stuck at the front.
-    for (let i = chars.length - 1; i > 0; i--) {
-      const j = crypto.randomInt(i + 1);
-      [chars[i], chars[j]] = [chars[j], chars[i]];
-    }
-    return { success: true, data: chars.join('') };
   });
 
   // ---- Backups ----
@@ -1980,16 +1923,6 @@ function setupIpcHandlers() {
     const vault = loadVault(currentPassword);
     if (!vault) return { success: false, error: '数据损坏' };
     return { success: true, data: vault.history[entryId] || [] };
-  });
-
-  // ---- TOTP ----
-  ipcMain.handle('totp:code', (_event, { secret, digits = 6, period = 30 } = {}) => {
-    if (!secret) return { success: false, error: '未配置密钥' };
-    const now = Date.now();
-    const code = totpAt(secret, now, digits, period);
-    if (!code) return { success: false, error: '密钥格式无效' };
-    const remain = period - Math.floor((now / 1000) % period);
-    return { success: true, data: { code, remain, period } };
   });
 
   // ---- Attachments (encrypted with the session key) ----
@@ -3554,6 +3487,7 @@ function setupIpcHandlers() {
   });
   // 目录型文件 IPC（周报 / 笔记）已拆到 electron/ipc-files.js
   registerFileIpc();
+  registerToolsIpc();
 
 }
 
