@@ -8,6 +8,7 @@ import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule
 import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema';
 import { codegenFromBody } from '../utils/apiCodegen';
 import { useConfirm } from '../components/confirm';
+import { parseCurl, buildCurl } from '../utils/curl';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -155,6 +156,11 @@ export function ApiClient() {
   const { items: history, save: saveHistory } = useCollection<ApiHistoryItem>('apiHistory');
   const [req, setReq] = useState<ApiRequest>(emptyReq);
   const { ask, confirmNode } = useConfirm();
+  // cURL 互转：粘贴导入 / 一键复制
+  const [curlOpen, setCurlOpen] = useState(false);
+  const [curlText, setCurlText] = useState('');
+  const [curlError, setCurlError] = useState('');
+  const [curlCopied, setCurlCopied] = useState(false);
   const [sideTab, setSideTab] = useState<'saved' | 'history'>('saved');
   const [activeEnvId, setActiveEnvId] = useState('');
   const [envOpen, setEnvOpen] = useState(false);
@@ -357,6 +363,40 @@ export function ApiClient() {
     setReq(entry);
   };
 
+  /**
+   * 复制当前请求为 curl。
+   * clipboard API 在窗口未聚焦/无权限时会抛错，兜底用 textarea + execCommand，
+   * 否则用户点了没反应（报错也只停在控制台）。
+   */
+  const copyCurlCmd = async () => {
+    const text = buildCurl(req);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setCurlCopied(true);
+      setTimeout(() => setCurlCopied(false), 1600);
+    } else {
+      setError('复制失败：剪贴板不可用（窗口失去焦点时可能出现）');
+    }
+  };
+
   const removeRequest = async (id: string) => {
     await save(items.filter(i => i.id !== id));
     if (req.id === id) { setReq(emptyReq()); setSchemaDiff(null); }
@@ -371,6 +411,9 @@ export function ApiClient() {
           desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存"
           tools={
             <>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setCurlText(''); setCurlError(''); setCurlOpen(true); }} title="粘贴同事/文档里的 curl 命令，自动拆成方法、地址、请求头、请求体">
+                <Icons.download size={13} /> 从 cURL 导入
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setReq(emptyReq()); setSchemaDiff(null); setResponse(null); }}>
                 <Icons.plus size={13} /> 新建请求
               </button>
@@ -517,14 +560,24 @@ export function ApiClient() {
               title="请求"
               meta={req.name || '未命名'}
               tools={
-                <button
-                  className={`tab2${showVars ? ' is-active' : ''}`}
-                  style={{ padding: '4px 10px', fontSize: 11.5 }}
-                  onClick={() => setShowVars(v => !v)}
-                  title="展开/收起变量表"
-                >
-                  <Icons.tag size={12} /> 变量
-                </button>
+                <div className="resp-tabs">
+                  <button
+                    className="tab2"
+                    style={{ padding: '4px 10px', fontSize: 11.5 }}
+                    onClick={copyCurlCmd}
+                    title="把当前请求复制成 curl 命令，可直接粘给同事或在终端跑"
+                  >
+                    <Icons.copy size={12} /> {curlCopied ? '已复制' : '复制 cURL'}
+                  </button>
+                  <button
+                    className={`tab2${showVars ? ' is-active' : ''}`}
+                    style={{ padding: '4px 10px', fontSize: 11.5 }}
+                    onClick={() => setShowVars(v => !v)}
+                    title="展开/收起变量表"
+                  >
+                    <Icons.tag size={12} /> 变量
+                  </button>
+                </div>
               }
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -927,6 +980,68 @@ export function ApiClient() {
           </div>
         </div>
       </Page>
+
+      {/* 从 cURL 导入 */}
+      <Modal
+        open={curlOpen}
+        onClose={() => setCurlOpen(false)}
+        title="从 cURL 导入"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setCurlOpen(false)}>取消</button>
+            <button
+              className="btn btn-primary"
+              disabled={!curlText.trim()}
+              onClick={() => {
+                const r = parseCurl(curlText);
+                if (!r.ok) { setCurlError(r.error); return; }
+                setReq(prev => ({
+                  ...prev,
+                  method: r.request.method,
+                  url: r.request.url,
+                  headers: r.request.headers,
+                  body: r.request.body,
+                  bodyType: r.request.bodyType,
+                  rawContentType: r.request.rawContentType,
+                }));
+                setResponse(null);
+                setSchemaDiff(null);
+                setError('');
+                setCurlError('');
+                setCurlText('');
+                setCurlOpen(false);
+              }}
+            >
+              解析并填入
+            </button>
+          </>
+        }
+      >
+        <div className="curl-import">
+          <div className="form-group">
+            <label>curl 命令</label>
+            <textarea
+              className="curl-input"
+              value={curlText}
+              onChange={e => { setCurlText(e.target.value); setCurlError(''); }}
+              rows={8}
+              spellCheck={false}
+              placeholder={`curl -X POST 'https://api.example.com/users' \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{"name":"张三"}'`}
+              autoFocus
+            />
+            <div className="input-hint">
+              支持 <code>-X</code> / <code>-H</code> / <code>-d</code> / <code>--data-raw</code> /
+              <code>--data-urlencode</code> / <code>-F</code> / <code>-b</code> / <code>-u</code> /
+              <code>-G</code>；<code>{'{{变量}}'}</code> 原样保留。多行（含 <code>\</code> 或 <code>^</code> 续行）也能识别。
+            </div>
+          </div>
+          {curlError && (
+            <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, fontWeight: 400, whiteSpace: 'pre-wrap' }}>
+              {curlError}
+            </div>
+          )}
+        </div>
+      </Modal>
 
       {/* 环境变量管理 */}
       <Modal

@@ -4351,3 +4351,31 @@
     display: none;
   }
 }
+
+/* --- 接口调试：从 cURL 导入 --- */
+.curl-import {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.curl-import .curl-input {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px 12px;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.curl-import .curl-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
