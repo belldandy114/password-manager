@@ -739,3 +739,30 @@ if (!r.ok) { addToast(`导出失败：${r.error}`, 'error'); return; }
   不要再写「请求历史」四个字（会被挤成两行）。
 - cURL 导入的 cmd 转义清理顺序（见 `utils/curl.ts` `unwrap`）：`^`+换行 → `^"`/`^'` → `^&|<>()` → 行尾孤立 `^`，
   最后才处理 bash 的 `\`+换行。缺任何一条都会出现「地址里带 `^&`」这类残留。
+
+## ⚠️ 启动阶段新增逻辑：必须放在模块作用域，并且要有「跑过 8 秒」的回归
+
+`electron/main.js` 里 `setupIpcHandlers()` 是一个 3000 行的大函数，绝大多数 handler 与工具函数都写在**它内部**。
+如果在里面顺手定义了「启动后要用的函数」，`app.whenReady()` 里的代码是**看不到**它的。
+
+2026-10-29 就踩了这个：`autoCheckUpdate` 写在 `setupIpcHandlers` 内部，而调用点在 `whenReady` 的
+`setTimeout(..., 8000)` 里 —— 应用启动 8 秒后抛 `ReferenceError: autoCheckUpdate is not defined`，
+弹「A JavaScript error occurred in the main process」。**所有既有回归都没发现**，因为：
+
+- UI 回归几十秒跑完，但没人跑到 8 秒后；
+- `npm run smoke` 只测首屏 13 条，几秒就退出。
+
+**约定**：
+
+1. 启动期逻辑（定时器、`whenReady` 里引用的函数）一律**定义在模块作用域**（`setupIpcHandlers` 外面），
+   与 `fetchLatestRelease` / `autoCheckUpdate` 同层；只被 IPC handler 用到的可以留在里面。
+2. 新增启动期定时任务，必须加一个阶段日志开关（参考 `PM_DEBUG_AUTO_UPDATE=1` 打印 `[auto-update] start`），
+   让回归能断言「定时器真的执行到了」，而不是只看「进程没退出」。
+3. 加了启动期逻辑就跑 `node scripts/ui-startup-test.js`（默认等 16 秒；`USE_PACKED=1` 测打包版）。
+
+```bash
+node scripts/ui-startup-test.js                 # 开发目录（需先 npx vite build）
+USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pack）
+```
+
+它验证三件事：进程 16 秒后仍存活 / 定时器执行到 / 主进程无未捕获异常。

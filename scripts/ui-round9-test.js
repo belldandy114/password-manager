@@ -468,6 +468,32 @@ const echo = http.createServer((req, res) => {
     check('响应体：有「另存为」按钮', /另存为/.test(String(saveBtnTitle)), String(saveBtnTitle));
   }
 
+  /* ================= F. 命令面板深链 ================= */
+  if (want('palette')) {
+    await navTo('接口调试');
+    await setVal('.url-bar input', `http://127.0.0.1:${ECHO_PORT}/deep-link-target`);
+    await setVal('input[placeholder="例如：查询用户列表"]', 'R9深链请求');
+    await sleep(200);
+    await clickHas('保存请求');
+    await sleep(700);
+    await ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })); return true; })()`);
+    await sleep(600);
+    const paletteOpen = await ev(`!!document.querySelector('.cmdk')`);
+    check('命令面板：Ctrl+K 能打开', paletteOpen === true, String(paletteOpen));
+    await setVal('.cmdk-search input', 'R9深链');
+    await sleep(500);
+    const palItem = await ev(`(() => {
+      const it = document.querySelector('.cmdk-item');
+      if (!it) return null;
+      return { text: it.textContent.trim().slice(0, 60) };
+    })()`);
+    check('命令面板：能搜到已保存的接口请求', !!palItem && /R9深链请求/.test(String(palItem.text)), JSON.stringify(palItem));
+    await ev(`(() => { const it = document.querySelector('.cmdk-item'); if (it) it.click(); return true; })()`);
+    await sleep(900);
+    const deepUrl = await ev(`(() => { const i = document.querySelector('.url-bar input'); return i ? i.value : ''; })()`);
+    check('命令面板：点请求后自动填进接口调试', /deep-link-target/.test(String(deepUrl)), String(deepUrl));
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败${skip.length ? ` / ${skip.length} 跳过` : ''}`);
   app.kill();
   zt.stop();

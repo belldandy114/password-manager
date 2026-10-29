@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { Icons } from './ui';
 import { applyTheme } from '../utils/theme';
 
-type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account';
+type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
 
 interface Cmd {
   id: string;
@@ -15,6 +15,7 @@ interface Cmd {
 
 const KIND_LABEL: Record<Kind, string> = {
   page: '页面', action: '操作', entry: '网址', snippet: '片段', note: '笔记', account: '账号',
+  request: '请求', checklist: '用例', env: '环境',
 };
 
 const PAGES: { page: string; label: string }[] = [
@@ -53,7 +54,10 @@ export function CommandPalette({
 
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
-  const [extra, setExtra] = useState<{ snippets: any[]; notes: any[]; accounts: any[] }>({ snippets: [], notes: [], accounts: [] });
+  const [extra, setExtra] = useState<{
+    snippets: any[]; notes: any[]; accounts: any[];
+    apiRequests: any[]; checklists: any[]; environments: any[];
+  }>({ snippets: [], notes: [], accounts: [], apiRequests: [], checklists: [], environments: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -63,15 +67,22 @@ export function CommandPalette({
     setIdx(0);
     setTimeout(() => inputRef.current?.focus(), 30);
     (async () => {
-      const [sn, nt, ac] = await Promise.all([
+      const [sn, nt, ac, rq, ck, ev] = await Promise.all([
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
         window.electronAPI.wsGet('accounts'),
+        window.electronAPI.wsGet('apiRequests'),
+        window.electronAPI.wsGet('checklists'),
+        window.electronAPI.wsGet('environments'),
       ]);
+      const pick = (r: any) => (r && r.success ? r.data || [] : []);
       setExtra({
-        snippets: sn.success ? sn.data || [] : [],
-        notes: nt.success ? nt.data || [] : [],
-        accounts: ac.success ? ac.data || [] : [],
+        snippets: pick(sn),
+        notes: pick(nt),
+        accounts: pick(ac),
+        apiRequests: pick(rq),
+        checklists: pick(ck),
+        environments: pick(ev),
       });
     })();
   }, [open]);
@@ -159,7 +170,35 @@ export function CommandPalette({
       run: () => onNavigate('accounts'),
     }));
 
-    return [...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts];
+    const fromRequests: Cmd[] = extra.apiRequests.slice(0, 200).map((r: any) => ({
+      id: `request:${r.id}`,
+      title: r.name || `${r.method || 'GET'} ${r.url || ''}`,
+      sub: `${r.method || 'GET'} ${String(r.url || '').replace(/^https?:\/\//, '').slice(0, 60)}`,
+      kind: 'request' as Kind,
+      // 深链：跳接口调试并把这条请求填进编辑器
+      run: () => { onNavigate('apiClient'); signalCmd(`api:open:${r.id}`); },
+    }));
+
+    const fromChecklists: Cmd[] = extra.checklists.slice(0, 200).map((c: any) => ({
+      id: `checklist:${c.id}`,
+      title: c.title || '（无标题用例）',
+      sub: (c.items || []).length ? `${c.items.length} 项` : '',
+      kind: 'checklist' as Kind,
+      run: () => onNavigate('checklists'),
+    }));
+
+    const fromEnvs: Cmd[] = extra.environments.slice(0, 200).map((e: any) => ({
+      id: `env:${e.id}`,
+      title: `${e.system || '未命名'} · ${e.env || ''}`.trim(),
+      sub: String(e.url || '').slice(0, 70),
+      kind: 'env' as Kind,
+      run: () => onNavigate('environments'),
+    }));
+
+    return [
+      ...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts,
+      ...fromRequests, ...fromChecklists, ...fromEnvs,
+    ];
   }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, settings.theme, updateSettings]);
 
   const filtered = useMemo(() => {

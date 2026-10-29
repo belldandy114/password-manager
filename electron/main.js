@@ -766,6 +766,90 @@ function readAttachment(id, password) {
 // ----------------------------------------------------------------
 // IPC Handlers
 // ----------------------------------------------------------------
+// 启动时的更新检查必须在模块作用域：whenReady 里的定时器访问不到 setupIpcHandlers 内部的函数。
+async function fetchLatestRelease() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch('https://api.github.com/repos/belldandy114/password-manager/releases/latest', {
+      headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const latest = String(json.tag_name || '').replace(/^v/, '');
+    const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
+    return {
+      latest,
+      htmlUrl: json.html_url || '',
+      // 优先给安装包直链 + 官方 SHA-256（下载后校验，防止镜像/代理改包）
+      downloadUrl: asset?.browser_download_url || '',
+      assetName: asset?.name || '',
+      digest: asset?.digest || '',
+      notes: (json.body || '').slice(0, 2000),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+ipcMain.handle('update:check', async () => {
+  try {
+    const rel = await fetchLatestRelease();
+    const current = app.getVersion();
+    return {
+      success: true,
+      data: {
+        current,
+        latest: rel.latest,
+        hasUpdate: !!rel.latest && cmpVersion(rel.latest, current) > 0,
+        url: rel.htmlUrl,
+        downloadUrl: rel.downloadUrl,
+        assetName: rel.assetName,
+        digest: rel.digest,
+        notes: rel.notes,
+      },
+    };
+  } catch (e) {
+    return { success: false, error: e.name === 'AbortError' ? '请求超时' : e.message };
+  }
+});
+
+/**
+ * 启动时静默检查更新：有新版就弹一条系统通知（点开是发布页），同一版本只提示一次。
+ * 完全后台执行且吞掉所有异常——网络不通不该影响启动。
+ */
+async function autoCheckUpdate() {
+  // PM_DEBUG_AUTO_UPDATE=1 时打印阶段日志：回归脚本靠它确认「定时器真的执行到了」
+  // （这个函数曾经被误写在 setupIpcHandlers 内部，导致启动 8 秒后 ReferenceError 崩溃）
+  const debug = process.env.PM_DEBUG_AUTO_UPDATE === '1';
+  try {
+    if (debug) console.log('[auto-update] start');
+    const s = loadSettings() || {};
+    if (s.updateCheckOnStart === false) { if (debug) console.log('[auto-update] disabled by settings'); return; }
+    const rel = await fetchLatestRelease();
+    if (debug) console.log('[auto-update] latest=' + rel.latest);
+    const current = app.getVersion();
+    if (!shouldNotifyUpdate({ current, latest: rel.latest, lastNotified: s.updateNotifiedVersion })) {
+      if (debug) console.log('[auto-update] no notify');
+      return;
+    }
+    if (!Notification.isSupported()) { if (debug) console.log('[auto-update] notifications unsupported'); return; }
+    const n = new Notification({
+      title: `发现新版本 v${rel.latest}`,
+      body: '点此查看更新说明；也可以在「设置 → 关于与更新」里直接下载安装。',
+    });
+    n.on('click', () => {
+      if (rel.htmlUrl) shell.openExternal(rel.htmlUrl).catch(() => { /* 忽略 */ });
+    });
+    n.show();
+    if (debug) console.log('[auto-update] notified ' + rel.latest);
+    saveSettings({ ...(loadSettings() || {}), updateNotifiedVersion: rel.latest });
+  } catch (e) {
+    // 静默：启动检查失败不影响任何功能；但调试模式下要能看到原因
+    if (debug) console.log('[auto-update] failed: ' + (e && e.message));
+  }
+}
 function setupIpcHandlers() {
 
   // Brute-force guard: 5 wrong passwords in a row → 30s cool-down (in-memory, resets on restart).
@@ -1419,77 +1503,6 @@ function setupIpcHandlers() {
   });
 
   /** 拉取最新 Release 元数据（update:check 与启动时自动检查共用） */
-  async function fetchLatestRelease() {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-    try {
-      const res = await fetch('https://api.github.com/repos/belldandy114/password-manager/releases/latest', {
-        headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const latest = String(json.tag_name || '').replace(/^v/, '');
-      const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
-      return {
-        latest,
-        htmlUrl: json.html_url || '',
-        // 优先给安装包直链 + 官方 SHA-256（下载后校验，防止镜像/代理改包）
-        downloadUrl: asset?.browser_download_url || '',
-        assetName: asset?.name || '',
-        digest: asset?.digest || '',
-        notes: (json.body || '').slice(0, 2000),
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  ipcMain.handle('update:check', async () => {
-    try {
-      const rel = await fetchLatestRelease();
-      const current = app.getVersion();
-      return {
-        success: true,
-        data: {
-          current,
-          latest: rel.latest,
-          hasUpdate: !!rel.latest && cmpVersion(rel.latest, current) > 0,
-          url: rel.htmlUrl,
-          downloadUrl: rel.downloadUrl,
-          assetName: rel.assetName,
-          digest: rel.digest,
-          notes: rel.notes,
-        },
-      };
-    } catch (e) {
-      return { success: false, error: e.name === 'AbortError' ? '请求超时' : e.message };
-    }
-  });
-
-  /**
-   * 启动时静默检查更新：有新版就弹一条系统通知（点开是发布页），同一版本只提示一次。
-   * 完全后台执行且吞掉所有异常——网络不通不该影响启动。
-   */
-  async function autoCheckUpdate() {
-    try {
-      const s = loadSettings() || {};
-      if (s.updateCheckOnStart === false) return;
-      const rel = await fetchLatestRelease();
-      const current = app.getVersion();
-      if (!shouldNotifyUpdate({ current, latest: rel.latest, lastNotified: s.updateNotifiedVersion })) return;
-      if (!Notification.isSupported()) return;
-      const n = new Notification({
-        title: `发现新版本 v${rel.latest}`,
-        body: '点此查看更新说明；也可以在「设置 → 关于与更新」里直接下载安装。',
-      });
-      n.on('click', () => {
-        if (rel.htmlUrl) shell.openExternal(rel.htmlUrl).catch(() => { /* 忽略 */ });
-      });
-      n.show();
-      saveSettings({ ...(loadSettings() || {}), updateNotifiedVersion: rel.latest });
-    } catch { /* 静默：启动检查失败不影响任何功能 */ }
-  }
 
   // ---- 应用内更新：下载安装包并重启安装 ----
   /** GitHub 大文件走 CDN（objects.githubusercontent.com），不少公司网络会直接重置连接 */

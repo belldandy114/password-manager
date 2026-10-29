@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot } from '../types';
 import { useCollection } from '../hooks/useCollection';
+import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { formatRecent } from '../utils/time';
@@ -153,7 +154,11 @@ function KvEditor({
   );
 }
 
+// 「从命令面板打开某条请求」的去重时间戳（模块级：跨挂载有效）
+let lastApiOpenAt = 0;
+
 export function ApiClient() {
+  const cmdSignal = useStore(s => s.cmdSignal);
   const { items, save } = useCollection<ApiRequest>('apiRequests');
   const { items: envs, save: saveEnvs } = useCollection<ApiEnv>('apiEnvs');
   const { items: history, save: saveHistory } = useCollection<ApiHistoryItem>('apiHistory');
@@ -214,6 +219,22 @@ export function ApiClient() {
 
   // 响应体 → TS 接口 / Markdown 表格（只在切到对应页签时用得上，但算一次就够）
   const codegen = useMemo(() => (response ? codegenFromBody(response.body) : null), [response]);
+
+  // 命令面板深链：「请求 xxx」→ 跳到这里并把这请求填进编辑器。
+  // 模块级时间戳去重：页面重新挂载不会把同一条命令再执行一次。
+  useEffect(() => {
+    const kind = String(cmdSignal?.kind || '');
+    if (!cmdSignal || cmdSignal.at === lastApiOpenAt || !kind.startsWith('api:open:')) return;
+    lastApiOpenAt = cmdSignal.at;
+    const id = kind.slice('api:open:'.length);
+    const hit = items.find(i => i.id === id);
+    if (!hit) return;
+    setReq(migrateReq(hit));
+    setSideTab('saved');
+    setResponse(null);
+    setSchemaDiff(null);
+    setError('');
+  }, [cmdSignal, items]);
 
   /** 侧栏「已保存」按关键字过滤（历史在渲染处用 filterHistory，逻辑同源） */
   const savedFiltered = useMemo(

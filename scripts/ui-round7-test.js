@@ -392,7 +392,7 @@ const check = (name, ok, extra = '') => {
   /* ================= F. 应用内更新：多线程分段下载 ================= */
   // 本地起一个支持 Range 的“安装包”服务，验证主进程确实并发分段抓取
   const bigFile = Buffer.alloc(6 * 1024 * 1024, 7);
-  let rangeHits = 0;
+  let rangeHits = 0; // 累计 Range 请求次数（默认单连接应为 0）
   const dlServer = http.createServer((rq, rs) => {
     if (rq.url !== '/setup.exe') { rs.statusCode = 404; rs.end(); return; }
     const range = rq.headers.range;
@@ -413,19 +413,31 @@ const check = (name, ok, extra = '') => {
   });
   await new Promise(res => dlServer.listen(9812, '127.0.0.1', res));
 
-  const dl = await api(`window.electronAPI.updateDownload('http://127.0.0.1:9812/setup.exe', false)`);
+  // 1.7.1 起默认是「单连接顺序下载」（杀软误报的修法），多线程必须显式开启。
+  // 所以这里分两次验证：默认不拆段；传 threads:true 才拆段。
+  const dlDefault = await api(`window.electronAPI.updateDownload('http://127.0.0.1:9812/setup.exe', false)`);
+  const rangeHitsDefault = rangeHits;
+  const fileDefault = dlDefault.data ? dlDefault.data.file : '';
+  const stDefault = fileDefault ? fs.statSync(fileDefault) : null;
+  if (fileDefault) { try { fs.unlinkSync(fileDefault); } catch { /* 忽略 */ } }
+  rangeHits = 0;
+
+  const dlParallel = await api(`window.electronAPI.updateDownload('http://127.0.0.1:9812/setup.exe', false, { threads: true })`);
+  const rangeHitsParallel = rangeHits;
+  const fileParallel = dlParallel.data ? dlParallel.data.file : '';
+  const stParallel = fileParallel ? fs.statSync(fileParallel) : null;
+  if (fileParallel) { try { fs.unlinkSync(fileParallel); } catch { /* 忽略 */ } }
   dlServer.close();
-  check('更新下载：分段下载成功', dl.success === true, dl.error || '');
-  check('更新下载：走的是多线程（≥3 个 Range 请求）', rangeHits >= 3, `${rangeHits} 个 Range 请求`);
-  if (dl.success && dl.data) {
-    const st = fs.statSync(dl.data.file);
-    check('更新下载：拼出来的文件大小与原文件一致', st.size === bigFile.length, `${st.size} / ${bigFile.length}`);
-    check('更新下载：报告了线程数', (dl.data.threads || 1) >= 2, `${dl.data.threads} 线程`);
-    try { fs.unlinkSync(dl.data.file); } catch { /* 忽略 */ }
-  } else {
-    check('更新下载：拼出来的文件大小与原文件一致', false, '下载未成功');
-    check('更新下载：报告了线程数', false, '下载未成功');
-  }
+
+  check('更新下载：默认单连接成功', dlDefault.success === true, dlDefault.error || '');
+  check('更新下载：默认不拆段（0 个 Range 请求）', rangeHitsDefault === 0, rangeHitsDefault + ' 个 Range 请求');
+  check('更新下载：默认报告 1 线程', !!dlDefault.data && (dlDefault.data.threads || 1) === 1, dlDefault.data && dlDefault.data.threads + ' 线程');
+  check('更新下载：多线程（threads:true）才拆段（≥3 个 Range 请求）', rangeHitsParallel >= 3, rangeHitsParallel + ' 个 Range 请求');
+  check('更新下载：多线程报告 ≥2 线程', !!dlParallel.data && (dlParallel.data.threads || 1) >= 2, dlParallel.data && dlParallel.data.threads + ' 线程');
+  check('更新下载（单连接）：文件大小与原文件一致', !!stDefault && stDefault.size === bigFile.length, stDefault ? stDefault.size + ' / ' + bigFile.length : '下载未成功');
+  check('更新下载（单连接）：落盘用官方文件名、不在 %TEMP%', /setup\.exe$/i.test(fileDefault) && !/pm-update/i.test(fileDefault), fileDefault);
+  check('更新下载（多线程）：文件大小与原文件一致', !!stParallel && stParallel.size === bigFile.length, stParallel ? stParallel.size + ' / ' + bigFile.length : '下载未成功');
+  check('更新下载（多线程）：落盘用官方文件名、不在 %TEMP%', /setup\.exe$/i.test(fileParallel) && !/pm-update/i.test(fileParallel), fileParallel);
 
   /* ================= 结果 ================= */
   srv.close();
