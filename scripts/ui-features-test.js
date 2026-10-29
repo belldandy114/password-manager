@@ -15,7 +15,7 @@ const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9601;
 const PASSWORD = 'Feat#2026';
 
-const ZT = { base: 'http://zentao.example.com/zentao', account: 'REDACTED_ACCOUNT', password: 'REDACTED_PASSWORD' };
+const ZT = require('./zt-config');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-feat-'));

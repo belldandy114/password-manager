@@ -1949,7 +1949,7 @@ function setupIpcHandlers() {
 
   const ztCookieHeader = () => [...ztCookies].map(([k, v]) => `${k}=${v}`).join('; ');
 
-  /** 允许用户只填 zentao.example.com/zentao，自动补协议、去掉尾部斜杠 */
+  /** 允许用户只填 host:port/zentao，自动补协议、去掉尾部斜杠 */
   function ztNormalizeCfg(cfg) {
     let base = String(cfg.baseUrl || '').trim();
     if (base && !/^https?:\/\//i.test(base)) base = `http://${base}`;

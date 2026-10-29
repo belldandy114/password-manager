@@ -15,7 +15,7 @@ const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
 const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9791;
 const PASSWORD = 'DtTest#2026';
-const ZT = { baseUrl: 'http://zentao.example.com/zentao', account: 'REDACTED_ACCOUNT', password: 'REDACTED_PASSWORD' };
+const ZT = require('./zt-config');
 const DO_DOWNLOAD = process.argv.includes('--download');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

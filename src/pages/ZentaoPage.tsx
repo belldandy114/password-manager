@@ -552,7 +552,7 @@ export function ZentaoPage() {
           <div className="grid3" style={{ gridTemplateColumns: '1.7fr 1fr 1fr' }}>
             <Field label="禅道地址">
               <input value={form.baseUrl} onChange={e => setForm({ ...form, baseUrl: e.target.value })}
-                placeholder="http://zentao.example.com/zentao" />
+                placeholder="http://<禅道域名或IP>:<端口>/zentao" />
             </Field>
             <Field label="账号">
               <input value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} placeholder="用户名" />
@@ -562,7 +562,7 @@ export function ZentaoPage() {
             </Field>
           </div>
           <div className="pg-sub" style={{ marginTop: 12 }}>
-            地址可只填 <code>zentao.example.com/zentao</code>，协议会自动补全。拉取时自动登录，无需先点登录；
+            地址可只填 <code>host:端口/zentao</code>，协议会自动补全。拉取时自动登录，无需先点登录；
             「项目 Bug」走禅道 REST API（<code>api.php/v1</code>），取的是该项目下所有指派人的缺陷。
           </div>
         </Panel>

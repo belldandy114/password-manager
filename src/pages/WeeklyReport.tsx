@@ -9,6 +9,8 @@ import { useStore } from '../store/useStore';
 
 let lastCmdAt = 0;
 
+// 不内置任何本机路径：老版本把某台机器的周报目录写死在这里，等于把使用者目录结构
+// 一起提交进了公开仓库。现在的默认值就是「没选」，由用户在界面上挑一次后存进 localStorage。
 const DEFAULT_DIR = '';
 const LS_KEY = 'weekly.report.dir';
 
@@ -71,8 +73,14 @@ export function WeeklyReport() {
   useEffect(() => { setDirDraft(dir); }, [dir]);
 
   const load = useCallback(async (target: string) => {
-    setLoading(true);
     setError('');
+    if (!target) {
+      // 还没选目录：清空列表即可，不要把「未指定周报目录」当成错误弹出来
+      setFiles([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     const res = await window.electronAPI.weeklyList(target);
     setLoading(false);
     if (!res.success) {
@@ -291,6 +299,12 @@ export function WeeklyReport() {
           }
         />
 
+        {!dir && (
+          <div className="pill" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
+            还没有选择周报目录 —— 展开上方「周报目录」，点「选择」挑一个文件夹（只记住本机，不会上传到任何地方）。
+          </div>
+        )}
+
         {error && (
           <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', whiteSpace: 'pre-wrap', fontWeight: 400 }}>
             {error}
@@ -359,20 +373,20 @@ export function WeeklyReport() {
           </Panel>
         )}
 
-        <Panel title="周报目录" meta={dir} collapsible defaultOpen={false}>
+        <Panel title="周报目录" meta={dir || '未选择（首次用请点「选择目录」）'} collapsible defaultOpen={!dir}>
           <div className="wk-dir">
             <input
               value={dirDraft}
               onChange={e => setDirDraft(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') applyDir(); }}
-              placeholder={DEFAULT_DIR}
+              placeholder="周报所在的文件夹，例如 D:\周报"
               spellCheck={false}
             />
             <button className="btn btn-secondary btn-sm" onClick={pickDir}>选择目录</button>
             <button className="btn btn-primary btn-sm" onClick={applyDir}>打开</button>
           </div>
           <div className="pg-sub" style={{ marginTop: 10 }}>
-            默认 <code></code>，支持 .md / .markdown / .txt；
+            目录由你自己选（只存在本机 localStorage），支持 .md / .markdown / .txt；
             新建与修改直接写文件，删除走系统回收站（可找回）。
           </div>
         </Panel>

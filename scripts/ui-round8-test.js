@@ -140,6 +140,16 @@ const echoServer = http.createServer((req, res) => {
   // 上周结束日不得晚于今天（这是用户看到的「11.02-11.08 是下周」的直接判据）
   check('周报：上周结束日不晚于今天', !!r1 && r1.b <= todayMd, `${r1 && r1.b} <= ${todayMd}`);
 
+  // 目录默认值不再内置本机路径：没选目录时应给引导提示，而不是抛「未指定周报目录」错误
+  const noDir = await ev(`(() => {
+    const bad = [...document.querySelectorAll('.pill-bad')].map(e => e.textContent.trim());
+    const hint = [...document.querySelectorAll('.pill')].map(e => e.textContent.trim()).find(t => t.includes('还没有选择周报目录'));
+    return { badCount: bad.length, bad: bad.slice(0, 2), hint: hint || '' };
+  })()`);
+  check('周报：未选目录时给引导提示、不报错',
+    !!noDir && noDir.badCount === 0 && /还没有选择周报目录/.test(noDir.hint),
+    JSON.stringify(noDir));
+
   /* ================= B. 设置页：左侧竖排菜单 ================= */
   await navTo('设置');
   const rail = await ev(`(() => {

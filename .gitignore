@@ -6,3 +6,12 @@ release/
 .vite/
 .env
 logs/
+
+# ---- 以下内容只属于本机，绝不进仓库（2026-10-29）----
+# 版本说明只在本地用 gh release edit --notes-file 同步到 Release，不需要进 git
+release-notes-*.md
+# 本机/个人环境的编辑器与 Agent 配置（含本地绝对路径）
+.claude/settings.local.json
+.claude/settings.local.json.bak
+# 禅道测试账号密码：用环境变量 ZT_BASEURL / ZT_ACCOUNT / ZT_PASSWORD 提供
+scripts/zt-config.local.js

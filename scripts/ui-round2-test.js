@@ -16,7 +16,7 @@ const APP_DIR = process.argv[2] ? path.resolve(process.argv[2]) : path.join(ROOT
 const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9622;
 const PASSWORD = 'Round2#2026';
-const ZT = { base: 'http://zentao.example.com/zentao', account: 'REDACTED_ACCOUNT', password: 'REDACTED_PASSWORD' };
+const ZT = require('./zt-config');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 
