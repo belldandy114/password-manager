@@ -78,6 +78,10 @@ export function Settings() {
   const [backups, setBackups] = useState<BackupFile[]>([]);
   const [backupDir, setBackupDir] = useState('');
   const [backupKeep, setBackupKeep] = useState(settings.backupKeep || 7);
+  // 异地备份目录（第二目录 / 网盘同步目录）
+  const [mirrorDir, setMirrorDir] = useState(settings.backupMirrorDir || '');
+  const [mirrorLastAt, setMirrorLastAt] = useState('');
+  const [mirrorBusy, setMirrorBusy] = useState(false);
   const [backupLastAt, setBackupLastAt] = useState('');
   /** 待确认恢复的备份文件名（空=不显示确认框） */
   const [restoreName, setRestoreName] = useState('');
@@ -205,6 +209,13 @@ export function Settings() {
       setBackups(res.data);
       setBackupDir(res.dir);
     }
+    // 异地备份状态（同步盘目录里最近一份的时间）
+    const st = await window.electronAPI.backupStatus();
+    if (st.success && st.data) {
+      const mirror = st.data.mirror;
+      setMirrorLastAt(mirror.lastAt || '');
+      if (mirror.dir) setMirrorDir(cur => cur || mirror.dir);
+    }
     const info = await window.electronAPI.dataInfo();
     if (info.success && info.data) setDataInfo(info.data);
   }, []);
@@ -212,6 +223,30 @@ export function Settings() {
   useEffect(() => {
     if (activeTab === 'security') refreshBackups();
   }, [activeTab, refreshBackups]);
+
+  /** 选异地备份目录（可直接选 OneDrive / 坚果云 的同步文件夹） */
+  const pickMirrorDir = async () => {
+    const r = await window.electronAPI.backupMirrorPick();
+    if (!r.success || !r.data) return;
+    setMirrorDir(r.data);
+    addToast('已选择异地备份目录，记得点「保存设置」', 'success');
+  };
+
+  /** 立即备份一次：本地 + 异地，并把结果说清楚 */
+  const runBackupNow = async () => {
+    setMirrorBusy(true);
+    const r = await window.electronAPI.backupNow();
+    setMirrorBusy(false);
+    if (!r.success || !r.data) {
+      addToast(r.error || '备份失败', 'error');
+      return;
+    }
+    const m = r.data.mirror;
+    if (m.skipped) addToast('已备份到本地；未配置异地目录', 'info');
+    else if (m.ok) addToast('已同时写入异地目录', 'success');
+    else addToast(`本地已备份，异地写入失败：${m.error || '未知原因'}`, 'error');
+    await refreshBackups();
+  };
 
   const handleSave = async () => {
     const prefs = {
@@ -225,6 +260,7 @@ export function Settings() {
       zentaoNotify,
       zentaoNotifyInterval: Math.max(2, Math.min(120, zentaoNotifyInterval)),
       backupKeep: Math.max(1, Math.min(60, backupKeep)),
+      backupMirrorDir: mirrorDir,
       theme: settings.theme,
       keybindings: localKeybindings,
     };
@@ -384,6 +420,31 @@ export function Settings() {
                 </button>
               </div>
             </div>
+            {/* 异地备份：第二目录 / 网盘同步目录 */}
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">异地备份（第二目录 / 网盘）</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  {mirrorDir
+                    ? <>每天备份时同时写一份到：<code>{mirrorDir}</code>{mirrorLastAt ? `（最近 ${formatDateTime(mirrorLastAt)}）` : '（还没写过）'}</>
+                    : '未启用。可以指向 OneDrive / 坚果云 等同步盘的本地文件夹，备份会同时写一份过去，硬盘坏了也还有一份。'}
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={pickMirrorDir} disabled={mirrorBusy}>
+                  选择目录
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={runBackupNow} disabled={mirrorBusy}>
+                  {mirrorBusy ? '备份中…' : '立即备份'}
+                </button>
+                {mirrorDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => setMirrorDir('')} title="只清空路径，不删文件">
+                    停用
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="backup-list">
               {backups.length === 0 ? (
                 <div className="text-sm text-muted">暂无备份（首次修改数据后自动生成）</div>

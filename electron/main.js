@@ -271,14 +271,55 @@ function backupKeepCount() {
   }
 }
 
+/** 异地备份目录（第二目录 / 网盘同步盘）：读设置里的 backupMirrorDir */
+function backupMirrorDir() {
+  try {
+    const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    return String((s && s.backupMirrorDir) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 把备份复制到异地目录（可以是 OneDrive/坚果云 这类同步盘的本地路径）。
+ * 失败只返回结果、绝不抛：备份不能阻断保存主流程。
+ */
+function mirrorBackupFile(srcFile, day) {
+  const dir = backupMirrorDir();
+  if (!dir) return { ok: false, skipped: true };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, `vault-${day}.enc`);
+    fs.copyFileSync(srcFile, target);
+    // 与本地用同一套保留份数
+    const keep = backupKeepCount();
+    const files = fs.readdirSync(dir)
+      .filter(f => /^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(f))
+      .sort();
+    while (files.length > keep) {
+      try { fs.unlinkSync(path.join(dir, files.shift())); } catch { /* ignore */ }
+    }
+    return { ok: true, dir, path: target };
+  } catch (e) {
+    return { ok: false, dir, error: e.message };
+  }
+}
+
 function backupVaultOncePerDay() {
   try {
     if (!fs.existsSync(DATA_FILE)) return false;
     const day = new Date().toISOString().slice(0, 10);
     const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
-    if (fs.existsSync(target)) return false; // already backed up today
+    if (fs.existsSync(target)) {
+      // 本地今天已有：只补齐异地（用户可能是今天才配的第二目录）
+      const dir = backupMirrorDir();
+      if (dir && !fs.existsSync(path.join(dir, `vault-${day}.enc`))) mirrorBackupFile(target, day);
+      return false; // already backed up today
+    }
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     fs.copyFileSync(DATA_FILE, target);
+    mirrorBackupFile(target, day);
 
     const keep = backupKeepCount();
     const files = fs.readdirSync(BACKUP_DIR)
@@ -1189,6 +1230,62 @@ function setupIpcHandlers() {
     keep: backupKeepCount(),
     lastAt: (listBackups()[0] || {}).mtime || '',
   }));
+
+  /** 备份状态：本地目录 + 异地目录（设置里配的第二目录/网盘） */
+  ipcMain.handle('backup:status', () => {
+    const local = listBackups();
+    const mirrorDir = backupMirrorDir();
+    let mirror = { dir: mirrorDir, files: [], lastAt: '' };
+    if (mirrorDir) {
+      try {
+        const files = fs.readdirSync(mirrorDir)
+          .filter(f => /^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(f))
+          .sort()
+          .reverse()
+          .map(name => {
+            const st = fs.statSync(path.join(mirrorDir, name));
+            return { name, size: st.size, mtime: st.mtime.toISOString() };
+          });
+        mirror = { dir: mirrorDir, files, lastAt: (files[0] || {}).mtime || '' };
+      } catch (e) {
+        mirror = { dir: mirrorDir, files: [], lastAt: '', error: e.message };
+      }
+    }
+    return {
+      success: true,
+      data: { local: { dir: BACKUP_DIR, files: local, keep: backupKeepCount() }, mirror },
+    };
+  });
+
+  /** 选异地备份目录（可选同步盘里的文件夹） */
+  ipcMain.handle('backup:mirror-pick', async () => {
+    try {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: '选择异地备份目录（可以是 OneDrive / 坚果云 等同步盘的文件夹）',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, canceled: true };
+      return { success: true, data: r.filePaths[0] };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 立即备份一次（不等「每天一次」）：本地 + 异地，返回两边路径 */
+  ipcMain.handle('backup:now', async () => {
+    try {
+      if (!fs.existsSync(DATA_FILE)) return { success: false, error: '还没有密码库可备份' };
+      const day = new Date().toISOString().slice(0, 10);
+      const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      fs.copyFileSync(DATA_FILE, target);
+      const mirror = mirrorBackupFile(target, day);
+      appendAudit({ action: 'vault-backup', entry: path.basename(target) });
+      return { success: true, data: { file: target, day, mirror } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
 
   /**
    * 备份恢复：把指定备份原子写回正式库。

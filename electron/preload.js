@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Backups
   backupList: () => ipcRenderer.invoke('backup:list'),
+  backupStatus: () => ipcRenderer.invoke('backup:status'),
+  backupNow: () => ipcRenderer.invoke('backup:now'),
+  backupMirrorPick: () => ipcRenderer.invoke('backup:mirror-pick'),
   auditLog: (action, detail) => ipcRenderer.invoke('audit:log', { action, detail }),
   auditList: (limit) => ipcRenderer.invoke('audit:list', limit),
   auditClear: () => ipcRenderer.invoke('audit:clear'),

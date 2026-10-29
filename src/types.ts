@@ -81,6 +81,8 @@ export interface AppSettings {
   zentaoActiveId?: string;
   /** 自动备份保留份数（1~60） */
   backupKeep: number;
+  /** 异地备份目录（第二目录 / 网盘同步目录），空 = 未启用 */
+  backupMirrorDir?: string;
   browserPaths: { [key: string]: string };
   keybindings: Record<KeybindingId, string>;
 }
@@ -427,6 +429,9 @@ export interface ElectronAPI {
 
   // Backups
   backupList: () => Promise<{ success: boolean; data: BackupFile[]; dir: string; keep?: number; lastAt?: string }>;
+  backupStatus: () => Promise<{ success: boolean; data?: { local: { dir: string; files: BackupFile[]; keep: number }; mirror: { dir: string; files: BackupFile[]; lastAt: string; error?: string } }; error?: string }>;
+  backupNow: () => Promise<{ success: boolean; data?: { file: string; day: string; mirror: { ok: boolean; skipped?: boolean; dir?: string; path?: string; error?: string } }; error?: string }>;
+  backupMirrorPick: () => Promise<{ success: boolean; data?: string; canceled?: boolean; error?: string }>;
   /** 写一条审计日志（复制密码/导出等） */
   auditLog: (action: string, detail?: string) => Promise<{ success: boolean }>;
   auditList: (limit?: number) => Promise<{ success: boolean; data?: AuditEntry[] }>;
