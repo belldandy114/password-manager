@@ -17,6 +17,7 @@ const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9622;
 const PASSWORD = 'Round2#2026';
 const ZT = require('./zt-config');
+const { ensureZt } = require('./zt-stub');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 
@@ -33,6 +34,9 @@ const check = (name, ok, detail) => {
 };
 
 (async () => {
+  // 没配真实禅道就用本地桩：回归不依赖内网地址与账号
+  const zt = await ensureZt(9841);
+  if (zt.stub) console.log('· 未配置 ZT_* 环境变量，禅道使用本地桩服务');
   const app = spawn(EXE, ['--no-sandbox', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`],
     { env, cwd: APP_DIR, windowsHide: true });
   app.on('exit', code => { if (code !== null && code !== 0) console.log(`[应用退出] code=${code}`); });
@@ -186,6 +190,7 @@ const check = (name, ok, detail) => {
     const varRows = await evaluate(`(() => { const rows = Array.from(document.querySelectorAll('.kv-row')); return rows.length; })()`);
     check('接口调试：变量也是逐行', varRows > rowsAfter, `${varRows} 行`);
 
+  if (!zt.stub) {
     /* ---------- ③ 禅道 ---------- */
     await nav('禅道');
     await sleep(900);
@@ -245,6 +250,9 @@ const check = (name, ok, detail) => {
     await sleep(700);
     const backRows = await evaluate(`(() => { const ts = document.querySelectorAll('.tbl'); return ts.length ? ts[ts.length-1].querySelectorAll('tbody tr').length : 0; })()`);
     check('禅道：切页回来项目 Bug 仍在', backRows > 0, `${backRows} 条`);
+  } else {
+    console.log('- 禅道：我的 Bug + 项目 Bug（跳过：未配置 ZT_* 环境变量）');
+  }
   } catch (e) {
     console.error('测试出错：' + e.message);
     results.push({ name: '执行异常', ok: false });
@@ -252,6 +260,7 @@ const check = (name, ok, detail) => {
 
   try { ws.close(); } catch { /* ignore */ }
   app.kill();
+  zt.stop();
   await sleep(1000);
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   try { fs.rmSync(tmpWeekly, { recursive: true, force: true }); } catch { /* ignore */ }

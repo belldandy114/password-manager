@@ -15,6 +15,7 @@ const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9690;
 const PASSWORD = 'Round3#2026';
 const ZT = require('./zt-config');
+const { ensureZt } = require('./zt-stub');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r3-'));
@@ -29,6 +30,9 @@ const check = (name, ok, detail) => {
 };
 
 (async () => {
+  // 没配真实禅道就用本地桩：回归不依赖内网地址与账号
+  const zt = await ensureZt(9842);
+  if (zt.stub) console.log('· 未配置 ZT_* 环境变量，禅道使用本地桩服务');
   const app = spawn(EXE, ['--no-sandbox', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`],
     { env, cwd: APP_DIR, windowsHide: true });
   app.on('exit', code => { if (code !== null && code !== 0) console.log(`[应用退出] code=${code}`); });
@@ -103,6 +107,7 @@ const check = (name, ok, detail) => {
     await evaluate(`(() => { const b = Array.from(document.querySelectorAll('.modal button')).find(x => x.textContent.trim() === '取消'); if (b) b.click(); return true; })()`);
     await sleep(400);
 
+  if (!zt.stub) {
     /* ② 禅道 全部项目 */
     await nav('禅道');
     await sleep(900);
@@ -162,6 +167,9 @@ const check = (name, ok, detail) => {
     check('禅道：全部项目有按项目统计表', projRows > 5, `${projRows} 个项目行`);
 
     /* ③ 其余页面渲染 */
+  } else {
+    console.log('- 禅道：全部项目 / 单个项目（跳过：未配置 ZT_* 环境变量）');
+  }
     for (const label of ['周报', '工具箱', '接口调试', '测试笔记', 'SQL 片段', '测试账号']) {
       await nav(label);
       await sleep(700);
@@ -175,6 +183,7 @@ const check = (name, ok, detail) => {
 
   try { ws.close(); } catch { /* ignore */ }
   app.kill();
+  zt.stop();
   await sleep(1000);
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
 

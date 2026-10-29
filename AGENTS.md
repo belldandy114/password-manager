@@ -623,3 +623,24 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 
 - 万一已经推上去了：**先改密码**（历史清不掉的情况下，改密码才是止损），再决定是否重写历史。
   重写历史会改所有 commit SHA，必须 `git push --force`，且需要把 tag 一起重指。
+
+## 1.7.0 起的约定（改代码前先看）
+
+| 能力 | 位置 | 约定 |
+|---|---|---|
+| cURL 互转 | `utils/curl.ts` | `parseCurl` / `buildCurl` 是**纯函数**，单测在 `src/utils/__tests__/curl.test.ts`（32 条）。分词器按「一个参数可由单引号段/双引号段/`\`转义/裸字拼接」实现，别写成「遇引号就 push」——`'it'\''s'` 与含空格的 body 会被切坏（踩过）。生成端用单引号包裹并 `'\''` 转义，输出单行，Git Bash/PowerShell 都能跑 |
+| cURL 复制兜底 | `ApiClient.tsx` `copyCurlCmd` | `navigator.clipboard` 在窗口未聚焦时会抛错，必须回退 `textarea + execCommand`，否则用户点了没反应 |
+| 我的 Bug 三视图 | `main.js` `ztLoadMyBugsScoped` | `opened` → REST `openedBy + status=all`；`verify` → `assignedTo + status=resolved`；`assigned` 仍走页面抓取（有现成分页模板）。视图存 `zentaoStore.mineScope`，切页面不丢 |
+| 异地备份 | `main.js` `backupMirrorDir` / `mirrorBackupFile` | 每天备份时同时写一份到 `settings.backupMirrorDir`（可为 OneDrive/坚果云 目录），保留份数与本地一致；**写失败只记录不抛**，绝不能让备份阻断保存。`backup:now` 可手动补一份，返回 `{file, mirror}` |
+| 备份测试 | `scripts/zt-stub.js` | 没配 `ZT_*` 时提供的假禅道（`tokens` / `products` / `bugs` 过滤 + `user-login.html`），回归脚本用它替代内网实例，并能断言「应用实际带了哪些查询参数」 |
+
+### 回归脚本现在的跑法（不再依赖内网与账号）
+
+`ui-round2/3/4/5/9` 都会自动调用 `ensureZt()`：
+
+- 配了 `ZT_BASEURL` / `ZT_ACCOUNT` / `ZT_PASSWORD` → 打真实禅道（分页、趋势图、缓存这些断言都会跑）；
+- 没配 → 起本地桩，**与真实数据强相关的断言自动跳过并打印跳过原因**，其余照常跑。
+
+所以本地/CI 上看到「12/12 通过 + 5 跳过」是正常的，不是漏测；要全量验证时先设环境变量。
+
+`scripts/ui-round9-test.js` 覆盖本轮三项：cURL 导入/复制（含中文与错误输入）、异地备份（真的在第二目录落文件）、禅道三视图（断言 `openedBy=...&status=all` 与 `assignedTo=...&status=resolved`）。可用 `R9_ONLY=curl|backup|zentao` 单跑一段。

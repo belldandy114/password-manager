@@ -14,6 +14,7 @@ const EXE = path.join(APP_DIR, '测试工具.exe');
 const PORT = 9741;
 const PASSWORD = 'Round4#2026';
 const ZT = require('./zt-config');
+const { ensureZt } = require('./zt-stub');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r4-'));
@@ -28,6 +29,9 @@ const check = (name, ok, detail) => {
 };
 
 (async () => {
+  // 没配真实禅道就用本地桩：回归不依赖内网地址与账号
+  const zt = await ensureZt(9843);
+  if (zt.stub) console.log('· 未配置 ZT_* 环境变量，禅道使用本地桩服务');
   const app = spawn(EXE, ['--no-sandbox', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`],
     { env, cwd: APP_DIR, windowsHide: true });
   app.on('exit', code => { if (code !== null && code !== 0) console.log(`[应用退出] code=${code}`); });
@@ -89,6 +93,7 @@ const check = (name, ok, detail) => {
     await sleep(2200);
     check('界面解锁', await evaluate(`!!document.querySelector('.sidebar')`));
 
+  if (!zt.stub) {
     /* ---------- 禅道：拉数据 ---------- */
     await nav('禅道');
     await sleep(900);
@@ -135,6 +140,9 @@ const check = (name, ok, detail) => {
     await sleep(800);
     const draft = await evaluate(`(() => { const ta = document.querySelector('.wk-md-input'); return ta ? ta.value : ''; })()`);
     check('周报草稿已生成', String(draft).includes('本周工作') && String(draft).includes('禅道缺陷'), JSON.stringify(draft).slice(0, 60));
+  } else {
+    console.log('- 禅道：拉数据 + 周报草稿（跳过：未配置 ZT_* 环境变量）');
+  }
 
     /* ---------- ④ 接口调试：环境 + 历史 ---------- */
     await nav('接口调试');
@@ -233,6 +241,7 @@ const check = (name, ok, detail) => {
 
   try { ws.close(); } catch { /* ignore */ }
   app.kill();
+  zt.stop();
   await sleep(1000);
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
 
