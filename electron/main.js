@@ -634,7 +634,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // sandbox: true —— 主窗口的 preload 只用 contextBridge + ipcRenderer（不碰 Node API），
+      // 因此可以开启沙箱提升隔离；改动 preload 时若引入 fs/path 等 Node 模块，这里会直接报错，必须同步调整。
+      sandbox: true,
       webviewTag: true
     },
     icon: appIcon,

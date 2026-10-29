@@ -494,6 +494,32 @@ const echo = http.createServer((req, res) => {
     check('命令面板：点请求后自动填进接口调试', /deep-link-target/.test(String(deepUrl)), String(deepUrl));
   }
 
+  /* ================= G. 测试数据（webview 子应用） ================= */
+  // 之前所有回归都没覆盖这个页面 —— 而它正是 sandbox / preload 改动最容易炸的地方。
+  if (want('tdg')) {
+    await navTo('测试数据');
+    let info = null;
+    for (let i = 0; i < 24; i++) {
+      info = await ev(`(async () => {
+        const wv = document.querySelector('webview');
+        if (!wv) return { found: false };
+        let id = 0, title = '', err = '';
+        try { id = wv.getWebContentsId ? wv.getWebContentsId() : 0; } catch (e) { err = e.message; }
+        if (id > 0) {
+          try { title = await wv.executeJavaScript('document.title'); } catch (e) { err = err || e.message; }
+        }
+        return { found: true, src: wv.getAttribute('src') || '', id, title, children: wv.shadowRoot ? 1 : 0, err };
+      })()`);
+      if (info && info.found && info.id > 0 && info.title) break;
+      await sleep(500);
+    }
+    check('测试数据：webview 已挂载', !!info && info.found === true, info && String(info.src).slice(0, 80));
+    check('测试数据：访客进程已连接', !!info && info.id > 0, info && `webContentsId=${info.id}${info.err ? ' · ' + info.err : ''}`);
+    check('测试数据：访客页可执行脚本（preload 正常）',
+      !!info && typeof info.title === 'string' && info.title.length > 0,
+      info && (info.title || info.err || '无标题'));
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败${skip.length ? ` / ${skip.length} 跳过` : ''}`);
   app.kill();
   zt.stop();
