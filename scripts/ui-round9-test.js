@@ -403,10 +403,18 @@ const echo = http.createServer((req, res) => {
     await clickHas('待我验证');
     const verifyRows = await waitRows();
     check('禅道：待我验证 → 拉到 2 条', verifyRows === 2, `${verifyRows} 行`);
-    const verifyHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /assignedTo=stub-user/.test(l.url) && /status=resolved/.test(l.url));
-    check('禅道：待我验证用的是 assignedTo + status=resolved', verifyHit,
+    // 1.7.6 起：服务端只按 product + status=all 查（status 参数可能被静默忽略），
+    // 「待我验证 = 已解决未关闭」由主进程在本地判定，所以这里断言请求带 assignedTo，且结果都是已解决。
+    const verifyHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /assignedTo=stub-user/.test(l.url) && /status=all/.test(l.url));
+    check('禅道：待我验证用 assignedTo 查询、状态在本地判', verifyHit,
       zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
 
+    const verifyStatuses = await ev(`[...document.querySelectorAll(".tbl tbody tr .pill")].map(p => p.textContent.trim()).filter(Boolean).slice(0, 20)`);
+    // 同一行里的 pill 既有状态也有严重度，这里只看「状态类」的词
+    const statusPills = (verifyStatuses || []).filter(t => /^(激活|已解决|已关闭|已延期)$/.test(t));
+    check('禅道：待我验证只返回「已解决」的 Bug',
+      statusPills.length > 0 && statusPills.every(t => t === '已解决'),
+      JSON.stringify(verifyStatuses));
     // 切页面回来视图要保留（状态在 store 里）
     await navTo('周报');
     await navTo('禅道');

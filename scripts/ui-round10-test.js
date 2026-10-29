@@ -68,7 +68,7 @@ if (reportDir) {
   fs.writeFileSync(path.join(reportDir, 'index.html'), '<html><body>fake report</body></html>');
 }
 log('summary =      5 in 00:00:00 =   20.0/s Avg:   144 Min:    90 Max:   300 Err: 1 (20.00%)');
-log('... end of run');
+// 中文 Windows 上 cmd 输出是 GBK：这一行按 GBK 编码「请按任意键继续. . .」\nprocess.stdout.write(Buffer.from([0xC7,0xEB,0xB0,0xB4,0xC8,0xCE,0xD2,0xE2,0xBC,0xFC,0xBC,0xCC,0xD0,0xF8,0x2E,0x20,0x2E,0x20,0x2E]));\nprocess.stdout.write("\\n");\nlog('... end of run');
 process.exit(0);
 `, 'utf8');
   fs.writeFileSync(cmd, `@echo off\r\nnode "%~dp0fake-jmeter.js" %*\r\n`, 'utf8');
@@ -79,6 +79,21 @@ process.exit(0);
 }
 
 /** 造一个「跑很久」的假 JMeter，用来验证 stop 能杀掉 */
+/** 假 JDK：bin\\java.cmd 能跑 `-version` 并返回 0（回归机不一定装了 JDK） */
+function makeFakeJdk(dir) {
+  const home = path.join(dir, 'fake-jdk');
+  fs.mkdirSync(path.join(home, 'bin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, 'bin', 'java.cmd'),
+    [
+      '@echo off',
+      'echo openjdk version "17.0.9" 2023-10-17',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf8',
+  );
+  return home;
+}
 function makeSlowJmeter(dir) {
   const js = path.join(dir, 'slow-jmeter.js');
   const cmd = path.join(dir, 'slow-jmeter.cmd');
@@ -94,6 +109,7 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
 (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r10-'));
   const fake = makeFakeJmeter(tmp);
+  const fakeJdk = makeFakeJdk(tmp);
   const slowExe = makeSlowJmeter(tmp);
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r10-ud-'));
   const env = { ...process.env, PM_USE_DIST: '1' };
@@ -213,6 +229,7 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const runRes = await ev(`(async () => {
     return await window.electronAPI.jmeterRun({
       jmeterPath: ${JSON.stringify(fake.exe)},
+      javaHome: ${JSON.stringify(fakeJdk)},
       jmxPath: ${JSON.stringify(fake.jmx)},
       mode: 'report',
       outDir: ${JSON.stringify(fake.outDir)},
@@ -236,6 +253,11 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const logLines = await ev(`[...document.querySelectorAll('.perf-line')].map(x => x.textContent).join('\\n')`);
   check('压力测试：命令回显了（能看到实际执行的参数）', /-Jthreads=50/.test(String(logLines)) && /-e/.test(String(logLines)), String(logLines).slice(0, 80));
   check('压力测试：JMeter 输出流式显示在界面上', /Starting standalone test/.test(String(logLines)), String(logLines).slice(0, 60));
+  check('压力测试：GBK 输出被正确解码（不再是乱码）',
+    /请按任意键继续/.test(String(logLines)) && !/맜|\uFFFD/.test(String(logLines)),
+    String(logLines).slice(-40).replace(/\n/g, ' '));
+  check('压力测试：日志里说明了使用的 JAVA_HOME', /\[env\] JAVA_HOME=/.test(String(logLines)),
+    (String(logLines).match(/\[env\][^\n]*/) || [''])[0]);
   check('压力测试：结果区出现统计', /样本数/.test(String(done)) && /错误率|TPS/.test(String(done)), String(done).slice(0, 120));
 
   const stats = await ev(`(() => {
@@ -263,6 +285,7 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const run2 = await ev(`(async () => {
     return await window.electronAPI.jmeterRun({
       jmeterPath: ${JSON.stringify(fake.exe)},
+      javaHome: ${JSON.stringify(fakeJdk)},
       jmxPath: ${JSON.stringify(fake.jmx)},
       mode: 'report',
       outDir: ${JSON.stringify(freshOut)},
@@ -279,6 +302,7 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const run3 = await ev(`(async () => {
     return await window.electronAPI.jmeterRun({
       jmeterPath: ${JSON.stringify(slowExe)},
+      javaHome: ${JSON.stringify(fakeJdk)},
       jmxPath: ${JSON.stringify(fake.jmx)},
       mode: 'log',
       outDir: ${JSON.stringify(freshOut)},

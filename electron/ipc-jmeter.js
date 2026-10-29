@@ -18,6 +18,7 @@ const {
   pickPaths, buildJmeterArgs,
   validateJmxPath, validateOutDir, validateJmeterPath,
   parseSummary, parseJtl,
+  decodeOutputLine, validateJavaHome,
 } = require('./jmeter-args');
 
 const IS_WIN = process.platform === 'win32';
@@ -73,13 +74,114 @@ function detectFromCommonDirs() {
   return candidates;
 }
 
-/** java 是否可用（jmeter.bat 依赖它；没有 java 时给出明确提示而不是让子进程报一堆错） */
-async function detectJava() {
+/**
+ * 找一个**能真正跑起来**的 Java。
+ *
+ * 坑：`where java` 在装了/卸载过 Oracle JDK 的机器上会留在
+ * `C:\Program Files\Common Files\Oracle\Java\javapath\java.exe`（一个转发 shim），
+ * 但后面的真实 JDK 可能已被删掉 —— 只看文件存在就会误报「Java 可用」，
+ * 然后 jmeter.bat 报 `Not able to find Java executable or version`。
+ * 所以这里对每个候选都真的执行一次 `-version`，退出码为 0 才算可用。
+ *
+ * 另一个坑：用户环境的 `JAVA_HOME` 可能指向已删除的目录（比如 E:\jdk17），
+ * jmeter.bat 会**优先**用它，于是即使 PATH 里有能用的 java 也会失败。
+ * 所以我们要把「JAVA_HOME 是否有效」单独报出来，运行前再决定是否覆盖它。
+ */
+async function tryJavaHome(home, source) {
+  const check = validateJavaHome(home);
+  if (!check.ok) return { ok: false, home: String(home || ''), exe: '', source, error: check.error };
+  const ver = await new Promise((resolve) => {
+    // Windows 上直接 execFile 一个 .cmd/.bat 会抛 EINVAL，必须走 cmd /c（假 JDK 也是 .cmd）
+    const isCmd = IS_WIN && /\.(cmd|bat)$/i.test(check.exe);
+    const file = isCmd ? "cmd.exe" : check.exe;
+    const argv = isCmd ? ["/c", check.exe, "-version"] : ["-version"];
+    try {
+      execFile(file, argv, { windowsHide: true, timeout: 8000 }, (err, out, stderr) => {
+        resolve({ ok: !err, text: String(stderr || '') || String(out || '') });
+      });
+    } catch (e) {
+      resolve({ ok: false, text: '', thrown: e.message });
+    }
+  });
+  if (!ver.ok) {
+    return { ok: false, home: check.home, exe: check.exe, source, error: '执行 java -version 失败（可能已卸载/损坏）' };
+  }
+  return { ok: true, home: check.home, exe: check.exe, source, version: ver.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0] || '' };
+}
+
+/** 常见 JDK 安装位置的候选目录（取父目录下第一层） */
+function javaHomeCandidates() {
+  const out = [];
+  const roots = [];
+  if (IS_WIN) {
+    if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'Java'));
+    if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'Eclipse Adoptium'));
+    if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'Microsoft'));
+    if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'Zulu'));
+    if (process.env['ProgramFiles(x86)']) roots.push(path.join(process.env['ProgramFiles(x86)'], 'Java'));
+    if (process.env.LOCALAPPDATA) roots.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Eclipse Adoptium'));
+    roots.push('C:\\Java', 'D:\\Java', 'E:\\Java', 'D:\\', 'E:\\', 'G:\\');
+  } else {
+    roots.push('/usr/lib/jvm', '/Library/Java/JavaVirtualMachines', '/opt/java');
+  }
+  for (const root of roots) {
+    let entries = [];
+    try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      // 只认名字像 JDK 的目录：否则 D:\ 下几十个目录每个都要跑一次 java -version，探测会卡住
+      if (/^(jdk|jre|java|zulu|openjdk)/i.test(e.name)) out.push(path.join(root, e.name));
+    }
+  }
+  return out.slice(0, 12);
+}
+
+/** 汇总 Java 情况：配置项 → JAVA_HOME 环境变量 → PATH → 常见目录 */
+async function detectJava(settingsJavaHome) {
+  const envHome = String(process.env.JAVA_HOME || '').trim();
+  const tried = [];
+
+  const ordered = [];
+  if (settingsJavaHome) ordered.push([settingsJavaHome, 'settings']);
+  if (envHome) ordered.push([envHome, 'env']);
+  for (const h of javaHomeCandidates()) ordered.push([h, 'scan']);
+
+  for (const [home, source] of ordered) {
+    const r = await tryJavaHome(home, source);
+    tried.push(r);
+    if (r.ok) {
+      return {
+        ok: true, home: r.home, exe: r.exe, version: r.version || '', source,
+        envHome, envHomeOk: envHome ? tried.some(t => t.source === 'env' && t.ok) : false,
+        candidates: tried.filter(t => !t.ok).map(t => ({ home: t.home, source: t.source, error: t.error })),
+      };
+    }
+  }
+
+  // 最后再试 PATH 上的 java（可能是 shim，也要真的跑一次）
   const out = await runCmd(IS_WIN ? 'where' : 'which', ['java']);
-  const p = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
-  if (!p || !fs.existsSync(p)) return { ok: false, path: '' };
-  const ver = await runCmd('java', ['-version']);
-  return { ok: true, path: p, version: ver.split(/\r?\n/)[0] || '' };
+  const pathExe = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0] || '';
+  if (pathExe && fs.existsSync(pathExe)) {
+    const ok = await new Promise((resolve) => {
+      execFile(pathExe, ['-version'], { windowsHide: true, timeout: 8000 }, (err) => resolve(!err));
+    });
+    if (ok) {
+      // PATH 上的 java 也能用；但它不在某个 JDK 目录里，只能把 bin 的上一级当 home
+      const home = path.dirname(path.dirname(pathExe));
+      return {
+        ok: true, home, exe: pathExe, version: '', source: 'path',
+        envHome, envHomeOk: false,
+        candidates: tried.map(t => ({ home: t.home, source: t.source, error: t.error })),
+      };
+    }
+    tried.push({ ok: false, home: path.dirname(path.dirname(pathExe)), exe: pathExe, source: 'path', error: 'PATH 上的 java 跑不起来（多为卸载后残留的 javapath shim）' });
+  }
+
+  return {
+    ok: false, home: '', exe: '', version: '', source: '',
+    envHome, envHomeOk: false,
+    candidates: tried.map(t => ({ home: t.home, source: t.source, error: t.error })),
+  };
 }
 
 /** 杀掉进程树：Windows 用 taskkill /T，其他平台用进程组 */
@@ -99,7 +201,7 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
   ipcMain.handle('jmeter:detect', async () => {
     const s = loadSettings() || {};
     const configured = String(s.jmeterPath || '').trim();
-    const java = await detectJava();
+    const java = await detectJava(String(s.javaHome || "").trim());
 
     if (configured && fs.existsSync(configured)) {
       return { success: true, data: { jmeterPath: configured, from: 'settings', java, candidates: [] } };
@@ -128,6 +230,22 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
     if (!check.ok) return { success: false, error: check.error };
     saveSettings({ ...(loadSettings() || {}), jmeterPath: exe });
     return { success: true, data: { jmeterPath: exe } };
+  });
+
+  /** 选 JDK 目录（JAVA_HOME 那种目录，里面有 bin\\java.exe） */
+  ipcMain.handle('jmeter:pick-java-home', async () => {
+    const r = await dialog.showOpenDialog(getWindow(), {
+      title: '选择 JDK 目录（内含 bin\\java.exe）',
+      properties: ['openDirectory'],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, canceled: true };
+    const home = r.filePaths[0];
+    const check = validateJavaHome(home);
+    if (!check.ok) return { success: false, error: check.error };
+    const probe = await detectJava(home);
+    if (!probe.ok) return { success: false, error: `这个目录里的 java 跑不起来：${(probe.candidates[0] || {}).error || "未知原因"}` };
+    saveSettings({ ...(loadSettings() || {}), javaHome: home });
+    return { success: true, data: { javaHome: home, version: probe.version || "" } };
   });
 
   /** 选 .jmx */
@@ -205,15 +323,29 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
       return { success: false, error: e.message };
     }
 
+    // ---- Java 自检：jmeter.bat 找不到可用的 java 时只会吐一句英文错误，这里提前拦住 ----
+    const java = await detectJava(String(opts.javaHome || s.javaHome || '').trim());
+    if (!java.ok) {
+      const envNote = java.envHome ? `；环境变量 JAVA_HOME=${java.envHome} 也无效（已忽略）` : '';
+      return {
+        success: false,
+        error: `没有找到能用的 Java，JMeter 需要 JDK/JRE 才能启动${envNote}。请点「选择 JDK 目录」指定 JDK 的根目录（里面有 bin\\java.exe）。`,
+        java,
+      };
+    }
+
     const runId = String(Date.now());
     const lines = [];
+    // 子进程环境：把 JAVA_HOME/JRE_HOME 指向**实测可用**的那个 JDK。
+    // 不这么做的话，用户环境里失效的 JAVA_HOME（如 E:\\jdk17）会盖掉正确路径。
+    const childEnv = { ...process.env, JAVA_HOME: java.home, JRE_HOME: java.home };
     let child;
     try {
       // Windows 的 .bat 必须经 cmd.exe 启动，否则 spawn 直接 EINVAL
       const isScript = IS_WIN && /\.(bat|cmd)$/i.test(jmeterPath);
       child = isScript
-        ? spawn('cmd.exe', ['/c', jmeterPath, ...args], { windowsHide: true, cwd: path.dirname(jmeterPath) })
-        : spawn(jmeterPath, args, { windowsHide: true, cwd: path.dirname(jmeterPath) });
+        ? spawn('cmd.exe', ['/c', jmeterPath, ...args], { windowsHide: true, cwd: path.dirname(jmeterPath), env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn(jmeterPath, args, { windowsHide: true, cwd: path.dirname(jmeterPath), env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       return { success: false, error: `启动 JMeter 失败：${e.message}` };
     }
@@ -229,18 +361,18 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
 
     const wire = (stream, readable) => {
       if (!readable) return;
-      let buf = '';
-      readable.setEncoding('utf8');
+      // 不 setEncoding：先按字节切行，再决定用 UTF-8 还是 GBK 解（中文 Windows 上是 GBK）
+      let buf = Buffer.alloc(0);
       readable.on('data', (chunk) => {
-        buf += chunk;
+        buf = Buffer.concat([buf, chunk]);
         let nl;
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).replace(/\r$/, '');
-          buf = buf.slice(nl + 1);
+        while ((nl = buf.indexOf(0x0a)) >= 0) {
+          const line = decodeOutputLine(buf.subarray(0, nl));
+          buf = buf.subarray(nl + 1);
           if (line.trim()) pushLine(stream, line);
         }
       });
-      readable.on('end', () => { if (buf.trim()) pushLine(stream, buf.trim()); });
+      readable.on('end', () => { const rest = decodeOutputLine(buf); if (rest.trim()) pushLine(stream, rest); });
     };
     wire('out', child.stdout);
     wire('err', child.stderr);
@@ -249,6 +381,9 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
 
     // 把「即将执行的命令」也推给界面，方便对照 cmd 里的写法
     pushLine('cmd', `${jmeterPath} ${args.join(' ')}`);
+    if (String(process.env.JAVA_HOME || '').trim() !== java.home) {
+      pushLine('cmd', `[env] JAVA_HOME=${java.home}（覆盖${process.env.JAVA_HOME ? `无效的 ${process.env.JAVA_HOME}` : '未设置'}）`);
+    }
 
     child.on('error', (err) => {
       pushLine('err', `进程启动失败：${err.message}`);
@@ -324,6 +459,7 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
       success: true,
       data: {
         jmeterPath: String(s.jmeterPath || ''),
+        javaHome: String(s.javaHome || ''),
         outDir: String(s.jmeterOutDir || ''),
         jmxPath: String(s.jmeterLastJmx || ''),
         appVersion: app.getVersion(),

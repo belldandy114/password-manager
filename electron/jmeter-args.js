@@ -221,8 +221,56 @@ function splitCsvLine(line) {
   return out;
 }
 
+// ---------------------------------------------------------------- 输出解码
+
+/**
+ * 子进程输出是字节流：中文 Windows 上 cmd / jmeter.bat 吐的是 **GBK**，
+ * 按 UTF-8 硬解就成了乱码（「请按任意键继续」→ `맜...`，1.7.5 的用户反馈）。
+ * 按行解码：先试严格 UTF-8，不是 UTF-8 再按 GBK —— 行边界处不可能切坏多字节字符。
+ */
+const utf8Fatal = new TextDecoder('utf-8', { fatal: true });
+let gbkDecoder = null;
+try { gbkDecoder = new TextDecoder('gbk'); } catch { gbkDecoder = null; }
+
+function decodeOutputLine(bytes) {
+  let b = bytes;
+  if (b && b.length && b[b.length - 1] === 0x0d) b = b.subarray(0, b.length - 1);
+  if (!b || !b.length) return '';
+  try { return utf8Fatal.decode(b); } catch { /* 不是 UTF-8，按 GBK 再试 */ }
+  if (gbkDecoder) return gbkDecoder.decode(b);
+  return new TextDecoder('utf-8').decode(b);
+}
+
+// ---------------------------------------------------------------- Java 检查
+
+/**
+ * 找 JDK 目录里的 java 可执行文件。
+ * `jmeter.bat` 要的是 **JAVA_HOME 这种目录**（不是 java.exe 本身），所以这里配的是目录。
+ * Windows 上同时接受 `bin\java.exe` 与包装脚本 `bin\java.cmd`（回归测试用的假 JDK 就是 cmd）。
+ */
+function javaExeInHome(home) {
+  const h = String(home || '').trim();
+  if (!h) return '';
+  const names = process.platform === 'win32' ? ['java.exe', 'java.cmd'] : ['java'];
+  for (const n of names) {
+    const exe = path.join(h, 'bin', n);
+    try { if (fs.statSync(exe).isFile()) return exe; } catch { /* 继续找 */ }
+  }
+  return '';
+}
+
+/** 校验 JDK 目录：只做结构检查（是否真能跑 java 由调用方执行一次 -version 验证） */
+function validateJavaHome(home) {
+  const h = String(home || '').trim();
+  if (!h) return { ok: false, error: '未指定 JDK 目录' };
+  const exe = javaExeInHome(h);
+  if (!exe) return { ok: false, error: `该目录下没有 bin/java：${h}` };
+  return { ok: true, home: h, exe };
+}
+
 module.exports = {
   MODES, stamp, scriptBase, pickPaths, buildJmeterArgs,
   validateJmxPath, validateOutDir, validateJmeterPath,
   parseSummary, parseJtl, splitCsvLine,
+  decodeOutputLine, javaExeInHome, validateJavaHome,
 };

@@ -170,6 +170,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterDetect: () => ipcRenderer.invoke('jmeter:detect'),
   jmeterPickExe: () => ipcRenderer.invoke('jmeter:pick-exe'),
   jmeterPickScript: () => ipcRenderer.invoke('jmeter:pick-script'),
+  jmeterPickJavaHome: () => ipcRenderer.invoke('jmeter:pick-java-home'),
   jmeterPickOutDir: () => ipcRenderer.invoke('jmeter:pick-out-dir'),
   jmeterDefaults: () => ipcRenderer.invoke('jmeter:defaults'),
   jmeterRemember: (patch) => ipcRenderer.invoke('jmeter:remember', patch),

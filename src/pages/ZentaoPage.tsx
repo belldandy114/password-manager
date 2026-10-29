@@ -245,7 +245,7 @@ export function ZentaoPage() {
   const scopeLabel = SCOPE_LABEL[mineScope];
   // 「我提交的 / 待我验证」按项目拉：记住选中的项目，默认挑当前项目
   // 最近一次「我的 Bug」响应的过滤信息（服务端可能不按账号过滤，主进程会本地再过一遍）
-  const [mineMeta, setMineMeta] = useState<{ account: string; filtered: boolean; dropped: number } | null>(null);
+  const [mineMeta, setMineMeta] = useState<{ account: string; filtered: boolean; dropped: number; scanned: number; withAccount: number } | null>(null);
   const [projOpen, setProjOpen] = useState(false);
   const [projDraft, setProjDraft] = useState<string[]>([]);
 
@@ -290,7 +290,13 @@ export function ZentaoPage() {
     const res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope, ids);
     setBusy('');
     if (res.success && res.data) {
-      setMineMeta({ account: res.account || form.account.trim(), filtered: !!res.filteredByAccount, dropped: Number(res.dropped) || 0 });
+      setMineMeta({
+        account: res.account || form.account.trim(),
+        filtered: !!res.filteredByAccount,
+        dropped: Number(res.dropped) || 0,
+        scanned: Number(res.scanned) || 0,
+        withAccount: Number(res.withAccount) || 0,
+      });
       setBugs(res.data, res.total || res.data.length);
       await persist({ baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
@@ -671,19 +677,34 @@ export function ZentaoPage() {
             <span className="zt-mine-proj-hint">
               {mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
             </span>
-            {mineMeta && (
-              <span
-                className={`zt-mine-account${mineMeta.filtered ? '' : ' is-warn'}`}
-                title={mineMeta.filtered
-                  ? `服务端未按账号过滤，已本地保留 ${mineMeta.account} 的记录`
-                  : '服务端没有返回账号字段，无法本地复核，结果可能含他人数据'}
-              >
-                <Icons.key size={11} />
-                {mineMeta.filtered
+            {mineMeta && (() => {
+              // 0 条时不报「未按账号复核」：那是「没有数据」，不是「无法复核」
+              const empty = bugs.length === 0;
+              const warn = !empty && !mineMeta.filtered;
+              // 服务端返回了 N 条，但一条都没有当前账号 → 账号不匹配（最常见：禅道里不是这个登录名）
+              const noMatch = empty && mineMeta.scanned > 0 && mineMeta.withAccount > 0;
+              const text = empty
+                ? `${mineMeta.account} · 0 条${mineMeta.scanned ? `（服务端 ${mineMeta.scanned} 条）` : ''}`
+                : mineMeta.filtered
                   ? `${mineMeta.account}${mineMeta.dropped ? ` · 已滤掉 ${mineMeta.dropped} 条` : ''}`
-                  : '未按账号复核'}
-              </span>
-            )}
+                  : '未按账号复核';
+              const tip = noMatch
+                ? `服务端返回 ${mineMeta.scanned} 条，但没有一条属于账号「${mineMeta.account}」。请确认登录账号是否为禅道登录名（不是姓名/邮箱）。`
+                : empty
+                  ? `服务端没有返回该项目的记录（账号 ${mineMeta.account}）。可能项目选错，或该项目下确实没有你的「${scopeLabel}」。`
+                  : mineMeta.filtered
+                    ? `服务端未按账号过滤，已本地保留 ${mineMeta.account} 的记录`
+                    : '服务端没有返回账号字段，无法本地复核，结果可能含他人数据';
+              return (
+                <span
+                  className={`zt-mine-account${warn || noMatch ? ' is-warn' : ''}`}
+                  title={tip}
+                >
+                  <Icons.key size={11} />
+                  {text}
+                </span>
+              );
+            })()}
           </div>
         )}
 
@@ -794,8 +815,12 @@ export function ZentaoPage() {
               <Panel>
                 <Empty
                   icon={<Icons.bug size={22} />}
-                  title="还没有 Bug 数据"
-                  desc={`选「${scopeLabel}」后点右上角「拉取」，结果会一直保留，切换页面也不会丢`}
+                  title={mineMeta ? `「${scopeLabel}」下没有你的 Bug` : '还没有 Bug 数据'}
+                  desc={
+                    mineMeta
+                      ? `已按账号 ${mineMeta.account} 过滤本项目${mineScope === 'verify' ? '（仅统计「已解决」且未关闭的 Bug）' : ''}。如果确认应该有，检查项目是否选对，或在禅道网页端核对一下状态。`
+                      : `选「${scopeLabel}」后点右上角「拉取」，结果会一直保留，切换页面也不会丢`
+                  }
                 />
               </Panel>
             )}

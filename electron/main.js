@@ -2551,13 +2551,11 @@ function setupIpcHandlers() {
         const params = new URLSearchParams();
         params.set('limit', '1000');
         params.set('page', '1');
-        if (scope === 'opened') {
-          params.set('openedBy', cfg.account);
-          params.set('status', 'all');        // 我提交的：含已关闭，能看整体履约情况
-        } else {
-          params.set('assignedTo', cfg.account);
-          params.set('status', 'resolved');   // 待我验证：已解决、还没关闭
-        }
+        // 服务端对 openedBy / assignedTo / status 都可能静默忽略，所以这里只当「缩小范围」用，
+        // 真正的过滤在 filterMineBugs 里按账号 + 状态做（status 统一取 all，避免漏数据）。
+        params.set('status', 'all');
+        if (scope === 'opened') params.set('openedBy', cfg.account);
+        else params.set('assignedTo', cfg.account);
         return params;
       };
 
@@ -2615,6 +2613,9 @@ function setupIpcHandlers() {
         account: cfg.account,
         filteredByAccount: mine.filtered,
         dropped: mine.dropped,
+        // 诊断用：服务端到底返回了几条、其中几条带账号字段
+        scanned: all.length,
+        withAccount: mine.withAccount,
         products: products.length,
         queried: wanted.length ? wanted : products.map(p => String(p.id)),
       };

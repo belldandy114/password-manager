@@ -47,7 +47,13 @@ function filterMineBugs(rows, account, scope) {
     return { rows: list, filtered: false, withAccount: 0, dropped: 0 };
   }
 
-  const kept = list.filter(b => accountOf(pickWho(b, scope)) === want);
+  const kept = list.filter(b => {
+    if (accountOf(pickWho(b, scope)) !== want) return false;
+    // 「待我验证」= 已解决但还没关闭。这个状态条件也在本地判：
+    // 服务端对 status 参数同样可能不生效，不能指望它。
+    if (scope === 'verify') return String(b && b.status || '').toLowerCase() === 'resolved';
+    return true;
+  });
   return { rows: kept, filtered: true, withAccount, dropped: list.length - kept.length };
 }
 

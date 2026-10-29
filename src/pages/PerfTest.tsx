@@ -14,7 +14,10 @@ export function PerfTest() {
   const { toasts, addToast, removeToast } = useToast();
 
   const [jmeterPath, setJmeterPath] = useState('');
-  const [javaInfo, setJavaInfo] = useState<{ ok: boolean; version?: string; path: string }>({ ok: false, path: '' });
+  const [javaInfo, setJavaInfo] = useState<{
+    ok: boolean; home: string; exe: string; version?: string; source?: string;
+    envHome?: string; envHomeOk?: boolean;
+  }>({ ok: false, home: '', exe: '' });
   const [candidates, setCandidates] = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
 
@@ -38,7 +41,7 @@ export function PerfTest() {
     setDetecting(false);
     if (!r.success || !r.data) { addToast(r.error || '探测失败', 'error'); return; }
     setJmeterPath(r.data.jmeterPath || '');
-    setJavaInfo(r.data.java || { ok: false, path: '' });
+    setJavaInfo((r.data.java as typeof javaInfo) || { ok: false, home: '', exe: '' });
     setCandidates(r.data.candidates || []);
     if (r.data.jmeterPath) addToast('已找到 JMeter', 'success');
   };
@@ -88,6 +91,14 @@ export function PerfTest() {
     if (!r.success || !r.data) { addToast(r.error || '选择失败', 'error'); return; }
     setJmeterPath(r.data.jmeterPath);
     addToast('JMeter 路径已保存', 'success');
+    await detect();
+  };
+
+  const pickJavaHome = async () => {
+    const r = await window.electronAPI.jmeterPickJavaHome();
+    if (r.canceled) return;
+    if (!r.success || !r.data) { addToast(r.error || '选择失败', 'error'); return; }
+    addToast('JDK 已保存', 'success');
     await detect();
   };
 
@@ -178,10 +189,30 @@ export function PerfTest() {
           </div>
           <div className="perf-env-row">
             <span className="perf-env-label">Java</span>
-            <span className={`perf-env-value${javaInfo.ok ? '' : ' is-empty'}`}>
-              {javaInfo.ok ? (javaInfo.version || javaInfo.path) : '未检测到 java（JMeter 需要 JDK/JRE）'}
+            <span className={`perf-env-value${javaInfo.ok ? '' : ' is-warn'}`} title={javaInfo.exe || javaInfo.home}>
+              {javaInfo.ok
+                ? `${javaInfo.version || 'java'}${javaInfo.home ? ` · ${javaInfo.home}` : ''}`
+                : '未找到可用的 Java（JMeter 需要 JDK/JRE，建议 17）'}
             </span>
+            <button className="btn btn-secondary btn-sm" onClick={pickJavaHome}>选择 JDK 目录</button>
           </div>
+          {javaInfo.envHome && javaInfo.envHomeOk === false && (
+            <div className="perf-env-row">
+              <span className="perf-env-label">注意</span>
+              <span className="perf-env-value is-warn">
+                环境变量 JAVA_HOME={javaInfo.envHome} 不可用（找不到或跑不起来），运行时已改用上方的 JDK
+              </span>
+            </div>
+          )}
+          {!javaInfo.ok && (
+            <div className="perf-env-row">
+              <span className="perf-env-label">说明</span>
+              <span className="perf-env-value">
+                点「选择 JDK 目录」选 JDK 根目录（如 <code>D:\jdk17</code>，里面要有 <code>bin\java.exe</code>）。
+                选一次会记住，之后自动用它启动 JMeter。
+              </span>
+            </div>
+          )}
           {candidates.length > 1 && (
             <div className="perf-env-row">
               <span className="perf-env-label">其他候选</span>

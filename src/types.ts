@@ -440,7 +440,20 @@ export interface JmeterRunOptions {
 export interface JmeterDetectInfo {
   jmeterPath: string;
   from: string;
-  java: { ok: boolean; path: string; version?: string };
+  java: {
+    ok: boolean;
+    /** JDK 根目录（JAVA_HOME 那种），可能为空 */
+    home: string;
+    /** 实际使用的 java 可执行文件 */
+    exe: string;
+    version?: string;
+    /** settings / env / scan / path */
+    source?: string;
+    /** 环境变量 JAVA_HOME 的值（可能已失效） */
+    envHome?: string;
+    envHomeOk?: boolean;
+    candidates?: { home: string; source: string; error?: string }[];
+  };
   candidates: string[];
 }
 export interface ElectronAPI {
@@ -538,7 +551,7 @@ export interface ElectronAPI {
   zentaoMyBugs: (cfg: ZentaoConfig, scope?: MyBugScope, productIds?: string[]) => Promise<{
     success: boolean; data?: ZentaoBug[]; total?: number; queried?: string[]; error?: string;
     /** 服务端未按账号过滤时，主进程会再做一次本地过滤 */
-    account?: string; filteredByAccount?: boolean; dropped?: number;
+    account?: string; filteredByAccount?: boolean; dropped?: number; scanned?: number; withAccount?: number;
   }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
@@ -625,8 +638,9 @@ export interface ElectronAPI {
   jmeterDetect: () => Promise<{ success: boolean; data?: JmeterDetectInfo; error?: string }>;
   jmeterPickExe: () => Promise<{ success: boolean; data?: { jmeterPath: string }; error?: string; canceled?: boolean }>;
   jmeterPickScript: () => Promise<{ success: boolean; data?: { jmxPath: string; name: string }; error?: string; canceled?: boolean }>;
+  jmeterPickJavaHome: () => Promise<{ success: boolean; data?: { javaHome: string; version: string }; error?: string; canceled?: boolean }>;
   jmeterPickOutDir: () => Promise<{ success: boolean; data?: { outDir: string }; error?: string; canceled?: boolean }>;
-  jmeterDefaults: () => Promise<{ success: boolean; data?: { jmeterPath: string; outDir: string; jmxPath: string; appVersion: string } }>;
+  jmeterDefaults: () => Promise<{ success: boolean; data?: { jmeterPath: string; javaHome?: string; outDir: string; jmxPath: string; appVersion: string } }>;
   jmeterRemember: (patch: { jmxPath?: string; outDir?: string }) => Promise<{ success: boolean }>;
   jmeterRun: (opts: JmeterRunOptions) => Promise<{ success: boolean; data?: { runId: string; jtlPath: string; reportDir: string; args: string[] }; error?: string }>;
   jmeterStop: () => Promise<{ success: boolean; error?: string }>;
