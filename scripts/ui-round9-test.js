@@ -9,6 +9,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
+
+const DL_PORT = 9836;
+const DL_NAME = 'PasswordManager-Setup-9.9.9.exe';
+const DL_BUF = Buffer.alloc(5 * 1024 * 1024);
+for (let i = 0; i < DL_BUF.length; i++) DL_BUF[i] = (i * 31 + 7) & 0xff;
+const DL_SHA = crypto.createHash('sha256').update(DL_BUF).digest('hex');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
@@ -49,6 +56,30 @@ const echo = http.createServer((req, res) => {
   const zt = await ensureZt(9846);
   if (zt.stub) console.log('· 未配置 ZT_* 环境变量，禅道使用本地桩服务');
   await new Promise((r) => echo.listen(ECHO_PORT, '127.0.0.1', r));
+
+  // 假安装包服务（支持 Range，用来验证单连接 / 多线程 / SHA-256 校验三条路）
+  const dlServer = http.createServer((req, res) => {
+    if (!String(req.url || '').includes(DL_NAME)) {
+      res.writeHead(404); res.end('nope'); return;
+    }
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d+)/.exec(range);
+      const start = Number(m[1]);
+      const end = Math.min(Number(m[2]), DL_BUF.length - 1);
+      res.writeHead(206, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + DL_BUF.length,
+        'Content-Length': end - start + 1,
+        'Accept-Ranges': 'bytes',
+      });
+      res.end(DL_BUF.subarray(start, end + 1));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': DL_BUF.length, 'Accept-Ranges': 'bytes' });
+    res.end(DL_BUF);
+  });
+  await new Promise((r) => dlServer.listen(DL_PORT, '127.0.0.1', r));
 
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r9-'));
   const env = { ...process.env, PM_USE_DIST: '1' };
@@ -187,7 +218,13 @@ const echo = http.createServer((req, res) => {
   })()`);
   check('cURL：复制后按钮反馈「已复制」', !!copyState && /已复制/.test(copyState.label), copyState && copyState.label);
 
-  const clip = await ev(`(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return 'ERR:' + e.message; } })()`);
+  // 剪贴板读取偶尔会被系统拒绝/尚未刷新，重试几次再判失败
+  let clip = '';
+  for (let i = 0; i < 3; i++) {
+    clip = await ev(`(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return 'ERR:' + e.message; } })()`);
+    if (!String(clip).startsWith('ERR:')) break;
+    await sleep(300);
+  }
   if (String(clip).startsWith('ERR:')) {
     skipped('cURL：剪贴板内容校验', '剪贴板读取被拒绝');
   } else {
@@ -246,6 +283,39 @@ const echo = http.createServer((req, res) => {
 
   }
 
+  /* ================= D. 应用内更新：落盘位置 / SHA-256 校验 / 多线程 ================= */
+  if (want('update')) {
+    await navTo('接口调试'); // 先在任意页，后续直接调 IPC
+    const dlUrl = `http://127.0.0.1:${DL_PORT}/${DL_NAME}`;
+
+    // 1) 正确的摘要：应成功、verified=true、文件名是官方资产名、且不在 %TEMP%\pm-update
+    const okRes = await ev(`(async () => {
+      const r = await window.electronAPI.updateDownload(${JSON.stringify(dlUrl)}, false, { expectedSha256: ${JSON.stringify(DL_SHA)} });
+      return r;
+    })()`);
+    check('更新：摘要正确时下载成功', !!okRes && okRes.success === true, okRes && (okRes.error || ''));
+    const d1 = okRes && okRes.data;
+    check('更新：SHA-256 校验通过', !!d1 && d1.verified === true, d1 && String(d1.sha256).slice(0, 12));
+    check('更新：文件名用官方资产名', !!d1 && d1.name === DL_NAME, d1 && d1.name);
+    check('更新：不再落到 %TEMP%\\pm-update', !!d1 && !/pm-update/i.test(String(d1.file)), d1 && d1.file);
+
+    // 2) 错误的摘要：必须拒绝，且把文件删掉
+    const badRes = await ev(`(async () => {
+      const r = await window.electronAPI.updateDownload(${JSON.stringify(dlUrl)}, false, { expectedSha256: 'deadbeef' });
+      const fs = null;
+      return r;
+    })()`);
+    check('更新：摘要不匹配时拒绝安装', !!badRes && badRes.success === false && /SHA-256/.test(String(badRes.error)), badRes && String(badRes.error).slice(0, 60));
+
+    // 3) 多线程（Range 服务）：应走 6 段且结果一致
+    const parRes = await ev(`(async () => {
+      const r = await window.electronAPI.updateDownload(${JSON.stringify(dlUrl)}, false, { expectedSha256: ${JSON.stringify(DL_SHA)}, threads: true });
+      return r;
+    })()`);
+    check('更新：多线程下载可用且校验通过',
+      !!parRes && parRes.success === true && parRes.data && parRes.data.verified === true && parRes.data.threads === 6,
+      parRes && JSON.stringify({ ok: parRes.success, th: parRes.data && parRes.data.threads, v: parRes.data && parRes.data.verified }));
+  }
   /* ================= C. 禅道：我提交的 / 待我验证 ================= */
   if (want('zentao')) {
     await navTo('禅道');
@@ -304,5 +374,6 @@ const echo = http.createServer((req, res) => {
   app.kill();
   zt.stop();
   echo.close();
+  dlServer.close();
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log('ERR', e); process.exit(1); });

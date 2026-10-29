@@ -129,7 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
-  updateDownload: (url, useMirror) => ipcRenderer.invoke('update:download', { url, useMirror }),
+  updateDownload: (url, useMirror, opts) => ipcRenderer.invoke('update:download', { url, useMirror, ...(opts || {}) }),
   updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
   saveText: (content, defaultName, filters) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters }),
   pickFile: (title, filters) => ipcRenderer.invoke('file:pick', { title, filters }),

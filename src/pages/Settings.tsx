@@ -89,10 +89,12 @@ export function Settings() {
   /** 数据目录信息（路径 / 体积 / 备份份数） */
   const [dataInfo, setDataInfo] = useState<DataLocationInfo | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
-  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string; assetName?: string; digest?: string } | null>(null);
   const [checking, setChecking] = useState(false);
   // 应用内更新：下载进度 / 已下载文件
   const [downloading, setDownloading] = useState(false);
+  // 多线程分段下载：更快，但会把 exe 拆成多个分片，部分杀软会误判（默认关闭）
+  const [multiThread, setMultiThread] = useState(false);
   const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1 });
   const [downloadedFile, setDownloadedFile] = useState('');
   // 下载失败时的提示与兜底（网络访问不了 GitHub CDN 时用）
@@ -135,14 +137,20 @@ export function Settings() {
     setDownloading(true);
     setDlError('');
     setProgress({ received: 0, total: 0, speed: 0, threads: 1 });
-    const res = await window.electronAPI.updateDownload(url, mirror);
+    const res = await window.electronAPI.updateDownload(url, mirror, {
+      expectedSha256: updateInfo?.digest || '',
+      threads: multiThread,
+    });
     setDownloading(false);
     if (res.success && res.data) {
       setDownloadedFile(res.data.file);
       setCanMirror(false);
       setDlError('');
       setViaMirror(!!mirror);
-      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}${res.data.threads && res.data.threads > 1 ? ` · ${res.data.threads} 线程加速` : ''}）`, 'success');
+      const shaTip = res.data.verified
+        ? ' · SHA-256 已校验'
+        : (res.data.sha256 ? ` · SHA-256 ${res.data.sha256.slice(0, 12)}…` : '');
+      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}${res.data.threads && res.data.threads > 1 ? ` · ${res.data.threads} 线程加速` : ''}${shaTip}）`, 'success');
     } else {
       setDlError(res.error || '下载失败');
       setCanMirror(!!res.canMirror);
@@ -854,6 +862,15 @@ export function Settings() {
                   <div className="setting-desc">
                     已下载：{downloadedFile.split('\\').pop()}{viaMirror ? '（来自加速镜像）' : ''}
                   </div>
+                )}
+                {!downloadedFile && updateInfo?.hasUpdate && (
+                  <label
+                    className="dl-multi"
+                    title="拆成 6 段并发下载，速度更快；但「分段拼装 exe」可能触发杀软误报（Trojan/Injector），默认关闭"
+                  >
+                    <input type="checkbox" checked={multiThread} onChange={e => setMultiThread(e.target.checked)} />
+                    <span>多线程加速（部分杀软会误报）</span>
+                  </label>
                 )}
               </div>
               <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

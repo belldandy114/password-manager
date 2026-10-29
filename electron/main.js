@@ -1446,6 +1446,7 @@ function setupIpcHandlers() {
       if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
       const json = await res.json();
       const latest = String(json.tag_name || '').replace(/^v/, '');
+      const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
       const current = app.getVersion();
       return {
         success: true,
@@ -1454,8 +1455,10 @@ function setupIpcHandlers() {
           latest,
           hasUpdate: !!latest && cmpVersion(latest, current) > 0,
           url: json.html_url || '',
-          // 优先给安装包直链，供「下载并安装」用
-          downloadUrl: (Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null)?.browser_download_url || '',
+          // 优先给安装包直链 + 官方 SHA-256（下载后校验，防止镜像/代理改包）
+          downloadUrl: asset?.browser_download_url || '',
+          assetName: asset?.name || '',
+          digest: asset?.digest || '',
           notes: (json.body || '').slice(0, 2000),
         },
       };
@@ -1646,7 +1649,7 @@ function setupIpcHandlers() {
    * 而它支持 Range —— 拆成 N 段并发，速度大致线性提升。
    * 任何一段失败都会重试该段（最多 2 次），整体不支持 Range 时由调用方回退单连接。
    */
-  async function netDownloadParallel(url, file, onProgress, threads = 6) {
+  async function netDownloadParallel(url, file, onProgress, threads = 6, partsDir = '') {
     const probe = await netProbe(url);
     if (!probe.ok || probe.total < 4 * 1024 * 1024) {
       return { fallback: true };
@@ -1656,12 +1659,15 @@ function setupIpcHandlers() {
     const chunk = Math.ceil(total / n);
     const parts = [];
     const ranges = [];
+    // 分片放独立目录、用 .bin 后缀：不要叫 xxx.exe.part0 —— 那等于在告诉杀软「这是 exe 的一段」
+    const dir = partsDir || path.dirname(file);
     for (let i = 0; i < n; i++) {
       const start = i * chunk;
       if (start >= total) break;
       const end = Math.min(total - 1, start + chunk - 1);
-      ranges.push({ start, end, part: `${file}.part${i}` });
-      parts.push(`${file}.part${i}`);
+      const part = path.join(dir, `chunk-${i}.bin`);
+      ranges.push({ start, end, part });
+      parts.push(part);
     }
 
     let received = 0;
@@ -1722,11 +1728,54 @@ function setupIpcHandlers() {
     return { fallback: true };
   }
 
-  ipcMain.handle('update:download', async (event, { url, useMirror } = {}) => {
-    if (!url) return { success: false, error: '没有可用的下载地址' };
-    const dir = path.join(app.getPath('temp'), 'pm-update');
+  /**
+   * 更新包落盘目录。
+   * ⚠️ 不要用 %TEMP%：杀软对「非浏览器进程在临时目录里生成/改写 exe」的启发式很强，
+   * 360/火绒会直接判 Trojan/Injector 并删文件（2026-10-29 实测）。
+   * 放到应用自己的目录，并且用 GitHub 上的真实文件名，行为跟普通下载器一致。
+   */
+  function updateDir() {
+    const dir = path.join(app.getPath('userData'), 'update');
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
-    const file = path.join(dir, `PasswordManager-Setup-${Date.now()}.exe`);
+    return dir;
+  }
+
+  /** 从下载地址取官方资产名（取不到就用兜底名），只保留安全字符 */
+  function assetFileName(url, fallback) {
+    let name = '';
+    try {
+      name = decodeURIComponent(path.basename(new URL(url).pathname));
+    } catch { /* 非法地址，用兜底名 */ }
+    name = String(name || '').replace(/[^\w.\-]+/g, '_');
+    if (!/\.exe$/i.test(name)) name = fallback;
+    return name;
+  }
+
+  /** 文件的 SHA-256（流式，96MB 也不吃内存） */
+  function sha256File(file) {
+    return new Promise((resolve, reject) => {
+      const h = crypto.createHash('sha256');
+      const rs = fs.createReadStream(file);
+      rs.on('data', (c) => h.update(c));
+      rs.on('end', () => resolve(h.digest('hex')));
+      rs.on('error', reject);
+    });
+  }
+
+  ipcMain.handle('update:download', async (event, { url, useMirror, expectedSha256, threads } = {}) => {
+    if (!url) return { success: false, error: '没有可用的下载地址' };
+
+    const dir = updateDir();
+    const name = assetFileName(url, `PasswordManager-Setup-${app.getVersion()}-new.exe`);
+    const finalFile = path.join(dir, name);
+    // 先写到 .partial 再改名：避免"边写边被扫"时留下半成品，也让最终文件出现在磁盘上是完整的
+    const partial = `${finalFile}.partial`;
+    const partsDir = path.join(dir, `parts-${Date.now()}`);
+    try { fs.mkdirSync(partsDir, { recursive: true }); } catch { /* 忽略 */ }
+    const cleanup = () => {
+      try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
+      try { fs.rmSync(partsDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+    };
 
     // 直连优先；只有用户主动点「用加速镜像」才走第三方代理（安装包是 exe，默认不代下载）
     const targets = useMirror
@@ -1734,35 +1783,66 @@ function setupIpcHandlers() {
       : [{ label: 'GitHub', url }];
 
     const errors = [];
+    // 多线程默认关闭：分段下载会把「可执行文件的内容」写进一堆分片文件，正是杀软最敏感的模式
+    const wantParallel = threads === true;
+
     for (const t of targets) {
       try {
-        // 先试多线程分段（CDN 单连接常被限速），不支持 Range 再退回单连接
-        let r = await netDownloadParallel(t.url, file, (received, total, speed) => {
-          try { event.sender.send('update:progress', { received, total, speed, threads: 6 }); } catch { /* 窗口已关 */ }
-        });
-        if (r.fallback) {
-          try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* 忽略 */ }
-          r = await netDownload(t.url, file, (received, total, speed) => {
-            try { event.sender.send('update:progress', { received, total, speed, threads: 1 }); } catch { /* 窗口已关 */ }
-          });
+        const onProgress = (received, total, speed, th) => {
+          try { event.sender.send('update:progress', { received, total, speed, threads: th }); } catch { /* 窗口已关 */ }
+        };
+
+        let r = null;
+        if (wantParallel) {
+          const p = await netDownloadParallel(t.url, partial, (received, total, speed) => onProgress(received, total, speed, 6), 6, partsDir);
+          if (!p.fallback) r = { size: p.total, threads: p.threads };
         }
-        if (r.size < 1024 * 1024) {
-          try { fs.unlinkSync(file); } catch { /* 忽略 */ }
-          errors.push(`${t.label}：文件过小（${Math.round(r.size / 1024)} KB）`);
+        if (!r) {
+          try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
+          r = await netDownload(t.url, partial, (received, total, speed) => onProgress(received, total, speed, 1));
+        }
+
+        if (!r || r.size < 1024 * 1024) {
+          cleanup();
+          errors.push(`${t.label}：文件过小（${Math.round((r ? r.size : 0) / 1024)} KB）`);
           continue;
         }
-        return { success: true, data: { file, size: r.size, via: t.label, threads: r.threads || 1 } };
+
+        try { if (fs.existsSync(finalFile)) fs.unlinkSync(finalFile); } catch { /* 忽略 */ }
+        fs.renameSync(partial, finalFile);
+
+        // 官方 SHA-256 校验：镜像站/代理有可能改包，校验不过就不用
+        const sha256 = await sha256File(finalFile);
+        let verified = false;
+        if (expectedSha256) {
+          const want = String(expectedSha256).replace(/^sha256:/i, '').trim().toLowerCase();
+          if (sha256 !== want) {
+            try { fs.unlinkSync(finalFile); } catch { /* 忽略 */ }
+            cleanup();
+            errors.push(`${t.label}：SHA-256 校验不通过（下载 ${sha256.slice(0, 12)}…，预期 ${want.slice(0, 12)}…）`);
+            continue;
+          }
+          verified = true;
+        }
+
+        cleanup();
+        return {
+          success: true,
+          data: { file: finalFile, name, size: r.size, via: t.label, threads: r.threads || 1, sha256, verified },
+        };
       } catch (e) {
         errors.push(`${t.label}：${e.message || '连接被中断'}`);
-        try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* 忽略 */ }
+        cleanup();
       }
     }
 
+    cleanup();
     return {
       success: false,
       error: [
-        '下载失败，网络访问不了 GitHub 的下载节点（公司网络常见）。',
+        '下载失败。',
         '可以：①点「浏览器下载」到发布页手动下；②已经下好了就点「选择安装包」；' + (useMirror ? '③换个网络再试。' : '③点「加速镜像重试」。'),
+        '如果杀软弹了拦截（Trojan/Injector 之类），那是把「下载安装包」误判成释放器：添加信任或手动下载即可。',
         `（${errors.join('；')}）`,
       ].join(' '),
       canMirror: !useMirror,

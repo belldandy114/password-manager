@@ -542,13 +542,13 @@ export interface ElectronAPI {
   // Update
   updateCheck: () => Promise<{
     success: boolean;
-    data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string; downloadUrl?: string };
+    data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string; downloadUrl?: string; assetName?: string; digest?: string };
     error?: string;
   }>;
   /** 下载新版本安装包（进度通过 onUpdateProgress 推送）；useMirror=true 时走第三方加速 */
-  updateDownload: (url: string, useMirror?: boolean) => Promise<{
+  updateDownload: (url: string, useMirror?: boolean, opts?: { expectedSha256?: string; threads?: boolean }) => Promise<{
     success: boolean;
-    data?: { file: string; size: number; via?: string; threads?: number };
+    data?: { file: string; name?: string; size: number; via?: string; threads?: number; sha256?: string; verified?: boolean };
     error?: string;
     canMirror?: boolean;
     detail?: string;
