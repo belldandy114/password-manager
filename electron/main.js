@@ -704,6 +704,7 @@ function clearClipboardAfter(delayMs) {
 // ----------------------------------------------------------------
 const { parseCsv, normalizeImportRecords } = require('./csv');
 const { ztDecodeEntities, ztStripTags, ztTableRows } = require('./zentao-parse');
+const { cmpVersion, shouldNotifyUpdate } = require('./update-check');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -1417,49 +1418,78 @@ function setupIpcHandlers() {
     }
   });
 
-  // ---- Update check (GitHub Releases) ----
-  ipcMain.handle('update:check', async () => {
-    const cmpVersion = (a, b) => {
-      const pa = String(a).split('.').map(Number);
-      const pb = String(b).split('.').map(Number);
-      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const x = pa[i] || 0;
-        const y = pb[i] || 0;
-        if (x !== y) return x > y ? 1 : -1;
-      }
-      return 0;
-    };
+  /** 拉取最新 Release 元数据（update:check 与启动时自动检查共用） */
+  async function fetchLatestRelease() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
       const res = await fetch('https://api.github.com/repos/belldandy114/password-manager/releases/latest', {
         headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
         signal: controller.signal,
       });
-      clearTimeout(timer);
-      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       const latest = String(json.tag_name || '').replace(/^v/, '');
       const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
+      return {
+        latest,
+        htmlUrl: json.html_url || '',
+        // 优先给安装包直链 + 官方 SHA-256（下载后校验，防止镜像/代理改包）
+        downloadUrl: asset?.browser_download_url || '',
+        assetName: asset?.name || '',
+        digest: asset?.digest || '',
+        notes: (json.body || '').slice(0, 2000),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  ipcMain.handle('update:check', async () => {
+    try {
+      const rel = await fetchLatestRelease();
       const current = app.getVersion();
       return {
         success: true,
         data: {
           current,
-          latest,
-          hasUpdate: !!latest && cmpVersion(latest, current) > 0,
-          url: json.html_url || '',
-          // 优先给安装包直链 + 官方 SHA-256（下载后校验，防止镜像/代理改包）
-          downloadUrl: asset?.browser_download_url || '',
-          assetName: asset?.name || '',
-          digest: asset?.digest || '',
-          notes: (json.body || '').slice(0, 2000),
+          latest: rel.latest,
+          hasUpdate: !!rel.latest && cmpVersion(rel.latest, current) > 0,
+          url: rel.htmlUrl,
+          downloadUrl: rel.downloadUrl,
+          assetName: rel.assetName,
+          digest: rel.digest,
+          notes: rel.notes,
         },
       };
     } catch (e) {
       return { success: false, error: e.name === 'AbortError' ? '请求超时' : e.message };
     }
   });
+
+  /**
+   * 启动时静默检查更新：有新版就弹一条系统通知（点开是发布页），同一版本只提示一次。
+   * 完全后台执行且吞掉所有异常——网络不通不该影响启动。
+   */
+  async function autoCheckUpdate() {
+    try {
+      const s = loadSettings() || {};
+      if (s.updateCheckOnStart === false) return;
+      const rel = await fetchLatestRelease();
+      const current = app.getVersion();
+      if (!shouldNotifyUpdate({ current, latest: rel.latest, lastNotified: s.updateNotifiedVersion })) return;
+      if (!Notification.isSupported()) return;
+      const n = new Notification({
+        title: `发现新版本 v${rel.latest}`,
+        body: '点此查看更新说明；也可以在「设置 → 关于与更新」里直接下载安装。',
+      });
+      n.on('click', () => {
+        if (rel.htmlUrl) shell.openExternal(rel.htmlUrl).catch(() => { /* 忽略 */ });
+      });
+      n.show();
+      saveSettings({ ...(loadSettings() || {}), updateNotifiedVersion: rel.latest });
+    } catch { /* 静默：启动检查失败不影响任何功能 */ }
+  }
 
   // ---- 应用内更新：下载安装包并重启安装 ----
   /** GitHub 大文件走 CDN（objects.githubusercontent.com），不少公司网络会直接重置连接 */
@@ -3800,6 +3830,10 @@ app.whenReady().then(() => {
     } catch { /* ignore */ }
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+  // 启动 8 秒后静默查一次新版本（有新版弹系统通知，同版本只弹一次）。
+  // 放最后 + setTimeout：网络请求绝不能影响启动速度。
+  setTimeout(() => { autoCheckUpdate(); }, 8000);
 
   // Global shortcut: Ctrl+Shift+P or Cmd+Shift+P to show/hide the window
   globalShortcut.register('CommandOrControl+Shift+P', () => {

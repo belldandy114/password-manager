@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
@@ -9,6 +9,9 @@ import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema'
 import { codegenFromBody } from '../utils/apiCodegen';
 import { useConfirm } from '../components/confirm';
 import { parseCurl, buildCurl } from '../utils/curl';
+import { filterHistory, groupByDay, matchesQuery } from '../utils/apiHistory';
+import { callIpc } from '../utils/ipc';
+import { responseSaveTarget } from '../utils/apiResponse';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -162,11 +165,22 @@ export function ApiClient() {
   const [curlError, setCurlError] = useState('');
   const [curlCopied, setCurlCopied] = useState(false);
   const [sideTab, setSideTab] = useState<'saved' | 'history'>('saved');
+  // 侧栏搜索：历史/已保存共用同一个关键字（切换页签时保留，方便对照）
+  const [sideQuery, setSideQuery] = useState('');
   const [activeEnvId, setActiveEnvId] = useState('');
   const [envOpen, setEnvOpen] = useState(false);
   const [envDraft, setEnvDraft] = useState<ApiEnv | null>(null);
   const [response, setResponse] = useState<ApiResponseData | null>(null);
   const [error, setError] = useState('');
+  // 轻量成功提示（这个页面没有 toast 容器，用一次性 pill 更省事）
+  const [notice, setNotice] = useState('');
+  const noticeTimer = useRef<number | null>(null);
+  /** 一次性成功提示：2.5s 后自动消失（换新提示时重置计时） */
+  const flashNotice = (msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 2500);
+  };
   const [sending, setSending] = useState(false);
   const [showVars, setShowVars] = useState(false);
   const [respTab, setRespTab] = useState<'body' | 'headers' | 'ts' | 'md'>('body');
@@ -200,6 +214,12 @@ export function ApiClient() {
 
   // 响应体 → TS 接口 / Markdown 表格（只在切到对应页签时用得上，但算一次就够）
   const codegen = useMemo(() => (response ? codegenFromBody(response.body) : null), [response]);
+
+  /** 侧栏「已保存」按关键字过滤（历史在渲染处用 filterHistory，逻辑同源） */
+  const savedFiltered = useMemo(
+    () => (sideQuery.trim() ? items.filter(i => matchesQuery(sideQuery, i.name, i.url, i.method)) : items),
+    [items, sideQuery],
+  );
 
   /** 选环境：把环境变量合并进变量表（同名覆盖） */
   const applyEnv = (id: string) => {
@@ -336,6 +356,23 @@ export function ApiClient() {
     setBatchRunning(false);
   };
 
+  /** 把响应体另存为文件（大响应/取证留档用；命名规则见 utils/apiResponse） */
+  const saveResponseBody = async () => {
+    if (!response) return;
+    const { fileName, ext } = responseSaveTarget(req, response);
+    const pick = await window.electronAPI.dialogSaveFile({
+      defaultName: fileName,
+      filters: [{ name: ext === 'json' ? 'JSON' : '文本', extensions: [ext] }],
+    });
+    if (pick.canceled || !pick.filePath) return;
+    const written = await callIpc(() => window.electronAPI.fileWrite({
+      filePath: pick.filePath as string,
+      content: response.body,
+    }));
+    if (!written.ok) { setError(`保存失败：${written.error}`); return; }
+    flashNotice('响应体已保存');
+  };
+
   /** 把当前响应的结构存成快照（只存类型，不存值） */
   const saveSnapshot = async () => {
     if (!response) return;
@@ -455,54 +492,98 @@ export function ApiClient() {
           >
             <div className="api-side" style={{ padding: 8 }}>
               {sideTab === 'history' && (
+                <div className="api-side-search">
+                  <span className="api-side-search-ico"><Icons.search size={12} /></span>
+                  <input
+                    value={sideQuery}
+                    onChange={e => setSideQuery(e.target.value)}
+                    placeholder="搜索地址 / 方法 / 状态码"
+                    aria-label="搜索请求历史"
+                  />
+                  {sideQuery && (
+                    <button className="api-side-search-clear" title="清空搜索" aria-label="清空搜索" onClick={() => setSideQuery('')}>
+                      <Icons.close size={11} />
+                    </button>
+                  )}
+                </div>
+              )}
+              {sideTab === 'history' && (
                 history.length === 0 ? (
-                  <div style={{ padding: '18px 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                  <div className="api-side-empty">
                     还没有请求记录。<br />发送一次请求后会自动记录（保留最近 50 条）。
                   </div>
-                ) : (
-                  history.map(h => {
-                    const ok = h.status >= 200 && h.status < 400;
-                    // 只显示路径：主机名往往相同，留着它会把真正有用的路径挤没
-                    const path = h.url.replace(/^https?:\/\/[^/]+/i, '') || '/';
-                    return (
-                      <div
-                        key={h.id}
-                        className="api-list-item api-row-2l"
-                        onClick={() => {
-                          setReq({ ...emptyReq(), method: h.method, url: h.url });
-                          setResponse(null);
-                          setError('');
-                        }}
-                        title={`${h.method} ${h.url}`}
-                      >
-                        <span className={`method m-${h.method}`}>{h.method}</span>
-                        <span className="api-item-main">
-                          <span className="api-name api-item-name" title={h.url}>{path}</span>
-                          <span className="api-item-sub">
-                            <span className={`api-hist${ok ? ' is-ok' : ' is-bad'}`}>{h.status || 'ERR'}</span>
-                            <span className="api-hist-time">{formatRecent(h.at)}</span>
-                          </span>
-                        </span>
-                        <span className="api-item-del">
-                        <IconBtn
-                          title="删除这条记录"
-                          onClick={e => { e.stopPropagation(); removeHistory(h.id); }}
-                        >
-                          <Icons.close size={12} />
-                        </IconBtn>
-                        </span>
+                ) : (() => {
+                  const filtered = filterHistory(history, sideQuery);
+                  if (filtered.length === 0) {
+                    return <div className="api-side-empty">没有匹配「{sideQuery}」的记录</div>;
+                  }
+                  return groupByDay(filtered).map(g => (
+                    <div key={g.key}>
+                      <div className="api-side-group">
+                        <span>{g.label}</span>
+                        <span className="api-side-group-n">{g.items.length}</span>
                       </div>
-                    );
-                  })
-                )
+                      {g.items.map(h => {
+                        const ok = h.status >= 200 && h.status < 400;
+                        // 只显示路径：主机名往往相同，留着它会把真正有用的路径挤没
+                        const path = h.url.replace(/^https?:\/\/[^/]+/i, '') || '/';
+                        return (
+                          <div
+                            key={h.id}
+                            className="api-list-item api-row-2l"
+                            onClick={() => {
+                              setReq({ ...emptyReq(), method: h.method, url: h.url });
+                              setResponse(null);
+                              setError('');
+                            }}
+                            title={`${h.method} ${h.url}`}
+                          >
+                            <span className={`method m-${h.method}`}>{h.method}</span>
+                            <span className="api-item-main">
+                              <span className="api-name api-item-name" title={h.url}>{path}</span>
+                              <span className="api-item-sub">
+                                <span className={`api-hist${ok ? ' is-ok' : ' is-bad'}`}>{h.status || 'ERR'}</span>
+                                <span className="api-hist-time">{formatRecent(h.at)}</span>
+                              </span>
+                            </span>
+                            <span className="api-item-del">
+                              <IconBtn
+                                title="删除这条记录"
+                                onClick={e => { e.stopPropagation(); removeHistory(h.id); }}
+                              >
+                                <Icons.close size={12} />
+                              </IconBtn>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ));
+                })()
               )}
               {sideTab === 'saved' && (<>
+              <div className="api-side-search">
+                <span className="api-side-search-ico"><Icons.search size={12} /></span>
+                <input
+                  value={sideQuery}
+                  onChange={e => setSideQuery(e.target.value)}
+                  placeholder="搜索名称 / 地址 / 方法"
+                  aria-label="搜索已保存的请求"
+                />
+                {sideQuery && (
+                  <button className="api-side-search-clear" title="清空搜索" aria-label="清空搜索" onClick={() => setSideQuery('')}>
+                    <Icons.close size={11} />
+                  </button>
+                )}
+              </div>
               {items.length === 0 ? (
-                <div style={{ padding: '18px 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                <div className="api-side-empty">
                   还没有保存的请求。<br />填好地址后点右上角「保存请求」。
                 </div>
+              ) : savedFiltered.length === 0 ? (
+                <div className="api-side-empty">没有匹配「{sideQuery}」的请求</div>
               ) : (
-                items.map(i => (
+                savedFiltered.map(i => (
                   <div
                     key={i.id}
                     className={`api-list-item api-row-2l${req.id === i.id ? ' is-active' : ''}`}
@@ -857,6 +938,11 @@ export function ApiClient() {
                     {error}
                   </div>
                 )}
+                {notice && (
+                  <div className="pill pill-ok" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
+                    {notice}
+                  </div>
+                )}
               </div>
             </Panel>
 
@@ -879,6 +965,9 @@ export function ApiClient() {
                   </button>
                   <IconBtn title="复制响应内容" onClick={() => navigator.clipboard.writeText(response.body)}>
                     <Icons.copy size={13} />
+                  </IconBtn>
+                  <IconBtn title="把响应体另存为文件" onClick={saveResponseBody}>
+                    <Icons.download size={13} />
                   </IconBtn>
                 </div>
               )}

@@ -441,7 +441,33 @@ const echo = http.createServer((req, res) => {
     await sleep(250);
     const hovered = await ev(`(() => { const d = document.querySelector('.api-side .api-list-item .api-item-del'); return d ? getComputedStyle(d).opacity : ''; })()`);
     check('侧栏：hover 时删除按钮出现', hovered === '1', String(hovered));
+    // 搜索 + 按天分组（1.7.3）
+    const groupLabels = await ev(`[...document.querySelectorAll('.api-side-group span:first-child')].map(x => x.textContent.trim())`);
+    check('侧栏：历史按天分组（出现「今天」组头）', Array.isArray(groupLabels) && groupLabels.includes('今天'), JSON.stringify(groupLabels));
+
+    const countRows = async () => ev(`document.querySelectorAll('.api-side .api-list-item').length`);
+    await setVal('.api-side-search input', 'admin-api');
+    await sleep(300);
+    const hitRows = await countRows();
+    check('侧栏：搜索命中后只剩匹配项', hitRows === 1, `${hitRows} 行`);
+
+    await setVal('.api-side-search input', 'zzz-not-exist');
+    await sleep(300);
+    const missRows = await countRows();
+    const missEmpty = await ev(`(() => { const e = document.querySelector('.api-side-empty'); return e ? e.textContent.trim() : ''; })()`);
+    check('侧栏：搜索无命中显示空提示', missRows === 0 && /没有匹配/.test(String(missEmpty)), String(missEmpty).slice(0, 30));
+
+    await ev(`(() => { const b = document.querySelector('.api-side-search-clear'); if (b) b.click(); })()`);
+    await sleep(300);
+    const restored = await countRows();
+    check('侧栏：清空搜索后列表恢复', restored >= 1, `${restored} 行`);
+
+    // 响应体另存为（1.7.3）：命名/扩展名逻辑有 9 条单测（utils/apiResponse），
+    // 这里只断言入口在（真正点击会弹原生保存对话框，没法在无头回归里点）。
+    const saveBtnTitle = await ev(`(() => { const b = [...document.querySelectorAll('.resp-tabs .ibtn')].find(x => /另存为/.test(x.title || '')); return b ? b.title : ''; })()`);
+    check('响应体：有「另存为」按钮', /另存为/.test(String(saveBtnTitle)), String(saveBtnTitle));
   }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败${skip.length ? ` / ${skip.length} 跳过` : ''}`);
   app.kill();
   zt.stop();

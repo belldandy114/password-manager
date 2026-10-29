@@ -71,6 +71,10 @@ export interface AppSettings {
   contentProtection: boolean;
   /** 开机自启 */
   launchAtLogin: boolean;
+  /** 启动时静默检查更新（默认 true）；关掉后只有手动点「检查更新」才联网 */
+  updateCheckOnStart?: boolean;
+  /** 上次弹过更新提示的版本号（内部字段，避免每次启动都弹） */
+  updateNotifiedVersion?: string;
   /** 上次停留的页面 */
   lastPage: string;
   /** 禅道新 Bug 提醒（后台定时检查） */

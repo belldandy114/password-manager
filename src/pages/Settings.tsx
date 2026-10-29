@@ -72,6 +72,8 @@ export function Settings() {
   const [closeToTray, setCloseToTray] = useState(settings.closeToTray);
   const [contentProtection, setContentProtection] = useState(settings.contentProtection);
   const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
+  // 启动时静默检查更新（默认开启；关掉后只有手动点才联网）
+  const [updateCheckOnStart, setUpdateCheckOnStart] = useState(settings.updateCheckOnStart !== false);
   const [zentaoNotify, setZentaoNotify] = useState(settings.zentaoNotify);
   const [zentaoNotifyInterval, setZentaoNotifyInterval] = useState(settings.zentaoNotifyInterval);
   // 提醒运行状态（是否已配置/解锁/上次检查）
@@ -812,6 +814,31 @@ export function Settings() {
             </div>
 
             <h3 style={{ marginTop: 24 }}>关于</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">启动时检查更新</div>
+                <div className="setting-desc">
+                  启动后静默检查一次，有新版本会弹系统通知（同一版本只提示一次）。
+                  关掉后只有点「检查更新」才会联网。
+                </div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={updateCheckOnStart}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setUpdateCheckOnStart(val);
+                      const r = await callIpc(() => window.electronAPI.settingsSave({ updateCheckOnStart: val }));
+                      if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
+                      addToast(val ? '已开启启动检查更新' : '已关闭启动检查更新', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
             <div className="setting-row">
               <div>
                 <div className="setting-label">检查更新</div>
