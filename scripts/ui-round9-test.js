@@ -236,7 +236,7 @@ const echo = http.createServer((req, res) => {
   // Chrome「Copy as cURL (cmd)」写法：^"..."^" 不该在值里留下 ^
   await clickHas('从 cURL 导入');
   await sleep(350);
-  const cmdStyle = ['curl ^"http://127.0.0.1:' + ECHO_PORT + '/cmd^" ^', '  -H ^"Accept: */*^"^'].join('\n');
+  const cmdStyle = ['curl ^"http://127.0.0.1:' + ECHO_PORT + '/cmd?pageNo=1^&pageSize=30^" ^', '  -H ^"Accept: */*^"^'].join('\n');
   await setVal('.curl-input', cmdStyle);
   await sleep(200);
   await clickHas('解析并填入');
@@ -245,8 +245,8 @@ const echo = http.createServer((req, res) => {
     url: document.querySelector('.url-bar input')?.value || '',
     headers: [...document.querySelectorAll('.api-io .kv-row input')].map(i => i.value).filter(Boolean).join('|'),
   }))()`);
-  check('cURL：cmd 写法（^"..."^"）不再残留 ^',
-    !!cmdFilled && !cmdFilled.url.includes('^') && !String(cmdFilled.headers).includes('^') && /Accept/.test(String(cmdFilled.headers)),
+  check('cURL：cmd 写法（caret 引号 + ^& 查询串）不再残留 ^',
+    !!cmdFilled && !cmdFilled.url.includes('^') && /pageNo=1&pageSize=30/.test(cmdFilled.url) && !String(cmdFilled.headers).includes('^') && /Accept/.test(String(cmdFilled.headers)),
     JSON.stringify(cmdFilled));
   // 错误输入要有可读提示
   await clickHas('从 cURL 导入');
@@ -392,6 +392,56 @@ const echo = http.createServer((req, res) => {
     check('禅道：切换页面后视图选择保留', kept === '待我验证', String(kept));
   }
 
+  /* ================= E. 接口调试侧栏：两行式列表 ================= */
+  if (want('sidebar')) {
+    await navTo('接口调试');
+    await setVal('.url-bar input', `http://127.0.0.1:${ECHO_PORT}/admin-api/assetsys/wait-warehousing/documents-page?pageNo=1&pageSize=30`);
+    await sleep(200);
+    await clickHas('发送');
+    for (let i = 0; i < 40; i++) {
+      if (await ev(`(() => !!document.querySelector('.code2'))()`)) break;
+      await sleep(150);
+    }
+    await clickHas('历史');
+    await sleep(500);
+
+    const side = await ev(`(() => {
+      const head = document.querySelector('.pnl-head');
+      const item = document.querySelector('.api-side .api-list-item');
+      const name = item && item.querySelector('.api-item-name');
+      const del = item && item.querySelector('.api-item-del');
+      const hist = item && item.querySelector('.api-hist');
+      const title = document.querySelector('.api-side-title');
+      const r = item && item.getBoundingClientRect();
+      const hr = head && head.getBoundingClientRect();
+      return {
+        titleText: title ? title.textContent.trim() : '',
+        titleH: title ? Math.round(title.getBoundingClientRect().height) : 0,
+        headH: hr ? Math.round(hr.height) : 0,
+        rowH: r ? Math.round(r.height) : 0,
+        nameW: name ? Math.round(name.getBoundingClientRect().width) : 0,
+        nameText: name ? name.textContent.trim() : '',
+        delOpacity: del ? getComputedStyle(del).opacity : '',
+        histText: hist ? hist.textContent.trim() : '',
+      };
+    })()`);
+    check('侧栏：标题是短的「历史」+ 计数，不再换行',
+      !!side && /^历史\d+$/.test(side.titleText) && side.headH <= 52 && side.titleH <= 24,
+      JSON.stringify([side && side.titleText, side && side.headH, side && side.titleH]));
+    check('侧栏：行是两行式（高度 48~62）', !!side && side.rowH >= 48 && side.rowH <= 62, side && `${side.rowH}px`);
+    check('侧栏：名称能显示路径（宽度 ≥ 110px）',
+      !!side && side.nameW >= 110 && /admin-api/.test(side.nameText),
+      side && `${side.nameW}px · ${side.nameText}`);
+    check('侧栏：状态码作为独立小标签', !!side && /^\d{3}$|^ERR$/.test(side.histText), side && side.histText);
+    check('侧栏：删除按钮默认隐藏（不抢横向空间）', !!side && side.delOpacity === '0', side && side.delOpacity);
+
+    // 真 hover 一下，删除按钮应该出现
+    const box = await ev(`(() => { const r = document.querySelector('.api-side .api-list-item').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y, button: 'none' });
+    await sleep(250);
+    const hovered = await ev(`(() => { const d = document.querySelector('.api-side .api-list-item .api-item-del'); return d ? getComputedStyle(d).opacity : ''; })()`);
+    check('侧栏：hover 时删除按钮出现', hovered === '1', String(hovered));
+  }
   console.log(`\n结果：${pass} 通过 / ${fail} 失败${skip.length ? ` / ${skip.length} 跳过` : ''}`);
   app.kill();
   zt.stop();

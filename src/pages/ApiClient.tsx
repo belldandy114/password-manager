@@ -422,15 +422,19 @@ export function ApiClient() {
           }
         />
 
-        <div className="split" style={{ gridTemplateColumns: '248px minmax(0, 1fr)' }}>
+        <div className="split" style={{ gridTemplateColumns: '272px minmax(0, 1fr)' }}>
           <Panel
-            title={sideTab === 'saved' ? '已保存' : '请求历史'}
-            meta={sideTab === 'saved' ? items.length : history.length}
+            title={
+              <span className="api-side-title">
+                {sideTab === 'saved' ? '已保存' : '历史'}
+                <span className="api-side-count">{sideTab === 'saved' ? items.length : history.length}</span>
+              </span>
+            }
             flush
             tools={
-              <div className="resp-tabs">
-                <button className={`tab2${sideTab === 'saved' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('saved')}>保存</button>
-                <button className={`tab2${sideTab === 'history' ? ' is-active' : ''}`} style={{ padding: '4px 10px', fontSize: 11.5 }} onClick={() => setSideTab('history')}>历史</button>
+              <div className="resp-tabs api-side-tabs">
+                <button className={`tab2${sideTab === 'saved' ? ' is-active' : ''}`} onClick={() => setSideTab('saved')}>保存</button>
+                <button className={`tab2${sideTab === 'history' ? ' is-active' : ''}`} onClick={() => setSideTab('history')}>历史</button>
                 {sideTab === 'history' && history.length > 0 && (
                   <button
                     className="ibtn"
@@ -456,31 +460,40 @@ export function ApiClient() {
                     还没有请求记录。<br />发送一次请求后会自动记录（保留最近 50 条）。
                   </div>
                 ) : (
-                  history.map(h => (
-                    <div
-                      key={h.id}
-                      className="api-list-item"
-                      onClick={() => {
-                        setReq({ ...emptyReq(), method: h.method, url: h.url });
-                        setResponse(null);
-                        setError('');
-                      }}
-                      title={`${h.method} ${h.url}`}
-                    >
-                      <span className={`method m-${h.method}`}>{h.method}</span>
-                      <span className="api-name">{h.url.replace(/^https?:\/\//, '')}</span>
-                      <span className="api-hist-time">{formatRecent(h.at)}</span>
-                      <span className={`api-hist${h.status >= 200 && h.status < 400 ? ' is-ok' : ' is-bad'}`}>
-                        {h.status || 'ERR'}
-                      </span>
-                      <IconBtn
-                        title="删除这条记录"
-                        onClick={e => { e.stopPropagation(); removeHistory(h.id); }}
+                  history.map(h => {
+                    const ok = h.status >= 200 && h.status < 400;
+                    // 只显示路径：主机名往往相同，留着它会把真正有用的路径挤没
+                    const path = h.url.replace(/^https?:\/\/[^/]+/i, '') || '/';
+                    return (
+                      <div
+                        key={h.id}
+                        className="api-list-item api-row-2l"
+                        onClick={() => {
+                          setReq({ ...emptyReq(), method: h.method, url: h.url });
+                          setResponse(null);
+                          setError('');
+                        }}
+                        title={`${h.method} ${h.url}`}
                       >
-                        <Icons.close size={12} />
-                      </IconBtn>
-                    </div>
-                  ))
+                        <span className={`method m-${h.method}`}>{h.method}</span>
+                        <span className="api-item-main">
+                          <span className="api-name api-item-name" title={h.url}>{path}</span>
+                          <span className="api-item-sub">
+                            <span className={`api-hist${ok ? ' is-ok' : ' is-bad'}`}>{h.status || 'ERR'}</span>
+                            <span className="api-hist-time">{formatRecent(h.at)}</span>
+                          </span>
+                        </span>
+                        <span className="api-item-del">
+                        <IconBtn
+                          title="删除这条记录"
+                          onClick={e => { e.stopPropagation(); removeHistory(h.id); }}
+                        >
+                          <Icons.close size={12} />
+                        </IconBtn>
+                        </span>
+                      </div>
+                    );
+                  })
                 )
               )}
               {sideTab === 'saved' && (<>
@@ -492,7 +505,7 @@ export function ApiClient() {
                 items.map(i => (
                   <div
                     key={i.id}
-                    className={`api-list-item${req.id === i.id ? ' is-active' : ''}`}
+                    className={`api-list-item api-row-2l${req.id === i.id ? ' is-active' : ''}`}
                     onClick={() => { setReq(migrateReq(i)); setResponse(null); setSchemaDiff(null); setError(''); }}
                     title={i.url}
                   >
@@ -510,7 +523,15 @@ export function ApiClient() {
                       />
                     </span>
                     <span className={`method m-${i.method}`}>{i.method}</span>
-                    <span className="api-name">{i.name}</span>
+                    <span className="api-item-main">
+                      <span className="api-name api-item-name" title={i.name}>{i.name}</span>
+                      <span className="api-item-sub">
+                        <span className="api-item-url" title={i.url}>
+                          {i.url.replace(/^https?:\/\/[^/]+/i, '') || '/'}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="api-item-del">
                     <IconBtn
                       title="删除"
                       danger
@@ -526,6 +547,7 @@ export function ApiClient() {
                     >
                       <Icons.trash size={12} />
                     </IconBtn>
+                    </span>
                   </div>
                 ))
               )}

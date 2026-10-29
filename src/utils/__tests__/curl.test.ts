@@ -34,6 +34,18 @@ describe('tokenizeCurl 引号与续行', () => {
     expect(r.headers).not.toContain('^');
   });
 
+  it('URL 里的 ^& 要去掉 ^（cmd 转义），查询串不能被污染', () => {
+    const src = 'curl ^"https://testapi.example.com/admin-api/list?pageNo=1^&pageSize=30^&id=b8fe^&type=1^"';
+    const r = ok(src);
+    expect(r.url).toBe('https://testapi.example.com/admin-api/list?pageNo=1&pageSize=30&id=b8fe&type=1');
+    expect(r.url).not.toContain('^');
+  });
+
+  it('bash 写法里正常的 & 与 ^ 都不动', () => {
+    const r = ok(`curl 'https://a/b?x=1&y=2' -H 'X: a^b'`);
+    expect(r.url).toBe('https://a/b?x=1&y=2');
+    expect(r.headers).toBe('X: a^b');
+  });
   it('cmd 写法里 ^ 与单引号组合也正确', () => {
     const r = ok('curl ^\'https://a/b\' ^ -H ^\'Accept: */*\'');
     expect(r.url).toBe('https://a/b');

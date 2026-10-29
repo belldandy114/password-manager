@@ -30,6 +30,8 @@ function unwrap(src: string): string {
   // Chrome「Copy as cURL (cmd)」把每个参数写成 ^"..."^"，^ 在 cmd 里是转义符：
   // 去掉紧挨引号的 ^，否则解析出来每个值首尾都会多一个 ^（用户实测踩过）
   s = s.replace(/\^(["'])/g, '$1');
+  // cmd 里 & | < > ( ) 前面都要加 ^ 转义，URL 查询串最常见：pageNo=1^&pageSize=30
+  s = s.replace(/\^([&|<>()])/g, '$1');
   // 还有一种是 ^ 直接贴在参数尾部（cmd 里既当转义又当续行，粘贴时常留下），一并去掉
   s = s.replace(/\^(?=\s|$)/g, '');
   // bash 的续行：行尾 \

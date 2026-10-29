@@ -4437,3 +4437,119 @@
 .dl-multi:hover {
   color: var(--text-secondary);
 }
+
+/* ================================================================
+   19.23 接口调试：左侧「已保存 / 历史」列表（2026-10-29 重做）
+   ----------------------------------------------------------------
+   旧样式把 方法/名称/时间/状态/删除 全挤在一行，272px 的侧栏里 URL 只剩「testapi...」，
+   标题「请求历史」还会被挤压换行。现在改成两行式：第一行方法+名称，第二行状态+时间，
+   删除按钮只在 hover/选中时出现，把横向空间全部让给名称。
+   ================================================================ */
+.api-side-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.api-side-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.api-side-tabs {
+  flex: none;
+}
+
+.api-side-tabs .tab2 {
+  padding: 3px 9px !important;
+  font-size: 11px !important;
+}
+
+/* 两行式行：高度稳定，不被内容顶开 */
+.api-list-item.api-row-2l {
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  min-height: 52px;
+}
+
+.api-list-item.api-row-2l .method {
+  margin-top: 1px;
+  flex: none;
+}
+
+.api-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.api-item-name {
+  display: block;
+  line-height: 1.35;
+}
+
+.api-item-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.api-item-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* 删除按钮默认隐藏，hover / 选中 / 键盘聚焦时出现 */
+.api-item-del {
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.api-list-item:hover .api-item-del,
+.api-list-item.is-active .api-item-del,
+.api-item-del:focus-visible {
+  opacity: 1;
+}
+
+.api-list-item.api-row-2l .api-hist {
+  padding: 0 5px;
+  line-height: 15px;
+}
+
+.api-list-item.api-row-2l .api-hist-time {
+  font-size: 10px;
+}
+
+/* 侧栏面板头部收紧：标题 + 页签 + 清空按钮要能一行放下 */
+.split > .pnl:first-child .pnl-head {
+  padding: 8px 10px;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.split > .pnl:first-child .pnl-title {
+  white-space: nowrap;
+  flex: none;
+}
