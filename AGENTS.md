@@ -114,7 +114,7 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
 - `electron` 固定在 `37.10.3`（`devDependencies`）；打包时通过 `-c.electronDist=node_modules/electron/dist`
   复用本地运行时，避免联网下载。
 - NSIS 阶段会下载 nsis/nsis-resources 资源，本机访问 GitHub 会超时；离线打包请设置
-  `ELECTRON_BUILDER_CACHE=C:\Users\Administrator\AppData\Local\electron-builder\Cache`（本机已有完整缓存）。
+  `ELECTRON_BUILDER_CACHE=%LOCALAPPDATA%\electron-builder\Cache`（本机已有完整缓存）。
 - `scripts/fix-icon.js` 已不再被 `build-installer.js` 调用：它针对 `password-manager-temp.exe`
   这个 electron-builder 不再留下的中间文件，必然报 `Fatal error: Unable to load file`。
   图标由 electron-builder 在 `--dir` 阶段用 `buildResources/icon.ico` 直接写入。
