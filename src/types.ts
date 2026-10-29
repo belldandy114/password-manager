@@ -125,6 +125,9 @@ export interface ZentaoConfig {
   updatedAt?: string;
 }
 
+/** 我的 Bug 视图：指派给我 / 我提交的 / 待我验证 */
+export type MyBugScope = 'assigned' | 'opened' | 'verify';
+
 export interface ZentaoBug {
   id: string;
   title: string;
@@ -466,7 +469,7 @@ export interface ElectronAPI {
   apiCookies: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
   apiCookiesClear: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
-  zentaoMyBugs: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
+  zentaoMyBugs: (cfg: ZentaoConfig, scope?: MyBugScope) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; error?: string }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
     Promise<{

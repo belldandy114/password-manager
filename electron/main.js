@@ -2422,8 +2422,53 @@ function setupIpcHandlers() {
     }
   }
 
-  ipcMain.handle('zentao:my-bugs', async (_event, cfg) => {
+  /**
+   * 「我提交的 / 待我验证」走 REST（api.php/v1）：
+   * 页面抓取那套只认 assignedTo 的分页模板，openedBy 与「待验证」没有现成模板可用。
+   */
+  async function ztLoadMyBugsScoped(cfg, scope) {
+    cfg = ztNormalizeCfg(cfg);
+    if (!cfg.account || !cfg.password) return { success: false, error: '请先填写账号和密码' };
+    try {
+      const products = await ztApiProducts(cfg).catch(() => []);
+      const nameMap = {};
+      for (const p of products) nameMap[String(p.id)] = p.name;
+
+      const build = (page) => {
+        const params = new URLSearchParams();
+        params.set('limit', '1000');
+        params.set('page', String(page));
+        if (scope === 'opened') {
+          params.set('openedBy', cfg.account);
+          params.set('status', 'all');        // 我提交的：含已关闭，能看整体履约情况
+        } else {
+          params.set('assignedTo', cfg.account);
+          params.set('status', 'resolved');   // 待我验证：已解决、还没关闭
+        }
+        return `api.php/v1/bugs?${params.toString()}`;
+      };
+
+      const first = await ztApiGet(cfg, build(1));
+      const all = (Array.isArray(first.bugs) ? first.bugs : []).map(b => ztMapApiBug(b, nameMap));
+      const total = Number(first.total) || all.length;
+
+      // 超过一页继续翻（最多 5 页，别把禅道打崩）
+      for (let page = 2; page <= Math.min(5, Math.ceil(total / 1000)); page++) {
+        const next = await ztApiGet(cfg, build(page));
+        const rows = (Array.isArray(next.bugs) ? next.bugs : []).map(b => ztMapApiBug(b, nameMap));
+        if (!rows.length) break;
+        all.push(...rows);
+      }
+
+      return { success: true, data: all, total, scope };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  ipcMain.handle('zentao:my-bugs', async (_event, cfg, scope = 'assigned') => {
     if (!cfg || !cfg.baseUrl) return { success: false, error: '请先填写禅道地址' };
+    if (scope === 'opened' || scope === 'verify') return ztLoadMyBugsScoped(cfg, scope);
     return ztLoadMyBugs(cfg);
   });
 

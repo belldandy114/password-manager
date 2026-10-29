@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ZentaoBug, ZentaoConfig, ZentaoPreset } from '../types';
+import type { ZentaoBug, ZentaoConfig, ZentaoPreset, MyBugScope } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useZentaoStore } from '../store/zentaoStore';
 import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, type PillTone } from '../components/ui';
@@ -98,6 +98,8 @@ export function ZentaoPage() {
   const severity = useZentaoStore(s => s.severity);
   const query = useZentaoStore(s => s.query);
   const setBugs = useZentaoStore(s => s.setBugs);
+  const mineScope = useZentaoStore(s => s.mineScope);
+  const setMineScope = useZentaoStore(s => s.setMineScope);
   const setFilter = useZentaoStore(s => s.setFilter);
 
   /* ---------- store：项目 Bug ---------- */
@@ -225,11 +227,26 @@ export function ZentaoPage() {
     }
   };
 
-  const loadMine = async () => {
+  /** 切换「指派给我 / 我提交的 / 待我验证」：换视图同时重新拉一次 */
+  const switchScope = (v: MyBugScope) => {
+    if (v === mineScope) return;
+    setMineScope(v);
+    setFilter({ project: '', status: '', severity: '', query: '' });
+    void loadMine(v);
+  };
+
+  const SCOPE_LABEL: Record<MyBugScope, string> = {
+    assigned: '指派给我',
+    opened: '我提交的',
+    verify: '待我验证',
+  };
+  const scopeLabel = SCOPE_LABEL[mineScope];
+
+  const loadMine = async (scope: MyBugScope = mineScope) => {
     setError('');
     if (!ready()) return;
     setBusy('mine');
-    const res = await window.electronAPI.zentaoMyBugs(currentCfg());
+    const res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope);
     setBusy('');
     if (res.success && res.data) {
       setBugs(res.data, res.total || res.data.length);
@@ -490,8 +507,8 @@ export function ZentaoPage() {
                 <Icons.lock size={13} /> {busy === 'login' ? '登录中…' : '登录并保存'}
               </button>
               {tab === 'mine' ? (
-                <button className="btn btn-primary btn-sm" onClick={loadMine} disabled={busy === 'mine'}>
-                  <Icons.refresh size={13} /> {busy === 'mine' ? '拉取中…' : '拉取我的 Bug'}
+                <button className="btn btn-primary btn-sm" onClick={() => loadMine()} disabled={busy === 'mine'}>
+                  <Icons.refresh size={13} /> {busy === 'mine' ? '拉取中…' : `拉取「${scopeLabel}」`}
                 </button>
               ) : (
                 <>
@@ -577,6 +594,27 @@ export function ZentaoPage() {
         </div>
 
         {tab === 'mine' && (
+          <div className="zt-scope" role="tablist" aria-label="我的 Bug 视图">
+            {([
+              { v: 'assigned' as MyBugScope, label: '指派给我', hint: '别人指派给我、还没关闭的 Bug' },
+              { v: 'opened' as MyBugScope, label: '我提交的', hint: '我创建的 Bug（含已关闭）' },
+              { v: 'verify' as MyBugScope, label: '待我验证', hint: '已解决、等我验证的 Bug' },
+            ]).map(s => (
+              <button
+                key={s.v}
+                role="tab"
+                aria-selected={mineScope === s.v}
+                className={`zt-scope-btn${mineScope === s.v ? ' is-active' : ''}`}
+                onClick={() => switchScope(s.v)}
+                title={s.hint}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'mine' && (
           <>
             <Panel title="快捷入口" meta={`${QUICK_LINKS.length} 个`}>
               <div className="zt-quick">
@@ -592,7 +630,7 @@ export function ZentaoPage() {
             {bugs.length > 0 && (
               <Panel
                 title="统计（点数字筛选下方列表）"
-                meta={`我的 Bug 共 ${bugs.length} 条${fetchedAt ? ` · ${formatHm(fetchedAt)} 拉取` : ''}`}
+                meta={`${scopeLabel} 共 ${bugs.length} 条${fetchedAt ? ` · ${formatHm(fetchedAt)} 拉取` : ''}`}
                 tools={hasFilter ? (
                   <button className="btn btn-ghost btn-sm" onClick={() => setFilter({ project: '', status: '', severity: '', query: '' })}>清除筛选</button>
                 ) : undefined}
@@ -609,7 +647,7 @@ export function ZentaoPage() {
 
             {bugs.length > 0 ? (
               <Panel
-                title="我的 Bug"
+                title={scopeLabel}
                 meta={`${visibleMine.length} / ${bugs.length} 条`}
                 tools={
                   <div className="zt-filters">
@@ -634,7 +672,7 @@ export function ZentaoPage() {
                     <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleMine)} title="复制为汇报文本">
                       <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => exportCsv(visibleMine, '我的Bug')} title="导出为 CSV（当前筛选全部）">
+                    <button className="btn btn-ghost btn-sm" onClick={() => exportCsv(visibleMine, scopeLabel)} title="导出为 CSV（当前筛选全部）">
                       <Icons.download size={12} /> 导出
                     </button>
                   </div>
@@ -684,7 +722,7 @@ export function ZentaoPage() {
                 <Empty
                   icon={<Icons.bug size={22} />}
                   title="还没有 Bug 数据"
-                  desc="填好地址账号后点「拉取我的 Bug」，结果会一直保留，切换页面也不会丢"
+                  desc={`选「${scopeLabel}」后点右上角「拉取」，结果会一直保留，切换页面也不会丢`}
                 />
               </Panel>
             )}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ZentaoBug, ZentaoProject } from '../types';
+import type { ZentaoBug, ZentaoProject, MyBugScope } from '../types';
 
 /**
  * 禅道数据放在 store 里，而不是页面组件的 useState：
@@ -14,6 +14,8 @@ interface ZentaoState {
   status: string;    // '' = 全部状态（也可以是 unclosed / fixed）
   severity: string;  // '' = 全部严重程度
   query: string;
+  /** 我的 Bug 视图：指派给我 / 我提交的 / 待我验证（切页面不丢） */
+  mineScope: MyBugScope;
 
   /* ---- 项目 Bug（整个项目，不限指派人） ---- */
   projects: ZentaoProject[];
@@ -26,6 +28,7 @@ interface ZentaoState {
   pQuery: string;
 
   setBugs: (bugs: ZentaoBug[], total: number) => void;
+  setMineScope: (scope: MyBugScope) => void;
   setFilter: (patch: Partial<Pick<ZentaoState, 'project' | 'status' | 'severity' | 'query'>>) => void;
   setProjects: (list: ZentaoProject[]) => void;
   setActiveProject: (id: string) => void;
@@ -42,6 +45,7 @@ export const useZentaoStore = create<ZentaoState>((set) => ({
   status: '',
   severity: '',
   query: '',
+  mineScope: 'assigned',
 
   projects: [],
   activeProject: '',
@@ -53,6 +57,7 @@ export const useZentaoStore = create<ZentaoState>((set) => ({
   pQuery: '',
 
   setBugs: (bugs, total) => set({ bugs, total, fetchedAt: new Date().toISOString() }),
+  setMineScope: (mineScope) => set({ mineScope }),
   setFilter: (patch) => set(patch),
   setProjects: (list) => set({ projects: list }),
   // 切换项目时清掉上一个项目的筛选与数据，避免看起来「没数据」

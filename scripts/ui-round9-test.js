@@ -20,6 +20,7 @@ const ECHO_PORT = 9835;
 const PW = 'Round9#2026';
 
 const ZT = require('./zt-config');
+const { ensureZt } = require('./zt-stub');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0;
@@ -45,6 +46,8 @@ const echo = http.createServer((req, res) => {
 });
 
 (async () => {
+  const zt = await ensureZt(9846);
+  if (zt.stub) console.log('· 未配置 ZT_* 环境变量，禅道使用本地桩服务');
   await new Promise((r) => echo.listen(ECHO_PORT, '127.0.0.1', r));
 
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r9-'));
@@ -62,7 +65,7 @@ const echo = http.createServer((req, res) => {
     } catch { /* 等待启动 */ }
     await sleep(400);
   }
-  if (!target) { console.log('FAIL 应用未启动'); app.kill(); echo.close(); process.exit(1); }
+  if (!target) { console.log('FAIL 应用未启动'); app.kill(); zt.stop(); echo.close(); process.exit(1); }
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   let seq = 0;
@@ -245,20 +248,61 @@ const echo = http.createServer((req, res) => {
 
   /* ================= C. 禅道：我提交的 / 待我验证 ================= */
   if (want('zentao')) {
-  if (!ZT.ready) {
-    skipped('禅道：我提交的 / 待我验证');
-  } else {
     await navTo('禅道');
     await sleep(500);
-    const scopes = await ev(`(() => [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /我提交|待我验证|指派给我/.test(t)))()`);
-    check('禅道：有三个视图切换（指派给我 / 我提交的 / 待我验证）',
-      Array.isArray(scopes) && scopes.length >= 3, (scopes || []).join(' | '));
-  }
 
+    const scopes = await ev(`(() => [...document.querySelectorAll('.zt-scope-btn')].map(b => ({ t: b.textContent.trim(), on: b.classList.contains('is-active') })))()`);
+    check('禅道：有三个视图切换（指派给我 / 我提交的 / 待我验证）',
+      Array.isArray(scopes) && scopes.length === 3, (scopes || []).map(s => s.t).join(' | '));
+    check('禅道：默认选中「指派给我」', !!scopes && scopes[0] && scopes[0].on, scopes && scopes[0] && scopes[0].t);
+
+    // 填配置（桩服务地址），无需真实账号
+    await ev(`(() => {
+      const s = ${SETVAL};
+      const ins = [...document.querySelectorAll('.pnl-body input')];
+      [${JSON.stringify(ZT.baseUrl)}, ${JSON.stringify(ZT.account)}, ${JSON.stringify(ZT.password)}].forEach((v, i) => { if (ins[i]) s(ins[i], v); });
+      return ins.length;
+    })()`);
+    await sleep(300);
+
+    const rowsOf = `(() => { const t = document.querySelectorAll('.tbl'); return t.length ? t[t.length - 1].querySelectorAll('tbody tr').length : 0; })()`;
+    const waitRows = async () => {
+      for (let i = 0; i < 40; i++) {
+        const n = await ev(rowsOf);
+        if (n > 0) return n;
+        await sleep(250);
+      }
+      return 0;
+    };
+
+    // 我提交的（REST openedBy + status=all）
+    await clickHas('我提交的');
+    const openedRows = await waitRows();
+    check('禅道：我提交的 → 拉到 2 条', openedRows === 2, `${openedRows} 行`);
+    const openedHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /openedBy=stub-user/.test(l.url) && /status=all/.test(l.url));
+    check('禅道：我提交的用的是 openedBy + status=all', openedHit,
+      zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
+    const openedTitle = await ev(`(() => { const p = [...document.querySelectorAll('.pnl-title')].map(x => x.textContent.trim()); return p.join(' | '); })()`);
+    check('禅道：切视图后标题跟着变', /我提交的/.test(String(openedTitle)), String(openedTitle).slice(0, 60));
+
+    // 待我验证（REST assignedTo + status=resolved）
+    await clickHas('待我验证');
+    const verifyRows = await waitRows();
+    check('禅道：待我验证 → 拉到 2 条', verifyRows === 2, `${verifyRows} 行`);
+    const verifyHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /assignedTo=stub-user/.test(l.url) && /status=resolved/.test(l.url));
+    check('禅道：待我验证用的是 assignedTo + status=resolved', verifyHit,
+      zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
+
+    // 切页面回来视图要保留（状态在 store 里）
+    await navTo('周报');
+    await navTo('禅道');
+    const kept = await ev(`(() => { const b = document.querySelector('.zt-scope-btn.is-active'); return b ? b.textContent.trim() : ''; })()`);
+    check('禅道：切换页面后视图选择保留', kept === '待我验证', String(kept));
   }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败${skip.length ? ` / ${skip.length} 跳过` : ''}`);
   app.kill();
+  zt.stop();
   echo.close();
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log('ERR', e); process.exit(1); });

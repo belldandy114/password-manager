@@ -4379,3 +4379,37 @@
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
+
+/* --- 禅道：我的 Bug 视图切换（指派给我 / 我提交的 / 待我验证） --- */
+.zt-scope {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--pm-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  align-self: flex-start;
+}
+
+.zt-scope-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.zt-scope-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.zt-scope-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-light);
+  font-weight: 650;
+}
