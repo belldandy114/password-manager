@@ -42,10 +42,13 @@ async function ensureZt(port = 9840) {
     if (/\/api\.php\/v1\/products/.test(url)) return send(200, { total: PRODUCTS.length, products: PRODUCTS });
     if (/\/api\.php\/v1\/bugs/.test(url)) {
       const q = new URL(url, 'http://x').searchParams;
+      // 禅道 20.x 真实行为：不带 product 直接报 "Need product id."
+      const product = q.get('product');
+      if (!product) return send(400, { result: 'fail', message: 'Need product id.' });
       const openedBy = q.get('openedBy');
       const assignedTo = q.get('assignedTo');
       const status = q.get('status');
-      let rows = BUGS.slice();
+      let rows = BUGS.filter(b => String(b.product) === String(product));
       if (openedBy) rows = rows.filter(b => b.openedBy.account === openedBy);
       if (assignedTo) rows = rows.filter(b => b.assignedTo.account === assignedTo);
       if (status && status !== 'all') rows = rows.filter(b => b.status === status);

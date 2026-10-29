@@ -676,3 +676,13 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 - `threads:true` → 走 6 段且校验仍然通过。
 
 GitHub 侧的 `digest` 字段确认可用：v1.7.0 附件的 digest 与本地 exe 的 SHA-256 完全一致。
+
+## 1.7.2 修的两个坑（别改回去）
+
+| 症状 | 根因 | 正确做法 |
+|---|---|---|
+| 禅道「我提交的 / 待我验证」报 `Need product id.` | 禅道 20.x 的 `GET api.php/v1/bugs` **强制要 product**，只带 openedBy/assignedTo + status 一律失败 | `ztLoadMyBugsScoped` 先 `ztApiProducts()` 取项目，再**按项目逐个查**（4 并发、按 id 去重合并）。`scripts/zt-stub.js` 也实现了「不带 product → 400 Need product id」，回归会拦住 |
+| 粘贴 curl 后值首尾多出 `^` | Chrome「Copy as cURL (cmd)」用 `^"…"^` 包裹参数，`^` 是 cmd 转义符；分词器只处理了 bash `\` 与裸 `^` 续行 | `unwrap()` 先把 `^"` → `"`、去掉贴尾/贴空白的孤立 `^`，再走正常引号分词。单测覆盖了 cmd 写法 |
+
+⚠️ 写禅道 REST 相关代码时记住：`products` 与 `bugs` 这两个接口都有硬性参数要求，
+不要凭直觉省参数——先在假禅道（`zt-stub.js`）里把响应造对，再让回归跑绿。

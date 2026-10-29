@@ -24,12 +24,17 @@ export type ParseResult = { ok: true; request: CurlRequest } | { ok: false; erro
 
 /** 去掉换行续行符：bash 的 `\` 与 Windows cmd 的 `^`，以及首尾空白 */
 function unwrap(src: string): string {
-  return String(src || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\\\n/g, ' ')
-    .replace(/\^\n/g, ' ')
-    .replace(/\n/g, ' ')
-    .trim();
+  let s = String(src || '').replace(/\r\n/g, '\n');
+  // Windows cmd 的续行：行尾 ^
+  s = s.replace(/\^\n/g, ' ');
+  // Chrome「Copy as cURL (cmd)」把每个参数写成 ^"..."^"，^ 在 cmd 里是转义符：
+  // 去掉紧挨引号的 ^，否则解析出来每个值首尾都会多一个 ^（用户实测踩过）
+  s = s.replace(/\^(["'])/g, '$1');
+  // 还有一种是 ^ 直接贴在参数尾部（cmd 里既当转义又当续行，粘贴时常留下），一并去掉
+  s = s.replace(/\^(?=\s|$)/g, '');
+  // bash 的续行：行尾 \
+  s = s.replace(/\\\n/g, ' ');
+  return s.replace(/\n/g, ' ').trim();
 }
 
 /**

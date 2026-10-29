@@ -21,6 +21,24 @@ describe('tokenizeCurl 引号与续行', () => {
     expect(tokenizeCurl(`curl -d 'it'\\''s'`)).toEqual(['curl', '-d', "it's"]);
   });
 
+  it('Chrome「Copy as cURL (cmd)」的 ^"..."^" 要去掉 ^，值首尾不能留 caret', () => {
+    const src = [
+      'curl ^"https://api.example.com/list^" ^',
+      '  -H ^"Accept: */*^" ^',
+      '  -H ^"Referer: http://172.16.0.1:30201/^" ^',
+      '  -H ^"Authorization: Bearer abc^" ^',
+    ].join('\n');
+    const r = ok(src);
+    expect(r.url).toBe('https://api.example.com/list');
+    expect(r.headers).toBe('Accept: */*\nReferer: http://172.16.0.1:30201/\nAuthorization: Bearer abc');
+    expect(r.headers).not.toContain('^');
+  });
+
+  it('cmd 写法里 ^ 与单引号组合也正确', () => {
+    const r = ok('curl ^\'https://a/b\' ^ -H ^\'Accept: */*\'');
+    expect(r.url).toBe('https://a/b');
+    expect(r.headers).toBe('Accept: */*');
+  });
   it('反斜杠续行与 cmd 的 ^ 续行都能拼成一行', () => {
     expect(tokenizeCurl("curl 'http://a/b' \\\n  -H 'X: 1'")).toEqual(['curl', 'http://a/b', '-H', 'X: 1']);
     expect(tokenizeCurl("curl 'http://a/b' ^\n  -H 'X: 1'")).toEqual(['curl', 'http://a/b', '-H', 'X: 1']);

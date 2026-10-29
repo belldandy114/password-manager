@@ -233,6 +233,21 @@ const echo = http.createServer((req, res) => {
       String(clip).slice(0, 90));
   }
 
+  // Chrome「Copy as cURL (cmd)」写法：^"..."^" 不该在值里留下 ^
+  await clickHas('从 cURL 导入');
+  await sleep(350);
+  const cmdStyle = ['curl ^"http://127.0.0.1:' + ECHO_PORT + '/cmd^" ^', '  -H ^"Accept: */*^"^'].join('\n');
+  await setVal('.curl-input', cmdStyle);
+  await sleep(200);
+  await clickHas('解析并填入');
+  await sleep(500);
+  const cmdFilled = await ev(`(() => ({
+    url: document.querySelector('.url-bar input')?.value || '',
+    headers: [...document.querySelectorAll('.api-io .kv-row input')].map(i => i.value).filter(Boolean).join('|'),
+  }))()`);
+  check('cURL：cmd 写法（^"..."^"）不再残留 ^',
+    !!cmdFilled && !cmdFilled.url.includes('^') && !String(cmdFilled.headers).includes('^') && /Accept/.test(String(cmdFilled.headers)),
+    JSON.stringify(cmdFilled));
   // 错误输入要有可读提示
   await clickHas('从 cURL 导入');
   await sleep(350);
@@ -349,10 +364,17 @@ const echo = http.createServer((req, res) => {
     await clickHas('我提交的');
     const openedRows = await waitRows();
     check('禅道：我提交的 → 拉到 2 条', openedRows === 2, `${openedRows} 行`);
-    const openedHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /openedBy=stub-user/.test(l.url) && /status=all/.test(l.url));
-    check('禅道：我提交的用的是 openedBy + status=all', openedHit,
+    const openedHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /openedBy=stub-user/.test(l.url) && /status=all/.test(l.url) && /product=\d+/.test(l.url));
+    check('禅道：我提交的用的是 openedBy + status=all + product', openedHit,
       zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
     const openedTitle = await ev(`(() => { const p = [...document.querySelectorAll('.pnl-title')].map(x => x.textContent.trim()); return p.join(' | '); })()`);
+    // 禅道强制要 product：必须按项目逐个查，且不能有漏带 product 的请求（线上就是 Need product id）
+    const bugReqs = zt.log.filter(l => /v1\/bugs/.test(l.url));
+    const withoutProduct = bugReqs.filter(l => !/[?&]product=/.test(l.url));
+    const productsQueried = new Set(bugReqs.map(l => (/[?&]product=(\d+)/.exec(l.url) || [])[1]).filter(Boolean));
+    check('禅道：按项目逐个查（覆盖 2 个项目、无漏带 product 的请求）',
+      productsQueried.size >= 2 && withoutProduct.length === 0,
+      'products=' + [...productsQueried].join(',') + ' 漏带=' + withoutProduct.length);
     check('禅道：切视图后标题跟着变', /我提交的/.test(String(openedTitle)), String(openedTitle).slice(0, 60));
 
     // 待我验证（REST assignedTo + status=resolved）

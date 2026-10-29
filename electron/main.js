@@ -2600,21 +2600,28 @@ function setupIpcHandlers() {
   }
 
   /**
-   * 「我提交的 / 待我验证」走 REST（api.php/v1）：
-   * 页面抓取那套只认 assignedTo 的分页模板，openedBy 与「待验证」没有现成模板可用。
+   * 「我提交的 / 待我验证」走 REST（api.php/v1）。
+   *
+   * ⚠️ 禅道 20.x 的 `GET /bugs` 强制要求 `product`，不带就返回
+   * `{"result":"fail","message":"Need product id."}`（用户实测报过）。
+   * 所以先取项目列表，再按项目逐个查、按 id 去重合并；
+   * 并发 4 个 worker，既压住耗时，也不至于把禅道打满。
    */
   async function ztLoadMyBugsScoped(cfg, scope) {
     cfg = ztNormalizeCfg(cfg);
     if (!cfg.account || !cfg.password) return { success: false, error: '请先填写账号和密码' };
     try {
       const products = await ztApiProducts(cfg).catch(() => []);
+      if (!products.length) {
+        return { success: false, error: '没有取到项目列表（禅道 REST 要求按项目查询），请先点一次「登录并保存」再试' };
+      }
       const nameMap = {};
       for (const p of products) nameMap[String(p.id)] = p.name;
 
-      const build = (page) => {
+      const filter = () => {
         const params = new URLSearchParams();
         params.set('limit', '1000');
-        params.set('page', String(page));
+        params.set('page', '1');
         if (scope === 'opened') {
           params.set('openedBy', cfg.account);
           params.set('status', 'all');        // 我提交的：含已关闭，能看整体履约情况
@@ -2622,22 +2629,44 @@ function setupIpcHandlers() {
           params.set('assignedTo', cfg.account);
           params.set('status', 'resolved');   // 待我验证：已解决、还没关闭
         }
-        return `api.php/v1/bugs?${params.toString()}`;
+        return params;
       };
 
-      const first = await ztApiGet(cfg, build(1));
-      const all = (Array.isArray(first.bugs) ? first.bugs : []).map(b => ztMapApiBug(b, nameMap));
-      const total = Number(first.total) || all.length;
+      const queue = products.slice();
+      const seen = new Set();
+      const all = [];
+      let okCount = 0;
+      let lastError = '';
 
-      // 超过一页继续翻（最多 5 页，别把禅道打崩）
-      for (let page = 2; page <= Math.min(5, Math.ceil(total / 1000)); page++) {
-        const next = await ztApiGet(cfg, build(page));
-        const rows = (Array.isArray(next.bugs) ? next.bugs : []).map(b => ztMapApiBug(b, nameMap));
-        if (!rows.length) break;
-        all.push(...rows);
+      const worker = async () => {
+        for (;;) {
+          const p = queue.shift();
+          if (!p) return;
+          const params = filter();
+          params.set('product', String(p.id));
+          let json = null;
+          try {
+            json = await ztApiGet(cfg, `api.php/v1/bugs?${params.toString()}`);
+            okCount++;
+          } catch (e) {
+            lastError = e.message || String(e);
+            continue;
+          }
+          for (const b of (Array.isArray(json && json.bugs) ? json.bugs : [])) {
+            const mapped = ztMapApiBug(b, nameMap);
+            if (!mapped.id || seen.has(mapped.id)) continue;
+            seen.add(mapped.id);
+            all.push(mapped);
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: Math.min(4, products.length) }, () => worker()));
+
+      if (!okCount) {
+        return { success: false, error: `按项目查询失败：${lastError || '全部请求都未成功'}` };
       }
-
-      return { success: true, data: all, total, scope };
+      return { success: true, data: all, total: all.length, scope, products: products.length };
     } catch (e) {
       return { success: false, error: e.message };
     }
