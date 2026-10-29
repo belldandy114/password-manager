@@ -177,6 +177,34 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const title = await ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
   const panels = await ev(`[...document.querySelectorAll('.pnl-title')].map(x => x.textContent.trim())`);
   check('压力测试：页面能打开', /压力/.test(String(title)), String(title));
+
+  // 1.7.4 的 bug：.pg 纵向 flex 把面板压到比内容还矮，内容被 overflow:hidden 裁掉。
+  // 这条断言专门盯「面板高度 ≥ 内容高度」，防止再犯。
+  const layout = await ev(`(() => {
+    const H = (el) => el ? Math.round(el.getBoundingClientRect().height) : -1;
+    const wrap = document.querySelector(".perf-page");
+    const clipped = [...document.querySelectorAll(".perf-page .pnl")].filter(p => {
+      const b = p.querySelector(".pnl-body");
+      return b && b.scrollHeight > H(b) + 1;
+    }).length;
+    return {
+      wrapper: !!wrap,
+      clipped,
+      inputs: document.querySelectorAll(".perf-form input").length,
+      modeItems: document.querySelectorAll(".perf-mode-item").length,
+      headButtons: [...document.querySelectorAll(".pg-head button")].map(b => b.textContent.trim()).join("|"),
+      scrollable: wrap ? wrap.scrollHeight > wrap.clientHeight : false,
+      threadsVisible: (() => { const el = [...document.querySelectorAll(".perf-form input")].find(i => i.placeholder === "如 50"); return el ? H(el) > 0 : false; })(),
+    };
+  })()`);
+  check('压力测试：面板没有被裁切（高度 ≥ 内容）', !!layout && layout.clipped === 0, `clipped=${layout && layout.clipped}`);
+  check('压力测试：运行配置控件齐全（≥7 输入 / 2 个输出模式 / 线程数可见）',
+    !!layout && layout.inputs >= 7 && layout.modeItems === 2 && layout.threadsVisible === true,
+    layout && JSON.stringify([layout.inputs, layout.modeItems, layout.threadsVisible]));
+  check('压力测试：头部有「重新探测 + 开始运行」',
+    !!layout && /探测/.test(String(layout.headButtons)) && /开始运行/.test(String(layout.headButtons)),
+    layout && layout.headButtons);
+  check('压力测试：内容区可滚动（不是把面板压扁）', !!layout && layout.scrollable === true);
   check('压力测试：四块面板都在（环境/运行配置/运行输出）',
     Array.isArray(panels) && panels.some(p => /环境/.test(p)) && panels.some(p => /运行配置/.test(p)) && panels.some(p => /运行输出/.test(p)),
     JSON.stringify(panels));
@@ -257,6 +285,8 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
     });
   })()`);
   await sleep(1200);
+  const runningHead = await ev(`[...document.querySelectorAll('.pg-head button')].map(b => b.textContent.trim()).join('|')`);
+  check('压力测试：运行中头部出现「停止运行」', /停止运行/.test(String(runningHead)), String(runningHead));
   const stopRes = await ev(`window.electronAPI.jmeterStop()`);
   check('压力测试：stop 能停掉正在运行的任务', !!run3 && run3.success === true && !!stopRes && stopRes.success === true,
     JSON.stringify([run3 && run3.success, stopRes && stopRes.error]));

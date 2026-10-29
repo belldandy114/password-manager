@@ -711,6 +711,7 @@ const { registerFileIpc } = require('./ipc-files');
 const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
+const { filterMineBugs } = require('./zentao-filter');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -2587,10 +2588,12 @@ function setupIpcHandlers() {
             continue;
           }
           for (const b of (Array.isArray(json && json.bugs) ? json.bugs : [])) {
-            const mapped = ztMapApiBug(b, nameMap);
-            if (!mapped.id || seen.has(mapped.id)) continue;
-            seen.add(mapped.id);
-            all.push(mapped);
+            // ⚠️ 这里必须留原始行：ztMapApiBug 之后 openedBy/assignedTo 变成了**显示名**，
+            // 拿去跟账号比较会把所有人的数据都滤掉（1.7.4 就是这么错的）。
+            const rawId = String((b && b.id) || '');
+            if (!rawId || seen.has(rawId)) continue;
+            seen.add(rawId);
+            all.push(b);
           }
         }
       };
@@ -2600,7 +2603,21 @@ function setupIpcHandlers() {
       if (!okCount) {
         return { success: false, error: `按项目查询失败：${lastError || '全部请求都未成功'}` };
       }
-      return { success: true, data: all, total: all.length, scope, products: products.length, queried: wanted.length ? wanted : products.map(p => String(p.id)) };
+      // 服务端对 openedBy / assignedTo 可能直接忽略（实测会返回整个项目的 Bug），
+      // 所以这里再按账号本地过滤一次；若返回里没有账号字段则不过滤，避免误杀成 0 条。
+      const mine = filterMineBugs(all, cfg.account, scope);
+      const rows = mine.rows.map(b => ztMapApiBug(b, nameMap)).filter(b => b.id);
+      return {
+        success: true,
+        data: rows,
+        total: rows.length,
+        scope,
+        account: cfg.account,
+        filteredByAccount: mine.filtered,
+        dropped: mine.dropped,
+        products: products.length,
+        queried: wanted.length ? wanted : products.map(p => String(p.id)),
+      };
     } catch (e) {
       return { success: false, error: e.message };
     }

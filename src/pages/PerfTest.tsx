@@ -60,6 +60,8 @@ export function PerfTest() {
   /** 订阅流式输出：cmd 里看到什么，这里就显示什么 */
   useEffect(() => {
     const offOut = window.electronAPI.onJmeterOutput((payload) => {
+      // 收到输出就说明有任务在跑：页面重新挂载、或任务由别处启动时，也要能反映「运行中」
+      setRunning(true);
       setLines(prev => {
         const next = prev.concat(payload);
         return next.length > 4000 ? next.slice(next.length - 4000) : next;
@@ -145,19 +147,22 @@ export function PerfTest() {
 
   return (
     <Page>
+      <div className="perf-page">
       <PageHead
         icon={<Icons.chart size={18} />}
         title="压力测试"
         desc="运行本机 JMeter（非 GUI 模式）：选脚本、定输出，运行过程按 cmd 的样子实时显示"
         tools={
           <>
-            <button className="btn btn-secondary" onClick={detect} disabled={detecting}>
+            <button className="btn btn-secondary" onClick={detect} disabled={detecting || running}>
               <Icons.refresh size={13} />
               {detecting ? '探测中…' : '重新探测 JMeter'}
             </button>
-            <button className="btn btn-primary" onClick={start} disabled={running}>
-              {running ? '运行中…' : '开始运行'}
-            </button>
+            {running ? (
+              <button className="btn btn-danger" onClick={stop}>停止运行</button>
+            ) : (
+              <button className="btn btn-primary" onClick={start}>开始运行</button>
+            )}
           </>
         }
       />
@@ -235,11 +240,6 @@ export function PerfTest() {
           </Field>
 
           <div className="perf-actions">
-            {!running ? (
-              <button className="btn btn-primary" onClick={start}>开始运行</button>
-            ) : (
-              <button className="btn btn-secondary" onClick={stop}>停止运行</button>
-            )}
             <span className="perf-tip">
               命令：<code>{jmeterPath ? `${jmeterPath} -n -t ${jmxPath || '<脚本>'} -l <结果>.jtl${mode === 'report' ? ' -e -o <报告目录>' : ''}` : '（先配置 JMeter 路径）'}</code>
             </span>
@@ -300,6 +300,7 @@ export function PerfTest() {
       )}
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </div>
     </Page>
   );
 }

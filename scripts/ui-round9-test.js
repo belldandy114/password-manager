@@ -371,6 +371,13 @@ const echo = http.createServer((req, res) => {
     await sleep(400);
     const projModal = await ev(`document.querySelectorAll('.zt-proj-item').length`);
     check('禅道：项目选择弹窗列出全部项目', projModal === 2, `${projModal} 个项目`);
+    // 项目多了靠滚动找很痛苦：搜「B」应只剩桩项目B，且计数要跟着变
+    await setVal('.zt-proj-search input', 'B');
+    await sleep(350);
+    const searched = await ev(`(() => ({ items: document.querySelectorAll('.zt-proj-item').length, count: (document.querySelector('.zt-proj-count') || {}).textContent || '' }))()`);
+    check('禅道：项目弹窗可按关键字过滤', !!searched && searched.items === 1 && /1 \/ 2/.test(String(searched.count)), JSON.stringify(searched));
+    await setVal('.zt-proj-search input', '');
+    await sleep(300);
     await clickHas('全选');
     await sleep(200);
     await clickHas('确定');
@@ -378,6 +385,8 @@ const echo = http.createServer((req, res) => {
     const openedRows = await waitRows();
     check('禅道：选 2 个项目后拉到 2 条', openedRows === 2, `${openedRows} 行`);
     const openedHit = zt.log.some(l => /\/api\.php\/v1\/bugs/.test(l.url) && /openedBy=stub-user/.test(l.url) && /status=all/.test(l.url) && /product=\d+/.test(l.url));
+    const acct = await ev(`(() => { const el = document.querySelector(".zt-mine-account"); return el ? el.textContent.trim() : ""; })()`);
+    check('禅道：界面标注了按哪个账号过滤', /stub-user/.test(String(acct)), String(acct));
     check('禅道：我提交的用的是 openedBy + status=all + product', openedHit,
       zt.log.filter(l => /v1\/bugs/.test(l.url)).slice(-1)[0]?.url || '');
     const openedTitle = await ev(`(() => { const p = [...document.querySelectorAll('.pnl-title')].map(x => x.textContent.trim()); return p.join(' | '); })()`);

@@ -244,6 +244,8 @@ export function ZentaoPage() {
   };
   const scopeLabel = SCOPE_LABEL[mineScope];
   // 「我提交的 / 待我验证」按项目拉：记住选中的项目，默认挑当前项目
+  // 最近一次「我的 Bug」响应的过滤信息（服务端可能不按账号过滤，主进程会本地再过一遍）
+  const [mineMeta, setMineMeta] = useState<{ account: string; filtered: boolean; dropped: number } | null>(null);
   const [projOpen, setProjOpen] = useState(false);
   const [projDraft, setProjDraft] = useState<string[]>([]);
 
@@ -268,6 +270,7 @@ export function ZentaoPage() {
   const openProjPicker = async () => {
     const ids = await ensureMineProjects();
     setProjDraft(ids);
+    setProjQuery('');
     setProjOpen(true);
   };
 
@@ -287,6 +290,7 @@ export function ZentaoPage() {
     const res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope, ids);
     setBusy('');
     if (res.success && res.data) {
+      setMineMeta({ account: res.account || form.account.trim(), filtered: !!res.filteredByAccount, dropped: Number(res.dropped) || 0 });
       setBugs(res.data, res.total || res.data.length);
       await persist({ baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
@@ -526,7 +530,7 @@ export function ZentaoPage() {
   const filteredProjects = useMemo(() => {
     const q = projQuery.trim().toLowerCase();
     if (!q) return projects;
-    return projects.filter(p => p.name.toLowerCase().includes(q));
+    return projects.filter(p => String(p.name || '').toLowerCase().includes(q) || String(p.id).includes(q));
   }, [projects, projQuery]);
 
   const hasFilter = !!(project || status || severity || query.trim());
@@ -667,6 +671,19 @@ export function ZentaoPage() {
             <span className="zt-mine-proj-hint">
               {mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
             </span>
+            {mineMeta && (
+              <span
+                className={`zt-mine-account${mineMeta.filtered ? '' : ' is-warn'}`}
+                title={mineMeta.filtered
+                  ? `服务端未按账号过滤，已本地保留 ${mineMeta.account} 的记录`
+                  : '服务端没有返回账号字段，无法本地复核，结果可能含他人数据'}
+              >
+                <Icons.key size={11} />
+                {mineMeta.filtered
+                  ? `${mineMeta.account}${mineMeta.dropped ? ` · 已滤掉 ${mineMeta.dropped} 条` : ''}`
+                  : '未按账号复核'}
+              </span>
+            )}
           </div>
         )}
 
@@ -933,7 +950,7 @@ export function ZentaoPage() {
         footer={(
           <>
             <button className="btn btn-secondary" onClick={() => setProjDraft([])}>清空</button>
-            <button className="btn btn-secondary" onClick={() => setProjDraft(projects.map(x => String(x.id)))}>全选</button>
+            <button className="btn btn-secondary" onClick={() => setProjDraft(filteredProjects.map(x => String(x.id)))}>全选（{filteredProjects.length}）</button>
             <button
               className="btn btn-primary"
               onClick={() => {
@@ -948,9 +965,18 @@ export function ZentaoPage() {
           </>
         )}
       >
+        <div className="zt-proj-search">
+          <SearchBox value={projQuery} onChange={setProjQuery} placeholder="搜索项目名或编号，例如 62" />
+          <span className="zt-proj-count">
+            {projQuery.trim() ? `${filteredProjects.length} / ${projects.length}` : `${projects.length} 个项目`}
+          </span>
+        </div>
         <div className="zt-proj-list">
           {projects.length === 0 && <div className="zt-proj-empty">还没有项目列表，请先连接禅道</div>}
-          {projects.map(pr => {
+          {projects.length > 0 && filteredProjects.length === 0 && (
+            <div className="zt-proj-empty">没有匹配「{projQuery}」的项目</div>
+          )}
+          {filteredProjects.map(pr => {
             const id = String(pr.id);
             const on = projDraft.includes(id);
             return (

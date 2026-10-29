@@ -535,7 +535,11 @@ export interface ElectronAPI {
   apiCookiesClear: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   /** 我提交的 / 待我验证：必须传选中的项目 id（禅道 REST 强制 product，且全量遍历太慢） */
-  zentaoMyBugs: (cfg: ZentaoConfig, scope?: MyBugScope, productIds?: string[]) => Promise<{ success: boolean; data?: ZentaoBug[]; total?: number; queried?: string[]; error?: string }>;
+  zentaoMyBugs: (cfg: ZentaoConfig, scope?: MyBugScope, productIds?: string[]) => Promise<{
+    success: boolean; data?: ZentaoBug[]; total?: number; queried?: string[]; error?: string;
+    /** 服务端未按账号过滤时，主进程会再做一次本地过滤 */
+    account?: string; filteredByAccount?: boolean; dropped?: number;
+  }>;
   zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string) =>
     Promise<{
