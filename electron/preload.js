@@ -165,4 +165,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Test Data Generator sub-app
   tdgGetPath: () => ipcRenderer.invoke('tdg:get-path'),
+
+  // JMeter（非 GUI 运行）
+  jmeterDetect: () => ipcRenderer.invoke('jmeter:detect'),
+  jmeterPickExe: () => ipcRenderer.invoke('jmeter:pick-exe'),
+  jmeterPickScript: () => ipcRenderer.invoke('jmeter:pick-script'),
+  jmeterPickOutDir: () => ipcRenderer.invoke('jmeter:pick-out-dir'),
+  jmeterDefaults: () => ipcRenderer.invoke('jmeter:defaults'),
+  jmeterRemember: (patch) => ipcRenderer.invoke('jmeter:remember', patch),
+  jmeterRun: (opts) => ipcRenderer.invoke('jmeter:run', opts),
+  jmeterStop: () => ipcRenderer.invoke('jmeter:stop'),
+  jmeterStatus: () => ipcRenderer.invoke('jmeter:status'),
+  jmeterOpenPath: (p) => ipcRenderer.invoke('jmeter:open-path', p),
+  // 运行输出（流式）：返回取消订阅函数
+  onJmeterOutput: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('jmeter:output', handler);
+    return () => ipcRenderer.removeListener('jmeter:output', handler);
+  },
+  onJmeterDone: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('jmeter:done', handler);
+    return () => ipcRenderer.removeListener('jmeter:done', handler);
+  },
 });

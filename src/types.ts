@@ -73,6 +73,13 @@ export interface AppSettings {
   launchAtLogin: boolean;
   /** 启动时静默检查更新（默认 true）；关掉后只有手动点「检查更新」才联网 */
   updateCheckOnStart?: boolean;
+  // ---- 压力测试（JMeter）：只记路径，脚本本身不复制进来 ----
+  /** 本机 jmeter.bat / jmeter 路径（设置页或压力测试页选择） */
+  jmeterPath?: string;
+  /** 上次使用的输出目录 */
+  jmeterOutDir?: string;
+  /** 上次使用的 .jmx 路径 */
+  jmeterLastJmx?: string;
   /** 上次弹过更新提示的版本号（内部字段，避免每次启动都弹） */
   updateNotifiedVersion?: string;
   /** 上次停留的页面 */
@@ -387,6 +394,55 @@ export type SortOrder = 'desc' | 'asc';
 export type SortOption = 'updatedAt-desc' | 'updatedAt-asc' | 'createdAt-desc' | 'createdAt-asc' | 'name-asc' | 'name-desc';
 export type ConflictStrategy = 'skip' | 'overwrite' | 'duplicate';
 
+/** JMeter 运行输出（流式） */
+export interface JmeterLogLine {
+  runId: string;
+  stream: 'out' | 'err' | 'cmd';
+  line: string;
+}
+
+/** JMeter 运行结果 */
+export interface JmeterDone {
+  runId: string;
+  code: number | null;
+  ok: boolean;
+  stats: {
+    samples: number;
+    errors: number;
+    errorPct: number;
+    avg: number;
+    min: number;
+    max: number;
+    p90?: number;
+    p95?: number;
+    p99?: number;
+    wallMs?: number;
+    tps: number;
+    topErrorCode?: { code: string; count: number } | null;
+  } | null;
+  statsFrom: string;
+  jtlPath: string;
+  reportDir: string;
+  logPath: string;
+}
+
+/** JMeter 运行参数 */
+export interface JmeterRunOptions {
+  jmeterPath?: string;
+  jmxPath: string;
+  mode: 'log' | 'report';
+  outDir: string;
+  threads?: number;
+  loops?: number;
+  extraArgs?: string[];
+}
+
+export interface JmeterDetectInfo {
+  jmeterPath: string;
+  from: string;
+  java: { ok: boolean; path: string; version?: string };
+  candidates: string[];
+}
 export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
@@ -561,6 +617,19 @@ export interface ElectronAPI {
   /** 选任意文件（上传附件） */
   pickFile: (title?: string, filters?: { name: string; extensions: string[] }[]) =>
     Promise<{ success: boolean; data?: { file: string; name: string }; error?: string; canceled?: boolean }>;
+  // JMeter（非 GUI 运行）
+  jmeterDetect: () => Promise<{ success: boolean; data?: JmeterDetectInfo; error?: string }>;
+  jmeterPickExe: () => Promise<{ success: boolean; data?: { jmeterPath: string }; error?: string; canceled?: boolean }>;
+  jmeterPickScript: () => Promise<{ success: boolean; data?: { jmxPath: string; name: string }; error?: string; canceled?: boolean }>;
+  jmeterPickOutDir: () => Promise<{ success: boolean; data?: { outDir: string }; error?: string; canceled?: boolean }>;
+  jmeterDefaults: () => Promise<{ success: boolean; data?: { jmeterPath: string; outDir: string; jmxPath: string; appVersion: string } }>;
+  jmeterRemember: (patch: { jmxPath?: string; outDir?: string }) => Promise<{ success: boolean }>;
+  jmeterRun: (opts: JmeterRunOptions) => Promise<{ success: boolean; data?: { runId: string; jtlPath: string; reportDir: string; args: string[] }; error?: string }>;
+  jmeterStop: () => Promise<{ success: boolean; error?: string }>;
+  jmeterStatus: () => Promise<{ success: boolean; data?: { runId: string } | null }>;
+  jmeterOpenPath: (target: string) => Promise<{ success: boolean; error?: string }>;
+  onJmeterOutput: (cb: (payload: JmeterLogLine) => void) => () => void;
+  onJmeterDone: (cb: (payload: JmeterDone) => void) => () => void;
   /** 保存文本到文件（导出 CSV 等），自动加 BOM */
   saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[]) =>
     Promise<{ success: boolean; data?: { file: string }; error?: string; canceled?: boolean }>;

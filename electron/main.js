@@ -710,6 +710,7 @@ const { cmpVersion, shouldNotifyUpdate } = require('./update-check');
 const { registerFileIpc } = require('./ipc-files');
 const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
+const { registerJmeterIpc } = require('./ipc-jmeter');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -3391,6 +3392,8 @@ function setupIpcHandlers() {
   registerFileIpc();
   registerToolsIpc();
   registerBrowserIpc({ loadSettings });
+  // JMeter 非 GUI 运行：需要窗口引用（推送流式日志）与设置读写
+  registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow });
 
 }
 

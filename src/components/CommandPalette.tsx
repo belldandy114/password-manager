@@ -29,6 +29,7 @@ const PAGES: { page: string; label: string }[] = [
   { page: 'jsonConverter', label: 'JSON 转化' },
   { page: 'toolbox', label: '工具箱' },
   { page: 'apiClient', label: '接口调试' },
+  { page: 'perfTest', label: '压力测试' },
   { page: 'settings', label: '设置' },
 ];
 

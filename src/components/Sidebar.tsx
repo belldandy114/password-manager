@@ -166,6 +166,7 @@ const toolboxIcon = (
   </svg>
 );
 
+const chartIcon = (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20V6" /><path d="M4 20h16" /><path d="M8 17V11" /><path d="M13 17V8" /><path d="M18 17v-4" /></svg>);
 const apiIcon = (
   <svg {...S}>
     <path d="M4 12h13"/>
@@ -210,6 +211,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { id: 'jsonConverter', label: 'JSON 转化', icon: jsonIcon },
       { id: 'toolbox', label: '工具箱', icon: toolboxIcon },
       { id: 'apiClient', label: '接口调试', icon: apiIcon },
+      { id: 'perfTest', label: '压力测试', icon: chartIcon },
     ],
   },
 ];

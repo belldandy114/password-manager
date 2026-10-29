@@ -21,6 +21,7 @@ const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.S
 const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
 const ZentaoPage = lazy(() => import('./pages/ZentaoPage').then(m => ({ default: m.ZentaoPage })));
 const ApiClient = lazy(() => import('./pages/ApiClient').then(m => ({ default: m.ApiClient })));
+const PerfTest = lazy(() => import('./pages/PerfTest').then(m => ({ default: m.PerfTest })));
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -317,6 +318,7 @@ function App() {
       case 'notes': return <Notes />;
       case 'zentao': return <ZentaoPage />;
       case 'apiClient': return <ApiClient />;
+      case 'perfTest': return <PerfTest />;
       default: return <PasswordManagerPage />;
     }
   };
