@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
+import { callIpc } from '../utils/ipc';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Icons } from '../components/ui';
@@ -273,7 +274,8 @@ export function Settings() {
       keybindings: localKeybindings,
     };
     updateSettings(prefs);
-    await window.electronAPI.settingsSave(prefs);
+    const saved = await callIpc(() => window.electronAPI.settingsSave(prefs));
+    if (!saved.ok) { addToast(`保存失败：${saved.error}`, 'error'); return; }
     addToast('设置已保存', 'success');
   };
 
@@ -281,7 +283,8 @@ export function Settings() {
   // creates/destroys the tray icon on settings:save.
   const applyTraySetting = async (patch: { minimizeToTray?: boolean; closeToTray?: boolean }) => {
     updateSettings(patch);
-    await window.electronAPI.settingsSave(patch);
+    const saved = await callIpc(() => window.electronAPI.settingsSave(patch));
+    if (!saved.ok) { addToast(`保存失败：${saved.error}`, 'error'); return; }
     addToast('窗口设置已更新', 'success');
   };
 

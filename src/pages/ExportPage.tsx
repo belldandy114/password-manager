@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { callIpc } from '../utils/ipc';
 
 export function ExportPage() {
   const { toasts, addToast, removeToast } = useToast();
@@ -31,11 +32,13 @@ export function ExportPage() {
         filters: [{ name: '加密备份', extensions: ['enc'] }],
       });
       if (!saveResult.canceled && saveResult.filePath) {
-        await window.electronAPI.fileWrite({
-          filePath: saveResult.filePath,
-          content: result.data,
+        const payload = result.data;
+        const written = await callIpc(() => window.electronAPI.fileWrite({
+          filePath: saveResult.filePath!,
+          content: payload,
           encoding: 'base64',
-        });
+        }));
+        if (!written.ok) { addToast(`导出失败：${written.error}`, 'error'); return; }
         addToast('加密备份导出成功', 'success');
       }
     } else {
@@ -68,18 +71,14 @@ export function ExportPage() {
         ],
       });
       if (!saveResult.canceled && saveResult.filePath) {
-        if (format === 'xlsx') {
-          await window.electronAPI.fileWrite({
-            filePath: saveResult.filePath,
-            content: result.data,
-            encoding: 'base64',
-          });
-        } else {
-          await window.electronAPI.fileWrite({
-            filePath: saveResult.filePath,
-            content: result.data,
-          });
-        }
+        // 写盘失败要报出来，不能一律弹「导出成功」
+        const payload = result.data;
+        const written = await callIpc(() => window.electronAPI.fileWrite({
+          filePath: saveResult.filePath!,
+          content: payload,
+          ...(format === 'xlsx' ? { encoding: 'base64' } : {}),
+        }));
+        if (!written.ok) { addToast(`导出失败：${written.error}`, 'error'); return; }
         addToast(`明文${format.toUpperCase()}导出成功 (${result.count} 条)`, 'success');
       }
     } else {

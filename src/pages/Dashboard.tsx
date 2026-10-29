@@ -9,6 +9,7 @@ import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
+import { callIpc } from '../utils/ipc';
 
 export function Dashboard() {
   const store = useStore();
@@ -194,11 +195,14 @@ export function Dashboard() {
             filters: [{ name: '加密备份', extensions: ['enc'] }],
           });
           if (!saveResult.canceled && saveResult.filePath) {
-            await window.electronAPI.fileWrite({
-              filePath: saveResult.filePath,
-              content: result.data,
+            // 写盘失败必须报错：以前不管结果都弹「导出成功」，磁盘满/无权限时会骗人
+            const payload = result.data;
+            const written = await callIpc(() => window.electronAPI.fileWrite({
+              filePath: saveResult.filePath!,
+              content: payload,
               encoding: 'base64',
-            });
+            }));
+            if (!written.ok) { addToast(`导出失败：${written.error}`, 'error'); return; }
             addToast(`加密备份导出成功 (${result.count ?? ids.length} 条)`, 'success');
           }
         } else {
@@ -214,18 +218,13 @@ export function Dashboard() {
             filters: [{ name: formatLabel, extensions: [ext] }],
           });
           if (!saveResult.canceled && saveResult.filePath) {
-            if (exportFormat === 'xlsx') {
-              await window.electronAPI.fileWrite({
-                filePath: saveResult.filePath,
-                content: result.data,
-                encoding: 'base64',
-              });
-            } else {
-              await window.electronAPI.fileWrite({
-                filePath: saveResult.filePath,
-                content: result.data,
-              });
-            }
+            const payload = result.data;
+            const written = await callIpc(() => window.electronAPI.fileWrite({
+              filePath: saveResult.filePath!,
+              content: payload,
+              ...(exportFormat === 'xlsx' ? { encoding: 'base64' } : {}),
+            }));
+            if (!written.ok) { addToast(`导出失败：${written.error}`, 'error'); return; }
             addToast(`${formatLabel}导出成功 (${result.count ?? ids.length} 条)`, 'success');
           }
         } else {

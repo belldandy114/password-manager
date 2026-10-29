@@ -46,12 +46,11 @@ const DATA_DIR = resolveDataDir();
 const DATA_FILE = path.join(DATA_DIR, 'vault.enc');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const BIN_FILE = path.join(DATA_DIR, 'trash.enc');
-const ALGO = 'aes-256-gcm';
+// 文件格式常量与结构自检都在 electron/vault-file.js（带单测）：常量只留这一份定义，
+// 否则「恢复前校验」和「解密」会各算各的长度。
+const { ALGO, SALT_LENGTH, IV_LENGTH, TAG_LENGTH, inspectVaultFile } = require('./vault-file');
 const KEY_ITERATIONS = 600000;
 const KEY_LENGTH = 32;
-const SALT_LENGTH = 32;
-const IV_LENGTH = 16;
-const TAG_LENGTH = 16;
 const BIN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // ----------------------------------------------------------------
@@ -704,27 +703,15 @@ function clearClipboardAfter(delayMs) {
 // Import helpers: CSV 解析 + 字段归一化（实现见 electron/csv.js，纯函数、可单测）
 // ----------------------------------------------------------------
 const { parseCsv, normalizeImportRecords } = require('./csv');
+const { ztDecodeEntities, ztStripTags, ztTableRows } = require('./zentao-parse');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
 // ----------------------------------------------------------------
 // 新增模块（SQL 片段 / 笔记 / 检查清单 / 账号池 / 环境总览 / 接口调试）都放在同一个
 // 加密文件里，随密码库一起加密，不额外增加新的密码。旧数据缺少这些字段时补空数组。
-const VAULT_COLLECTIONS = ['snippets', 'notes', 'checklists', 'accounts', 'environments', 'apiRequests', 'integrations',
-  'ztPresets', 'apiEnvs', 'apiHistory'];
-
-function normalizeVault(v) {
-  const src = v && typeof v === 'object' ? v : {};
-  const out = {
-    entries: Array.isArray(src.entries) ? src.entries : [],
-    tags: Array.isArray(src.tags) ? src.tags : [],
-    history: (src.history && typeof src.history === 'object' && !Array.isArray(src.history)) ? src.history : {},
-  };
-  for (const key of VAULT_COLLECTIONS) {
-    out[key] = Array.isArray(src[key]) ? src[key] : [];
-  }
-  return out;
-}
+// 结构归一化抽到 electron/vault-schema.js（带单测）：它是旧库升级的唯一关口，不能靠肉眼保证
+const { VAULT_COLLECTIONS, normalizeVault } = require('./vault-schema');
 
 // ----------------------------------------------------------------
 // TOTP (two-factor codes stored next to the entry)
@@ -1300,6 +1287,13 @@ function setupIpcHandlers() {
       }
       const src = path.join(BACKUP_DIR, safe);
       if (!fs.existsSync(src)) return { success: false, error: '备份文件不存在' };
+
+      // 恢复是「直接写回主库」：先做结构自检，半截/选错的文件一律不覆盖现有密码库。
+      // 少了这一步，损坏的备份会把好库盖掉，用户只能靠 pre-restore 快照救回来。
+      const inspection = inspectVaultFile(fs.readFileSync(src, 'utf8'));
+      if (!inspection.ok) {
+        return { success: false, error: `备份文件损坏，已取消恢复（${inspection.error}）` };
+      }
 
       let preRestore = '';
       if (fs.existsSync(DATA_FILE)) {
@@ -2234,53 +2228,6 @@ function setupIpcHandlers() {
     }
     return null;
   }
-
-  const ztDecodeEntities = (s) => String(s)
-    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/g, "'")
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#x2F;/g, '/');
-
-  /**
-   * 禅道 20.x 把表格数据写在 zui-create-dtable 属性里，但整体不是合法 JSON
-   * （混了 JS 函数体），所以只按括号配平截取 "data": [...] 再解析。
-   */
-  function ztTableRows(html) {
-    if (!html) return [];
-    const attr = html.match(/zui-create-dtable="([^"]*)"/);
-    if (!attr) return [];
-    const raw = ztDecodeEntities(attr[1]);
-    const marker = '"data":';
-    const at = raw.indexOf(marker);
-    if (at < 0) return [];
-    let i = at + marker.length;
-    while (i < raw.length && /\s/.test(raw[i])) i++;
-    if (raw[i] !== '[') return [];
-    let depth = 0, inStr = false, esc = false, end = -1;
-    for (let j = i; j < raw.length; j++) {
-      const c = raw[j];
-      if (inStr) {
-        if (esc) esc = false;
-        else if (c === '\\') esc = true;
-        else if (c === '"') inStr = false;
-        continue;
-      }
-      if (c === '"') { inStr = true; continue; }
-      if (c === '[') depth++;
-      else if (c === ']') { depth--; if (depth === 0) { end = j + 1; break; } }
-    }
-    if (end < 0) return [];
-    try {
-      const arr = JSON.parse(raw.slice(i, end));
-      return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
-  }
-
-  const ztStripTags = (s) => String(s || '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 
   /** 富文本 HTML → 纯文本（保留换行，图片留占位） */
   function ztHtmlToText(html, imgTag) {
