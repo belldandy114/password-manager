@@ -152,7 +152,22 @@ step(5, '提交并推送 master');
 const msg = `chore: ${next}（${productName}）`;
 run(`git add -A`);
 run(`git commit -q -m "${msg}"`);
-run('git push origin master');
+// push 一次失败多半是代理抖动（SSL_ERROR_SYSCALL），重试几次通常就过
+let pushedOk = false;
+for (let i = 1; i <= 4; i++) {
+  try {
+    sh('git push origin master');
+    pushedOk = true;
+    console.log(`   已推送（第 ${i} 次）`);
+    break;
+  } catch (e) {
+    const last = String(e.stderr || e.message || '').split('\n').filter(Boolean).pop() || '';
+    console.log(`   第 ${i} 次推送失败：${last}`);
+    if (i === 4) break;
+    execFileSync(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'timeout /t 5 >nul'] : ['-c', 'sleep 5']);
+  }
+}
+if (!pushedOk) fail('推送失败（检查代理 http.proxy，公司网络常见 SSL_ERROR_SYSCALL）');
 const head = dryRun ? '(dry-run)' : sh('git rev-parse --short HEAD');
 console.log(`   HEAD ${head}`);
 

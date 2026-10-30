@@ -63,25 +63,34 @@ if (dryRun) {
   process.exit(0);
 }
 
-try {
-  execFileSync(installer, args, { stdio: 'inherit', windowsHide: true });
-} catch (e) {
-  fail(`安装失败：${e.message}`);
+const interactive = process.argv.includes('--interactive');
+
+if (interactive) {
+  // 有些机器上 assisted NSIS 的 /S 不生效，用向导装一次更稳
+  console.log('以向导方式启动安装程序（等你点完）…');
+  execFileSync(installer, [], { stdio: 'inherit', windowsHide: false });
+} else {
+  try {
+    execFileSync(installer, args, { stdio: 'inherit', windowsHide: true });
+  } catch (e) {
+    fail(`安装程序退出异常：${e.message}`);
+  }
 }
 
 // NSIS /S 是异步退出的，给它一点时间落盘
-const exe = path.join(targetDir || '', `${productName}.exe`);
+const exe = path.join(targetDir || path.join(process.env.LOCALAPPDATA || '', 'Programs', productName), `${productName}.exe`);
 const started = Date.now();
-while (Date.now() - started < 15000) {
+while (Date.now() - started < 25000) {
   try {
     const st = fs.statSync(exe);
     console.log(`✓ 已覆盖安装：${exe}（${new Date(st.mtimeMs).toLocaleString()}）`);
     process.exit(0);
   } catch { /* 等它落盘 */ }
+  execFileSync(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'timeout /t 1 >nul'] : ['-c', 'sleep 1']);
 }
 
-if (targetDir) {
-  console.log(`⚠ 安装器已执行，但没在 15 秒内看到 ${exe}。请手动确认。`);
-} else {
-  console.log('✓ 安装器已执行（未指定目标目录时无法自动校验，请从开始菜单启动确认版本号）');
-}
+console.log('⚠ 安装程序已执行，但没在 25 秒内看到目标 exe。');
+console.log('  这台机器上 assisted NSIS 的静默安装可能不生效，换一种方式：');
+console.log(`    node scripts/install-local.js --interactive   # 打开向导，点下一步即可`);
+console.log(`    或直接双击：${installer}`);
+process.exit(2);
