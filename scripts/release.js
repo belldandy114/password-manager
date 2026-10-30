@@ -40,6 +40,16 @@ function shInherit(cmd) {
   execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
 }
 
+/** 阻塞等待（不依赖 cmd 的 timeout：无终端环境下会报 Input redirection 而崩溃） */
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* spin */ }
+  }
+}
+
 function fail(msg) {
   console.error(`\n✗ ${msg}`);
   process.exit(1);
@@ -164,7 +174,7 @@ for (let i = 1; i <= 4; i++) {
     const last = String(e.stderr || e.message || '').split('\n').filter(Boolean).pop() || '';
     console.log(`   第 ${i} 次推送失败：${last}`);
     if (i === 4) break;
-    execFileSync(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'timeout /t 5 >nul'] : ['-c', 'sleep 5']);
+    sleepSync(5000);
   }
 }
 if (!pushedOk) fail('推送失败（检查代理 http.proxy，公司网络常见 SSL_ERROR_SYSCALL）');
@@ -192,7 +202,7 @@ if (dryRun) {
       const hit = j.find((r) => r.headBranch === `v${next}`);
       if (hit) runId = String(hit.databaseId);
     } catch { /* 稍后再试 */ }
-    if (!runId) execFileSync(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'timeout /t 5 >nul'] : ['-c', 'sleep 5']);
+    if (!runId) sleepSync(5000);
   }
   if (!runId) fail('没找到 tag 对应的 CI run，请手动检查 Actions');
   console.log(`   run ${runId}`);
@@ -203,7 +213,7 @@ if (dryRun) {
       console.log('   CI 成功');
       break;
     }
-    execFileSync(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'timeout /t 10 >nul'] : ['-c', 'sleep 10']);
+    sleepSync(10000);
   }
 }
 
