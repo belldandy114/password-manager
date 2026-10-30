@@ -1,11 +1,12 @@
 // Check app-builder icon details and test setting on exe
 const path = require('path');
+const { pickExe } = require('./pick-exe');
 const { execSync } = require('child_process');
 const fs = require('fs');
 
 const appBuilder = path.resolve('node_modules/app-builder-bin/win/x64/app-builder.exe');
 const ico = path.resolve('图标.ico');
-const exe = path.resolve('release/win-unpacked/测试工具.exe');
+const exe = pickExe(path.resolve('release/win-unpacked'));
 
 console.log('=== Step 1: app-builder icon resolution ===');
 const outDir = path.resolve('.icon-test');

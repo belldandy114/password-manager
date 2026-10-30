@@ -426,6 +426,27 @@ export interface JmeterDone {
   logPath: string;
 }
 
+export interface JmeterHistoryRecord {
+  id: string;
+  at: string;
+  jmx: string;
+  jmxName: string;
+  mode: string;
+  threads: number;
+  loops: number;
+  ok: boolean;
+  code: number | null;
+  samples: number;
+  errors: number;
+  errorPct: number;
+  avg: number;
+  max: number;
+  tps: number;
+  jtlPath: string;
+  reportDir: string;
+  logPath: string;
+}
+
 /** JMeter 运行参数 */
 export interface JmeterRunOptions {
   jmeterPath?: string;
@@ -639,6 +660,11 @@ export interface ElectronAPI {
   jmeterPickExe: () => Promise<{ success: boolean; data?: { jmeterPath: string }; error?: string; canceled?: boolean }>;
   jmeterPickScript: () => Promise<{ success: boolean; data?: { jmxPath: string; name: string }; error?: string; canceled?: boolean }>;
   jmeterPickJavaHome: () => Promise<{ success: boolean; data?: { javaHome: string; version: string }; error?: string; canceled?: boolean }>;
+  /** 预检 .jmx 是否支持 -J 覆盖线程数/循环次数 */
+  jmeterInspectScript: (jmxPath: string) => Promise<{ success: boolean; data?: { supportsThreads: boolean; supportsLoops: boolean; ok: boolean; error?: string }; error?: string }>;
+  /** JMeter 运行历史（最近的在前） */
+  jmeterHistory: () => Promise<{ success: boolean; data?: JmeterHistoryRecord[] }>;
+  jmeterHistoryClear: () => Promise<{ success: boolean }>;
   jmeterPickOutDir: () => Promise<{ success: boolean; data?: { outDir: string }; error?: string; canceled?: boolean }>;
   jmeterDefaults: () => Promise<{ success: boolean; data?: { jmeterPath: string; javaHome?: string; outDir: string; jmxPath: string; appVersion: string } }>;
   jmeterRemember: (patch: { jmxPath?: string; outDir?: string }) => Promise<{ success: boolean }>;
@@ -646,6 +672,12 @@ export interface ElectronAPI {
   jmeterStop: () => Promise<{ success: boolean; error?: string }>;
   jmeterStatus: () => Promise<{ success: boolean; data?: { runId: string } | null }>;
   jmeterOpenPath: (target: string) => Promise<{ success: boolean; error?: string }>;
+  // 应用日志（排障用：出问题让用户点「打开日志」即可）
+  logInfo: () => Promise<{ success: boolean; data?: { path: string } }>;
+  logOpen: () => Promise<{ success: boolean; data?: { path: string }; error?: string }>;
+  logTail: (lines?: number) => Promise<{ success: boolean; data?: { path: string; text: string } }>;
+  /** 启动检查发现新版本时主进程推过来（应用内提示用，不发系统通知） */
+  onUpdateAvailable: (cb: (payload: { current: string; latest: string; url: string; downloadUrl: string }) => void) => () => void;
   onJmeterOutput: (cb: (payload: JmeterLogLine) => void) => () => void;
   onJmeterDone: (cb: (payload: JmeterDone) => void) => () => void;
   /** 保存文本到文件（导出 CSV 等），自动加 BOM */

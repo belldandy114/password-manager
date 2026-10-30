@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
-import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill } from '../components/ui';
+import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill , SearchBox } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { formatRecent } from '../utils/time';
 import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule, ASSERT_OPS, type AssertResult } from '../utils/apiAssert';
@@ -13,6 +13,7 @@ import { parseCurl, buildCurl } from '../utils/curl';
 import { filterHistory, groupByDay, matchesQuery } from '../utils/apiHistory';
 import { callIpc } from '../utils/ipc';
 import { responseSaveTarget } from '../utils/apiResponse';
+import { flattenJsonPaths, upsertVariable } from '../../electron/json-paths';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -187,6 +188,19 @@ export function ApiClient() {
     noticeTimer.current = window.setTimeout(() => setNotice(''), 2500);
   };
   const [sending, setSending] = useState(false);
+  // 请求头经常一大屏（从 cURL 导入 15 行很常见），默认展开但可折叠
+  const [headersOpen, setHeadersOpen] = useState(true);
+  // cURL 导入预览：先看清「解析成了什么」再填入，避免上次那种「一坨原文/带 ^」直接进编辑器
+  // 从响应提取字段：选字段 → 起变量名 → 写进变量表
+  const [pickOpen, setPickOpen] = useState(false);
+  const [pickQuery, setPickQuery] = useState('');
+  const [pickTarget, setPickTarget] = useState<{ path: string; name: string; value: string } | null>(null);
+  const [pickVarName, setPickVarName] = useState('');
+  const [curlPreview, setCurlPreview] = useState<{
+    method: string; url: string; headers: string; body: string; bodyType: string;
+    rawContentType: string; warnings: string[];
+  } | null>(null);
+  const headerLineCount = String(req.headers || '').split('\n').filter(l => l.trim()).length;
   const [showVars, setShowVars] = useState(false);
   const [respTab, setRespTab] = useState<'body' | 'headers' | 'ts' | 'md'>('body');
   // 会话保持：把响应 Set-Cookie 收进主进程内存 Cookie 罐，后续请求自动补 Cookie 头
@@ -251,6 +265,33 @@ export function ApiClient() {
     parseKv(req.variables || '', '=').forEach(r => { if (r.k) map.set(r.k, r.v); });
     parseKv(env.vars || '', '=').forEach(r => { if (r.k) map.set(r.k, r.v); });
     setReq({ ...req, variables: [...map].map(([k, v]) => `${k}=${v}`).join('\n') });
+  };
+
+  /** 当前响应里可提取的叶子字段（只在需要时算） */
+  const jsonLeaves = useMemo(() => {
+    if (!response) return [];
+    try {
+      return flattenJsonPaths(JSON.parse(response.body));
+    } catch {
+      return [];
+    }
+  }, [response]);
+
+  const pickFiltered = useMemo(() => {
+    const q = pickQuery.trim().toLowerCase();
+    if (!q) return jsonLeaves.slice(0, 60);
+    return jsonLeaves.filter(l => l.path.toLowerCase().includes(q)).slice(0, 120);
+  }, [jsonLeaves, pickQuery]);
+
+  /** 把选中的字段值写成 {{变量}} 并追加到变量表 */
+  const savePickedVariable = () => {
+    if (!pickTarget) return;
+    const name = pickVarName.trim() || pickTarget.name;
+    setReq(prev => ({ ...prev, variables: upsertVariable(prev.variables || '', name, pickTarget.value) }));
+    flashNotice(`已存变量 {{${name}}}，可在地址/请求头/请求体里引用`);
+    setPickOpen(false);
+    setPickTarget(null);
+    setPickVarName('');
   };
 
   const saveEnv = async () => {
@@ -820,7 +861,24 @@ export function ApiClient() {
                 <div className="api-io">
                   <div className="field">
                     <div className="field-label-row">
-                      <span className="field-label">请求头（一行一个，Cookie 写在里面）</span>
+                      <span className="field-label">
+                        请求头
+                        <span className="text-muted" style={{ marginLeft: 6, fontWeight: 400 }}>
+                          {headerLineCount} 行
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm api-collapse-btn"
+                        onClick={() => setHeadersOpen(v => !v)}
+                        title={headersOpen ? "收起请求头" : "展开请求头"}
+                        aria-expanded={headersOpen}
+                      >
+                        <span className={`api-caret${headersOpen ? " is-open" : ""}`}>
+                          <Icons.chevron size={11} />
+                        </span>
+                        {headersOpen ? "收起" : "展开"}
+                      </button>
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
@@ -830,16 +888,20 @@ export function ApiClient() {
                         <Icons.plus size={11} /> Cookie
                       </button>
                     </div>
-                    <KvEditor
-                      value={req.headers}
-                      onChange={v => setReq({ ...req, headers: v })}
-                      keyPlaceholder="Header，如 Authorization / Cookie"
-                      valuePlaceholder="值，如 Bearer {{token}}"
-                      sep=":"
-                    />
-                    <div className="assert-hint">
-                      Cookie 直接写成一行：<code>Cookie: token=abc; SESSION=xxx</code>
-                    </div>
+                    {headersOpen && (
+                      <>
+                        <KvEditor
+                          value={req.headers}
+                          onChange={v => setReq({ ...req, headers: v })}
+                          keyPlaceholder="Header，如 Authorization / Cookie"
+                          valuePlaceholder="值，如 Bearer {{token}}"
+                          sep=":"
+                        />
+                        <div className="assert-hint">
+                          Cookie 直接写成一行：<code>Cookie: token=abc; SESSION=xxx</code>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {(() => {
@@ -1007,6 +1069,16 @@ export function ApiClient() {
                   >
                     {req.snapshot ? '重存快照' : '存结构快照'}
                   </button>
+                  {jsonLeaves.length > 0 && (
+                    <button
+                      className="tab2"
+                      style={{ padding: '4px 10px', fontSize: 11.5 }}
+                      title="从响应里挑一个字段，存成 {{变量}}，后面的请求就能直接引用"
+                      onClick={() => { setPickTarget(null); setPickVarName(''); setPickQuery(''); setPickOpen(true); }}
+                    >
+                      提取字段
+                    </button>
+                  )}
                   <IconBtn title="复制响应内容" onClick={() => navigator.clipboard.writeText(response.body)}>
                     <Icons.copy size={13} />
                   </IconBtn>
@@ -1136,6 +1208,54 @@ export function ApiClient() {
         </div>
       </Page>
 
+      {/* 从响应提取字段 → 变量 */}
+      <Modal
+        open={pickOpen}
+        onClose={() => { setPickOpen(false); setPickTarget(null); }}
+        title="从响应提取字段"
+        footer={(
+          <>
+            <button className="btn btn-secondary" onClick={() => { setPickOpen(false); setPickTarget(null); }}>取消</button>
+            <button className="btn btn-primary" disabled={!pickTarget} onClick={savePickedVariable}>
+              存为变量
+            </button>
+          </>
+        )}
+      >
+        <div className="pick-var">
+          <SearchBox value={pickQuery} onChange={setPickQuery} placeholder="搜索字段路径，例如 token" />
+          <div className="pick-var-list">
+            {pickFiltered.length === 0 && <div className="pick-var-empty">没有匹配的字段</div>}
+            {pickFiltered.map(l => (
+              <button
+                key={l.path}
+                type="button"
+                className={`pick-var-row${pickTarget && pickTarget.path === l.path ? ' is-on' : ''}`}
+                onClick={() => { setPickTarget({ path: l.path, name: l.name, value: l.value }); setPickVarName(l.name); }}
+              >
+                <span className="pick-var-path">{l.path}</span>
+                <span className={`pick-var-type is-${l.type}`}>{l.type}</span>
+                <span className="pick-var-value">{l.preview}</span>
+              </button>
+            ))}
+          </div>
+          {pickTarget && (
+            <div className="pick-var-name">
+              <span>变量名</span>
+              <input
+                value={pickVarName}
+                onChange={e => setPickVarName(e.target.value)}
+                placeholder={pickTarget.name}
+                autoFocus
+              />
+              <span className="text-sm text-muted">
+                之后在地址/请求头/请求体里写 {'{{'}{pickVarName.trim() || pickTarget.name}{'}}'}
+              </span>
+            </div>
+          )}
+        </div>
+      </Modal>
+
       {/* 从 cURL 导入 */}
       <Modal
         open={curlOpen}
@@ -1144,34 +1264,59 @@ export function ApiClient() {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setCurlOpen(false)}>取消</button>
-            <button
-              className="btn btn-primary"
-              disabled={!curlText.trim()}
-              onClick={() => {
-                const r = parseCurl(curlText);
-                if (!r.ok) { setCurlError(r.error); return; }
-                setReq(prev => ({
-                  ...prev,
-                  method: r.request.method,
-                  url: r.request.url,
-                  headers: r.request.headers,
-                  body: r.request.body,
-                  bodyType: r.request.bodyType,
-                  rawContentType: r.request.rawContentType,
-                }));
-                setResponse(null);
-                setSchemaDiff(null);
-                setError('');
-                setCurlError('');
-                setCurlText('');
-                setCurlOpen(false);
-                // 解析器会说明「做了什么」：multipart 拆了字段、文件字段无法还原等
-                if (r.warnings && r.warnings.length) flashNotice(r.warnings.join("；"));
-                else flashNotice('已导入 curl');
-              }}
-            >
-              解析并填入
-            </button>
+            {!curlPreview && (
+              <button
+                className="btn btn-primary"
+                disabled={!curlText.trim()}
+                onClick={() => {
+                  const r = parseCurl(curlText);
+                  if (!r.ok) { setCurlError(r.error); return; }
+                  setCurlError('');
+                  setCurlPreview({
+                    method: r.request.method,
+                    url: r.request.url,
+                    headers: r.request.headers,
+                    body: r.request.body,
+                    bodyType: r.request.bodyType,
+                    rawContentType: r.request.rawContentType,
+                    warnings: r.warnings || [],
+                  });
+                }}
+              >
+                解析并预览
+              </button>
+            )}
+            {curlPreview && (
+              <>
+                <button className="btn btn-secondary" onClick={() => setCurlPreview(null)}>返回修改</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const pv = curlPreview;
+                    setReq(prev => ({
+                      ...prev,
+                      method: pv.method,
+                      url: pv.url,
+                      headers: pv.headers,
+                      body: pv.body,
+                      bodyType: pv.bodyType as typeof prev.bodyType,
+                      rawContentType: pv.rawContentType,
+                    }));
+                    setResponse(null);
+                    setSchemaDiff(null);
+                    setError('');
+                    setCurlError('');
+                    setCurlText('');
+                    setCurlPreview(null);
+                    setCurlOpen(false);
+                    if (pv.warnings.length) flashNotice(pv.warnings.join("；"));
+                    else flashNotice('已导入 curl');
+                  }}
+                >
+                  确认填入
+                </button>
+              </>
+            )}
           </>
         }
       >
@@ -1196,6 +1341,39 @@ export function ApiClient() {
           {curlError && (
             <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, fontWeight: 400, whiteSpace: 'pre-wrap' }}>
               {curlError}
+            </div>
+          )}
+
+          {curlPreview && (
+            <div className="curl-preview">
+              <div className="curl-preview-head">
+                <span className="pill pill-ok">解析结果</span>
+                <span className="text-sm text-muted">确认无误再填入编辑器</span>
+              </div>
+              <div className="curl-preview-grid">
+                <span>方法</span><b>{curlPreview.method}</b>
+                <span>地址</span><b className="curl-preview-url" title={curlPreview.url}>{curlPreview.url}</b>
+                <span>请求头</span><b>{String(curlPreview.headers || "").split("\n").filter(Boolean).length} 条</b>
+                <span>请求体</span>
+                <b>{
+                  curlPreview.bodyType === "none"
+                    ? "无"
+                    : `${{ json: "JSON", form: "表单", multipart: "文件/表单", raw: "原文" }[curlPreview.bodyType] || curlPreview.bodyType}` +
+                      (curlPreview.bodyType === "multipart"
+                        ? `（${String(curlPreview.body || "").split("\n").filter(Boolean).length} 个字段）`
+                        : curlPreview.bodyType === "form"
+                          ? `（${String(curlPreview.body || "").split("\n").filter(Boolean).length} 个字段）`
+                          : `（${String(curlPreview.body || "").length} 字符）`)
+                }</b>
+              </div>
+              {curlPreview.warnings.length > 0 && (
+                <ul className="curl-preview-warn">
+                  {curlPreview.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                </ul>
+              )}
+              {curlPreview.body && (
+                <pre className="curl-preview-body">{String(curlPreview.body).slice(0, 600)}{String(curlPreview.body).length > 600 ? "\n…（已截断）" : ""}</pre>
+              )}
             </div>
           )}
         </div>

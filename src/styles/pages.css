@@ -4996,3 +4996,265 @@
   color: var(--warning, #b26a00);
   background: color-mix(in srgb, var(--warning, #b26a00) 12%, transparent);
 }
+
+/* 请求头折叠：小开关 + 旋转箭头 */
+.api-collapse-btn {
+  gap: 4px;
+}
+
+.api-caret {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+  transform: rotate(0deg);
+}
+
+.api-caret.is-open {
+  transform: rotate(90deg);
+}
+
+/* ================================================================
+   应用内更新提示（替代系统通知）
+   ================================================================ */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 18px 0;
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--pm-line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.update-banner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.update-banner-text b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 测试账号：从已有系统选择的下拉 */
+.suggest-select {
+  margin-top: 6px;
+  width: 100%;
+}
+
+/* ================================================================
+   cURL 导入预览
+   ================================================================ */
+.curl-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--pm-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-card));
+}
+
+.curl-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.curl-preview-grid {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 6px 12px;
+  font-size: 12.5px;
+}
+
+.curl-preview-grid > span {
+  color: var(--text-muted);
+}
+
+.curl-preview-grid b {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curl-preview-url {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.curl-preview-warn {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--warning, #b26a00);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.curl-preview-body {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+/* 从响应提取字段（变量） */
+.pick-var {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pick-var-list {
+  max-height: 44vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--pm-line);
+  border-radius: 9px;
+  padding: 6px;
+}
+
+.pick-var-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, 1.1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pick-var-row:hover {
+  background: var(--bg-hover);
+}
+
+.pick-var-row.is-on {
+  background: var(--accent-light);
+  color: var(--text-primary);
+}
+
+.pick-var-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-var-type {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-align: center;
+  border: 1px solid var(--pm-line);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+
+.pick-var-value {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-var-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pick-var-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+
+.pick-var-name input {
+  width: 200px;
+}
+
+/* 压测运行历史 */
+.perf-hist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.perf-hist-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 78px 84px 78px 70px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.perf-hist-row:hover {
+  background: var(--bg-hover);
+}
+
+.perf-hist-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.perf-hist-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-hist-stat {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.perf-hist-stat.is-bad {
+  color: var(--danger);
+}
+
+.perf-hist-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}

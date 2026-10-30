@@ -166,8 +166,8 @@ export function Login({ onLogin }: Props) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <img src="./图标.png" alt="测试工具" className="login-logo" />
-          <h1>测试工具</h1>
+          <img src="./图标.png" alt="测试中台" className="login-logo" />
+          <h1>测试中台</h1>
           <p className="subtitle" style={{ marginTop: 20 }}>加载中...</p>
         </div>
       </div>
@@ -178,8 +178,8 @@ export function Login({ onLogin }: Props) {
     <>
     <div className="login-page">
       <div className="login-card">
-        <img src="./图标.png" alt="测试工具" className="login-logo" />
-        <h1>测试工具</h1>
+        <img src="./图标.png" alt="测试中台" className="login-logo" />
+        <h1>测试中台</h1>
         <p className="subtitle">
           {mode === 'setup' ? '首次使用，请设置主密码' : '请输入主密码解锁'}
         </p>

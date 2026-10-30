@@ -1,6 +1,7 @@
 {
   "name": "password-manager",
-  "version": "1.7.8",
+  "version": "1.8.0",
+  "productName": "测试中台",
   "description": "测试工具 - 集成网址管理与测试数据生成",
   "main": "electron/main.js",
   "scripts": {
@@ -15,8 +16,12 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "pack": "electron-builder --dir",
+    "check:ipc": "node scripts/check-ipc-contract.js",
     "check:integrity": "node scripts/check-integrity.js",
     "smoke": "node scripts/smoke-test.js",
+    "install:local": "node scripts/install-local.js",
+    "release": "node scripts/release.js",
+    "regress": "node scripts/regress-all.js",
     "dist": "node scripts/build-installer.js",
     "verify:packaged-csv": "node scripts/verify-packaged-csv.js",
     "check": "node scripts/preflight.js",
@@ -25,7 +30,7 @@
   },
   "build": {
     "appId": "com.passwordmanager.app",
-    "productName": "测试工具",
+    "productName": "测试中台",
     "files": [
       "dist/**/*",
       "dist-tdg/**/*",

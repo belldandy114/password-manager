@@ -12,6 +12,7 @@
  *   3) 输出里没有 Uncaught Exception / ReferenceError。
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,7 +21,7 @@ const USE_PACKED = process.env.USE_PACKED === '1';
 const DEBUG_WAIT_MS = Number(process.env.STARTUP_WAIT_MS || 16000);
 
 const exe = USE_PACKED
-  ? path.join('release', 'win-unpacked', '测试工具.exe')
+  ? pickExe(path.join('release', 'win-unpacked'))
   : path.join('node_modules', 'electron', 'dist', 'electron.exe');
 
 if (!fs.existsSync(exe)) {

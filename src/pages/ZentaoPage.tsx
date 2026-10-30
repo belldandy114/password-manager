@@ -547,7 +547,7 @@ export function ZentaoPage() {
       <Page>
         <PageHead
           icon={<Icons.bug size={16} />}
-          title="禅道"
+          title="缺陷管理"
           desc="连接公司禅道：我的 Bug 按项目统计；「项目 Bug」看整个项目的全部缺陷"
           tools={
             <>

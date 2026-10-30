@@ -292,6 +292,15 @@ function App() {
   // 首次进入立即挂载；之后在解锁空闲 3 秒时预热，点进去时已经就绪
   // 注意：这些 hooks 必须在下面的 `if (isLocked) return` 之前，否则锁定/解锁切换时
   // hooks 数量会变化，触发 React error #310。
+  // 启动检查发现新版本：在应用内横向提示条里告知（不再弹 Windows 系统通知）
+  const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; url: string } | null>(null);
+  useEffect(() => {
+    const off = window.electronAPI.onUpdateAvailable((d) => {
+      if (d && d.latest) setUpdateInfo({ latest: d.latest, current: d.current, url: d.url || "" });
+    });
+    return () => { try { off(); } catch { /* 忽略 */ } };
+  }, []);
+
   const [tdgMounted, setTdgMounted] = useState(false);
   useEffect(() => {
     if (currentPage === 'dataGenerator') { setTdgMounted(true); return; }
@@ -333,6 +342,27 @@ function App() {
         onLock={handleLock}
       />
       <div className="main-content">
+        {updateInfo && (
+          <div className="update-banner" role="status">
+            <span className="update-banner-dot" />
+            <span className="update-banner-text">
+              有新版本 <b>v{updateInfo.latest}</b>（当前 v{updateInfo.current}）
+            </span>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => { setCurrentPage('settings'); setUpdateInfo(null); }}
+            >
+              去更新
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setUpdateInfo(null)}
+              title="本次先不看了"
+            >
+              稍后
+            </button>
+          </div>
+        )}
         {/* 每个页面自己是独立 chunk：切换时只挂一个局部 loading，不牵连保活的子应用 */}
         {currentPage !== 'dataGenerator' && (
           <Suspense fallback={<div className="page-loading">正在加载…</div>}>

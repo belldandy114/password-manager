@@ -4,12 +4,13 @@
  * 必须确认它真的被打进 asar 且 require 得到——repo 里跑通不等于装完能跑）。
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const APP_DIR = path.join(__dirname, '..', 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9566;
 const PASSWORD = 'CsvPack#2026';
 

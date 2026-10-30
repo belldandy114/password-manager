@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Page, PageHead, Panel, Field, Icons, Pill } from '../components/ui';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
-import type { JmeterDone, JmeterLogLine } from '../types';
+import type { JmeterDone, JmeterLogLine, JmeterHistoryRecord } from '../types';
 
 /**
  * JMeter 非 GUI 运行页。
@@ -27,6 +27,10 @@ export function PerfTest() {
   const [threads, setThreads] = useState('');
   const [loops, setLoops] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
+  // 脚本是否支持 -J 覆盖：不支持时禁用输入并说明，避免「填了但没生效」
+  const [caps, setCaps] = useState<{ supportsThreads: boolean; supportsLoops: boolean } | null>(null);
+  // 运行历史（最近在前）：压测要看多轮趋势，跑完就丢太可惜
+  const [history, setHistory] = useState<JmeterHistoryRecord[]>([]);
 
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<JmeterLogLine[]>([]);
@@ -54,6 +58,8 @@ export function PerfTest() {
         if (d.data.jmxPath) setJmxPath(d.data.jmxPath);
       }
       await detect();
+      const hist = await window.electronAPI.jmeterHistory();
+      if (hist.success && hist.data) setHistory(hist.data);
       const st = await window.electronAPI.jmeterStatus();
       if (st.success && st.data) setRunning(true);
     })();
@@ -73,6 +79,7 @@ export function PerfTest() {
     const offDone = window.electronAPI.onJmeterDone((payload) => {
       setRunning(false);
       setResult(payload);
+      void window.electronAPI.jmeterHistory().then(h => { if (h.success && h.data) setHistory(h.data); });
       addToast(payload.ok ? '压测完成' : `压测结束（退出码 ${payload.code}）`, payload.ok ? 'success' : 'error');
     });
     return () => { offOut(); offDone(); };
@@ -107,6 +114,8 @@ export function PerfTest() {
     if (r.canceled) return;
     if (!r.success || !r.data) { addToast(r.error || '选择失败', 'error'); return; }
     setJmxPath(r.data.jmxPath);
+    const ins = await window.electronAPI.jmeterInspectScript(r.data.jmxPath);
+    if (ins.success && ins.data) setCaps({ supportsThreads: !!ins.data.supportsThreads, supportsLoops: !!ins.data.supportsLoops });
     await window.electronAPI.jmeterRemember({ jmxPath: r.data.jmxPath });
   };
 
@@ -258,11 +267,33 @@ export function PerfTest() {
           </Field>
 
           <div className="perf-row2">
-            <Field label="线程数" hint="临时覆盖，脚本内用 ${__P(threads,默认)} 才生效">
-              <input value={threads} onChange={e => setThreads(e.target.value)} placeholder="如 50" inputMode="numeric" />
+            <Field
+              label="线程数"
+              hint={caps && !caps.supportsThreads
+                ? "该脚本没有 ${__P(threads,默认值)}，填了也不会生效（脚本里线程组写死了）"
+                : "临时覆盖，脚本内用 ${__P(threads,默认)} 才生效"}
+            >
+              <input
+                value={threads}
+                onChange={e => setThreads(e.target.value)}
+                placeholder={caps && !caps.supportsThreads ? "脚本不支持覆盖" : "如 50"}
+                inputMode="numeric"
+                disabled={!!caps && !caps.supportsThreads}
+              />
             </Field>
-            <Field label="循环次数" hint="临时覆盖，脚本内用 ${__P(loops,默认)}">
-              <input value={loops} onChange={e => setLoops(e.target.value)} placeholder="如 10" inputMode="numeric" />
+            <Field
+              label="循环次数"
+              hint={caps && !caps.supportsLoops
+                ? "该脚本没有 ${__P(loops,默认值)}，填了也不会生效（脚本里循环写死了）"
+                : "临时覆盖，脚本内用 ${__P(loops,默认)}"}
+            >
+              <input
+                value={loops}
+                onChange={e => setLoops(e.target.value)}
+                placeholder={caps && !caps.supportsLoops ? "脚本不支持覆盖" : "如 10"}
+                inputMode="numeric"
+                disabled={!!caps && !caps.supportsLoops}
+              />
             </Field>
           </div>
 
@@ -329,6 +360,43 @@ export function PerfTest() {
           </div>
         </Panel>
       )}
+
+      <Panel
+        title="运行历史"
+        meta={history.length ? `${history.length} 次` : '还没有记录'}
+        tools={history.length > 0 ? (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={async () => {
+              const r = await window.electronAPI.jmeterHistoryClear();
+              if (r.success) { setHistory([]); addToast('已清空运行历史', 'success'); }
+            }}
+          >
+            清空
+          </button>
+        ) : undefined}
+      >
+        {history.length === 0 ? (
+          <div className="perf-tip">跑一次压测后，这里会留下「时间 / 脚本 / 样本 / 错误率 / TPS」，方便对比调参前后。</div>
+        ) : (
+          <div className="perf-hist">
+            {history.map(h => (
+              <div key={h.id} className="perf-hist-row">
+                <span className="perf-hist-time">{new Date(h.at).toLocaleString()}</span>
+                <span className="perf-hist-name" title={h.jmx}>{h.jmxName || '(未记录脚本)'}</span>
+                <span className="perf-hist-stat">{h.samples} 样本</span>
+                <span className={`perf-hist-stat${h.errors ? ' is-bad' : ''}`}>错误 {h.errorPct}%</span>
+                <span className="perf-hist-stat">TPS {h.tps}</span>
+                <span className="perf-hist-stat">{h.avg} ms</span>
+                <span className="perf-hist-actions">
+                  {h.jtlPath && <button className="btn btn-ghost btn-sm" onClick={() => openPath(h.jtlPath)}>.jtl</button>}
+                  {h.reportDir && <button className="btn btn-ghost btn-sm" onClick={() => openPath(h.reportDir)}>报告</button>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       </div>

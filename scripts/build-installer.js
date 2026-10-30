@@ -42,7 +42,8 @@ if (!process.env.ELECTRON_BUILDER_CACHE) {
 
 // 0. Clean
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
-console.log(`${CYAN}  测试工具 - 自动化构建${RESET}`);
+const _pkgForTitle = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
+console.log(`${CYAN}  ${(_pkgForTitle.build && _pkgForTitle.build.productName) || '测试中台'} - 自动化构建${RESET}`);
 
 // 0. 质量门禁（CI 也跑这个脚本，所以门禁对 CI 与本地同时生效）：
 //    typecheck 或单测挂了就不出包，避免「带病发版」。
@@ -116,7 +117,9 @@ try {
 
 // 5. Verify
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
-const installerName = `测试工具 Setup ${pkg.version}.exe`;
+// 产品名从 package.json 读（1.8.0 改名「测试中台」，别写死）
+const productName = pkg.build && pkg.build.productName ? pkg.build.productName : (pkg.productName || '测试中台');
+const installerName = `${productName} Setup ${pkg.version}.exe`;
 const installer = path.join(ROOT, 'release', installerName);
 if (fs.existsSync(installer)) {
   const size = (fs.statSync(installer).size / 1024 / 1024).toFixed(1);

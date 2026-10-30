@@ -9,6 +9,7 @@
  *   --fix  发现问题时自动把目标（及其后代）改回 Medium
  */
 const fs = require('fs');
+const { pickExe } = require('./pick-exe');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
@@ -24,7 +25,7 @@ const targets = [
   { path: ROOT, label: '源码目录' },
   { path: RELEASE, label: 'release 目录' },
   { path: UNPACKED, label: 'win-unpacked 目录' },
-  { path: path.join(UNPACKED, '测试工具.exe'), label: '主程序' },
+  { path: pickExe(UNPACKED), label: '主程序' },
   { path: path.join(UNPACKED, 'resources', 'app.asar'), label: 'app.asar' },
   { path: path.join(UNPACKED, 'resources', 'elevate.exe'), label: 'elevate.exe' },
   { path: installer, label: '安装包' },

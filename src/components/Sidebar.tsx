@@ -38,8 +38,8 @@ export function Sidebar({ currentPage, onNavigate, onLock }: Props) {
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
-        <img src="./图标.png" alt="测试工具" className="sidebar-logo-icon" />
-        测试工具
+        <img src="./图标.png" alt="测试中台" className="sidebar-logo-icon" />
+        测试中台
       </div>
 
       <nav className="sidebar-nav sidebar-nav-groups">
@@ -201,7 +201,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
       { id: 'snippets', label: 'SQL 片段', icon: dbIcon },
       { id: 'notes', label: '测试笔记', icon: noteIcon },
-      { id: 'zentao', label: '禅道', icon: bugIcon },
+      { id: 'zentao', label: '缺陷管理', icon: bugIcon },
     ],
   },
   {

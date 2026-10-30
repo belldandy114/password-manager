@@ -171,6 +171,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterPickExe: () => ipcRenderer.invoke('jmeter:pick-exe'),
   jmeterPickScript: () => ipcRenderer.invoke('jmeter:pick-script'),
   jmeterPickJavaHome: () => ipcRenderer.invoke('jmeter:pick-java-home'),
+  jmeterInspectScript: (p) => ipcRenderer.invoke('jmeter:inspect-script', p),
+  jmeterHistory: () => ipcRenderer.invoke('jmeter:history'),
+  jmeterHistoryClear: () => ipcRenderer.invoke('jmeter:history-clear'),
   jmeterPickOutDir: () => ipcRenderer.invoke('jmeter:pick-out-dir'),
   jmeterDefaults: () => ipcRenderer.invoke('jmeter:defaults'),
   jmeterRemember: (patch) => ipcRenderer.invoke('jmeter:remember', patch),
@@ -179,6 +182,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterStatus: () => ipcRenderer.invoke('jmeter:status'),
   jmeterOpenPath: (p) => ipcRenderer.invoke('jmeter:open-path', p),
   // 运行输出（流式）：返回取消订阅函数
+  // 应用日志（排障）
+  logInfo: () => ipcRenderer.invoke('log:info'),
+  logOpen: () => ipcRenderer.invoke('log:open'),
+  logTail: (lines) => ipcRenderer.invoke('log:tail', lines),
+
+  // 应用内「有新版本」提示（替代系统通知）
+  onUpdateAvailable: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('update:available', handler);
+    return () => ipcRenderer.removeListener('update:available', handler);
+  },
   onJmeterOutput: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('jmeter:output', handler);

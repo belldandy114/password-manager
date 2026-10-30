@@ -184,6 +184,31 @@ async function detectJava(settingsJavaHome) {
   };
 }
 
+/**
+ * 读 .jmx 判断它是否支持用 -J 覆盖线程数/循环次数。
+ * 脚本里必须写成 ${__P(threads,默认值)} 才会读 -Jthreads=N；写死数字的话覆盖不生效，
+ * 但界面上填了值会让人以为生效了 —— 所以先在界面上说清楚。
+ */
+function inspectScript(jmxPath) {
+  const out = { supportsThreads: false, supportsLoops: false, ok: false, error: "" };
+  try {
+    const st = fs.statSync(jmxPath);
+    // 只读前 4MB：正常 jmx 远小于此，避免极大文件拖慢界面
+    const fd = fs.openSync(jmxPath, "r");
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, 0);
+    fs.closeSync(fd);
+    const text = buf.toString("utf8");
+    out.supportsThreads = /__P\(\s*threads\b/i.test(text) || /\$\{__threads\b/i.test(text);
+    out.supportsLoops = /__P\(\s*loops\b/i.test(text) || /\$\{__loops\b/i.test(text);
+    out.ok = true;
+  } catch (e) {
+    out.error = e.message;
+  }
+  return out;
+}
+
 /** 杀掉进程树：Windows 用 taskkill /T，其他平台用进程组 */
 function killTree(child) {
   if (!child || child.killed) return;
@@ -196,7 +221,8 @@ function killTree(child) {
   } catch { /* 进程可能已退出 */ }
 }
 
-function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
+function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
+  const histDir = dataDir || app.getPath('userData');
   /** 探测：优先设置里的路径 → PATH → 常见目录 */
   ipcMain.handle('jmeter:detect', async () => {
     const s = loadSettings() || {};
@@ -246,6 +272,13 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
     if (!probe.ok) return { success: false, error: `这个目录里的 java 跑不起来：${(probe.candidates[0] || {}).error || "未知原因"}` };
     saveSettings({ ...(loadSettings() || {}), javaHome: home });
     return { success: true, data: { javaHome: home, version: probe.version || "" } };
+  });
+
+  /** 预检脚本是否支持 -J 覆盖线程/循环 */
+  ipcMain.handle('jmeter:inspect-script', async (_e, jmxPath) => {
+    const check = validateJmxPath(jmxPath);
+    if (!check.ok) return { success: false, error: check.error };
+    return { success: true, data: inspectScript(jmxPath) };
   });
 
   /** 选 .jmx */
@@ -379,6 +412,17 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
 
     current = { runId, child, jtlPath: paths.jtlPath, reportDir: paths.reportDir };
 
+    // 覆盖参数是否真的生效，取决于脚本里有没有 __P(...)：不生效就明说，别让人以为填了就有用
+    const caps = inspectScript(opts.jmxPath);
+    const askThreads = Number(opts.threads) > 0;
+    const askLoops = Number(opts.loops) > 0;
+    if (askThreads && !caps.supportsThreads) {
+      pushLine("warn", "[警告] 脚本里没有 ${__P(threads,默认值)}，线程数覆盖不会生效（脚本里线程组是写死的）");
+    }
+    if (askLoops && !caps.supportsLoops) {
+      pushLine("warn", "[警告] 脚本里没有 ${__P(loops,默认值)}，循环次数覆盖不会生效（脚本里循环是写死的）");
+    }
+
     // 把「即将执行的命令」也推给界面，方便对照 cmd 里的写法
     pushLine('cmd', `${jmeterPath} ${args.join(' ')}`);
     if (String(process.env.JAVA_HOME || '').trim() !== java.home) {
@@ -386,6 +430,7 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
     }
 
     child.on('error', (err) => {
+      console.error('[jmeter] spawn failed: ' + err.message);
       pushLine('err', `进程启动失败：${err.message}`);
     });
 
@@ -411,6 +456,7 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
         fs.writeFileSync(logPath, `${lines.join('\n')}\n`, 'utf8');
       } catch { /* 写日志失败不影响结果 */ }
 
+      console.log('[jmeter] done runId=' + runId + ' code=' + code + ' jtl=' + (fs.existsSync(paths.jtlPath) ? paths.jtlPath : 'none') + ' report=' + (paths.reportDir || 'none'));
       const done = {
         runId,
         code,
@@ -421,6 +467,15 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
         reportDir: mode === 'report' && fs.existsSync(path.join(paths.reportDir, 'index.html')) ? paths.reportDir : '',
         logPath,
       };
+      // 记一条运行历史（只存路径与统计，不含任何密钥）
+      try {
+        const { recordFromRun, pushRecord, loadHistory, saveHistory } = require("./jmeter-history");
+        const rec = recordFromRun(done, { jmxPath: opts.jmxPath, mode, threads: opts.threads, loops: opts.loops });
+        saveHistory(histDir, pushRecord(loadHistory(histDir), rec));
+      } catch (e) {
+        console.warn("[jmeter] 写运行历史失败：" + e.message);
+      }
+
       current = null;
       if (win && !win.isDestroyed()) {
         try { win.webContents.send('jmeter:done', done); } catch { /* 窗口已关 */ }
@@ -434,6 +489,17 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow }) {
   ipcMain.handle('jmeter:stop', async () => {
     if (!current) return { success: false, error: '当前没有正在运行的任务' };
     killTree(current.child);
+    return { success: true };
+  });
+
+  /** 运行历史 */
+  ipcMain.handle('jmeter:history', async () => {
+    const { loadHistory } = require("./jmeter-history");
+    return { success: true, data: loadHistory(histDir) };
+  });
+  ipcMain.handle('jmeter:history-clear', async () => {
+    const { saveHistory } = require("./jmeter-history");
+    saveHistory(histDir, []);
     return { success: true };
   });
 

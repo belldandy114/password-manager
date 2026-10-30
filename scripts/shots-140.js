@@ -1,12 +1,13 @@
 /** 1.4.0 界面截图：禅道分页+趋势图 / 接口断言 / 安全体检 */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9821;
 const PW = 'Shot140#2026';
 const ZT = require('./zt-config');

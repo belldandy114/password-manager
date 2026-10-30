@@ -24,7 +24,7 @@ const PAGES: { page: string; label: string }[] = [
   { page: 'weeklyReport', label: '周报' },
   { page: 'snippets', label: 'SQL 片段' },
   { page: 'notes', label: '测试笔记' },
-  { page: 'zentao', label: '禅道' },
+  { page: 'zentao', label: '缺陷管理' },
   { page: 'dataGenerator', label: '测试数据' },
   { page: 'jsonConverter', label: 'JSON 转化' },
   { page: 'toolbox', label: '工具箱' },
@@ -108,7 +108,7 @@ export function CommandPalette({
       {
         id: 'action:zt-refresh',
         title: '刷新：我的 Bug',
-        sub: '重新拉禅道「我的 Bug」',
+        sub: '重新拉缺陷管理「我的 Bug」',
         kind: 'action',
         run: () => { onNavigate('zentao'); signalCmd('zentao:refresh-mine'); },
       },
@@ -131,7 +131,7 @@ export function CommandPalette({
           window.electronAPI.settingsSave({ theme: next });
         },
       },
-      { id: 'action:zentao', title: '禅道：我的 Bug', sub: '打开禅道页', kind: 'action', run: () => onNavigate('zentao') },
+      { id: 'action:zentao', title: '缺陷管理：我的 Bug', sub: '打开缺陷管理页', kind: 'action', run: () => onNavigate('zentao') },
       { id: 'action:api', title: '发一个接口请求', sub: '打开接口调试', kind: 'action', run: () => onNavigate('apiClient') },
     ];
 

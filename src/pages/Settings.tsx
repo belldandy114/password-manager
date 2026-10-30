@@ -24,7 +24,7 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
   { id: 'newEntry', label: '新增网址', desc: '快速添加新的密码记录' },
   { id: 'search', label: '搜索', desc: '聚焦到搜索输入框' },
   { id: 'settings', label: '打开设置', desc: '跳转到设置页面' },
-  { id: 'lock', label: '锁定应用', desc: '立即锁定测试工具' },
+  { id: 'lock', label: '锁定应用', desc: '立即锁定测试中台' },
   { id: 'trash', label: '回收站', desc: '打开回收站页面' },
   { id: 'import', label: '导入数据', desc: '打开导入页面' },
   { id: 'export', label: '导出数据', desc: '打开导出页面' },
@@ -816,9 +816,28 @@ export function Settings() {
             <h3 style={{ marginTop: 24 }}>关于</h3>
             <div className="setting-row">
               <div>
+                <div className="setting-label">运行日志</div>
+                <div className="setting-desc">
+                  出问题时把这里的日志发给开发者，比截图更能说明原因（不记录密码和请求体）。
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    const r = await window.electronAPI.logOpen();
+                    if (!r.success) addToast(r.error || '打开失败', 'error');
+                  }}
+                >
+                  打开日志目录
+                </button>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
                 <div className="setting-label">启动时检查更新</div>
                 <div className="setting-desc">
-                  启动后静默检查一次，有新版本会弹系统通知（同一版本只提示一次）。
+                  启动后静默检查一次，有新版本会在应用内顶部提示（同一版本只提示一次）。
                   关掉后只有点「检查更新」才会联网。
                 </div>
               </div>

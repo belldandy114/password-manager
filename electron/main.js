@@ -29,6 +29,34 @@ if (!app.requestSingleInstanceLock()) {
 // ----------------------------------------------------------------
 // 数据目录默认是 userData，但允许用户改到别的盘（设置 → 数据目录）。
 // 指针文件必须放在 userData 里（不能放数据目录里，否则换了目录就找不到指针）。
+
+/**
+ * 应用改名（1.8.0：测试工具 → 测试中台）会改变 userData 路径，
+ * 老用户的密码库会「凭空消失」（其实是新目录里是空库）。
+ * 这里在新目录还空着时，把老目录整体搬过来一次。
+ *
+ * 只在新目录没有任何内容时迁移：用户已经在用新版本就绝不覆盖。
+ */
+function migrateLegacyUserData(appData) {
+  try {
+    const current = app.getPath('userData');
+    const legacyName = '测试工具';
+    const legacy = path.join(appData, legacyName);
+    if (!legacy || path.resolve(current) === path.resolve(legacy)) return '';
+    if (!fs.existsSync(legacy)) return '';
+    if (fs.existsSync(current) && fs.readdirSync(current).length > 0) return '';
+    fs.mkdirSync(current, { recursive: true });
+    fs.cpSync(legacy, current, { recursive: true, force: false, errorOnExist: false });
+    console.log(`[migrate] 已把旧数据目录迁移到新应用名下：${legacy} → ${current}`);
+    return current;
+  } catch (e) {
+    console.log(`[migrate] 迁移旧数据目录失败（不影响启动）：${e.message}`);
+    return '';
+  }
+}
+
+migrateLegacyUserData(app.getPath('appData'));
+
 const USER_DATA_DIR = app.getPath('userData');
 const LOCATION_FILE = path.join(USER_DATA_DIR, 'data-location.json');
 
@@ -43,6 +71,10 @@ function resolveDataDir() {
 }
 
 const DATA_DIR = resolveDataDir();
+// 日志尽早装上：启动阶段的问题也要能落盘
+const { installFileLogging } = require('./app-log');
+process.env.PM_APP_VERSION = app.getVersion();
+installFileLogging(path.join(DATA_DIR, 'logs'));
 const DATA_FILE = path.join(DATA_DIR, 'vault.enc');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const BIN_FILE = path.join(DATA_DIR, 'trash.enc');
@@ -518,7 +550,7 @@ function createTray() {
   if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(__dirname, '..', 'buildResources', 'icon.ico'));
 
   tray = new Tray(icon);
-  tray.setToolTip('测试工具');
+  tray.setToolTip('测试中台');
   buildTrayMenu();
   // Left click / double click on the icon restores the window (Windows convention).
   tray.on('click', () => showMainWindow());
@@ -711,8 +743,10 @@ const { registerFileIpc } = require('./ipc-files');
 const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
+const { registerSystemIpc } = require('./ipc-system');
 const { filterMineBugs } = require('./zentao-filter');
 const { parseMultipartLine } = require('./multipart');
+const { logPath, tail: logTail } = require('./app-log');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -771,6 +805,19 @@ async function fetchLatestRelease() {
   }
 }
 
+// ---- 应用日志（排障用）----
+ipcMain.handle('log:info', async () => ({ success: true, data: { path: logPath() || '' } }));
+ipcMain.handle('log:open', async () => {
+  const f = logPath();
+  if (!f || !fs.existsSync(f)) return { success: false, error: '还没有日志文件' };
+  const err = await shell.openPath(path.dirname(f));
+  return err ? { success: false, error: err } : { success: true, data: { path: f } };
+});
+ipcMain.handle('log:tail', async (_e, lines = 200) => ({
+  success: true,
+  data: { path: logPath() || "", text: String(logTail(Number(lines) || 200) || "") },
+}));
+
 ipcMain.handle('update:check', async () => {
   try {
     const rel = await fetchLatestRelease();
@@ -794,7 +841,7 @@ ipcMain.handle('update:check', async () => {
 });
 
 /**
- * 启动时静默检查更新：有新版就弹一条系统通知（点开是发布页），同一版本只提示一次。
+ * 启动时静默检查更新：有新版就**在应用内**提示（不弹系统通知），同一版本只提示一次。
  * 完全后台执行且吞掉所有异常——网络不通不该影响启动。
  */
 async function autoCheckUpdate() {
@@ -812,15 +859,18 @@ async function autoCheckUpdate() {
       if (debug) console.log('[auto-update] no notify');
       return;
     }
-    if (!Notification.isSupported()) { if (debug) console.log('[auto-update] notifications unsupported'); return; }
-    const n = new Notification({
-      title: `发现新版本 v${rel.latest}`,
-      body: '点此查看更新说明；也可以在「设置 → 关于与更新」里直接下载安装。',
-    });
-    n.on('click', () => {
-      if (rel.htmlUrl) shell.openExternal(rel.htmlUrl).catch(() => { /* 忽略 */ });
-    });
-    n.show();
+    // 只在应用内提示：推给渲染层显示横幅/弹窗，用户点了再打开发布页。
+    // （以前用 new Notification 弹 Windows 通知，容易和其他软件的通知混在一起被忽略）
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send('update:available', {
+          current,
+          latest: rel.latest,
+          url: rel.htmlUrl || '',
+          downloadUrl: rel.downloadUrl || '',
+        });
+      } catch { /* 窗口已关 */ }
+    }
     if (debug) console.log('[auto-update] notified ' + rel.latest);
     saveSettings({ ...(loadSettings() || {}), updateNotifiedVersion: rel.latest });
   } catch (e) {
@@ -3344,79 +3394,13 @@ function setupIpcHandlers() {
     return { success: true, data: output, count: entries.length };
   });
 
-  // ---- File dialogs ----
-  ipcMain.handle('dialog:open-file', async (_event, { filters }) => {
-    const { dialog } = require('electron');
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openFile'],
-      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
-    });
-    if (result.canceled) return { canceled: true };
-    return { canceled: false, filePath: result.filePaths[0] };
-  });
-
-  ipcMain.handle('dialog:save-file', async (_event, { defaultName, filters }) => {
-    const { dialog } = require('electron');
-    const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: defaultName,
-      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
-    });
-    if (result.canceled) return { canceled: true };
-    return { canceled: false, filePath: result.filePath };
-  });
-
-  ipcMain.handle('file:write', (_event, { filePath, content, encoding }) => {
-    try {
-      if (encoding === 'base64') {
-        const buf = Buffer.from(content, 'base64');
-        fs.writeFileSync(filePath, buf);
-      } else {
-        fs.writeFileSync(filePath, content, 'utf8');
-      }
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
-  });
-
-  // ---- App info ----
-  ipcMain.handle('app:get-path', (_event, name) => {
-    return app.getPath(name);
-  });
-
-  // 浏览器检测/启动已拆到 electron/ipc-browser.js
-  // ---- Test Data Generator IPC handlers ----
-  ipcMain.handle('dialog:saveFile', async (_event, { defaultName, filters }) => {
-    const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: defaultName,
-      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
-    });
-    if (result.canceled || !result.filePath) return { canceled: true };
-    return { canceled: false, filePath: result.filePath };
-  });
-
-  ipcMain.handle('fs:writeFile', async (_event, { filePath, content, encoding }) => {
-    try {
-      fs.writeFileSync(filePath, content, encoding || 'utf-8');
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  // IPC handler for renderer to get the TDG paths
-  ipcMain.handle('tdg:get-path', () => {
-    return {
-      distPath: TDG_DIST_PATH,
-      preloadPath: TDG_PRELOAD_PATH,
-    };
-  });
   // 目录型文件 IPC（周报 / 笔记）已拆到 electron/ipc-files.js
+  registerSystemIpc({ getWindow: () => mainWindow, tdgPaths: { distPath: TDG_DIST_PATH, preloadPath: TDG_PRELOAD_PATH } });
   registerFileIpc();
   registerToolsIpc();
   registerBrowserIpc({ loadSettings });
   // JMeter 非 GUI 运行：需要窗口引用（推送流式日志）与设置读写
-  registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow });
+  registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow, dataDir: DATA_DIR });
 
 }
 

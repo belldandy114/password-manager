@@ -5,6 +5,7 @@
  * 禅道相关断言需要真实地址；没配 ZT_BASEURL/ZT_ACCOUNT/ZT_PASSWORD 时自动跳过那一段。
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -19,7 +20,7 @@ const DL_SHA = crypto.createHash('sha256').update(DL_BUF).digest('hex');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const PACKED = path.join(APP_DIR, '测试工具.exe');
+const PACKED = pickExe(APP_DIR);
 const usePacked = fs.existsSync(PACKED) && process.env.USE_PACKED === '1';
 const EXE = usePacked ? PACKED : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const PORT = 9809;
@@ -44,6 +45,11 @@ const ONLY = String(process.env.R9_ONLY || '').toLowerCase();
 const want = (m) => !ONLY || ONLY.includes(m);
 
 const echo = http.createServer((req, res) => {
+  if (String(req.url || '').startsWith('/api/login-token')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ code: 200, data: { token: 'tok-' + Date.now(), user: { name: '张三', id: 7 } } }));
+    return;
+  }
   let data = '';
   req.on('data', (c) => { data += c; });
   req.on('end', () => {
@@ -136,13 +142,54 @@ const echo = http.createServer((req, res) => {
     s(el, ${JSON.stringify(v)});
     return true;
   })()`);
+  /** 打开「从 cURL 导入」弹窗并等输入框就绪 */
+  const openCurlImport = async () => {
+    await clickHas('从 cURL 导入');
+    for (let i = 0; i < 40; i++) {
+      if (await ev(`!!document.querySelector(".curl-input")`)) return true;
+      await sleep(100);
+    }
+    return false;
+  };
+
+  /** 等 cURL 预览出现，再点「确认填入」（渲染是异步的，固定 sleep 会抢跑） */
+  const confirmCurlImport = async () => {
+    let ok = false;
+    for (let i = 0; i < 40; i++) {
+      ok = !!(await ev(`!!document.querySelector(".curl-preview")`));
+      if (ok) break;
+      await sleep(100);
+    }
+    if (!ok) return false;
+    await clickHas('确认填入');
+    for (let i = 0; i < 40; i++) {
+      if (!(await ev(`!!document.querySelector(".curl-input")`))) return true;
+      await sleep(100);
+    }
+    return true;
+  };
+
   const clickHas = async (t) => ev(`(() => {
     const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim().includes(${JSON.stringify(t)}));
     if (b) { b.click(); return true; }
     return false;
   })()`);
-  const navTo = async (label) => {
+  const NAV_ALIAS = { '禅道': '缺陷管理' };
+  const navTo = async (label0) => {
+    // 菜单改名兼容：旧名 → 新名
+    const label = label0 === '禅道' ? '缺陷管理' : label0;
+    // 目标页可能已经挂着 .pg（旧页面），必须等「标题变化」才算切页完成，
+    // 否则会在旧页面 DOM 上断言（曾导致容器列表读到空数据）
+    const titleNow = () => ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
+    const before = await titleNow();
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
+    for (let i = 0; i < 40; i++) {
+      const now = await titleNow();
+      if (now && now !== before) break;
+      await sleep(100);
+    }
+    await sleep(500);
+    // 页面是懒加载 chunk，等真正渲染出来再断言
     for (let i = 0; i < 40; i++) {
       const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
       if (ready) break;
@@ -177,7 +224,8 @@ const echo = http.createServer((req, res) => {
   ].join('\n');
   await setVal('.curl-input', sample);
   await sleep(200);
-  await clickHas('解析并填入');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
   await sleep(600);
 
   const filled = await ev(`(() => ({
@@ -207,7 +255,35 @@ const echo = http.createServer((req, res) => {
   check('cURL：导入后能直接发送并拿到响应', /"ok": true/.test(String(echoed)), String(echoed).slice(0, 60).replace(/\s+/g, ' '));
   check('cURL：发出的中文 body 未被破坏', /张三/.test(String(echoed)));
 
-  // 一键复制
+  // 1.8.0 改名与交互优化
+  const brand = await ev(`(() => ({
+    logo: (document.querySelector(".sidebar-logo") || {}).textContent || "",
+    nav: [...document.querySelectorAll(".nav-item")].map(x => x.textContent.trim()),
+    title: document.title,
+  }))()`);
+  check("改名：应用名显示「测试中台」", /测试中台/.test(String(brand && brand.logo)) && /测试中台/.test(String(brand && brand.title)),
+    `${brand && brand.logo} | ${brand && brand.title}`);
+  check("改名：菜单为「缺陷管理」且不再有「禅道」",
+    !!brand && brand.nav.includes("缺陷管理") && !brand.nav.includes("禅道"),
+    (brand && brand.nav || []).slice(0, 6).join("|"));
+
+  // 请求头折叠 / 展开
+  const hdrToggle = await ev(`(() => {
+    const b = [...document.querySelectorAll(".field-label-row button")].find(x => /收起|展开/.test(x.textContent));
+    return b ? b.textContent.trim() : "";
+  })()`);
+  check("接口调试：请求头有收起/展开开关", /收起|展开/.test(String(hdrToggle)), String(hdrToggle));
+  const hdrBefore = await ev(`document.querySelectorAll(".api-io .kv-row").length`);
+  await ev(`(() => { const b = [...document.querySelectorAll(".field-label-row button")].find(x => /收起/.test(x.textContent)); if (b) b.click(); return true; })()`);
+  await sleep(300);
+  const hdrAfter = await ev(`document.querySelectorAll(".api-io .kv-row").length`);
+  check("接口调试：收起后请求头行隐藏", Number(hdrAfter) === 0 && Number(hdrBefore) > 0, `${hdrBefore} → ${hdrAfter}`);
+  await ev(`(() => { const b = [...document.querySelectorAll(".field-label-row button")].find(x => /展开/.test(x.textContent)); if (b) b.click(); return true; })()`);
+  await sleep(300);
+  const hdrBack = await ev(`document.querySelectorAll(".api-io .kv-row").length`);
+  check("接口调试：展开后请求头行回来", Number(hdrBack) === Number(hdrBefore), `${hdrBack}`);
+
+  // 一键复制  // 一键复制  // 一键复制
   await ev(`(() => { navigator.clipboard.writeText('__clean__').catch(() => {}); return 1; })()`);
   await sleep(200);
   await clickHas('复制 cURL');
@@ -239,7 +315,8 @@ const echo = http.createServer((req, res) => {
   const cmdStyle = ['curl ^"http://127.0.0.1:' + ECHO_PORT + '/cmd?pageNo=1^&pageSize=30^" ^', '  -H ^"Accept: */*^"^'].join('\n');
   await setVal('.curl-input', cmdStyle);
   await sleep(200);
-  await clickHas('解析并填入');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
   await sleep(500);
   const cmdFilled = await ev(`(() => ({
     url: document.querySelector('.url-bar input')?.value || '',
@@ -253,7 +330,8 @@ const echo = http.createServer((req, res) => {
   await sleep(350);
   await setVal('.curl-input', 'wget https://a/b');
   await sleep(150);
-  await clickHas('解析并填入');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
   await sleep(400);
   const errText = await ev(`(() => { const p = document.querySelector('.curl-import .pill-bad'); return p ? p.textContent.trim() : ''; })()`);
   check('cURL：非 curl 输入给出错误提示且不关闭弹窗', /不是 curl/.test(String(errText)), String(errText).slice(0, 40));
@@ -270,7 +348,8 @@ const echo = http.createServer((req, res) => {
   ].join('\n');
   await setVal('.curl-input', cmdJson);
   await sleep(200);
-  await clickHas('解析并填入');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
   await sleep(700);
   const cmdJsonFilled = await ev(`(() => ({
     body: document.querySelector(".api-io textarea")?.value || "",
@@ -315,7 +394,8 @@ const echo = http.createServer((req, res) => {
   ].join('\n');
   await setVal('.curl-input', mp);
   await sleep(200);
-  await clickHas('解析并填入');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
   await sleep(800);
   const mpFilled = await ev(`(() => ({
     bodyType: [...document.querySelectorAll(".seg button, .seg-btn, .body-type button")].map(b => b.textContent.trim()).join("|"),
@@ -328,6 +408,120 @@ const echo = http.createServer((req, res) => {
   check("cURL：multipart 不再残留 boundary/Content-Disposition",
     !/WebKitFormBoundary|Content-Disposition/.test(String(mpFilled && mpFilled.body)),
     String(mpFilled && mpFilled.body).slice(0, 60));
+  // B1：从响应提取字段 → {{变量}}
+  await navTo('接口调试');
+  await sleep(400);
+  // 用一条干净 JSON curl 重置请求（上一个 multipart 用例的 files=@a.jpg 会让发送失败）
+  await openCurlImport();
+  await setVal('.curl-input', 'curl -X GET "http://127.0.0.1:' + ECHO_PORT + '/api/login-token"');
+  await clickHas('解析并预览');
+  await confirmCurlImport();
+  await sleep(400);
+  await clickHas('发送');
+  for (let i = 0; i < 50; i++) {
+    if (await ev(`!!document.querySelector(".code2")`)) break;
+    await sleep(200);
+  }
+  const respState = await ev(`(() => ({ code2: !!document.querySelector(".code2"), body: ((document.querySelector(".code2")||{}).textContent||"").slice(0, 40) }))()`);
+  check('提取字段：先发一个 JSON 请求拿到响应', !!respState && respState.code2 === true, JSON.stringify(respState));
+  const hasPickBtn = await ev(`(() => [...document.querySelectorAll("button")].some(b => b.textContent.trim() === "提取字段"))()`);
+  check('提取字段：JSON 响应出现「提取字段」按钮', hasPickBtn === true);
+  await clickHas('提取字段');
+  await sleep(500);
+  const pickRows = await ev(`(() => ({ rows: document.querySelectorAll(".pick-var-row").length }))()`);
+  check('提取字段：列出可提取的字段路径', !!pickRows && pickRows.rows > 0, JSON.stringify(pickRows));
+  await ev(`(() => { const r = [...document.querySelectorAll(".pick-var-row")].find(x => /token/.test(x.textContent)); if (r) { r.click(); return true; } return false; })()`);
+  await sleep(400);
+  const varName = await ev(`(() => { const el = document.querySelector(".pick-var-name input"); return el ? el.value : ""; })()`);
+  check('提取字段：选中后默认用字段名作变量名', /token/.test(String(varName)), String(varName));
+  await clickHas('存为变量');
+  await sleep(500);
+  const pickClosed = await ev(`(() => !document.querySelector('.pick-var-row'))()`);
+  const savedNotice = await ev(`(() => { const el = document.querySelector('.api-notice, .inline-hint, .notice, .toast'); return el ? el.textContent.trim() : ''; })()`);
+  check('提取字段：保存后关闭弹窗（变量已写入）', pickClosed === true, String(savedNotice).slice(0, 40));
+  // A4：解析后先出预览（看清方法/地址/头数/字段数），确认才填入
+  await clickHas('从 cURL 导入');
+  await sleep(400);
+  await setVal('.curl-input', [
+    'curl -X POST ^"http://127.0.0.1:' + ECHO_PORT + '/api/preview^" ^',
+    '  -H ^"Content-Type: application/json^" ^',
+    '  -H ^"X-Demo: 1^" ^',
+    '  --data-raw ^"{"a":1}^"',
+  ].join('\n'));
+  await sleep(200);
+  await clickHas('解析并预览');
+  await sleep(400);
+  const pv = await ev(`(() => {
+    const box = document.querySelector(".curl-preview");
+    return { has: !!box, text: box ? box.textContent.replace(/\\s+/g, " ").trim() : "", modalOpen: !!document.querySelector(".curl-input") };
+  })()`);
+  check("cURL：解析后先给预览（不直接填入）", !!pv && pv.has === true && pv.modalOpen === true, String(pv && pv.text).slice(0, 80));
+  check("cURL：预览里能看到方法/地址/头数",
+    !!pv && /POST/.test(pv.text) && /\/api\/preview/.test(pv.text) && /2 条/.test(pv.text),
+    String(pv && pv.text).slice(0, 100));
+  await clickHas('返回修改');
+  await sleep(300);
+  const backToEdit = await ev(`(() => !document.querySelector(".curl-preview") && !!document.querySelector(".curl-input"))()`);
+  check("cURL：预览可返回修改", backToEdit === true);
+  await clickHas('解析并预览');
+  await sleep(300);
+  await clickHas('确认填入');
+  await sleep(600);
+  const pvFilled = await ev(`(() => ({ url: document.querySelector(".url-bar input")?.value || "", modal: !!document.querySelector(".curl-input") }))()`);
+  check("cURL：确认后填入并关闭弹窗",
+    !!pvFilled && /\/api\/preview/.test(pvFilled.url) && pvFilled.modal === false, JSON.stringify(pvFilled));
+
+
+  // 测试账号：新增窗口的「系统」可从已有数据里选（环境矩阵 / 历史账号 / 网址管理条目）
+  await ev(`(async () => {
+    await window.electronAPI.wsSet('environments', [
+      { id: 'env1', system: '资产管理系统', env: '测试', url: 'http://env.example.com' },
+    ]);
+    await window.electronAPI.wsSet('accounts', [
+      { id: 'acc0', system: '华贸学工系统', role: '管理员', envType: 'testing', username: 'u', password: 'p', note: '', updatedAt: new Date().toISOString() },
+    ]);
+    return 1;
+  })()`);
+  await navTo('测试账号');
+  await sleep(400);
+  await ev(`(() => { const b = [...document.querySelectorAll("button")].find(x => /新增|添加/.test(x.textContent)); if (b) b.click(); return !!b; })()`);
+  await sleep(500);
+  const acctSys = await ev(`(() => {
+    const sel = document.querySelector(".modal .suggest-select");
+    return { has: !!sel, opts: sel ? sel.options.length : 0, first: sel && sel.options.length > 1 ? sel.options[1].value : "" };
+  })()`);
+  check("测试账号：系统可从已有系统里选择（下拉存在且有待选项）",
+    !!acctSys && acctSys.has === true && acctSys.opts > 1, JSON.stringify(acctSys));
+  // 选中后应回填到输入框
+  if (acctSys && acctSys.first) {
+    await setVal(".modal .suggest-select", acctSys.first);
+    await sleep(300);
+    const filledSys = await ev(`(() => { const el = document.querySelector(".modal input"); return el ? el.value : ""; })()`);
+    check("测试账号：选中后系统名回填到输入框", String(filledSys) === String(acctSys.first), String(filledSys));
+  }
+  await ev(`(() => { const b = [...document.querySelectorAll(".modal button")].find(x => x.textContent.trim() === "取消"); if (b) b.click(); return true; })()`);
+  await sleep(300);
+
+  // C2：测试账号批量导入（粘贴多行 → 一次生成多条）
+  await navTo('测试账号');
+  await sleep(400);
+  const bulkBtn = await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '批量导入'); if (b) { b.click(); return true; } return false; })()`);
+  check('测试账号：有「批量导入」入口', bulkBtn === true);
+  await sleep(400);
+  await setVal('.bulk-text', '# 注释行\n资产系统 | 管理员 | bulk1 | p1 | 备注A\n学工系统 | 教师 | bulk2 | p2');
+  await sleep(200);
+  await ev(`(() => { const b = [...document.querySelectorAll('.modal button')].find(x => x.textContent.trim() === '导入'); if (b) { b.click(); return true; } return false; })()`);
+  await sleep(800);
+  const bulkState = await ev(`(() => ({ has1: /bulk1/.test(document.body.textContent), has2: /bulk2/.test(document.body.textContent), modal: !!document.querySelector('.bulk-text') }))()`);
+  check('测试账号：批量导入生成多条账号', !!bulkState && bulkState.has1 === true && bulkState.has2 === true && bulkState.modal === false, JSON.stringify(bulkState));
+
+  // 新版本提示：走应用内横幅  // 新版本提示：走应用内横幅（主进程 update:available → 渲染层），不再发系统通知
+  const hasInAppHook = await ev(`(async () => { const r = await window.electronAPI.updateCheck().catch(() => null); return !!(r && typeof r === "object"); })()`);
+  const bannerApi = await ev(`(() => typeof window.electronAPI.onUpdateAvailable === "function")()`);
+  check("更新提示：已改为应用内提示（onUpdateAvailable 可用，且 updateCheck 正常）",
+    bannerApi === true && hasInAppHook === true, `onUpdateAvailable=${bannerApi}`);
+
+
 
 
   }
@@ -403,7 +597,7 @@ const echo = http.createServer((req, res) => {
   }
   /* ================= C. 禅道：我提交的 / 待我验证 ================= */
   if (want('zentao')) {
-    await navTo('禅道');
+    await navTo('缺陷管理');
     await sleep(500);
 
     const scopes = await ev(`(() => [...document.querySelectorAll('.zt-scope-btn')].map(b => ({ t: b.textContent.trim(), on: b.classList.contains('is-active') })))()`);
@@ -487,7 +681,7 @@ const echo = http.createServer((req, res) => {
       JSON.stringify(verifyStatuses));
     // 切页面回来视图要保留（状态在 store 里）
     await navTo('周报');
-    await navTo('禅道');
+    await navTo('缺陷管理');
     const kept = await ev(`(() => { const b = document.querySelector('.zt-scope-btn.is-active'); return b ? b.textContent.trim() : ''; })()`);
     check('禅道：切换页面后视图选择保留', kept === '待我验证', String(kept));
   }

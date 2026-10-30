@@ -5,13 +5,14 @@
  *   ③ 禅道：项目筛选 / 标签点击筛选 / 按项目统计 / 切页数据不丢
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = process.argv[2] ? path.resolve(process.argv[2]) : path.join(ROOT, 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9601;
 const PASSWORD = 'Feat#2026';
 

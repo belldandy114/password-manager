@@ -6,13 +6,14 @@
  * node scripts/ui-dl-time-test.js [--download]
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9791;
 const PASSWORD = 'DtTest#2026';
 const ZT = require('./zt-config');

@@ -13,13 +13,14 @@
  *   5) stop：长时间任务能被杀掉并回报结束。
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const PACKED = path.join(APP_DIR, '测试工具.exe');
+const PACKED = pickExe(APP_DIR);
 const usePacked = fs.existsSync(PACKED) && process.env.USE_PACKED === '1';
 const EXE = usePacked ? PACKED : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const PORT = 9811;
@@ -169,10 +170,24 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
     s(el, ${JSON.stringify(v)});
     return true;
   })()`);
-  const navTo = async (label) => {
+  const navTo = async (label0) => {
+    // 菜单改名兼容：旧名 → 新名
+    const label = label0 === '禅道' ? '缺陷管理' : label0;
+    // 目标页可能已经挂着 .pg（旧页面），必须等「标题变化」才算切页完成，
+    // 否则会在旧页面 DOM 上断言（曾导致容器列表读到空数据）
+    const titleNow = () => ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
+    const before = await titleNow();
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
     for (let i = 0; i < 40; i++) {
-      if (await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`)) break;
+      const now = await titleNow();
+      if (now && now !== before) break;
+      await sleep(100);
+    }
+    await sleep(500);
+    // 页面是懒加载 chunk，等真正渲染出来再断言
+    for (let i = 0; i < 40; i++) {
+      const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
+      if (ready) break;
       await sleep(100);
     }
     await sleep(400);
@@ -291,6 +306,12 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
       outDir: ${JSON.stringify(freshOut)},
     });
   })()`);
+  // C1：运行历史（跑完应留下一条，含脚本名与统计）
+  const histPanel = await ev(`(() => { const rows = document.querySelectorAll('.perf-hist-row'); return { n: rows.length, text: rows[0] ? rows[0].textContent.replace(/\\s+/g, ' ').trim() : '' }; })()`);
+  check('压力测试：运行后写入运行历史',
+    !!histPanel && histPanel.n > 0 && /样本/.test(String(histPanel.text)),
+    JSON.stringify(histPanel).slice(0, 100));
+
   check('压力测试：连续运行不会撞「报告目录非空」', !!run2 && run2.success === true, run2 && (run2.error || ''));
 
   /* ================= 5. stop 杀掉长任务 ================= */

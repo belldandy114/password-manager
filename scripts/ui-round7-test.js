@@ -8,13 +8,14 @@
  * 环境变量 DEBUG7=1 打印 CDP 细节
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const PACKED = path.join(APP_DIR, '测试工具.exe');
+const PACKED = pickExe(APP_DIR);
 const usePacked = fs.existsSync(PACKED) && process.env.USE_PACKED === '1';
 const EXE = usePacked ? PACKED : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const PORT = 9807;
@@ -90,10 +91,22 @@ const check = (name, ok, extra = '') => {
     if (b) { b.click(); return true; }
     return false;
   })()`);
-  const navTo = async (label) => {
+  const NAV_ALIAS = { '禅道': '缺陷管理' };
+  const navTo = async (label0) => {
+    // 菜单改名兼容：旧名 → 新名
+    const label = label0 === '禅道' ? '缺陷管理' : label0;
+    // 目标页可能已经挂着 .pg（旧页面），必须等「标题变化」才算切页完成，
+    // 否则会在旧页面 DOM 上断言（曾导致容器列表读到空数据）
+    const titleNow = () => ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
+    const before = await titleNow();
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
+    for (let i = 0; i < 40; i++) {
+      const now = await titleNow();
+      if (now && now !== before) break;
+      await sleep(100);
+    }
     await sleep(500);
-    // 页面是懒加载的 chunk：等 loading 占位消失、真正的 .pg 出现再往下走
+    // 页面是懒加载 chunk，等真正渲染出来再断言
     for (let i = 0; i < 40; i++) {
       const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
       if (ready) break;
@@ -353,7 +366,7 @@ const check = (name, ok, extra = '') => {
     { id: 'zentao', baseUrl: 'http://a.example.com/zentao', account: 'alice', password: 'pa', updatedAt: new Date().toISOString() },
     { id: 'cfg-b', baseUrl: 'http://b.example.com/zentao', account: 'bob', password: 'pb', updatedAt: new Date().toISOString() },
   ])})`);
-  await navTo('禅道');
+  await navTo('缺陷管理');
   await sleep(900);
   // 已配置时面板默认折叠（折叠即不渲染子节点），先展开标题栏
   await ev(`(() => {

@@ -3,6 +3,7 @@
  * 用法：node scripts/shots.js <输出目录> [dark|light]
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,7 +12,7 @@ const OUT = process.argv[2] || path.join(os.tmpdir(), 'pm-shots');
 const THEME = process.argv[3] || 'dark';
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9666;
 const PASSWORD = 'Shots#2026';
 

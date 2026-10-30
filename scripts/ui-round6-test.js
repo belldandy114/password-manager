@@ -4,6 +4,7 @@
  * node scripts/ui-round6-test.js
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -12,7 +13,7 @@ const http = require('http');
 const ROOT = path.resolve(__dirname, '..');
 // 用 PM_USE_DIST=1 直接跑 dist（省一次打包）；EXE_PACKED 存在时可切回打包产物
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const PACKED = path.join(APP_DIR, '测试工具.exe');
+const PACKED = pickExe(APP_DIR);
 const usePacked = fs.existsSync(PACKED) && process.env.USE_PACKED === '1';
 const EXE = usePacked ? PACKED : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const PORT = 9806;
@@ -111,10 +112,21 @@ const server = http.createServer((req, res) => {
     if (b) { b.click(); return true; }
     return false;
   })()`);
-  const navTo = async (label) => {
+  const navTo = async (label0) => {
+    // 菜单改名兼容：旧名 → 新名
+    const label = label0 === '禅道' ? '缺陷管理' : label0;
+    // 目标页可能已经挂着 .pg（旧页面），必须等「标题变化」才算切页完成，
+    // 否则会在旧页面 DOM 上断言（曾导致容器列表读到空数据）
+    const titleNow = () => ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
+    const before = await titleNow();
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
+    for (let i = 0; i < 40; i++) {
+      const now = await titleNow();
+      if (now && now !== before) break;
+      await sleep(100);
+    }
     await sleep(500);
-    // 页面 chunk 是懒加载的：等占位消失、真正的 .pg 出现再继续，避免定长 sleep 引发的偶发失败
+    // 页面是懒加载 chunk，等真正渲染出来再断言
     for (let i = 0; i < 40; i++) {
       const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
       if (ready) break;

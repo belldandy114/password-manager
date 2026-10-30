@@ -2,11 +2,12 @@
  * Check and fix icon on the built .exe
  */
 const { execSync } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const exe = path.join(ROOT, 'release', 'win-unpacked', '测试工具.exe');
+const exe = pickExe(path.join(ROOT, 'release', 'win-unpacked'));
 const rcedit = path.join(ROOT, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe');
 const icoPath = path.join(ROOT, '图标.ico');
 

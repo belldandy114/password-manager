@@ -3,13 +3,14 @@
  * node scripts/ui-round5-test.js
  */
 const { spawn } = require('child_process');
+const { pickExe } = require('./pick-exe');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
-const EXE = path.join(APP_DIR, '测试工具.exe');
+const EXE = pickExe(APP_DIR);
 const PORT = 9801;
 const PW = 'Round5#2026';
 const ZT = require('./zt-config');
@@ -80,8 +81,19 @@ const check = (name, ok, extra = '') => {
     if (b) { b.click(); return true; }
     return false;
   })()`);
-  const navTo = async (label) => {
+  const navTo = async (label0) => {
+    // 菜单改名兼容：旧名 → 新名
+    const label = label0 === '禅道' ? '缺陷管理' : label0;
+    // 目标页可能已经挂着 .pg（旧页面），必须等「标题变化」才算切页完成，
+    // 否则会在旧页面 DOM 上断言（曾导致容器列表读到空数据）
+    const titleNow = () => ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);
+    const before = await titleNow();
     await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (n) n.click(); return !!n; })()`);
+    for (let i = 0; i < 40; i++) {
+      const now = await titleNow();
+      if (now && now !== before) break;
+      await sleep(100);
+    }
     await sleep(500);
     // 页面是懒加载 chunk，等真正渲染出来再断言
     for (let i = 0; i < 40; i++) {
@@ -197,7 +209,7 @@ const check = (name, ok, extra = '') => {
     ]);
     return 1;
   })()`);
-  await navTo('禅道');
+  await navTo('缺陷管理');
   await sleep(300);
   await navTo('接口调试');
   await sleep(900);
@@ -231,7 +243,7 @@ const check = (name, ok, extra = '') => {
   check('Esc 关闭弹窗', modalGone === 0, `剩余 ${modalGone} 个弹层`);
 
   // ---------- A1/A2/A3 禅道 ----------
-  await navTo('禅道');
+  await navTo('缺陷管理');
   await sleep(700);
   const cfgInputs = await ev(`(() => {
     const ins = [...document.querySelectorAll('.pnl-body input')];
