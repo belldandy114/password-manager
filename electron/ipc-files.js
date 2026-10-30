@@ -15,7 +15,9 @@ const { ipcMain, shell, dialog } = require('electron');
 const WEEKLY_EXTS = ['.md', '.markdown', '.txt'];
 const NOTE_EXTS = ['.md', '.markdown', '.txt'];
 
-function registerFileIpc() {
+function registerFileIpc(deps = {}) {
+  // mainWindow 属于 main.js 的模块状态，拆分后必须注入；缺省时用无父窗口的对话框（也能弹出来）
+  const getWindow = typeof deps.getWindow === "function" ? deps.getWindow : () => null;
   // ---- 周报（本地 Markdown 目录）----
   // 列表/读取/写入/删除都限制在指定目录内，删除走系统回收站（可恢复）。
   const weeklyResolve = (dir, name) => {
@@ -61,7 +63,7 @@ function registerFileIpc() {
 
   ipcMain.handle('weekly:pick-dir', async () => {
     try {
-      const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+      const r = await dialog.showOpenDialog(getWindow(), { properties: ['openDirectory'] });
       if (r.canceled || !r.filePaths || !r.filePaths[0]) return { success: false, data: null };
       return { success: true, data: r.filePaths[0] };
     } catch (e) {
@@ -243,7 +245,7 @@ function registerFileIpc() {
 
   ipcMain.handle('notes:pick-dir', async () => {
     try {
-      const r = await dialog.showOpenDialog(mainWindow, {
+      const r = await dialog.showOpenDialog(getWindow(), {
         title: '选择存放测试笔记的目录',
         properties: ['openDirectory', 'createDirectory'],
       });

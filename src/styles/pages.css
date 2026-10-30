@@ -5311,3 +5311,32 @@
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* 我的 Bug：项目筛选 + 「全部」切换 */
+.zt-mine-proj {
+  flex-wrap: wrap;
+}
+
+.zt-mine-proj-all {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--pm-line);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.zt-mine-proj-all:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.zt-mine-proj-all.is-on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--text-primary);
+  font-weight: 500;
+}

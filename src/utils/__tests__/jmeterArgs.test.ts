@@ -7,19 +7,19 @@ import {
 
 const JMX = 'C:\\scripts\\广科华贸.jmx';
 const OUT = 'C:\\out';
-const ST = '20261029-160305';
+const ST = '2026-10-29_16-03-05';
 
 describe('jmeter-args.pickPaths 输出路径规划', () => {
   it('log 模式：jtl 放输出目录，文件名带脚本名与时间戳', () => {
     const p = pickPaths({ jmxPath: JMX, outDir: OUT, mode: 'log', stampStr: ST });
     expect(p.reportDir).toBe('');
-    expect(p.jtlPath).toContain('广科华贸-20261029-160305.jtl');
+    expect(p.jtlPath).toContain('广科华贸-2026-10-29_16-03-05.jtl');
     expect(p.jtlPath.startsWith(OUT)).toBe(true);
   });
 
   it('report 模式：报告进独立子目录（JMeter 要求 -o 目录为空），jtl 在它旁边', () => {
     const p = pickPaths({ jmxPath: JMX, outDir: OUT, mode: 'report', stampStr: ST });
-    expect(p.reportDir).toContain('report-20261029-160305');
+    expect(p.reportDir).toContain('report-2026-10-29_16-03-05');
     expect(p.jtlPath).not.toBe(p.reportDir);
     // jtl 不能落在 reportDir 里，否则 -o 目录非空会直接报错
     expect(p.jtlPath.startsWith(p.reportDir)).toBe(false);
@@ -30,7 +30,7 @@ describe('jmeter-args.pickPaths 输出路径规划', () => {
     expect(scriptBase('a/b:c*.jmx')).toBe('b_c_');
     expect(scriptBase('C:\\\\s\\\\广科 华贸.jmx')).toBe('广科_华贸');
     expect(scriptBase('')).toBe('jmeter');
-    expect(stamp(new Date(2026, 0, 2, 3, 4, 5))).toBe('20260102-030405');
+    expect(stamp(new Date(2026, 0, 2, 3, 4, 5))).toBe('2026-01-02_03-04-05');
   });
 });
 

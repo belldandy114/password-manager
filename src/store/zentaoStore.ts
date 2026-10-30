@@ -16,8 +16,10 @@ interface ZentaoState {
   query: string;
   /** 我的 Bug 视图：指派给我 / 我提交的 / 待我验证（切页面不丢） */
   mineScope: MyBugScope;
-  /** 我提交的/待我验证 要查哪些项目（禅道 REST 强制 product；空数组=还没选） */
+  /** 我的 Bug 三个视图要查哪些项目（禅道 REST 强制 product；空数组=还没选） */
   mineProductIds: string[];
+  /** 三个视图勾了「全部项目」时为 true（忽略 mineProductIds，查所有项目） */
+  mineAllProjects: boolean;
 
   /* ---- 项目 Bug（整个项目，不限指派人） ---- */
   projects: ZentaoProject[];
@@ -32,6 +34,7 @@ interface ZentaoState {
   setBugs: (bugs: ZentaoBug[], total: number) => void;
   setMineScope: (scope: MyBugScope) => void;
   setMineProductIds: (ids: string[]) => void;
+  setMineAllProjects: (all: boolean) => void;
   setFilter: (patch: Partial<Pick<ZentaoState, 'project' | 'status' | 'severity' | 'query'>>) => void;
   setProjects: (list: ZentaoProject[]) => void;
   setActiveProject: (id: string) => void;
@@ -50,6 +53,7 @@ export const useZentaoStore = create<ZentaoState>((set) => ({
   query: '',
   mineScope: 'assigned',
   mineProductIds: [],
+  mineAllProjects: false,
 
   projects: [],
   activeProject: '',
@@ -62,7 +66,8 @@ export const useZentaoStore = create<ZentaoState>((set) => ({
 
   setBugs: (bugs, total) => set({ bugs, total, fetchedAt: new Date().toISOString() }),
   setMineScope: (mineScope) => set({ mineScope }),
-  setMineProductIds: (mineProductIds) => set({ mineProductIds }),
+  setMineProductIds: (mineProductIds) => set({ mineProductIds, mineAllProjects: false }),
+  setMineAllProjects: (mineAllProjects) => set({ mineAllProjects }),
   setFilter: (patch) => set(patch),
   setProjects: (list) => set({ projects: list }),
   // 切换项目时清掉上一个项目的筛选与数据，避免看起来「没数据」
@@ -72,6 +77,6 @@ export const useZentaoStore = create<ZentaoState>((set) => ({
   clear: () => set({
     bugs: [], total: 0, fetchedAt: '', project: '', status: '', severity: '', query: '',
     projects: [], activeProject: '', projectBugs: [], projectTotal: 0, projectFetchedAt: '',
-    pStatus: '', pSeverity: '', pQuery: '', mineProductIds: [],
+    pStatus: '', pSeverity: '', pQuery: '', mineProductIds: [], mineAllProjects: false,
   }),
 }));

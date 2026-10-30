@@ -285,10 +285,15 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   const files = await ev(`window.electronAPI.jmeterStatus().then(x => JSON.stringify(x))`);
   const jtlFiles = fs.readdirSync(fake.outDir).filter(f => f.endsWith('.jtl'));
   check('压力测试：jtl 结果文件已生成', jtlFiles.length === 1, jtlFiles.join(','));
+  // 文件名里的时间要能直接看出是哪天跑的（旧实现是 20261030-173645 或 epoch 毫秒）
+  const readable = jtlFiles.filter(f => /-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.jtl$/.test(f));
+  check('压力测试：jtl 文件名带可读日期（YYYY-MM-DD_HH-mm-ss）', readable.length === 1, jtlFiles.join(','));
+  const logFiles = fs.readdirSync(fake.outDir).filter(f => f.endsWith('.log') && f.startsWith('jmeter-'));
+  const logReadable = logFiles.filter(f => /-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.log$/.test(f));
+  check('压力测试：日志文件名带可读日期（不再是 epoch 毫秒）', logReadable.length === 1, logFiles.join(','));
   const reportDirs = fs.readdirSync(fake.outDir).filter(f => f.startsWith('report-'));
   const hasIndex = reportDirs.length === 1 && fs.existsSync(path.join(fake.outDir, reportDirs[0], 'index.html'));
   check('压力测试：HTML 报告目录已生成且有 index.html', hasIndex, reportDirs.join(','));
-  const logFiles = fs.readdirSync(fake.outDir).filter(f => f === 'jmeter-' + '' || /^jmeter-\d+\.log$/.test(f));
   check('压力测试：完整运行日志已落盘', logFiles.length === 1, logFiles.join(','));
 
   const jtlText = fs.readFileSync(path.join(fake.outDir, jtlFiles[0]), 'utf8');

@@ -75,6 +75,42 @@ function collectTypedMethods() {
   return names;
 }
 
+/**
+ * 拆分守卫：electron/ipc-*.js 是独立模块，**看不到 main.js 的模块级状态**。
+ * 1.9.2 就踩过：ipc-files.js 里用了 mainWindow，运行时报 ReferenceError，
+ * 表现为「点按钮没反应」（错误被 handler 的 try/catch 吞掉，界面无感知）。
+ */
+const MAIN_ONLY_STATE = [
+  'mainWindow', 'DATA_DIR', 'DATA_FILE', 'USER_DATA_DIR', 'LOCATION_FILE',
+  'loadVault', 'saveVault', 'loadTrash', 'saveTrash', 'clearCaches',
+  'currentPassword', 'appendAudit', 'apiJar', 'ztTokenCache', 'ztCfgFromVault',
+  'loadSettings', 'saveSettings', 'writeFileAtomic', 'TDG_DIST_PATH', 'TDG_PRELOAD_PATH',
+];
+
+function checkSplitModules() {
+  const problems = [];
+  for (const f of fs.readdirSync(ELECTRON_DIR)) {
+    if (!/^ipc-.*\.js$/.test(f)) continue;
+    const raw = fs.readFileSync(path.join(ELECTRON_DIR, f), 'utf8');
+    // 去掉注释与字符串字面量：注释里提到 mainWindow 不该算违规
+    const text = raw
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    for (const name of MAIN_ONLY_STATE) {
+      const re = new RegExp(`(?<![.\\w$])${name}\\b`, "g");
+      const hits = text.match(re);
+      if (!hits) continue;
+      // 声明/传参（const name、name:、name =、解构、deps.name）不算违规
+      const ok = new RegExp(`(?:const|let|var|function)\\s+${name}\\b|\\b${name}\\s*[:=](?!=)|\\{[^}]*\\b${name}\\b[^}]*\\}|deps\\.${name}`).test(text);
+      if (!ok) problems.push(`${f}: 引用了 main.js 的 ${name}（拆分模块看不到，运行时会 ReferenceError）`);
+    }
+  }
+  return problems;
+}
+
 function check() {
   const sources = readElectronSources();
   const handlers = collectHandlers(sources);
@@ -82,6 +118,7 @@ function check() {
   const typed = collectTypedMethods();
 
   const problems = [];
+  const splitProblems = checkSplitModules();
 
   // 1) handler 注册了但 renderer 从没调用（可能改名后忘了，也可能本来就只在主进程内部用）
   const unused = [...handlers.keys()].filter((n) => !invokes.has(n));
@@ -95,6 +132,7 @@ function check() {
   // 4) 类型声明了但 preload 没暴露（调用会 undefined）
   const unimplemented = [...typed].filter((n) => !methods.has(n));
 
+  if (splitProblems.length) problems.push({ level: 'error', title: '拆分模块引用了 main.js 的模块级状态（运行时会 ReferenceError）', items: splitProblems });
   if (missing.length) problems.push({ level: 'error', title: '调用了未注册的 IPC（会直接失败）', items: missing });
   if (unimplemented.length) problems.push({ level: 'error', title: 'types 声明了但 preload 没暴露（运行时会 undefined）', items: unimplemented });
   if (unused.length) problems.push({ level: 'warn', title: '注册了但没人调用（可能是死代码或忘记接线）', items: unused });

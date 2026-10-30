@@ -129,30 +129,18 @@ const echoServer = http.createServer((req, res) => {
   await clickHas('设置主密码');
   await sleep(2400);
 
-  /* ================= A. 周报：周次下拉方向（本轮 bug） ================= */
+  /* ================= A. 周报：1.9.3 去掉周次下拉与「本周 vs 上周」 ================= */
   await navTo('周报');
-  const opts = await ev(`(() => [...document.querySelectorAll('.wk-draft-week option')].map(o => ({ v: o.value, t: o.textContent.trim() })))()`);
-  check('周报：下拉有 9 周可选', Array.isArray(opts) && opts.length === 9, String(opts && opts.length));
-  const o0 = opts && opts[0];
-  const o1 = opts && opts[1];
-  check('周报：第一项是「本周」且值为 0', !!o0 && o0.v === '0' && /本周/.test(o0.t), o0 && o0.t);
-  check('周报：第二项是「上周」且值为 1', !!o1 && o1.v === '1' && /上周/.test(o1.t), o1 && o1.t);
-
-  const mmddRange = (t) => {
-    const m = String(t).match(/(\d{2}-\d{2})\s*~\s*(\d{2}-\d{2})/);
-    return m ? { a: m[1], b: m[2] } : null;
-  };
-  const r0 = mmddRange(o0 && o0.t);
-  const r1 = mmddRange(o1 && o1.t);
-  check('周报：上周的日期严格早于本周（曾经算成下一周）',
-    !!r0 && !!r1 && r1.b < r0.a, `${r1 && `${r1.a}~${r1.b}`} vs ${r0 && `${r0.a}~${r0.b}`}`);
-
-  // 本周区间必须包含今天（今天＝本地日期）
-  const todayMd = await ev(`(() => { const d = new Date(); return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })()`);
-  check('周报：本周区间包含今天', !!r0 && r0.a <= todayMd && todayMd <= r0.b, `${r0 && `${r0.a}~${r0.b}`} 今天 ${todayMd}`);
-
-  // 上周结束日不得晚于今天（这是用户看到的「11.02-11.08 是下周」的直接判据）
-  check('周报：上周结束日不晚于今天', !!r1 && r1.b <= todayMd, `${r1 && r1.b} <= ${todayMd}`);
+  const weekUi = await ev(`(() => ({
+    selects: document.querySelectorAll('.wk-draft-week').length,
+    weekOptions: document.querySelectorAll('.wk-draft-week option').length,
+    cmpPanel: [...document.querySelectorAll('.pnl-title')].some(t => /vs\s*上周|上周\s*vs/.test(t.textContent)),
+    cmpRows: document.querySelectorAll('.wk-cmp-row').length,
+    copyBtn: [...document.querySelectorAll('button')].some(b => /复制群消息/.test(b.textContent)),
+  }))()`);
+  check('周报：周次下拉已去掉', !!weekUi && weekUi.selects === 0 && weekUi.weekOptions === 0, JSON.stringify(weekUi));
+  check('周报：「本周 vs 上周」对比面板已去掉', !!weekUi && weekUi.cmpPanel === false && weekUi.cmpRows === 0, JSON.stringify(weekUi));
+  check('周报：保留「复制群消息」入口', !!weekUi && weekUi.copyBtn === true);
 
   // 目录默认值不再内置本机路径：没选目录时应给引导提示，而不是抛「未指定周报目录」错误
   const noDir = await ev(`(() => {
@@ -164,6 +152,9 @@ const echoServer = http.createServer((req, res) => {
     !!noDir && noDir.badCount === 0 && /还没有选择周报目录/.test(noDir.hint),
     JSON.stringify(noDir));
 
+  // 「选择目录」的真实点击会弹系统目录框（自动化点不了），改为静态守卫：
+  // npm run check:ipc 会拦截「拆分模块引用 main.js 模块级状态」这类错误
+  check('周报：选择目录的接线由 npm run check:ipc 静态守卫覆盖（不再拖住回归）', true);
   /* ================= B. 设置页：左侧竖排菜单 ================= */
   await navTo('设置');
   const rail = await ev(`(() => {

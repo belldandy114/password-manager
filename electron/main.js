@@ -3481,7 +3481,7 @@ function setupIpcHandlers() {
 
   // 目录型文件 IPC（周报 / 笔记）已拆到 electron/ipc-files.js
   registerSystemIpc({ getWindow: () => mainWindow, tdgPaths: { distPath: TDG_DIST_PATH, preloadPath: TDG_PRELOAD_PATH } });
-  registerFileIpc();
+  registerFileIpc({ getWindow: () => mainWindow });
   registerToolsIpc();
   registerBrowserIpc({ loadSettings });
   // JMeter 非 GUI 运行：需要窗口引用（推送流式日志）与设置读写

@@ -3,7 +3,7 @@ import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
-import { buildWeeklyDraft, weekRange, weekOptions, compareWeeks, buildGroupMessage } from '../utils/weeklyDraft';
+import { buildWeeklyDraft, weekRange, buildGroupMessage } from '../utils/weeklyDraft';
 import { useZentaoStore } from '../store/zentaoStore';
 import { useStore } from '../store/useStore';
 
@@ -37,12 +37,7 @@ const TEMPLATE = `**一、本周工作**
 
 export function WeeklyReport() {
   const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
-  // 生成草稿选的是「几周前」：0=本周、1=上周、2=两周前…
-  // 旧版本把 0 存成 0、把「上周」错存成 -1（那时 weekRange 的方向反了），这里把负数一律当 0。
-  const [draftOffset, setDraftOffset] = useState(() => {
-    const v = Number(localStorage.getItem('pm.weekly.draftOffset'));
-    return Number.isFinite(v) && v >= 0 && v <= 8 ? v : 0;
-  });
+  // 周次已固定为「本周」（1.9.3 去掉周次下拉与「本周 vs 上周」对比）
   const [files, setFiles] = useState<WeeklyFile[]>([]);
   const [current, setCurrent] = useState<string>('');
   const [content, setContent] = useState('');
@@ -64,8 +59,6 @@ export function WeeklyReport() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 禅道数据（周报草稿用）
   const ztBugs = useZentaoStore(s => s.bugs);
-  // 本周 vs 上周对比（跟草稿选的那一周同步）
-  const cmp = useMemo(() => compareWeeks(ztBugs, draftOffset), [ztBugs, draftOffset]);
   const [msgCopied, setMsgCopied] = useState(false);
   // 命令面板「生成周报草稿」
   const cmdSignal = useStore(s => s.cmdSignal);
@@ -113,7 +106,12 @@ export function WeeklyReport() {
 
   const pickDir = async () => {
     const res = await window.electronAPI.weeklyPickDir();
-    if (res.success && res.data) {
+    if (!res || res.success === false) {
+      setError(`打开目录选择框失败：${(res && res.error) || '未知原因'}（可以手动把目录路径粘到下面的输入框）`);
+      return;
+    }
+    if (!res.data) { setError(''); return; }
+    {
       setDir(res.data);
       localStorage.setItem(LS_KEY, res.data);
       setCurrent('');
@@ -179,7 +177,7 @@ export function WeeklyReport() {
   /* ---------------- 新建 / 编辑 / 删除 ---------------- */
 
   /** 从禅道「我的 Bug」生成一周草稿 */
-  const genDraft = (offset = draftOffset) => {
+  const genDraft = (offset = 0) => {
     if (ztBugs.length === 0) {
       setError('还没有禅道数据：请先到「禅道 → 我的 Bug」点一次「拉取我的 Bug」');
       return;
@@ -195,8 +193,8 @@ export function WeeklyReport() {
     if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
     if (cmdSignal.kind !== 'weekly:draft') return;
     lastCmdAt = cmdSignal.at;
-    genDraft(draftOffset);
-  }, [cmdSignal, draftOffset]);
+    genDraft(0);
+  }, [cmdSignal]);
 
   const startNew = () => {
     setError('');
@@ -269,24 +267,23 @@ export function WeeklyReport() {
               <button className="btn btn-secondary btn-sm" onClick={() => load(dir)} disabled={loading}>
                 <Icons.refresh size={13} /> {loading ? '刷新中…' : '刷新'}
               </button>
-              <select
-                className="wk-draft-week"
-                value={draftOffset}
-                onChange={e => {
-                  const v = Number(e.target.value);
-                  setDraftOffset(v);
-                  localStorage.setItem('pm.weekly.draftOffset', String(v));
+              <button
+                className="btn btn-ghost btn-sm"
+                title="复制成一段可以直接发群里的纯文本（本周口径）"
+                onClick={async () => {
+                  try {
+                    const w = weekRange(0);
+                    await navigator.clipboard.writeText(buildGroupMessage(ztBugs, w.start, w.end));
+                    setMsgCopied(true);
+                    setTimeout(() => setMsgCopied(false), 1600);
+                  } catch { setError('复制失败，请检查剪贴板权限'); }
                 }}
-                disabled={editing}
-                title="选哪一周生成草稿"
               >
-                {weekOptions(9).map(o => (
-                  <option key={o.offset} value={o.offset}>{o.label}（{o.start.slice(5)} ~ {o.end.slice(5)}）</option>
-                ))}
-              </select>
+                <Icons.copy size={12} /> {msgCopied ? '已复制' : '复制群消息'}
+              </button>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={() => genDraft(draftOffset)}
+                onClick={() => genDraft(0)}
                 disabled={editing}
                 title="用禅道「我的 Bug」生成所选周的草稿"
               >
@@ -309,68 +306,6 @@ export function WeeklyReport() {
           <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', whiteSpace: 'pre-wrap', fontWeight: 400 }}>
             {error}
           </div>
-        )}
-
-        {/* 本周 vs 上周：同一套口径的硬数字，省得每周手算「比上周多了几条」 */}
-        {ztBugs.length > 0 && (
-          <Panel
-            title={`${draftOffset === 0 ? '本周' : draftOffset === 1 ? '上周' : `${draftOffset} 周前`} vs ${draftOffset === 0 ? '上周' : draftOffset === 1 ? '前两周' : `${draftOffset + 1} 周前`}`}
-            meta={`${cmp.cur.start} ~ ${cmp.cur.end}　对比 ${cmp.prev.start} ~ ${cmp.prev.end}`}
-            collapsible
-            tools={
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(buildGroupMessage(ztBugs, cmp.cur.start, cmp.cur.end));
-                    setMsgCopied(true);
-                    setTimeout(() => setMsgCopied(false), 1600);
-                  } catch { setError('复制失败，请检查剪贴板权限'); }
-                }}
-                title="复制成一段可以直接发群里的纯文本"
-              >
-                <Icons.copy size={12} /> {msgCopied ? '已复制' : '复制群消息'}
-              </button>
-            }
-          >
-            <div className="wk-cmp">
-              <div className="wk-cmp-head">
-                <span />
-                <span>本周</span>
-                <span>上周</span>
-                <span>变化</span>
-              </div>
-              {[
-                { label: '新提', cur: cmp.cur.created, prev: cmp.prev.created, lowerBetter: true },
-                { label: '解决', cur: cmp.cur.resolved, prev: cmp.prev.resolved, lowerBetter: false },
-                { label: '关闭', cur: cmp.cur.closed, prev: cmp.prev.closed, lowerBetter: false },
-                { label: '未关闭', cur: cmp.cur.unclosed, prev: cmp.prev.unclosed, lowerBetter: true },
-              ].map(r => {
-                const d = r.cur - r.prev;
-                const tone = d === 0 ? 'flat' : (d > 0) === r.lowerBetter ? 'bad' : 'good';
-                return (
-                  <div className="wk-cmp-row" key={r.label}>
-                    <span className="wk-cmp-label">{r.label}</span>
-                    <b>{r.cur}</b>
-                    <span className="wk-cmp-prev">{r.prev}</span>
-                    <span className={`wk-delta is-${tone}`}>
-                      {d === 0 ? '持平' : d > 0 ? `↑ ${d}` : `↓ ${-d}`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            {cmp.cur.byProject.length > 0 && (
-              <div className="wk-cmp-proj">
-                {cmp.cur.byProject.slice(0, 5).map(p => (
-                  <span key={p.name} className="chip">
-                    {p.name}：{p.created}/{p.resolved}/{p.closed}
-                  </span>
-                ))}
-                <span className="drawer-hint-inline">（按项目：新提/解决/关闭）</span>
-              </div>
-            )}
-          </Panel>
         )}
 
         <Panel title="周报目录" meta={dir || '未选择（首次用请点「选择目录」）'} collapsible defaultOpen={!dir}>

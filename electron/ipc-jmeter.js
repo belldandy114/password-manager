@@ -452,7 +452,9 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
       // 顺手把完整日志落盘，方便出问题后回看
       let logPath = '';
       try {
-        logPath = path.join(outDir, `jmeter-${runId}.log`);
+        // 用与 jtl/报告一致的可读时间（旧实现是 epoch 毫秒，文件名看不出日期）
+    const { stamp: stampNow } = require('./jmeter-args');
+    logPath = path.join(outDir, `jmeter-${stampNow()}.log`);
         fs.writeFileSync(logPath, `${lines.join('\n')}\n`, 'utf8');
       } catch { /* 写日志失败不影响结果 */ }
 

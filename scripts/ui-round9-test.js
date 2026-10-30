@@ -699,8 +699,26 @@ const echo = http.createServer((req, res) => {
     await navTo('缺陷管理');
     const kept = await ev(`(() => { const b = document.querySelector('.zt-scope-btn.is-active'); return b ? b.textContent.trim() : ''; })()`);
     check('禅道：切换页面后视图选择保留', kept === '待我验证', String(kept));
-  }
 
+    // 三个视图都要有项目筛选，且能一键切「全部项目」
+    const scopeProj = [];
+    for (const label of ['指派给我', '我提交的', '待我验证']) {
+      await ev(`(() => { const b = [...document.querySelectorAll('.zt-scope-btn')].find(x => x.textContent.trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
+      await sleep(700);
+      const st = await ev(`(() => ({ row: !!document.querySelector('.zt-mine-proj'), all: !!document.querySelector('.zt-mine-proj-all') }))()`);
+      scopeProj.push({ label, row: !!(st && st.row), all: !!(st && st.all) });
+    }
+    check('禅道：三个视图都有项目筛选 + 「全部」按钮',
+      scopeProj.length === 3 && scopeProj.every(x => x.row === true && x.all === true),
+      JSON.stringify(scopeProj));
+
+    // 点「全部」→ 按钮高亮且标签变成「全部 N 个项目」
+    await ev(`(() => { const b = document.querySelector('.zt-mine-proj-all'); if (b) b.click(); return !!b; })()`);
+    await sleep(1500);
+    const allState = await ev(`(() => ({ on: !!document.querySelector('.zt-mine-proj-all.is-on'), label: (document.querySelector('.zt-mine-proj-name') || {}).textContent || '' }))()`);
+    check('禅道：切到「全部项目」后按钮高亮且标签显示全部',
+      !!allState && allState.on === true && /全部/.test(String(allState.label)), JSON.stringify(allState));
+  }
   /* ================= E. 接口调试侧栏：两行式列表 ================= */
   if (want('sidebar')) {
     await navTo('接口调试');

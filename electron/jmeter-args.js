@@ -18,7 +18,8 @@ const pad = (n) => String(n).padStart(2, '0');
 
 /** 时间戳（本地时区），用于输出文件/目录命名：20261029-1603 */
 function stamp(d = new Date()) {
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  // 可读时间戳：文件名里一眼能看出是哪天跑的（旧格式 20261030-173645 不好认）
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 }
 
 /** 从 .jmx 路径取一个安全的基名（去掉扩展名与非法字符） */

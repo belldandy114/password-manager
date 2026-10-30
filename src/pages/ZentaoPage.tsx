@@ -101,6 +101,8 @@ export function ZentaoPage() {
   const mineScope = useZentaoStore(s => s.mineScope);
   const setMineScope = useZentaoStore(s => s.setMineScope);
   const mineProductIds = useZentaoStore(s => s.mineProductIds);
+  const mineAllProjects = useZentaoStore(s => s.mineAllProjects);
+  const setMineAllProjects = useZentaoStore(s => s.setMineAllProjects);
   const setMineProductIds = useZentaoStore(s => s.setMineProductIds);
   const setFilter = useZentaoStore(s => s.setFilter);
 
@@ -275,6 +277,7 @@ export function ZentaoPage() {
   };
 
   const mineProjectLabel = (() => {
+    if (mineAllProjects) return `全部 ${projects.length} 个项目`;
     if (!mineProductIds.length) return "未选择项目";
     if (mineProductIds.length > 1) return `${mineProductIds.length} 个项目`;
     const hit = projects.find(p => String(p.id) === String(mineProductIds[0]));
@@ -662,7 +665,7 @@ export function ZentaoPage() {
           </div>
         )}
 
-        {tab === 'mine' && mineScope !== 'assigned' && (
+        {tab === 'mine' && (
           <div className="zt-mine-proj">
             <span className="zt-mine-proj-label">项目</span>
             <button
@@ -674,8 +677,19 @@ export function ZentaoPage() {
               <span className="zt-mine-proj-name">{mineProjectLabel}</span>
               <span className="zt-mine-proj-caret">▾</span>
             </button>
+            <button
+              className={`zt-mine-proj-all${mineAllProjects ? ' is-on' : ''}`}
+              onClick={() => {
+                const next = !mineAllProjects;
+                setMineAllProjects(next);
+                if (next) void loadMine(mineScope);
+              }}
+              title={mineAllProjects ? '当前查询全部项目，点一下改回单项目' : '查询全部项目（项目多时会慢一些）'}
+            >
+              {mineAllProjects ? '全部项目' : '全部'}
+            </button>
             <span className="zt-mine-proj-hint">
-              {mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
+              {mineAllProjects ? `本次查全部 ${projects.length} 个项目` : mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
             </span>
             {mineMeta && (() => {
               // 0 条时不报「未按账号复核」：那是「没有数据」，不是「无法复核」
