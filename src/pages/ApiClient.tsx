@@ -298,12 +298,35 @@ export function ApiClient() {
     setReq({ ...req, headers: `${base ? `${base}\n` : ''}Cookie: ` });
   };
 
-  /** multipart 选文件：把 `file=@绝对路径` 追加到请求体 */
+  /**
+   * multipart 选文件。
+   *
+   * 优先「补上」而不是「再加一行」：从 cURL 导入的 multipart 里文件字段只有占位值
+   * （`files=@4mb.jpg`，本地根本没这个文件）。以前这里无脑 append 一行 `file=@绝对路径`，
+   * 结果占位行还在 → 发送时报「上传文件不存在：4mb.jpg」，用户看到两行也不知道该删哪个。
+   */
   const pickUploadFile = async () => {
     const res = await window.electronAPI.pickFile('选择要上传的文件');
     if (!res.success || !res.data) return;
-    const base = String(req.body || '').replace(/\n+$/, '');
-    setReq({ ...req, body: `${base ? `${base}\n` : ''}file=@${res.data.file}` });
+    const picked = res.data.file;
+    const lines = String(req.body || '').split('\n').filter((l) => l.trim());
+    // 找第一个「值是 @路径 但文件不翼而飞」的行（cURL 导入的占位）——前端拿不到 fs，按扩展名/无分隔符粗判
+    const looksPlaceholder = (v: string) => {
+      const p = v.slice(1).split(';')[0].trim();
+      return !!p && !/[\\/]/.test(p);
+    };
+    let replaced = false;
+    const next = lines.map((line) => {
+      if (replaced) return line;
+      const at = line.indexOf('=');
+      if (at <= 0) return line;
+      const val = line.slice(at + 1);
+      if (!val.startsWith('@') || !looksPlaceholder(val)) return line;
+      replaced = true;
+      return `${line.slice(0, at)}=@${picked}`;
+    });
+    if (!replaced) next.push(`file=@${picked}`);
+    setReq({ ...req, body: next.join('\n') });
   };
 
   const refreshJar = async () => {
@@ -1142,6 +1165,9 @@ export function ApiClient() {
                 setCurlError('');
                 setCurlText('');
                 setCurlOpen(false);
+                // 解析器会说明「做了什么」：multipart 拆了字段、文件字段无法还原等
+                if (r.warnings && r.warnings.length) flashNotice(r.warnings.join("；"));
+                else flashNotice('已导入 curl');
               }}
             >
               解析并填入

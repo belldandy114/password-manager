@@ -20,7 +20,93 @@ export interface CurlRequest {
   rawContentType: string;
 }
 
-export type ParseResult = { ok: true; request: CurlRequest } | { ok: false; error: string };
+export type ParseResult =
+  | { ok: true; request: CurlRequest; warnings?: string[] }
+  | { ok: false; error: string };
+
+/** multipart 正文里的一个普通字段 */
+export interface MultipartField { key: string; value: string }
+/** multipart 正文里的一个文件字段（cURL 里只有文件名，没有内容） */
+export interface MultipartFile { key: string; filename: string; contentType: string }
+
+/** 去掉包裹用的双引号（Chrome cmd 写法里 name=^\^"id^\^" 解出来会带引号） */
+function unquote(v: string): string {
+  const s = String(v || '').trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1);
+  return s;
+}
+
+/**
+ * 把 multipart/form-data 的原始正文拆成字段。
+ *
+ * 为什么需要它：Chrome「Copy as cURL」在**上传文件**时不会用 `-F`，而是把整个 multipart
+ * 正文（含 boundary 分隔线与各 part 的头部）塞进 `--data-raw`。如果只按 Content-Type 把类型
+ * 标成 multipart，正文还是一条大字符串，界面上就没法逐字段编辑 —— 用户实测踩到。
+ */
+export function parseMultipartBody(raw: string, boundary: string): {
+  ok: boolean;
+  fields: MultipartField[];
+  files: MultipartFile[];
+} {
+  const b = unquote(boundary);
+  const text = String(raw || '').replace(/\r\n/g, '\n');
+  const empty = { ok: false, fields: [] as MultipartField[], files: [] as MultipartFile[] };
+  if (!b || !text || !text.includes(`--${b}`)) return empty;
+
+  const fields: MultipartField[] = [];
+  const files: MultipartFile[] = [];
+  // tokenizeCurl 会把换行一律折成空格，所以 multipart 正文常常已经「压成单行」，
+  // 这时没有 \n\n 可用来切头/体，只能按 Content-Disposition / Content-Type 定位。
+  const collapsed = !text.includes('\n');
+  const segs = text.split(`--${b}`);
+  for (const segRaw of segs) {
+    let seg = segRaw;
+    if (!seg) continue;
+    if (seg.startsWith('--')) break; // 结束分隔线
+    seg = seg.replace(/^\n+/, '');
+    if (!seg.trim()) continue;
+    // Chrome(cmd) 复制出来的正文里，part 头部的引号会被多层转义：^\\^"id^\\^"
+    // 变成 ^\"id^\"，这里统一还原成 "id"，否则 name 会解析成 ^"id^"。
+    seg = seg.replace(/\^\\?"/g, '"').replace(/\\"/g, '"').replace(/\^/g, '');
+
+    const dispM = /content-disposition\s*:\s*([^\n]*)/i.exec(seg);
+    if (!dispM || !/form-data/i.test(dispM[1])) continue;
+    const nameM = /name\s*=\s*("[^"]*"|[^;\s]+)/i.exec(dispM[1]);
+    if (!nameM) continue;
+    const key = unquote(nameM[1]);
+    if (!key) continue;
+    const fnM = /filename\s*=\s*("[^"]*"|[^;\s]+)/i.exec(dispM[1]);
+
+    if (!collapsed) {
+      const sep = seg.includes('\n\n') ? '\n\n' : '\n';
+      const at = seg.indexOf(sep);
+      const head = at < 0 ? seg : seg.slice(0, at);
+      const value = at < 0 ? '' : seg.slice(at + sep.length).replace(/[\n]+$/, '');
+      const ctM = /content-type\s*:\s*([^\n;]*)/i.exec(head);
+      if (fnM) files.push({ key, filename: unquote(fnM[1]), contentType: ctM ? ctM[1].trim() : '' });
+      else fields.push({ key, value });
+      continue;
+    }
+
+    // 单行形态：没有 \n 可切，改成「按指针逐个吃掉头字段，剩下的就是值」
+    // 注意别用 dispM[0] 来切片：单行时它的 [^\n]* 会一路吃到段尾，把值也吞掉
+    const cdM = /content-disposition\s*:\s*form-data/i.exec(seg);
+    let rest = cdM ? seg.slice(cdM.index + cdM[0].length) : '';
+    let ct = '';
+    const paramRe = /^\s*;\s*(name|filename)\s*=\s*("[^"]*"|[^;\s]+)/i;
+    for (;;) {
+      const pm = paramRe.exec(rest);
+      if (!pm) break;
+      rest = rest.slice(pm[0].length);
+    }
+    const ctM = /^\s*content-type\s*:\s*([^\s;]+)/i.exec(rest);
+    if (ctM) { ct = ctM[1].trim(); rest = rest.slice(ctM[0].length); }
+    const value = rest.trim();
+    if (fnM) files.push({ key, filename: unquote(fnM[1]), contentType: ct });
+    else fields.push({ key, value });
+  }
+  return { ok: fields.length > 0 || files.length > 0, fields, files };
+}
 
 /** 去掉换行续行符：bash 的 `\` 与 Windows cmd 的 `^`，以及首尾空白 */
 function unwrap(src: string): string {
@@ -263,8 +349,12 @@ export function parseCurl(input: string): ParseResult {
   }
 
   // 请求体
+  const warnings: string[] = [];
   let body = '';
   let bodyType: BodyType = 'none';
+  // -d 的多个参数 curl 会按 & 拼接；但 multipart 原始正文必须保留换行，不能拼 &
+  const rawData = data.join('&');
+  const rawDataLines = data.join('\n');
   if (forms.length) {
     body = forms.join('\n');
     bodyType = 'multipart';
@@ -272,7 +362,7 @@ export function parseCurl(input: string): ParseResult {
     body = urlencode.join('&');
     bodyType = 'form';
   } else if (data.length) {
-    body = data.join('&');
+    body = rawData;
     bodyType = 'raw';
   }
 
@@ -290,6 +380,32 @@ export function parseCurl(input: string): ParseResult {
     }
   }
 
+  // Chrome「Copy as cURL」上传文件时把整个 multipart 正文塞进 --data-raw，
+  // 这里把它拆成「每行 key=value」，文件字段填 @文件名（cURL 不含文件内容，需用户重新选择）。
+  // -d @file / --data-binary @file 在 curl 里是「把文件内容当请求体」，我们做不到，
+  // 但也不能假装成功（否则发出去的正文就是字符串 "@file"）。
+  if (bodyType === 'raw' && /^@/.test(body.trim())) {
+    warnings.push(`cURL 用的是从文件读取请求体（${body.trim()}），本工具不支持按文件内容发送，已按文本原样保留。`);
+  }
+
+  if (bodyType === 'multipart' && !forms.length) {
+    const bM = /boundary\s*=\s*("[^"]*"|[^;\s]+)/i.exec(ct || '');
+    const boundary = bM ? bM[1] : '';
+    const parsed = boundary ? parseMultipartBody(rawDataLines || body, boundary) : { ok: false, fields: [], files: [] };
+    if (parsed.ok) {
+      const lines = parsed.fields.map((f) => `${f.key}=${f.value}`);
+      for (const f of parsed.files) lines.push(`${f.key}=@${f.filename || 'file'}`);
+      body = lines.join('\n');
+      if (parsed.files.length) {
+        const names = parsed.files.map((f) => `${f.key}（${f.filename || '未命名'}）`).join('、');
+        warnings.push(`识别到 ${parsed.files.length} 个文件字段：${names}。cURL 里不含文件内容，已填成 @文件名，请点该行右侧「选择文件」重新指定本地文件。`);
+      }
+      if (parsed.fields.length) warnings.push(`已把 multipart 正文拆成 ${parsed.fields.length} 个表单字段。`);
+    } else {
+      warnings.push('请求体看起来是 multipart，但没能按 boundary 拆分（可能被复制时截断），已按原文保留。');
+    }
+  }
+
   if (asGet && bodyType !== 'none') {
     url = appendQuery(url, body);
     body = '';
@@ -298,6 +414,7 @@ export function parseCurl(input: string): ParseResult {
 
   return {
     ok: true,
+    warnings: warnings.length ? warnings : undefined,
     request: {
       method: method || 'GET',
       url,
@@ -348,13 +465,20 @@ export function buildCurl(req: {
     if (!hasCt) {
       if (bodyType === 'json') headerLines.push('Content-Type: application/json');
       else if (bodyType === 'form') headerLines.push('Content-Type: application/x-www-form-urlencoded');
-      else if (bodyType === 'multipart') headerLines.push('Content-Type: multipart/form-data');
       else if (bodyType === 'raw' && req.rawContentType) headerLines.push(`Content-Type: ${req.rawContentType}`);
     }
   }
 
-  for (const h of headerLines) parts.push('-H', shq(h));
-  if (hasBody) parts.push('--data-raw', shq(body));
+  // multipart 交给 -F：curl 自己生成带 boundary 的 Content-Type，
+  // 手写一个没有 boundary 的头会让服务端解析失败。
+  const isMultipart = hasBody && bodyType === 'multipart';
+  const finalHeaders = isMultipart
+    ? headerLines.filter((l) => !/^content-type\s*:\s*multipart/i.test(l))
+    : headerLines;
+  for (const h of finalHeaders) parts.push('-H', shq(h));
+  if (isMultipart) {
+    for (const line of body.split('\n').map((l) => l.trim()).filter(Boolean)) parts.push('-F', shq(line));
+  } else if (hasBody) parts.push('--data-raw', shq(body));
 
   return parts.join(' ');
 }

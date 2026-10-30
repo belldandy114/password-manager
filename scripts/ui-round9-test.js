@@ -259,6 +259,49 @@ const echo = http.createServer((req, res) => {
   check('cURL：非 curl 输入给出错误提示且不关闭弹窗', /不是 curl/.test(String(errText)), String(errText).slice(0, 40));
   await clickHas('取消');
   await sleep(300);
+  // multipart 上传：Chrome「Copy as cURL(cmd)」会把整个 multipart 正文塞进 --data-raw，
+  // 1.7.7 起要能拆成逐行 key=value（用户实测：以前整坨落在「原文」里没法编辑）
+  await clickHas('从 cURL 导入');
+  await sleep(400);
+  const mp = [
+    'curl --url ^"http://127.0.0.1:' + ECHO_PORT + '/api/upload^" ^',
+    '  -H ^"Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryABC^" ^',
+    '  --data-raw ^"------WebKitFormBoundaryABC^',
+    '',
+    'Content-Disposition: form-data; name=^\\^"id^\\^"^',
+    '',
+    '^',
+    '',
+    'A1B2C3^',
+    '',
+    '------WebKitFormBoundaryABC^',
+    '',
+    'Content-Disposition: form-data; name=^\\^"files^\\^"; filename=^\\^"a.jpg^\\^"^',
+    '',
+    'Content-Type: image/jpeg^',
+    '',
+    '^',
+    '',
+    '------WebKitFormBoundaryABC--^',
+    '',
+    '^"',
+  ].join('\n');
+  await setVal('.curl-input', mp);
+  await sleep(200);
+  await clickHas('解析并填入');
+  await sleep(800);
+  const mpFilled = await ev(`(() => ({
+    bodyType: [...document.querySelectorAll(".seg button, .seg-btn, .body-type button")].map(b => b.textContent.trim()).join("|"),
+    body: document.querySelector(".api-io textarea")?.value || "",
+  }))()`);
+  const mpLines = String(mpFilled && mpFilled.body || "").split("\n").filter(Boolean);
+  check("cURL：multipart 正文被拆成逐行字段",
+    mpLines.includes("id=A1B2C3") && mpLines.some(l => /^files=@/.test(l)),
+    JSON.stringify(mpLines).slice(0, 120));
+  check("cURL：multipart 不再残留 boundary/Content-Disposition",
+    !/WebKitFormBoundary|Content-Disposition/.test(String(mpFilled && mpFilled.body)),
+    String(mpFilled && mpFilled.body).slice(0, 60));
+
 
   }
 

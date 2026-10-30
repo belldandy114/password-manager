@@ -712,6 +712,7 @@ const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
 const { filterMineBugs } = require('./zentao-filter');
+const { parseMultipartLine } = require('./multipart');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -2011,27 +2012,31 @@ function setupIpcHandlers() {
           const params = new URLSearchParams();
           String(body).split('\n').forEach(line => {
             const i = line.indexOf('=');
-            if (i > 0) params.append(line.slice(0, i).trim(), line.slice(i + 1).trim());
+            if (i > 0) params.append(line.slice(0, i).trim(), line.slice(i + 1));
           });
           init.body = params.toString();
           setCT('application/x-www-form-urlencoded; charset=UTF-8');
         } else if (bodyType === 'multipart') {
-          // key=value 每行一个；value 以 @ 开头视为文件路径
+          // key=value 每行一个；value 以 @ 开头视为文件路径（支持 curl 的 ;type= / ;filename= 语法）
           const fd = new FormData();
           const lines = String(body).split('\n').filter(l => l.trim());
           for (const line of lines) {
-            const i = line.indexOf('=');
-            if (i <= 0) continue;
-            const key = line.slice(0, i).trim();
-            const val = line.slice(i + 1).trim();
-            if (val.startsWith('@')) {
-              const file = val.slice(1);
-              if (!fs.existsSync(file)) {
-                return { success: false, error: `上传文件不存在：${file}` };
+            const p = parseMultipartLine(line);
+            if (!p.ok) continue;
+            if (p.isFile) {
+              if (!p.filePath || !fs.existsSync(p.filePath)) {
+                // cURL 导入的文件字段只有文件名、没有内容，必须让用户重新选一次
+                return {
+                  success: false,
+                  error: `上传文件不存在：${p.filePath || '(空)'}。如果是从 cURL 导入的文件字段，请点「选择文件」重新指定本地文件。`,
+                };
               }
-              fd.append(key, new Blob([fs.readFileSync(file)]), path.basename(file));
+              // 带上 MIME：不少服务端会校验 part 的 Content-Type，缺省 octet-stream 会被拒
+              const mime = p.mime || 'application/octet-stream';
+              const name = p.filename || path.basename(p.filePath);
+              fd.append(p.key, new Blob([fs.readFileSync(p.filePath)], { type: mime }), name);
             } else {
-              fd.append(key, val);
+              fd.append(p.key, p.value);
             }
           }
           // 不要手动设 Content-Type：fetch 会按 FormData 自动带 boundary。
