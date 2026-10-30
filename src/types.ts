@@ -673,6 +673,10 @@ export interface ElectronAPI {
   jmeterStatus: () => Promise<{ success: boolean; data?: { runId: string } | null }>;
   jmeterOpenPath: (target: string) => Promise<{ success: boolean; error?: string }>;
   // 应用日志（排障用：出问题让用户点「打开日志」即可）
+  /** 旧版本数据恢复（改名后新库已建、旧库仍在时用） */
+  dataLegacyInfo: () => Promise<{ success: boolean; data?: { legacyDir: string; found: string[]; currentHasVault: boolean } }>;
+  dataRecoverLegacy: () => Promise<{ success: boolean; data?: { from: string; copied: number; backup: string }; error?: string }>;
+  appRelaunch: () => Promise<{ success: boolean }>;
   logInfo: () => Promise<{ success: boolean; data?: { path: string } }>;
   logOpen: () => Promise<{ success: boolean; data?: { path: string }; error?: string }>;
   logTail: (lines?: number) => Promise<{ success: boolean; data?: { path: string; text: string } }>;

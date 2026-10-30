@@ -183,6 +183,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterOpenPath: (p) => ipcRenderer.invoke('jmeter:open-path', p),
   // 运行输出（流式）：返回取消订阅函数
   // 应用日志（排障）
+  dataLegacyInfo: () => ipcRenderer.invoke('data:legacy-info'),
+  dataRecoverLegacy: () => ipcRenderer.invoke('data:recover-legacy'),
+  appRelaunch: () => ipcRenderer.invoke('app:relaunch'),
   logInfo: () => ipcRenderer.invoke('log:info'),
   logOpen: () => ipcRenderer.invoke('log:open'),
   logTail: (lines) => ipcRenderer.invoke('log:tail', lines),

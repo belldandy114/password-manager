@@ -16,7 +16,20 @@ export function Login({ onLogin }: Props) {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [storedHint, setStoredHint] = useState('');
+  // 改名后可能留下「旧库还在、新库已建」的情况：给出显式恢复入口
+  const [legacy, setLegacy] = useState<{ legacyDir: string; currentHasVault: boolean } | null>(null);
   const setMasterPassword = useStore(s => s.setMasterPassword);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.electronAPI.dataLegacyInfo();
+        if (alive && r.success && r.data && r.data.legacyDir && r.data.currentHasVault) setLegacy({ legacyDir: r.data.legacyDir, currentHasVault: r.data.currentHasVault });
+      } catch { /* 老版本没有这个 IPC，忽略 */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // Forgot password state
   const [forgotSecurityWord, setForgotSecurityWord] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
@@ -269,6 +282,25 @@ export function Login({ onLogin }: Props) {
           </>
         ) : (
           <>
+            {legacy && (
+              <div className="legacy-recover">
+                <div className="legacy-recover-text">
+                  检测到旧版本的数据（<code>{legacy.legacyDir.split("\\").pop()}</code>），
+                  当前是新库。如果这不是你要的数据，可以从旧版本恢复（当前库会先备份）。
+                </div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    const r = await window.electronAPI.dataRecoverLegacy();
+                    if (!r.success) { setError(r.error || '恢复失败'); return; }
+                    await window.electronAPI.appRelaunch();
+                  }}
+                >
+                  从旧版本恢复
+                </button>
+              </div>
+            )}
+
             {storedHint && (
               <div style={{ textAlign: 'center', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-secondary)' }}>
                 💡 提示: {storedHint}

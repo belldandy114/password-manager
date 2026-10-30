@@ -31,33 +31,67 @@ if (!app.requestSingleInstanceLock()) {
 // 指针文件必须放在 userData 里（不能放数据目录里，否则换了目录就找不到指针）。
 
 /**
- * 应用改名（1.8.0：测试工具 → 测试中台）会改变 userData 路径，
- * 老用户的密码库会「凭空消失」（其实是新目录里是空库）。
- * 这里在新目录还空着时，把老目录整体搬过来一次。
+ * 应用改名会改变 userData 路径（历史上出现过 测试工具 / 测试工作台 / password-manager），
+ * 老用户的密码库会「凭空消失」。这里在当前目录**还没有 vault.enc** 时，把旧目录的数据搬一次。
  *
- * 只在新目录没有任何内容时迁移：用户已经在用新版本就绝不覆盖。
+ * 教训（1.9.0 事故）：不要按目录名猜——旧版实际用的是 %APPDATA%\password-manager，
+ * 按名字找 测试工具 直接落空。现在按「目录里有没有 vault.enc」判定。
  */
-function migrateLegacyUserData(appData) {
+let legacyMigrateTried = false;
+
+/**
+ * 把旧数据目录（可能是 测试工具 / 测试工作台 / password-manager）搬到当前数据目录。
+ * 只在**当前目录还没有 vault.enc** 时搬一次，搬完逐个校验是否真的写入磁盘。
+ *
+ * 为什么不在模块加载时做（1.9.0 教训）：打包版里那一刻路径/权限还没稳定，
+ * 会出现「日志说搬了、磁盘上没有」；改在登录页第一次问 auth:is-setup 时做，此时一切就绪。
+ */
+function migrateLegacyInto(targetDir) {
+  const { planLegacyMigration, MIGRATE_ITEMS } = require('./legacy-migrate');
+  if (legacyMigrateTried) return { copied: 0, from: '' };
+  legacyMigrateTried = true;
   try {
-    const current = app.getPath('userData');
-    const legacyName = '测试工具';
-    const legacy = path.join(appData, legacyName);
-    if (!legacy || path.resolve(current) === path.resolve(legacy)) return '';
-    if (!fs.existsSync(legacy)) return '';
-    if (fs.existsSync(current) && fs.readdirSync(current).length > 0) return '';
-    fs.mkdirSync(current, { recursive: true });
-    fs.cpSync(legacy, current, { recursive: true, force: false, errorOnExist: false });
-    console.log(`[migrate] 已把旧数据目录迁移到新应用名下：${legacy} → ${current}`);
-    return current;
+    // 自定义 user-data-dir（测试/多开）不搬；PM_APP_DATA 是回归脚本旁路
+    const udArg = process.argv.find((a) => a.startsWith('--user-data-dir'));
+    if (udArg && !process.env.PM_APP_DATA) return { copied: 0, from: '' };
+    const plan = planLegacyMigration({
+      appData: process.env.PM_APP_DATA || app.getPath('appData'),
+      currentUserData: targetDir,
+      isDir: (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } },
+      hasVault: (d) => fs.existsSync(path.join(d, 'vault.enc')),
+      currentHasVault: fs.existsSync(path.join(targetDir, 'vault.enc')),
+    });
+    if (plan.reason === 'no-legacy-vault') return { copied: 0, from: '' };
+    if (plan.reason === 'current-already-has-vault') {
+      console.log(`[migrate] 发现旧库 ${plan.legacyDir}，但当前目录已有 vault.enc，跳过自动迁移`);
+      return { copied: 0, from: plan.legacyDir };
+    }
+    fs.mkdirSync(targetDir, { recursive: true });
+    let copied = 0;
+    for (const item of MIGRATE_ITEMS) {
+      const src = path.join(plan.legacyDir, item);
+      const dst = path.join(targetDir, item);
+      if (!fs.existsSync(src) || fs.existsSync(dst)) continue;
+      fs.cpSync(src, dst, { recursive: true, force: true });
+      // 校验真的落盘了（打包版曾出现「报成功但没写」）
+      if (fs.existsSync(dst)) copied += 1;
+      else console.log(`[migrate] 复制失败（未落盘）：${item}`);
+    }
+    console.log(`[migrate] 已从 ${plan.legacyDir} 迁移 ${copied} 项到 ${targetDir}`);
+    return { copied, from: plan.legacyDir };
   } catch (e) {
     console.log(`[migrate] 迁移旧数据目录失败（不影响启动）：${e.message}`);
-    return '';
+    return { copied: 0, from: '' };
   }
 }
 
-migrateLegacyUserData(app.getPath('appData'));
 
 const USER_DATA_DIR = app.getPath('userData');
+// 日志尽早装上（写 userData/logs，不受自定义数据目录影响），迁移与启动阶段的问题都能留痕
+const { installFileLogging } = require('./app-log');
+process.env.PM_APP_VERSION = app.getVersion();
+installFileLogging(path.join(USER_DATA_DIR, 'logs'));
+
 const LOCATION_FILE = path.join(USER_DATA_DIR, 'data-location.json');
 
 function resolveDataDir() {
@@ -71,10 +105,7 @@ function resolveDataDir() {
 }
 
 const DATA_DIR = resolveDataDir();
-// 日志尽早装上：启动阶段的问题也要能落盘
-const { installFileLogging } = require('./app-log');
-process.env.PM_APP_VERSION = app.getVersion();
-installFileLogging(path.join(DATA_DIR, 'logs'));
+// 日志与旧数据迁移已在上面处理（userData/logs + vault.enc 判定）
 const DATA_FILE = path.join(DATA_DIR, 'vault.enc');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const BIN_FILE = path.join(DATA_DIR, 'trash.enc');
@@ -806,6 +837,57 @@ async function fetchLatestRelease() {
 }
 
 // ---- 应用日志（排障用）----
+// ---- 旧版本数据恢复（改名后「新库已建、旧库还在」时手动搬）----
+function legacyInfo() {
+  const { planLegacyMigration } = require('./legacy-migrate');
+  const current = app.getPath('userData');
+  const plan = planLegacyMigration({
+    appData: process.env.PM_APP_DATA || app.getPath('appData'),
+    currentUserData: current,
+    isDir: (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } },
+    hasVault: (d) => fs.existsSync(path.join(d, 'vault.enc')),
+    currentHasVault: fs.existsSync(path.join(current, 'vault.enc')),
+  });
+  return {
+    legacyDir: plan.legacyDir || '',
+    found: plan.found || [],
+    currentHasVault: fs.existsSync(path.join(current, 'vault.enc')),
+  };
+}
+
+ipcMain.handle('data:legacy-info', async () => ({ success: true, data: legacyInfo() }));
+
+ipcMain.handle('data:recover-legacy', async () => {
+  try {
+    const info = legacyInfo();
+    if (!info.legacyDir) return { success: false, error: '没有找到可恢复的旧数据' };
+    const current = app.getPath('userData');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    // 现有库先备份，绝不直接覆盖
+    const curVault = path.join(current, 'vault.enc');
+    if (fs.existsSync(curVault)) {
+      fs.copyFileSync(curVault, path.join(current, `vault.enc.before-recover-${ts}`));
+    }
+    let copied = 0;
+    for (const item of ['vault.enc', 'vault.enc.bak', 'settings.json']) {
+      const src = path.join(info.legacyDir, item);
+      if (!fs.existsSync(src)) continue;
+      fs.copyFileSync(src, path.join(current, item));
+      copied += 1;
+    }
+    console.log(`[recover] 已从 ${info.legacyDir} 恢复 ${copied} 个文件（原库已备份）`);
+    return { success: true, data: { from: info.legacyDir, copied, backup: ts } };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('app:relaunch', async () => {
+  app.relaunch();
+  app.exit(0);
+  return { success: true };
+});
+
 ipcMain.handle('log:info', async () => ({ success: true, data: { path: logPath() || '' } }));
 ipcMain.handle('log:open', async () => {
   const f = logPath();
@@ -888,6 +970,9 @@ function setupIpcHandlers() {
 
   // ---- Master password ----
   ipcMain.handle('auth:is-setup', () => {
+    // 首次启动时把旧版本数据搬过来（只在还没有 vault.enc 时）
+    const migrated = migrateLegacyInto(DATA_DIR);
+    if (migrated.copied > 0) clearCaches();
     const settings = loadSettings();
     return !!(settings && settings.masterPasswordHash);
   });
