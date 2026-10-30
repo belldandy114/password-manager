@@ -259,6 +259,33 @@ const echo = http.createServer((req, res) => {
   check('cURL：非 curl 输入给出错误提示且不关闭弹窗', /不是 curl/.test(String(errText)), String(errText).slice(0, 40));
   await clickHas('取消');
   await sleep(300);
+  // cmd 写法的 JSON：双引号被转义成 ^\^" ，导入后正文必须是干净 JSON（用户实测踩过两次）
+  await clickHas('从 cURL 导入');
+  await sleep(400);
+  const cmdJson = [
+    'curl --url ^"http://127.0.0.1:' + ECHO_PORT + '/api/page^" ^',
+    '  -H ^"Content-Type: application/json^" ^',
+    '  -H ^"sec-ch-ua: ^\\^"Chromium^\\^";v=^\\^"152^\\^"^" ^',
+    '  --data-raw ^"^{^\\^"pageNo^\\^":1,^\\^"pageSize^\\^":30,^\\^"assetCode^\\^":^\\^"5555555555000020^\\^",^\\^"isBatchAssets^\\^":2^}^"',
+  ].join('\n');
+  await setVal('.curl-input', cmdJson);
+  await sleep(200);
+  await clickHas('解析并填入');
+  await sleep(700);
+  const cmdJsonFilled = await ev(`(() => ({
+    body: document.querySelector(".api-io textarea")?.value || "",
+    headers: [...document.querySelectorAll(".api-io .kv-row input")].map(i => i.value).filter(Boolean).join("|"),
+  }))()`);
+  const cmdBody = String(cmdJsonFilled && cmdJsonFilled.body || "");
+  let cmdJsonOk = false;
+  try { cmdJsonOk = JSON.parse(cmdBody).pageNo === 1; } catch { cmdJsonOk = false; }
+  check("cURL：cmd 写法的 JSON 正文是干净 JSON（无 ^ 无转义引号）",
+    cmdJsonOk && !cmdBody.includes("^") && !cmdBody.includes(String.fromCharCode(92)),
+    cmdBody.slice(0, 80));
+  check("cURL：cmd 写法的请求头也还原了引号",
+    !String(cmdJsonFilled && cmdJsonFilled.headers).includes("^"),
+    String(cmdJsonFilled && cmdJsonFilled.headers).slice(0, 60));
+
   // multipart 上传：Chrome「Copy as cURL(cmd)」会把整个 multipart 正文塞进 --data-raw，
   // 1.7.7 起要能拆成逐行 key=value（用户实测：以前整坨落在「原文」里没法编辑）
   await clickHas('从 cURL 导入');

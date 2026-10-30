@@ -114,7 +114,9 @@ function unwrap(src: string): string {
   // Windows cmd 的续行：行尾 ^
   s = s.replace(/\^\n/g, ' ');
   // Chrome「Copy as cURL (cmd)」把每个参数写成 ^"..."^"，^ 在 cmd 里是转义符：
-  // 去掉紧挨引号的 ^，否则解析出来每个值首尾都会多一个 ^（用户实测踩过）
+  // 去掉紧挨引号的 ^，否则解析出来每个值首尾都会多一个 ^（用户实测踩过）。
+  // 值内部再嵌一层引号时会写成 ^\\^"（cmd 转义 + JSON 引号转义叠加），这一层要先去。
+  s = s.replace(/\^\\\^(["'])/g, '\\$1');
   s = s.replace(/\^(["'])/g, '$1');
   // cmd 里 & | < > ( ) 前面都要加 ^ 转义，URL 查询串最常见：pageNo=1^&pageSize=30
   s = s.replace(/\^([&|<>()])/g, '$1');
@@ -208,6 +210,37 @@ export function tokenizeCurl(src: string): string[] {
 }
 
 const CT_RE = /^content-type\s*:\s*(.*)$/i;
+
+/**
+ * 还原 cmd 写法残留的转义（`^` 与 `\"`）。
+ *
+ * 背景：Chrome「Copy as cURL (cmd)」把整个参数包成 `^"…^"`，JSON 里的 `"` 先被写成 `\"`，
+ * 再被 cmd 层转义成 `^\^"`。分词器只放行了引号类转义，正文里仍留着 `^`，
+ * 于是 UI 上看到 `^{^"pageNo^\^":1…^}`，发出去服务端必然解析失败（用户实测踩到）。
+ *
+ * JSON 要格外小心：正文里本来就可能含 `\"`（字符串里的引号），
+ * 所以两种候选都试一遍，取**能 JSON.parse** 的那个；都不行才用还原版兜底。
+ */
+function normalizeCmdBody(body: string, bodyType: BodyType): string {
+  if (!body || !body.includes('^')) return body;
+  const noCaret = body.replace(/\^/g, '');
+  const unescaped = noCaret.replace(/\\"/g, '"');
+  if (bodyType === 'json') {
+    if (isJson(unescaped)) return unescaped;
+    if (isJson(noCaret)) return noCaret;
+    return unescaped;
+  }
+  return unescaped;
+}
+
+function isJson(s: string): boolean {
+  try {
+    JSON.parse(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function bodyTypeFromContentType(ct: string): BodyType {
   const v = ct.toLowerCase();
@@ -388,10 +421,18 @@ export function parseCurl(input: string): ParseResult {
     warnings.push(`cURL 用的是从文件读取请求体（${body.trim()}），本工具不支持按文件内容发送，已按文本原样保留。`);
   }
 
+  // cmd 写法（^"…^"，内层 JSON 的 " 还会再写成 ^\^"）在分词后仍会残留 ^ 和 \"，
+  // 必须按请求体类型还原，否则发出去的 JSON 是 `^{^"pageNo^\^":1…^}` 这种废串。
+  const cmdStyle = /\^["']/.test(input);
+  if (cmdStyle && body) {
+    body = normalizeCmdBody(body, bodyType);
+  }
+  const splitSource = cmdStyle ? normalizeCmdBody(rawDataLines, 'raw') : rawDataLines;
+
   if (bodyType === 'multipart' && !forms.length) {
     const bM = /boundary\s*=\s*("[^"]*"|[^;\s]+)/i.exec(ct || '');
     const boundary = bM ? bM[1] : '';
-    const parsed = boundary ? parseMultipartBody(rawDataLines || body, boundary) : { ok: false, fields: [], files: [] };
+    const parsed = boundary ? parseMultipartBody(splitSource || body, boundary) : { ok: false, fields: [], files: [] };
     if (parsed.ok) {
       const lines = parsed.fields.map((f) => `${f.key}=${f.value}`);
       for (const f of parsed.files) lines.push(`${f.key}=@${f.filename || 'file'}`);
