@@ -225,9 +225,10 @@ if (dryRun) {
 } else {
   run(`gh release delete-asset v${next} Setup.${next}.exe -y`, { optional: true });
   run(`gh release edit v${next} --notes-file "${notesFile}"`);
-  const info = JSON.parse(sh(`gh release view v${next} --json assets,isLatest,tagName`));
+  const info = JSON.parse(sh(`gh release view v${next} --json assets,tagName`));
+  const latestTag = sh('gh api repos/belldandy114/password-manager/releases/latest --jq .tag_name').trim();
   console.log(`   附件：${info.assets.map((a) => a.name).join(', ')}`);
-  console.log(`   Latest：${info.isLatest}`);
+  console.log(`   Latest：${latestTag === `v${next}` ? '是' : `否（当前是 ${latestTag}）`}`);
 }
 
 console.log(`\n✓ 完成：v${next}`);
