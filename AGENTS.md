@@ -942,3 +942,16 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 
 > 拆 `ipc-system` 时注意：`dialog:save-file` 与 `dialog:saveFile`、`file:write` 与 `fs:writeFile`
 > 是两套**必须并存**的别名（页面用前者，测试数据子应用用后者），合并会导致子应用静默失败。
+
+## 1.9.2 起的约定（改登录页 / 接口调试标题行前先看）
+
+| 项 | 约定 |
+|---|---|
+| 登录页「从旧版本恢复」 | 登录卡片很窄，提示条用**上下排布**（文字在上、按钮靠右在下），按钮必须 `flex: 0 0 auto; white-space: nowrap`，否则会被挤成半截字（1.9.2 修过） |
+| 接口调试请求头标题行 | 「收起/展开」与「+ Cookie」必须在 `.field-label-actions` 里、`margin-left: auto` 贴右。别用 `space-between` 直接排三个子元素——会把按钮甩到行中间（用户明确说「在中间不合适」） |
+| 布局类改动怎么验 | 不要只截图说「看起来行」。r9 里有几何断言：动作组右边缘与标题行右边缘间距 ≤ 14px（实际 0）；登录页按钮 `scrollWidth ≤ clientWidth` |
+
+### release.js 的两个坑
+
+- **不要用 `cmd /c timeout` 休眠**：无终端（后台任务/CI）时它会报 `Input redirection is not supported` 并抛错，把发布卡在「等 CI」那一步。用 `Atomics.wait` 封装的 `sleepSync(ms)`。
+- **`.github/workflows/build.yml` 里还写着「测试工具」**：CI 上传产物会提示 `No files were found`（不影响 Release，但没 artifact）。本机 gh token 缺 `workflow` scope，改不了；要修先 `gh auth refresh -h github.com -s workflow`，改动清单见 `ci-workflow-rename.patch.txt`。
