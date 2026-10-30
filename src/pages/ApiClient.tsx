@@ -867,26 +867,28 @@ export function ApiClient() {
                           {headerLineCount} 行
                         </span>
                       </span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm api-collapse-btn"
-                        onClick={() => setHeadersOpen(v => !v)}
-                        title={headersOpen ? "收起请求头" : "展开请求头"}
-                        aria-expanded={headersOpen}
-                      >
-                        <span className={`api-caret${headersOpen ? " is-open" : ""}`}>
-                          <Icons.chevron size={11} />
-                        </span>
-                        {headersOpen ? "收起" : "展开"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={addCookieRow}
-                        title="在请求头里追加一行 Cookie"
-                      >
-                        <Icons.plus size={11} /> Cookie
-                      </button>
+                      <div className="field-label-actions">
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm api-collapse-btn"
+                          onClick={() => setHeadersOpen(v => !v)}
+                          title={headersOpen ? "收起请求头" : "展开请求头"}
+                          aria-expanded={headersOpen}
+                        >
+                          <span className={`api-caret${headersOpen ? " is-open" : ""}`}>
+                            <Icons.chevron size={11} />
+                          </span>
+                          {headersOpen ? "收起" : "展开"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={addCookieRow}
+                          title="在请求头里追加一行 Cookie"
+                        >
+                          <Icons.plus size={11} /> Cookie
+                        </button>
+                      </div>
                     </div>
                     {headersOpen && (
                       <>

@@ -5282,3 +5282,32 @@
   font-family: var(--font-mono);
   font-size: 11.5px;
 }
+
+/* 请求头标题行：左侧标题、右侧动作组（收起/展开 + Cookie），不要被 space-between 甩到中间 */
+.api-io .field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.field-label-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* 登录页「从旧版本恢复」：卡片很窄，文字与按钮改为上下排，按钮不再被压缩 */
+.legacy-recover {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.legacy-recover .btn {
+  align-self: flex-end;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

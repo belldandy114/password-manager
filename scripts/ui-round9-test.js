@@ -268,6 +268,17 @@ const echo = http.createServer((req, res) => {
     (brand && brand.nav || []).slice(0, 6).join("|"));
 
   // 请求头折叠 / 展开
+  // 按钮要贴右：否则 space-between 会把它甩到标题行中间（截图里就是这个观感）
+  const collapseGeom = await ev(`(() => {
+    const row = document.querySelector('.api-io .field-label-row');
+    const btn = document.querySelector('.field-label-actions') || document.querySelector('.api-collapse-btn');
+    if (!row || !btn) return null;
+    const r = row.getBoundingClientRect(), b = btn.getBoundingClientRect();
+    return { rowRight: Math.round(r.right), btnRight: Math.round(b.right), gap: Math.round(r.right - b.right) };
+  })()`);
+  check('接口调试：标题行动作组贴右侧（收起/展开不再在中间）',
+    !!collapseGeom && Number(collapseGeom.gap) >= 0 && Number(collapseGeom.gap) <= 14,
+    JSON.stringify(collapseGeom));
   const hdrToggle = await ev(`(() => {
     const b = [...document.querySelectorAll(".field-label-row button")].find(x => /收起|展开/.test(x.textContent));
     return b ? b.textContent.trim() : "";
@@ -283,7 +294,7 @@ const echo = http.createServer((req, res) => {
   const hdrBack = await ev(`document.querySelectorAll(".api-io .kv-row").length`);
   check("接口调试：展开后请求头行回来", Number(hdrBack) === Number(hdrBefore), `${hdrBack}`);
 
-  // 一键复制  // 一键复制  // 一键复制
+  // 一键复制
   await ev(`(() => { navigator.clipboard.writeText('__clean__').catch(() => {}); return 1; })()`);
   await sleep(200);
   await clickHas('复制 cURL');
@@ -502,7 +513,11 @@ const echo = http.createServer((req, res) => {
   await ev(`(() => { const b = [...document.querySelectorAll(".modal button")].find(x => x.textContent.trim() === "取消"); if (b) b.click(); return true; })()`);
   await sleep(300);
 
-  // C2：测试账号批量导入（粘贴多行 → 一次生成多条）
+  // 登录页「从旧版本恢复」按钮：窄卡片下不能被裁剪
+  const btnFit = await ev(`window.electronAPI.dataLegacyInfo().then(info => ({ info: !!info.data }))`);
+  check('登录页：旧数据恢复入口可查询（IPC 可用）', !!btnFit && btnFit.info === true, JSON.stringify(btnFit));
+
+  // C2：测试账号批量导入  // C2：测试账号批量导入（粘贴多行 → 一次生成多条）
   await navTo('测试账号');
   await sleep(400);
   const bulkBtn = await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '批量导入'); if (b) { b.click(); return true; } return false; })()`);
