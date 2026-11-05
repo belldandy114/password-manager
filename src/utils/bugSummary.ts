@@ -234,11 +234,19 @@ export function statDayOf(dateTime: string, cutoffMin: number): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
   if (!/^\d{2}:\d{2}$/.test(hm)) return d; // 只有日期：算当天
   const [h, mi] = hm.split(':').map(Number);
-  return h * 60 + mi >= cutoffMin ? d : shiftDay(d, -1);
+  // 归属到「窗口结束的那一天」：昨天 17:30 → 今天 17:30 这一整天，记作「今天」。
+  // 所以 >= 切分点的（今天 17:30 之后提的）算到明天那一天。
+  return h * 60 + mi >= cutoffMin ? shiftDay(d, 1) : d;
+}
+
+/** 某个统计日对应的实际窗口，给界面显示用：['2026-11-04 17:30', '2026-11-05 17:30'] */
+export function statWindowOf(day: string, cutoffMin: number): [string, string] {
+  const c = fmtCutoff(cutoffMin);
+  return [`${shiftDay(day, -1)} ${c}`, `${day} ${c}`];
 }
 
 export interface DailyPoint {
-  /** 统计日（YYYY-MM-DD，指该日的 17:30 → 次日 17:30） */
+  /** 统计日（YYYY-MM-DD）：该日 17:30 结束的那个窗口，即 昨天17:30 → 当天17:30 */
   day: string;
   count: number;
 }

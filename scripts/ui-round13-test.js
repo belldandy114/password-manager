@@ -337,8 +337,13 @@ const check = (name, ok, extra = '') => {
   const dayBars = await ev(`(() => document.querySelectorAll('.zt-sum-day').length)()`);
   check('有按统计日切分的新增趋势柱', Number(dayBars) >= 5, `${dayBars} 天`);
 
-  const dailyHead0 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily-head'); return h ? h.textContent : ''; })()`);
+  const dailyHead0 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily'); return h ? h.textContent : ''; })()`);
   check('趋势条上方有「环比昨日」说明', /环比/.test(dailyHead0) && /昨日/.test(dailyHead0), String(dailyHead0).slice(0, 60));
+
+  const winText0 = await ev(`(() => { const w=document.querySelector('.zt-sum-daily-window'); return w ? w.textContent : ''; })()`);
+  check('页面上写出了统计窗口（昨天 17:30 → 今天 17:30）',
+    /\d{2}:\d{2}/.test(String(winText0)) && /→/.test(String(winText0)),
+    String(winText0).slice(0, 70));
 
   const cutExists = await ev(`(() => { const i=document.querySelector('.zt-sum-cutoff input[type=time]'); return i ? i.value : ''; })()`);
   check('统计日切换点默认 17:30', cutExists === '17:30', String(cutExists));
@@ -351,8 +356,8 @@ const check = (name, ok, extra = '') => {
     return true;
   })()`);
   await sleep(700);
-  const dailyHead1 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily-head'); return h ? h.textContent : ''; })()`);
-  check('改切分点后说明文字同步变成 09:00', /09:00/.test(dailyHead1), String(dailyHead1).slice(-40));
+  const dailyHead1 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily'); return h ? h.textContent : ''; })()`);
+  check('改切分点后窗口文字同步变成 09:00', /09:00/.test(dailyHead1), String(dailyHead1).slice(-46));
   await ev(`(() => {
     const s = ${SETVAL};
     const i = document.querySelector('.zt-sum-cutoff input[type=time]');

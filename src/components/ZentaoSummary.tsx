@@ -6,7 +6,7 @@ import { Modal } from './Modal';
 import { formatHm } from '../utils/time';
 import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
-  daysAgoDay, dailyNew, parseCutoff, fmtCutoff, type ProjectSummary, type SummaryFormat,
+  daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf, type ProjectSummary, type SummaryFormat,
 } from '../utils/bugSummary';
 
 /** 进入页面自动拉一次（每个会话只自动拉一次，避免来回切 tab 反复打禅道） */
@@ -136,6 +136,8 @@ export function ZentaoSummary({
     () => dailyNew(sumBugs, { cutoffMin, days: 7, now, since }),
     [sumBugs, cutoffMin, now, since],
   );
+  // 当前统计日的实际窗口，例如 2026-11-04 17:30 → 2026-11-05 17:30
+  const dailyWindow = useMemo(() => statWindowOf(daily.currentDay, cutoffMin), [daily.currentDay, cutoffMin]);
 
   const selectedProjects = useMemo(
     () => productIds.map(id => projects.find(p => String(p.id) === id)).filter(Boolean) as ZentaoProject[],
@@ -428,16 +430,16 @@ export function ZentaoSummary({
             <button className="btn btn-ghost btn-sm" onClick={() => applyExclude([])}>全部恢复</button>
           )}
           <span className="zt-sum-cutoff">
-            <span className="pg-sub" style={{ margin: 0 }}>统计日切换点</span>
+            <span className="zt-sum-exclude-label">换日时间</span>
             <input
               type="time"
               value={dayCutoff}
               onChange={e => setDayCutoff(e.target.value || '17:30')}
-              title="按这个时间切分「一天」：17:30 → 次日 17:30 算一个统计日"
+              title="每天几点换一天：默认 17:30，即「昨天 17:30 → 今天 17:30」算一天"
             />
-            <span className="pg-sub" style={{ margin: 0 }}>
-              {fmtCutoff(cutoffMin)} → 次日 {fmtCutoff(cutoffMin)}
-            </span>
+            {dayCutoff !== '17:30' && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setDayCutoff('17:30')}>恢复 17:30</button>
+            )}
           </span>
         </div>
 
@@ -581,11 +583,11 @@ export function ZentaoSummary({
                 label="今日新增"
                 value={daily.today}
                 tone={daily.delta > 0 ? 'bad' : daily.delta < 0 ? 'ok' : 'info'}
-                title={`统计日 ${daily.currentDay} ${fmtCutoff(cutoffMin)} 起算；昨日 ${daily.yesterday} 个`}
+                title={`统计日「${daily.currentDay}」= ${dailyWindow[0]} → ${dailyWindow[1]}（昨天 ${daily.yesterday} 个）`}
               />
             </div>
 
-            {/* 按「统计日」切分的新增趋势：17:30 → 次日 17:30 算一天 */}
+            {/* 按「统计日」切分的新增趋势：昨天 17:30 → 今天 17:30 算一天 */}
             <div className="zt-sum-daily">
               <div className="zt-sum-daily-head">
                 <span>
@@ -601,19 +603,23 @@ export function ZentaoSummary({
                 </span>
                 <span className="zt-sum-sep" />
                 <span>近 6 日日均 {daily.avg} 个</span>
+              </div>
+              <div className="zt-sum-daily-window">
+                统计窗口 <code>{dailyWindow[0]}</code> → <code>{dailyWindow[1]}</code>
                 <span className="zt-sum-daily-note">
-                  统计日按每天 {fmtCutoff(cutoffMin)} 切分，可在上方改时间
+                  「今天」= 昨天 {fmtCutoff(cutoffMin)} 之后到今天 {fmtCutoff(cutoffMin)}；换日时间可改
                 </span>
               </div>
               <div className="zt-sum-days">
                 {daily.series.map(p => {
                   const max = Math.max(1, ...daily.series.map(x => x.count));
                   const isToday = p.day === daily.currentDay;
+                  const [ws, we] = statWindowOf(p.day, cutoffMin);
                   return (
                     <div
                       key={p.day}
                       className={`zt-sum-day${isToday ? ' is-today' : ''}`}
-                      title={`${p.day} ${fmtCutoff(cutoffMin)} → 次日 ${fmtCutoff(cutoffMin)}：新增 ${p.count} 个${isToday ? '（进行中）' : ''}`}
+                      title={`${p.day}：${ws} → ${we}，新增 ${p.count} 个${isToday ? '（进行中）' : ''}`}
                     >
                       <span className="zt-sum-day-n">{p.count}</span>
                       <span className="zt-sum-day-bar">
