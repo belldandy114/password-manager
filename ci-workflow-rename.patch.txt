@@ -1,0 +1,15 @@
+把 workflow 里 5 处「测试工具」改成「测试中台」（本机 token 缺 workflow scope，推不上去）：
+
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@
+-        name: 测试工具-Setup-${{ github.ref_name }}
+-        path: release/测试工具 Setup *.exe
++        name: 测试中台-Setup-${{ github.ref_name }}
++        path: release/测试中台 Setup *.exe
+-          name: 测试工具 ${{ github.ref_name }}
+-          ## 测试工具 ${{ github.ref_name }}
+-        files: release/测试工具 Setup *.exe
++          name: 测试中台 ${{ github.ref_name }}
++          ## 测试中台 ${{ github.ref_name }}
++        files: release/测试中台 Setup *.exe

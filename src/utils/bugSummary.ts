@@ -1,0 +1,574 @@
+import type { ZentaoBug } from '../types';
+
+/**
+ * 缺陷汇总口径（与 ~/workspace/samples/zt_daily.py 保持一致）：
+ * - 总数      = 该项目全部 Bug（含已关闭、含已解决待验证）
+ * - 已修复    = resolution === 'fixed'
+ * - 未修复    = status === 'active'
+ * - 已解决待验证 = status === 'resolved'
+ * - 已关闭    = status === 'closed'
+ * - 修复率    = 已修复 / 总数
+ * - 未关闭修复率 = 未关闭且已修复 / 未关闭（把历史已关闭的从分母里去掉，看「还剩多少没弄完」）
+ * - 近期新增 / 修复 = 最近 7 天（含今天）按 openedDate / resolvedDate 计
+ *
+ * 人员分布（「谁身上还挂着多少」）：
+ * - 只看「当前指派人」，已关闭的不算（关闭后禅道会清空指派人），未指派的单列；
+ * - 「排除人员」只作用于这一块——用途是把测试人员去掉，只看开发身上压了多少，
+ *   所以匹配的是指派人，不是提交人；
+ * - 项目 / 模块 / 总数 / 修复率始终按全量口径，跟定时任务 zt_daily.py 的日报一致。
+ */
+
+export interface BugStat {
+  total: number;
+  fixed: number;
+  active: number;
+  resolved: number;
+  closed: number;
+  /** 延期等其他状态 */
+  other: number;
+  /** 已修复 / 总数，百分比，保留 1 位 */
+  rate: number;
+  /** 未关闭 = 总数 - 已关闭 */
+  open: number;
+  /** 未关闭中的已修复（一般是「已解决待验证」那些） */
+  fixedOpen: number;
+  /** 已修复(未关闭中) / 未关闭，百分比，保留 1 位 */
+  openRate: number;
+  /** 最近 7 天新增 */
+  recentNew: number;
+  /** 最近 7 天解决 */
+  recentFixed: number;
+}
+
+export interface ModuleRow extends BugStat {
+  name: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  stat: BugStat;
+  modules: ModuleRow[];
+  /** 该项目按「当前指派人」的分布，按条数降序 */
+  persons: PersonRow[];
+  /** 未关闭且没有指派人的条数（人员之和 + 未指派 + 已排除 = 未关闭数） */
+  unassigned: number;
+  /** 挂在「被排除人员」名下、因而没进人员分布的条数 */
+  skipped: number;
+  /** 严重程度分布：{'1': n, '2': n, ...} */
+  severity: Record<string, number>;
+}
+
+export interface PersonRow {
+  name: string;
+  /** 指派给该人的未关闭缺陷数 */
+  total: number;
+  fixed: number;
+  active: number;
+  resolved: number;
+  closed: number;
+  other: number;
+  /** 占「已指派缺陷」的比例，百分比，保留 1 位 */
+  share: number;
+  /** 最近 7 天新指派到他身上的 */
+  recentNew: number;
+  /** 最近 7 天他这边解决的 */
+  recentFixed: number;
+}
+
+/** 严重程度：禅道 1 致命 / 2 严重 / 3 一般 / 4 轻微 */
+export const SEVERITY_LABELS: Record<string, string> = {
+  '1': '致命',
+  '2': '严重',
+  '3': '一般',
+  '4': '轻微',
+};
+
+export const bugIsFixed = (b: ZentaoBug) => String(b.resolution || '') === 'fixed';
+export const bugIsClosed = (b: ZentaoBug) => String(b.status || '') === 'closed';
+
+const emptyStat = (): BugStat => ({
+  total: 0, fixed: 0, active: 0, resolved: 0, closed: 0, other: 0, rate: 0,
+  open: 0, fixedOpen: 0, openRate: 0, recentNew: 0, recentFixed: 0,
+});
+
+const rateOf = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
+
+/** 日期部分：优先 openedDate（主进程已转本地时间），退回 date 字段 */
+const dayOf = (v?: string) => String(v || '').trim().slice(0, 10);
+
+function count(stat: BugStat, b: ZentaoBug, since7: string) {
+  const st = String(b.status || '');
+  const fixed = bugIsFixed(b);
+  stat.total += 1;
+  if (fixed) stat.fixed += 1;
+
+  if (st === 'closed') {
+    stat.closed += 1;
+  } else {
+    stat.open += 1;
+    if (fixed) stat.fixedOpen += 1;
+    if (st === 'active') stat.active += 1;
+    else if (st === 'resolved') stat.resolved += 1;
+    else stat.other += 1;
+  }
+
+  const opened = dayOf(b.openedDate || b.date);
+  if (opened && opened >= since7) stat.recentNew += 1;
+  const resolved = dayOf(b.resolvedDate);
+  if (resolved && resolved >= since7) stat.recentFixed += 1;
+}
+
+const finish = (stat: BugStat): BugStat => ({
+  ...stat,
+  rate: rateOf(stat.fixed, stat.total),
+  openRate: rateOf(stat.fixedOpen, stat.open),
+});
+
+/** 人员桶：PersonRow 去掉最后才可能算出来的 share */
+type PersonBucket = Omit<PersonRow, 'share'>;
+
+const emptyPerson = (name: string): PersonBucket =>
+  ({ name, total: 0, fixed: 0, active: 0, resolved: 0, closed: 0, other: 0, recentNew: 0, recentFixed: 0 });
+
+/** 往人员桶里加一条（调用方保证 who 非空，且该条未关闭） */
+function addPerson(map: Map<string, PersonBucket>, who: string, b: ZentaoBug, since7: string) {
+  const p = map.get(who) || emptyPerson(who);
+  p.total += 1;
+  if (bugIsFixed(b)) p.fixed += 1;
+  const st = String(b.status || '');
+  if (st === 'active') p.active += 1;
+  else if (st === 'resolved') p.resolved += 1;
+  else if (st === 'closed') p.closed += 1;
+  else p.other += 1;
+  const opened = dayOf(b.openedDate || b.date);
+  if (opened && opened >= since7) p.recentNew += 1;
+  const resolved = dayOf(b.resolvedDate);
+  if (resolved && resolved >= since7) p.recentFixed += 1;
+  map.set(who, p);
+}
+
+/** 人员列表收尾：算占比、按条数降序（同条数按名字，保证两次渲染顺序一致） */
+function finishPersons(map: Map<string, PersonBucket>): PersonRow[] {
+  const list = Array.from(map.values());
+  const denom = list.reduce((s, p) => s + p.total, 0);
+  return list
+    .map(p => ({ ...p, share: rateOf(p.total, denom) }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+
+/** 模块名：优先模块路径，其次「模块<id>」，都没有就是「未指定模块」 */
+const moduleNameOf = (b: ZentaoBug) => {
+  const nm = String(b.moduleName || '').trim();
+  if (nm) return nm;
+  const id = String(b.module || '').trim();
+  if (id && id !== '0') return `模块${id}`;
+  return '未指定模块';
+};
+
+/**
+ * 「谁身上挂着多少」只看当前指派人：
+ * - 已关闭的不算（禅道关闭后指派人会被清空，也不该算作某个人的积压）
+ * - 指派人为空、或字面量 "closed" 的，算「未指派」
+ * 这也是定时任务 zt_daily.py 的 persons() 口径。
+ */
+export const personOf = (b: ZentaoBug) => {
+  if (bugIsClosed(b)) return '';
+  const a = String(b.assignedTo || '').trim();
+  if (!a || a === 'closed') return '';
+  return a;
+};
+
+/**
+ * 是否被排除：只看当前指派人。
+ * 不看提交人——否则「测试提交 + 开发修复」的 Bug 会被连带剔掉，
+ * 而且这份名单的用途就是「把测试人员从人员表里去掉，只看开发」。
+ */
+export const isExcluded = (b: ZentaoBug, exclude: Set<string>) => {
+  const who = personOf(b);
+  return !!who && exclude.has(who);
+};
+
+/** n 天前的本地日期（YYYY-MM-DD），含今天 */
+export function daysAgoDay(n: number, now: Date = new Date()): string {
+  const d = new Date(now.getTime() - n * 86400000);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export interface SummarizeOpts {
+  productIds: string[];
+  productNames?: Record<string, string>;
+  exclude?: string[];
+  /** 时间窗：只统计这个日期（含）之后提交的缺陷，YYYY-MM-DD */
+  since?: string;
+  /** 注入「今天」，方便单测 */
+  now?: Date;
+}
+
+export interface SummaryResult {
+  projects: ProjectSummary[];
+  overall: BugStat;
+  persons: PersonRow[];
+  unassigned: number;
+  skipped: number;
+  /** 全局严重程度分布 */
+  severity: Record<string, number>;
+}
+
+export function summarize(bugs: ZentaoBug[], opts: SummarizeOpts): SummaryResult {
+  const exclude = new Set((opts.exclude || []).map(s => String(s).trim()).filter(Boolean));
+  const order = opts.productIds || [];
+  const since7 = daysAgoDay(7, opts.now || new Date());
+  const since = String(opts.since || '').slice(0, 10);
+
+  type Bucket = {
+    stat: BugStat;
+    modules: Map<string, BugStat>;
+    persons: Map<string, PersonBucket>;
+    severity: Record<string, number>;
+    unassigned: number;
+    skipped: number;
+  };
+  const newBucket = (): Bucket => ({
+    stat: emptyStat(), modules: new Map(), persons: new Map(), severity: {}, unassigned: 0, skipped: 0,
+  });
+
+  const map = new Map<string, Bucket>();
+  // 先按选择的顺序建空行：选中但 0 条的项目也要显示出来
+  for (const id of order) map.set(String(id), newBucket());
+
+  const persons = new Map<string, PersonBucket>();
+  const overall = emptyStat();
+  const severity: Record<string, number> = {};
+  let overallUnassigned = 0;
+  let overallSkipped = 0;
+
+  for (const b of bugs) {
+    // 时间窗：按「提交时间」筛选（看近 N 天新增的这批缺陷现在修了多少）
+    if (since) {
+      const opened = dayOf(b.openedDate || b.date);
+      if (!opened || opened < since) continue;
+    }
+
+    const pid = String(b.product || '');
+    const key = pid || '__none__';
+    if (!map.has(key)) map.set(key, newBucket());
+    const bucket = map.get(key)!;
+
+    // 项目 / 模块 / 总数永远按全量口径算；排除人员只影响「按人员」这一块，
+    // 否则把测试人员一排除，缺陷总数和修复率也跟着变，跟日报对不上。
+    count(bucket.stat, b, since7);
+    count(overall, b, since7);
+
+    const mn = moduleNameOf(b);
+    if (!bucket.modules.has(mn)) bucket.modules.set(mn, emptyStat());
+    count(bucket.modules.get(mn)!, b, since7);
+
+    const sev = String(b.severity || '').trim();
+    if (sev) {
+      bucket.severity[sev] = (bucket.severity[sev] || 0) + 1;
+      severity[sev] = (severity[sev] || 0) + 1;
+    }
+
+    // 人员口径按「当前指派人」，未关闭且没指派的单独计数，
+    // 保证 人员之和 + 未指派 + 已排除 = 未关闭数
+    const who = personOf(b);
+    if (!who) {
+      // 已关闭的不算「未指派」——它们本来就不该挂在任何人身上
+      if (!bugIsClosed(b)) {
+        bucket.unassigned += 1;
+        overallUnassigned += 1;
+      }
+      continue;
+    }
+    if (exclude.size > 0 && exclude.has(who)) {
+      bucket.skipped += 1;
+      overallSkipped += 1;
+      continue;
+    }
+    addPerson(bucket.persons, who, b, since7);
+    addPerson(persons, who, b, since7);
+  }
+
+  // 项目名：优先外部传入的名字表（页面上的项目列表），其次 Bug 里带的 productName
+  const nameOf = (id: string) => {
+    if (opts.productNames && opts.productNames[id]) return opts.productNames[id];
+    const hit = bugs.find(b => String(b.product) === id);
+    return (hit && hit.productName) || `项目 ${id}`;
+  };
+
+  const projects: ProjectSummary[] = Array.from(map.entries()).map(([id, v]) => ({
+    id,
+    name: nameOf(id),
+    stat: finish(v.stat),
+    modules: Array.from(v.modules.entries())
+      .map(([name, st]) => ({ name, ...finish(st) }))
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
+    persons: finishPersons(v.persons),
+    unassigned: v.unassigned,
+    skipped: v.skipped,
+    severity: v.severity,
+  }));
+
+  // 保持传入顺序（order 在前，其余追加在后）
+  projects.sort((a, b) => {
+    const ia = order.indexOf(a.id);
+    const ib = order.indexOf(b.id);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return b.stat.total - a.stat.total;
+  });
+
+  return {
+    projects,
+    overall: finish(overall),
+    persons: finishPersons(persons),
+    unassigned: overallUnassigned,
+    skipped: overallSkipped,
+    severity,
+  };
+}
+
+/** 严重程度分布转成有序数组（只要出现过的） */
+export function severityRows(severity: Record<string, number>): { key: string; label: string; count: number }[] {
+  return Object.keys(severity)
+    .filter(k => severity[k] > 0)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(k => ({ key: k, label: SEVERITY_LABELS[k] || `严重度${k}`, count: severity[k] }));
+}
+
+/** 一行文字概括一个项目（列表与复制共用，保证口径一致） */
+const lineOf = (s: BugStat) =>
+  `缺陷 ${s.total} · 已修复 ${s.fixed}（${s.rate}%）· 未修复 ${s.active} · 待验证 ${s.resolved} · 已关闭 ${s.closed}`;
+
+export interface TextOpts {
+  at?: string;
+  exclude?: string[];
+  withModules?: boolean;
+  /** 人员分布；不传则不输出这一段 */
+  persons?: PersonRow[];
+  unassigned?: number;
+  skipped?: number;
+  withPersons?: boolean;
+  /** 只写前 N 人（0 / 不传 = 全部） */
+  personLimit?: number;
+  /** 时间窗说明，会写进标题行 */
+  sinceLabel?: string;
+}
+
+/**
+ * 人员分布行，形如定时任务日报里那句：
+ *   人员指派共 36 个：张三 13 个、李四 10 个、……（未指派 1 个，已关闭 910 个不计）
+ * 只统计未关闭的 Bug（关闭后禅道会清空指派人，算进任何人名下都没意义）。
+ */
+export function personsToText(
+  persons: PersonRow[],
+  opts: {
+    /** 未关闭但没有指派人 */
+    unassigned?: number;
+    /** 已关闭条数（只用于提示「没算进来」） */
+    closedCount?: number;
+    /** 被排除的人员名单 */
+    exclude?: string[];
+    /** 这些人名下被略过的条数 */
+    skipped?: number;
+    /** 只写前 N 人，其余用「等 N 人」收尾 */
+    limit?: number;
+  } = {},
+): string {
+  const assigned = persons.reduce((s, p) => s + p.total, 0);
+  const shown = opts.limit && opts.limit > 0 ? persons.slice(0, opts.limit) : persons;
+  const body = shown.length ? shown.map(p => `${p.name} ${p.total} 个`).join('、') : '暂无';
+  const rest = persons.length > shown.length ? ` 等 ${persons.length} 人` : '';
+
+  const notes: string[] = [];
+  if (opts.unassigned) notes.push(`未指派 ${opts.unassigned} 个`);
+  if (opts.closedCount) notes.push(`已关闭 ${opts.closedCount} 个不计`);
+  const ex = (opts.exclude || []).map(s => String(s).trim()).filter(Boolean);
+  if (ex.length) {
+    notes.push(opts.skipped
+      ? `已排除 ${ex.join('、')} 名下 ${opts.skipped} 个`
+      : `已排除 ${ex.join('、')}`);
+  }
+  const tail = notes.length ? `（${notes.join('，')}）` : '';
+  return `人员指派共 ${assigned} 个：${body}${rest}${tail}`;
+}
+
+const stampOf = (at?: string) => {
+  const d = new Date(at || new Date().toISOString());
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+/** 生成可直接粘到群里/周报的纯文本 */
+export function summaryToText(
+  projects: ProjectSummary[],
+  overall: BugStat,
+  opts: TextOpts = {},
+): string {
+  const stamp = stampOf(opts.at);
+
+  const lines: string[] = [];
+  lines.push(`【缺陷汇总】${stamp}　${projects.length} 个项目${opts.sinceLabel ? `　统计范围：${opts.sinceLabel}` : ''}`);
+  lines.push(`合计 ${lineOf(overall)}`);
+  const ex = (opts.exclude || []).filter(Boolean);
+  if (ex.length) lines.push(`人员分布已排除（只看开发者）：${ex.join('、')}`);
+  lines.push('');
+
+  projects.forEach((p, i) => {
+    lines.push(`${i + 1}. ${p.name}`);
+    lines.push(`   ${lineOf(p.stat)}`);
+    if (opts.withModules !== false && p.modules.length) {
+      lines.push(`   模块 ${p.modules.length} 个：`);
+      for (const m of p.modules) {
+        lines.push(`   - ${m.name}：${m.total} 个（未修复 ${m.active}、待验证 ${m.resolved}）`);
+      }
+    }
+  });
+
+  // 人员分布放在最后：放在合计下面会把项目明细挤下去，粘到群里也不好读
+  const persons = opts.persons || [];
+  if (opts.withPersons !== false && persons.length) {
+    lines.push('');
+    lines.push(personsToText(persons, {
+      unassigned: opts.unassigned || 0,
+      closedCount: overall.closed,
+      exclude: ex,
+      skipped: opts.skipped || 0,
+      limit: opts.personLimit || 0,
+    }));
+  }
+
+  return lines.join('\n');
+}
+
+/** Markdown：直接贴到飞书/企微/Confluence 里表格不会散 */
+export function summaryToMarkdown(
+  projects: ProjectSummary[],
+  overall: BugStat,
+  opts: TextOpts = {},
+): string {
+  const stamp = stampOf(opts.at);
+  const out: string[] = [];
+  out.push(`**【缺陷汇总】${stamp}　${projects.length} 个项目**`);
+  out.push('');
+  out.push(`合计：${lineOf(overall)}`);
+  const ex = (opts.exclude || []).filter(Boolean);
+  if (ex.length) out.push(`人员分布已排除：${ex.join('、')}`);
+  if (opts.sinceLabel) out.push(`统计范围：${opts.sinceLabel}`);
+  out.push('');
+
+  out.push('| 项目 | 缺陷 | 已修复 | 修复率 | 未修复 | 待验证 | 已关闭 |');
+  out.push('|---|---:|---:|---:|---:|---:|---:|');
+  for (const p of projects) {
+    out.push(`| ${p.name} | ${p.stat.total} | ${p.stat.fixed} | ${p.stat.rate}% | ${p.stat.active} | ${p.stat.resolved} | ${p.stat.closed} |`);
+  }
+  out.push(`| **合计** | **${overall.total}** | **${overall.fixed}** | **${overall.rate}%** | **${overall.active}** | **${overall.resolved}** | **${overall.closed}** |`);
+
+  if (opts.withModules !== false) {
+    const withMods = projects.filter(p => p.modules.length);
+    if (withMods.length) {
+      out.push('');
+      out.push('**模块明细**');
+      out.push('');
+      out.push('| 项目 | 模块 | 缺陷 | 已修复 | 未修复 | 待验证 |');
+      out.push('|---|---|---:|---:|---:|---:|');
+      for (const p of withMods) {
+        for (const m of p.modules) {
+          out.push(`| ${p.name} | ${m.name} | ${m.total} | ${m.fixed} | ${m.active} | ${m.resolved} |`);
+        }
+      }
+    }
+  }
+
+  const persons = opts.persons || [];
+  if (opts.withPersons !== false && persons.length) {
+    const shown = opts.personLimit && opts.personLimit > 0 ? persons.slice(0, opts.personLimit) : persons;
+    out.push('');
+    out.push('**人员分布（按当前指派人）**');
+    out.push('');
+    out.push('| 人员 | 指派 | 占比 | 未修复 | 待验证 | 已修复 | 近 7 天新增 |');
+    out.push('|---|---:|---:|---:|---:|---:|---:|');
+    for (const p of shown) {
+      out.push(`| ${p.name} | ${p.total} | ${p.share}% | ${p.active} | ${p.resolved} | ${p.fixed} | ${p.recentNew} |`);
+    }
+    if (opts.unassigned) out.push(`| 未指派 | ${opts.unassigned} | - | - | - | - | - |`);
+    out.push('');
+    out.push(personsToText(persons, {
+      unassigned: opts.unassigned || 0,
+      closedCount: overall.closed,
+      exclude: ex,
+      skipped: opts.skipped || 0,
+    }));
+  }
+
+  return out.join('\n');
+}
+
+/** CSV：项目 + 模块两级行，Excel 直接打开 */
+export function summaryToCsv(
+  projects: ProjectSummary[],
+  overall: BugStat,
+  opts: TextOpts = {},
+): string {
+  const rows: string[][] = [];
+  const cell = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const push = (proj: string, mod: string, s: BugStat) => {
+    rows.push([proj, mod, String(s.total), String(s.fixed), String(s.rate), String(s.active),
+      String(s.resolved), String(s.closed), String(s.openRate), String(s.recentNew), String(s.recentFixed)]
+      .map(cell));
+  };
+
+  rows.push(['项目', '模块', '缺陷', '已修复', '修复率%', '未修复', '待验证', '已关闭', '未关闭修复率%', '近7天新增', '近7天修复']);
+  for (const p of projects) {
+    push(p.name, '（全部）', p.stat);
+    if (opts.withModules !== false) {
+      for (const m of p.modules) push(p.name, m.name, m);
+    }
+  }
+  push('合计', '', overall);
+
+  const persons = opts.persons || [];
+  if (opts.withPersons !== false && persons.length) {
+    rows.push([]);
+    rows.push(['人员', '指派', '占比%', '未修复', '待验证', '已修复', '近7天新增', '近7天修复']);
+    for (const p of persons) {
+      rows.push([p.name, String(p.total), String(p.share), String(p.active), String(p.resolved),
+        String(p.fixed), String(p.recentNew), String(p.recentFixed)].map(cell));
+    }
+    if (opts.unassigned) rows.push(['未指派', String(opts.unassigned), '', '', '', '', '', '']);
+  }
+
+  // 带 BOM，Excel 打开中文不乱码
+  return '\ufeff' + rows.map(r => r.join(',')).join('\r\n');
+}
+
+export type SummaryFormat = 'text' | 'markdown' | 'csv';
+
+export function summaryTo(
+  format: SummaryFormat,
+  projects: ProjectSummary[],
+  overall: BugStat,
+  opts: TextOpts = {},
+): string {
+  if (format === 'markdown') return summaryToMarkdown(projects, overall, opts);
+  if (format === 'csv') return summaryToCsv(projects, overall, opts);
+  return summaryToText(projects, overall, opts);
+}
+
+/** 只复制单个项目（含模块明细与该项目的指派分布） */
+export function projectToText(p: ProjectSummary, at?: string): string {
+  return summaryToText([p], p.stat, {
+    at,
+    withModules: true,
+    persons: p.persons,
+    unassigned: p.unassigned,
+    skipped: p.skipped,
+  });
+}

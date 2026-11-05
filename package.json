@@ -1,0 +1,103 @@
+{
+  "name": "password-manager",
+  "version": "1.14.0",
+  "productName": "测试中台",
+  "description": "测试工具 - 集成网址管理与测试数据生成",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build:renderer": "vite build",
+    "build:sub-apps": "node scripts/build-subapp.js",
+    "build:all": "npm run build:renderer && npm run build:sub-apps",
+    "start": "electron .",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "pack": "electron-builder --dir",
+    "check:ipc": "node scripts/check-ipc-contract.js",
+    "check:privacy": "node scripts/check-privacy.js",
+    "check:integrity": "node scripts/check-integrity.js",
+    "smoke": "node scripts/smoke-test.js",
+    "install:local": "node scripts/install-local.js",
+    "release": "node scripts/release.js",
+    "regress": "node scripts/regress-all.js",
+    "dist": "node scripts/build-installer.js",
+    "verify:packaged-csv": "node scripts/verify-packaged-csv.js",
+    "check": "node scripts/preflight.js",
+    "check:pack": "node scripts/preflight.js --pack",
+    "hooks:install": "node scripts/install-hooks.js"
+  },
+  "build": {
+    "appId": "com.passwordmanager.app",
+    "productName": "测试中台",
+    "files": [
+      "dist/**/*",
+      "dist-tdg/**/*",
+      "electron/**/*",
+      "buildResources/icon.ico",
+      "buildResources/icon.png",
+      "图标.png",
+      "图标.ico"
+    ],
+    "asarUnpack": [
+      "图标.ico",
+      "图标.png",
+      "buildResources/icon.ico",
+      "buildResources/icon.png",
+      "dist-tdg/**/*",
+      "electron/preload-tdg.cjs"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "buildResources/icon.ico",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "buildResources/icon.ico",
+      "uninstallerIcon": "buildResources/icon.ico",
+      "installerHeaderIcon": "buildResources/icon.ico"
+    }
+  },
+  "keywords": [
+    "password-manager",
+    "security",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^9.2.1",
+    "electron": "^37.10.3",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14",
+    "vitest": "^5.0.5",
+    "wait-on": "^9.0.10"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "js-yaml": "^5.5.0",
+    "pinyin-pro": "^3.29.5",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "uuid": "^14.0.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.13"
+  }
+}

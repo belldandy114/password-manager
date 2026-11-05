@@ -1,0 +1,387 @@
+import React, { useState, useEffect } from 'react';
+import { useStore } from '../store/useStore';
+import { Modal } from '../components/Modal';
+import type { BackupFile } from '../types';
+import { formatDateTime } from '../utils/time';
+
+interface Props {
+  onLogin: () => void;
+}
+
+export function Login({ onLogin }: Props) {
+  const [mode, setMode] = useState<'loading' | 'setup' | 'login' | 'forgot'>('loading');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [hint, setHint] = useState('');
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [storedHint, setStoredHint] = useState('');
+  // 改名后可能留下「旧库还在、新库已建」的情况：给出显式恢复入口
+  const [legacy, setLegacy] = useState<{ legacyDir: string; currentHasVault: boolean } | null>(null);
+  const setMasterPassword = useStore(s => s.setMasterPassword);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.electronAPI.dataLegacyInfo();
+        if (alive && r.success && r.data && r.data.legacyDir && r.data.currentHasVault) setLegacy({ legacyDir: r.data.legacyDir, currentHasVault: r.data.currentHasVault });
+      } catch { /* 老版本没有这个 IPC，忽略 */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Forgot password state
+  const [forgotSecurityWord, setForgotSecurityWord] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotNewPassword2, setForgotNewPassword2] = useState('');
+  const [forgotStep, setForgotStep] = useState<'security' | 'reset'>('security');
+  // 连续输错后的冷却倒计时（秒）
+  const [lockRemain, setLockRemain] = useState(0);
+  // 从备份恢复（解锁不了时的出口）
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreList, setRestoreList] = useState<BackupFile[]>([]);
+  const [restoreBusy, setRestoreBusy] = useState('');
+  const [restoreDone, setRestoreDone] = useState('');
+
+  useEffect(() => {
+    if (lockRemain <= 0) return;
+    const t = setTimeout(() => setLockRemain(n => Math.max(0, n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [lockRemain]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const isSetup = await window.electronAPI.authIsSetup();
+        if (isSetup) {
+          const h = await window.electronAPI.authGetHint();
+          setStoredHint(h);
+          setMode('login');
+        } else {
+          setMode('setup');
+        }
+      } catch {
+        setMode('setup');
+      }
+    })();
+  }, []);
+
+  const handleSetup = async () => {
+    setError('');
+    if (password.length < 8) { setError('密码至少需要8位'); return; }
+    if (!/[a-z]/.test(password)) { setError('密码需包含小写字母'); return; }
+    if (!/[A-Z]/.test(password)) { setError('密码需包含大写字母'); return; }
+    if (!/[0-9]/.test(password)) { setError('密码需包含数字'); return; }
+    if (!/[^a-zA-Z0-9]/.test(password)) { setError('密码需包含特殊符号'); return; }
+    if (password !== confirmPassword) { setError('两次密码不一致'); return; }
+    try {
+      const result = await window.electronAPI.authSetup({ password, hint });
+      if (result.success) {
+        setMasterPassword(password);
+        onLogin();
+      } else {
+        setError(result.error || '设置失败');
+      }
+    } catch (e: any) {
+      setError(e.message || '设置失败');
+    }
+  };
+
+  const handleLogin = async () => {
+    setError('');
+    if (!password) { setError('请输入主密码'); return; }
+    if (lockRemain > 0) return;
+    try {
+      const result = await window.electronAPI.authVerify({ password });
+      if (result.success) {
+        setMasterPassword(password);
+        onLogin();
+      } else {
+        setError(result.error || '密码错误');
+        if (result.retryAfterMs && result.retryAfterMs > 0) {
+          setLockRemain(Math.ceil(result.retryAfterMs / 1000));
+        }
+        if (result.code === 'vault-corrupt') openRestore();
+      }
+    } catch (e: any) {
+      setError(e.message || '验证失败');
+    }
+  };
+
+  const handleForgotSecurity = async () => {
+    setError('');
+    if (!forgotSecurityWord) { setError('请输入安全词'); return; }
+    try {
+      const result = await window.electronAPI.authVerifySecurityWord({ securityWord: forgotSecurityWord });
+      if (result.success) {
+        setForgotStep('reset');
+        setError('');
+      } else {
+        setError(result.error || '安全词错误');
+      }
+    } catch (e: any) {
+      setError(e.message || '验证失败');
+    }
+  };
+
+  const handleForgotReset = async () => {
+    setError('');
+    if (forgotNewPassword.length < 8) { setError('新密码至少8位'); return; }
+    if (!/[a-z]/.test(forgotNewPassword)) { setError('密码需包含小写字母'); return; }
+    if (!/[A-Z]/.test(forgotNewPassword)) { setError('密码需包含大写字母'); return; }
+    if (!/[0-9]/.test(forgotNewPassword)) { setError('密码需包含数字'); return; }
+    if (!/[^a-zA-Z0-9]/.test(forgotNewPassword)) { setError('密码需包含特殊符号'); return; }
+    if (forgotNewPassword !== forgotNewPassword2) { setError('两次密码不一致'); return; }
+    try {
+      const result = await window.electronAPI.authResetPassword({ securityWord: forgotSecurityWord, newPassword: forgotNewPassword });
+      if (result.success) {
+        setMasterPassword(forgotNewPassword);
+        onLogin();
+      } else {
+        setError(result.error || '重置失败');
+      }
+    } catch (e: any) {
+      setError(e.message || '重置失败');
+    }
+  };
+
+  /** 打开「从备份恢复」面板：解不开库时这里是唯一的出口 */
+  const openRestore = async () => {
+    setRestoreOpen(true);
+    setRestoreDone('');
+    const r = await window.electronAPI.backupList();
+    if (r.success) setRestoreList(r.data || []);
+  };
+
+  const doRestore = async (name: string) => {
+    setRestoreBusy(name);
+    const r = await window.electronAPI.backupRestore(name);
+    setRestoreBusy('');
+    if (!r.success) { setError(r.error || '恢复失败'); return; }
+    setRestoreDone(name);
+    setError('');
+  };
+
+  const getPasswordStrength = (pw: string): { label: string; color: string; percent: number } => {
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (pw.length >= 12) score++;
+    if (/[a-z]/.test(pw)) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^a-zA-Z0-9]/.test(pw)) score++;
+    if (score <= 2) return { label: '弱', color: 'var(--danger)', percent: 33 };
+    if (score <= 4) return { label: '中', color: 'var(--warning)', percent: 66 };
+    return { label: '强', color: 'var(--success)', percent: 100 };
+  };
+
+  if (mode === 'loading') {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <img src="./图标.png" alt="测试中台" className="login-logo" />
+          <h1>测试中台</h1>
+          <p className="subtitle" style={{ marginTop: 20 }}>加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+    <div className="login-page">
+      <div className="login-card">
+        <img src="./图标.png" alt="测试中台" className="login-logo" />
+        <h1>测试中台</h1>
+        <p className="subtitle">
+          {mode === 'setup' ? '首次使用，请设置主密码' : '请输入主密码解锁'}
+        </p>
+
+        {mode === 'setup' ? (
+          <>
+            <div className="form-group">
+              <label>主密码</label>
+              <div className="password-input-wrapper">
+                <input type={showPassword ? 'text' : 'password'} value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
+                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                  {showPassword ? '🙈' : '👁'}
+                </button>
+              </div>
+              {password && (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ width: `${getPasswordStrength(password).percent}%`, height: '100%', background: getPasswordStrength(password).color, transition: 'all 0.3s', borderRadius: 2 }} />
+                  </div>
+                  <div className="input-hint">密码强度: {getPasswordStrength(password).label}</div>
+                </div>
+              )}
+              <div className="input-hint">需包含大小写字母、数字和特殊符号，至少8位</div>
+            </div>
+            <div className="form-group">
+              <label>确认密码</label>
+              <div className="password-input-wrapper">
+                <input type={showPassword ? 'text' : 'password'} value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)} placeholder="再次输入密码" />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>密码提示词（可选）</label>
+              <input type="text" value={hint} onChange={e => setHint(e.target.value)}
+                placeholder="帮助你记忆密码的提示" />
+              <div className="input-hint">忘记主密码后将无法访问数据，请务必牢记</div>
+            </div>
+            {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
+            <button className="btn btn-primary btn-block btn-lg" onClick={handleSetup}>设置主密码并开始使用</button>
+          </>
+        ) : mode === 'forgot' ? (
+          <>
+            <p className="subtitle">重置主密码</p>
+            {forgotStep === 'security' ? (
+              <>
+                <div className="form-group">
+                  <label>安全词</label>
+                  <input type="text" value={forgotSecurityWord}
+                    onChange={e => setForgotSecurityWord(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleForgotSecurity(); }}
+                    placeholder="输入设置的安全词" autoFocus />
+                  <div className="input-hint">输入设置安全词时填写的词语</div>
+                </div>
+                {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
+                <button className="btn btn-primary btn-block btn-lg" onClick={handleForgotSecurity}>验证安全词</button>
+              </>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label>新主密码</label>
+                  <div className="password-input-wrapper">
+                    <input type={showPassword ? 'text' : 'password'} value={forgotNewPassword}
+                      onChange={e => setForgotNewPassword(e.target.value)}
+                      placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
+                    <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                      {showPassword ? '🙈' : '👁'}
+                    </button>
+                  </div>
+                  <div className="input-hint">需包含大小写字母、数字和特殊符号，至少8位</div>
+                </div>
+                <div className="form-group">
+                  <label>确认新密码</label>
+                  <input type={showPassword ? 'text' : 'password'} value={forgotNewPassword2}
+                    onChange={e => setForgotNewPassword2(e.target.value)} placeholder="再次输入新密码" />
+                </div>
+                {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
+                <button className="btn btn-primary btn-block btn-lg" onClick={handleForgotReset}>重置密码</button>
+              </>
+            )}
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setMode('login'); setError(''); setForgotStep('security'); setForgotSecurityWord(''); }}>
+                返回登录
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {legacy && (
+              <div className="legacy-recover">
+                <div className="legacy-recover-text">
+                  检测到旧版本的数据（<code>{legacy.legacyDir.split("\\").pop()}</code>），
+                  当前是新库。如果这不是你要的数据，可以从旧版本恢复（当前库会先备份）。
+                </div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    const r = await window.electronAPI.dataRecoverLegacy();
+                    if (!r.success) { setError(r.error || '恢复失败'); return; }
+                    await window.electronAPI.appRelaunch();
+                  }}
+                >
+                  从旧版本恢复
+                </button>
+              </div>
+            )}
+
+            {storedHint && (
+              <div style={{ textAlign: 'center', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-secondary)' }}>
+                💡 提示: {storedHint}
+              </div>
+            )}
+            <div className="form-group">
+              <label>主密码</label>
+              <div className="password-input-wrapper">
+                <input type={showPassword ? 'text' : 'password'} value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleLogin(); }}
+                  placeholder="输入主密码解锁" autoFocus />
+                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                  {showPassword ? '🙈' : '👁'}
+                </button>
+              </div>
+            </div>
+            {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
+            <button className="btn btn-primary btn-block btn-lg" onClick={handleLogin} disabled={lockRemain > 0}>
+              {lockRemain > 0 ? `${lockRemain} 秒后可重试` : '解锁'}
+            </button>
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <button className="btn btn-ghost btn-sm" onClick={async () => {
+                const has = await window.electronAPI.authHasSecurityWord();
+                if (has) {
+                  setMode('forgot');
+                  setForgotStep('security');
+                  setError('');
+                } else {
+                  setError('未设置安全词，无法重置密码');
+                }
+              }}>
+                忘记密码?
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={openRestore} style={{ marginLeft: 8 }}>
+                从备份恢复
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+
+    {/* 解锁不了时的出口：用某份加密备份覆盖当前库 */}
+    <Modal open={restoreOpen} onClose={() => setRestoreOpen(false)} title="从备份恢复密码库"
+      footer={<button className="btn btn-secondary" onClick={() => setRestoreOpen(false)}>关闭</button>}
+    >
+      {restoreDone ? (
+        <div>
+          <p style={{ marginTop: 0 }}>已用 <b>{restoreDone}</b> 覆盖当前密码库。</p>
+          <p className="text-sm text-muted">
+            请用<strong>这份备份当时的主密码</strong>重新解锁（如果之后改过主密码，就要用旧密码）。
+            恢复前的库已另存为 <code>vault-prerestore-*.enc</code>，在数据目录的 backups 里可以找回。
+          </p>
+        </div>
+      ) : (
+        <div>
+          <p style={{ marginTop: 0 }} className="text-sm text-muted">
+            这里列出本机现有的加密备份（每天首次改动数据时生成）。恢复会覆盖当前 <code>vault.enc</code>，
+            但会先把当前库另存一份 <code>vault-prerestore-*.enc</code>。
+          </p>
+          {restoreList.length === 0 ? (
+            <div className="text-sm text-muted" style={{ padding: '12px 0' }}>暂无备份</div>
+          ) : (
+            <div className="backup-list" style={{ maxHeight: 260, overflow: 'auto' }}>
+              {restoreList.map(b => (
+                <div key={b.name} className="backup-item">
+                  <span className="backup-name">{b.name}</span>
+                  <span className="text-sm text-muted">{(b.size / 1024).toFixed(1)} KB</span>
+                  <span className="text-sm text-muted">{formatDateTime(b.mtime)}</span>
+                  <button className="btn btn-sm btn-ghost" disabled={!!restoreBusy} onClick={() => doRestore(b.name)}>
+                    {restoreBusy === b.name ? '恢复中…' : '用这份恢复'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {error && <div className="input-hint" style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</div>}
+        </div>
+      )}
+    </Modal>
+    </>
+  );
+}
