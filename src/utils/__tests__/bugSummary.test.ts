@@ -3,6 +3,7 @@ import {
   summarize, isExcluded, bugIsFixed, summaryToText, projectToText, personsToText,
   summaryToMarkdown, summaryToCsv, summaryTo, severityRows, daysAgoDay, personOf,
   dailyNew, parseCutoff, fmtCutoff, statDayOf, statWindowOf,
+  periodOf, workdaysBetween, growthOf, splitSecurity, dailyReportText,
 } from '../bugSummary';
 import type { ZentaoBug } from '../../types';
 
@@ -509,5 +510,143 @@ describe('bugSummary 统计日切分（默认 17:30）', () => {
     const d = dailyNew([bug('1', '58', 'active')], { days: 3, now: new Date('2026-11-05T18:00:00') });
     expect(d.today).toBe(0);
     expect(d.series.every(p => p.count === 0)).toBe(true);
+  });
+});
+
+describe('bugSummary 日报口径（本期 / 环比 / 安全 / 正文）', () => {
+  const mk = (id: string, o: Partial<ZentaoBug>) => ({ ...bug(id, '58', 'active'), ...o }) as ZentaoBug;
+
+  it('periodOf：(since, until] 左开右闭，三个量分开算', () => {
+    const bugs = [
+      mk('1', { openedDate: '2026-11-05 10:00' }), // 落在本期
+      mk('2', { openedDate: '2026-11-04 17:30' }), // 正好等于起点，不算
+      mk('3', { openedDate: '2026-11-01 09:00', resolvedDate: '2026-11-05 11:00', status: 'resolved' }),
+      mk('4', { openedDate: '2026-11-02 09:00', closedDate: '2026-11-05 12:00', status: 'closed', resolution: 'fixed' }),
+    ];
+    const p = periodOf(bugs, '2026-11-04 17:30', '2026-11-05 17:30');
+    expect(p.created).toBe(1);
+    expect(p.resolved).toBe(1);
+    expect(p.closed).toBe(1);
+    expect(p.since).toBe('2026-11-04 17:30');
+    expect(p.until).toBe('2026-11-05 17:30');
+  });
+
+  it('periodOf：只有日期时补 00:00；没日期的不计', () => {
+    const p = periodOf(
+      [mk('1', { openedDate: '2026-11-05' }), mk('2', {})],
+      '2026-11-04 17:30',
+      '2026-11-05 17:30',
+    );
+    expect(p.created).toBe(1);
+    expect(p.resolved).toBe(0);
+    expect(p.closed).toBe(0);
+  });
+
+  it('periodOf：带秒的时间也能比（截到分钟）', () => {
+    const p = periodOf(
+      [mk('1', { openedDate: '2026-11-05 17:29:59' })],
+      '2026-11-04 17:30:00',
+      '2026-11-05 17:30:00',
+    );
+    expect(p.created).toBe(1);
+  });
+
+  it('workdaysBetween：(start, end] 只数周一到周五，至少 1', () => {
+    expect(workdaysBetween('2026-11-04 17:30', '2026-11-05 17:30')).toBe(1); // 周三 → 周四
+    expect(workdaysBetween('2026-11-06 17:30', '2026-11-09 17:30')).toBe(1); // 周五 → 周一
+    expect(workdaysBetween('2026-11-02 09:00', '2026-11-09 09:00')).toBe(5); // 周一 → 下周一
+    expect(workdaysBetween('2026-11-05 09:00', '2026-11-05 18:00')).toBe(1); // 同一天
+  });
+
+  it('growthOf：分母是上次总数，日均按工作日折算', () => {
+    const g = growthOf('2026-11-04 18:17', 944, '2026-11-05 15:54', 982);
+    expect(g).toEqual({
+      prevAt: '2026-11-04 18:17', prevTotal: 944, delta: 38, pct: 4, workdays: 1, daily: 4,
+    });
+  });
+
+  it('growthOf：下降时给负数，没有基准返回 null', () => {
+    const g = growthOf('2026-11-04 18:17', 1000, '2026-11-05 15:54', 980);
+    expect(g && g.delta).toBe(-20);
+    expect(g && g.pct).toBe(-2);
+    expect(growthOf('', 0, '2026-11-05 15:54', 10)).toBeNull();
+    expect(growthOf('2026-11-04 18:17', 0, '2026-11-05 15:54', 10)).toBeNull();
+  });
+
+  it('splitSecurity：按提交人剔除并单独计数', () => {
+    const rows = [
+      mk('1', { openedBy: '安全小哥' }),
+      mk('2', { openedBy: '测试同学' }),
+      mk('3', { openedBy: '安全小哥' }),
+    ];
+    const r = splitSecurity(rows, ['安全小哥']);
+    expect(r.security).toBe(2);
+    expect(r.bugs.map(b => b.id)).toEqual(['2']);
+    // 名单为空 / 只有空格时原样返回
+    expect(splitSecurity(rows, []).security).toBe(0);
+    expect(splitSecurity(rows, ['  ']).bugs.length).toBe(3);
+  });
+
+  it('日报正文和定时任务同一套话术', () => {
+    const s = summarize([mk('1', { openedDate: '2026-11-05 10:00' })], { productIds: ['58'] });
+    const text = dailyReportText([{
+      name: '演示项目',
+      stat: s.overall,
+      period: { since: '2026-11-04 17:30', until: '2026-11-05 17:30', created: 1, resolved: 0, closed: 0 },
+      growth: { prevAt: '2026-11-04 17:30', prevTotal: 944, delta: 38, pct: 4, workdays: 1, daily: 4 },
+      persons: s.persons,
+      excludedCount: 2,
+      excludedAreTesters: true,
+      modules: [{ name: '登录', total: 1, active: 1 }],
+      security: 27,
+    }], '2026-11-05 15:54');
+
+    expect(text.startsWith('【演示项目】禅道缺陷日报　2026-11-05 15:54')).toBe(true);
+    expect(text).toContain('截至 15:54，禅道中共记录缺陷 1 个');
+    expect(text).toContain('待修复 1 个，另有 0 个已解决待验证，修复率 0%');
+    expect(text).toContain('本期（11-04 17:30 — 11-05 17:30）新增 1 个、修复 0 个、关闭 0 个');
+    expect(text).toContain('缺陷总数较上次统计（11-04 17:30，944 个）净增 38 个，增长 4%');
+    expect(text).toContain('该区间含 1 个工作日，按工作日计日均增长 4%');
+    expect(text).toContain('人员分布（按当前指派，已剔除测试人员）共 1 个：lisi 1 个。');
+    expect(text).toContain('模块分布（全部缺陷，括号内为当前待修复数）共 1 个：登录 1 个（待修复 1）。');
+    expect(text).toContain('（另有安全问题 27 个，由安全工程师提交，单独统计，未计入上述数据。）');
+  });
+
+  it('没有基准时写「首次统计」，不空着', () => {
+    const s = summarize([mk('1', {})], { productIds: ['58'] });
+    const text = dailyReportText([{
+      name: 'P',
+      stat: s.overall,
+      period: { since: '2026-11-04 17:30', until: '2026-11-05 17:30', created: 0, resolved: 0, closed: 0 },
+      growth: null,
+      persons: s.persons,
+      excludedCount: 0,
+      excludedAreTesters: false,
+      modules: [],
+      security: 0,
+    }], '2026-11-05 15:54');
+    expect(text).toContain('本次为首次统计，暂无环比基准。');
+    // 没排除人时不说「已剔除」，也不出安全问题那句
+    expect(text).toContain('人员分布（按当前指派）');
+    expect(text).not.toContain('安全问题');
+  });
+
+  it('多项目：标题带项目数，正文按编号分段', () => {
+    const s = summarize([mk('1', {})], { productIds: ['58'] });
+    const one = {
+      name: 'A',
+      stat: s.overall,
+      period: { since: '2026-11-04 17:30', until: '2026-11-05 17:30', created: 0, resolved: 0, closed: 0 },
+      growth: null,
+      persons: s.persons,
+      excludedCount: 0,
+      excludedAreTesters: false,
+      modules: [],
+      security: 0,
+    };
+    const text = dailyReportText([one, { ...one, name: 'B' }], '2026-11-05 15:54');
+    expect(text).toContain('【缺陷汇总】禅道缺陷日报　2026-11-05 15:54　2 个项目');
+    expect(text).toContain('1. A');
+    expect(text).toContain('2. B');
   });
 });

@@ -58,14 +58,16 @@ interface ZentaoState {
   sumExclude: string[];
   /** 测试人员名单（本地标记）：用来一键把这类人从人员表里排除，持久化 */
   sumTesters: string[];
+  /** 安全工程师名单：他们提交的缺陷算「安全问题」，从功能缺陷口径里剔除、单独计数 */
+  sumSecurity: string[];
   /** 时间窗（天）：0 = 全部，7 / 30 / 90 = 只看这些天里提交的缺陷 */
   sumSince: number;
   /** 统计日切分点（HH:mm，默认 17:30）：17:30 → 次日 17:30 记作一个统计日 */
   sumDayCutoff: string;
   /** 上次汇总的关键数字，用来显示「较上次 +N/-N」 */
   sumSnapshot: SumSnapshot | null;
-  /** 复制格式偏好 */
-  sumFormat: SummaryFormat;
+  /** 复制格式偏好（daily = 日报整段文本） */
+  sumFormat: SummaryFormat | 'daily';
   sumFetchedAt: string;
 
   setBugs: (bugs: ZentaoBug[], total: number) => void;
@@ -83,9 +85,10 @@ interface ZentaoState {
   setSumProductIds: (ids: string[]) => void;
   setSumExclude: (names: string[]) => void;
   setSumTesters: (names: string[]) => void;
+  setSumSecurity: (names: string[]) => void;
   setSumSince: (days: number) => void;
   setSumDayCutoff: (hhmm: string) => void;
-  setSumFormat: (fmt: SummaryFormat) => void;
+  setSumFormat: (fmt: SummaryFormat | 'daily') => void;
   /** 记下本次结果作为下次的环比基准 */
   saveSumSnapshot: (snap: SumSnapshot) => void;
   clear: () => void;
@@ -121,10 +124,11 @@ export const useZentaoStore = create<ZentaoState>()(
   sumDataIds: [],
   sumExclude: [],
   sumTesters: [],
+  sumSecurity: [],
   sumSince: 0,
   sumDayCutoff: '17:30',
   sumSnapshot: null,
-  sumFormat: 'text',
+  sumFormat: 'daily',
   sumFetchedAt: '',
 
   setBugs: (bugs, total) => set({ bugs, total, fetchedAt: new Date().toISOString() }),
@@ -151,6 +155,7 @@ export const useZentaoStore = create<ZentaoState>()(
   setSumProductIds: (sumProductIds) => set({ sumProductIds }),
   setSumExclude: (sumExclude) => set({ sumExclude }),
   setSumTesters: (sumTesters) => set({ sumTesters }),
+  setSumSecurity: (sumSecurity) => set({ sumSecurity }),
   setSumSince: (sumSince) => set({ sumSince }),
   setSumDayCutoff: (sumDayCutoff) => set({ sumDayCutoff }),
   setSumFormat: (sumFormat) => set({ sumFormat }),
@@ -174,7 +179,7 @@ export const useZentaoStore = create<ZentaoState>()(
         project: st.project, status: st.status, severity: st.severity, query: st.query,
         pStatus: st.pStatus, pSeverity: st.pSeverity, pModule: st.pModule, pQuery: st.pQuery,
         // 汇总的 Bug 量大，只把「选了哪些项目 / 排除了谁 / 测试人员名单 / 时间窗 / 上次快照」留在会话里，数据每次重拉
-        sumProductIds: st.sumProductIds, sumExclude: st.sumExclude, sumTesters: st.sumTesters,
+        sumProductIds: st.sumProductIds, sumExclude: st.sumExclude, sumTesters: st.sumTesters, sumSecurity: st.sumSecurity,
         sumSince: st.sumSince, sumDayCutoff: st.sumDayCutoff,
         sumSnapshot: st.sumSnapshot, sumFormat: st.sumFormat,
       }),

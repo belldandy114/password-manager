@@ -150,29 +150,47 @@ const SETVAL = `(el, v) => {
   await sleep(600);
   await shot('4-summary');
 
+  if (process.env.DEBUG_LAYOUT) {
+    const box = await ev(`(() => {
+      const g = (s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
+      return { main: g('.zt-sumbar-main'), projects: g('.zt-sumbar-projects'), actions: g('.zt-sumbar-actions'), sub: g('.zt-sumbar-sub'), kpis: g('.zt-sum-kpis'), card: g('.zt-sum-card'), rate: g('.zt-sum-card.is-rate') };
+    })()`);
+    console.log('LAYOUT', JSON.stringify(box));
+  }
+
+  const scrollTo = (sel) => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.scrollIntoView({ block: 'start' }); return true; })()`);
+  const clickTab = (label) => ev(`(() => { const b = [...document.querySelectorAll('.zt-detail-tab')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (b) { b.click(); return true; } return false; })()`);
+
+  // 项目表 + 展开模块
+  await scrollTo('.zt-sum-detail-pnl');
+  await sleep(500);
   await ev(`(() => { const r = document.querySelector('.zt-sum-row'); if (r) r.click(); return !!r; })()`);
-  await sleep(800);
+  await sleep(700);
   await shot('5-expanded');
 
-  // 按人员面板在页面底部，单独滚过去拍一张
-  await ev(`(() => {
-    const p = [...document.querySelectorAll('.pnl')].find(x => /按人员/.test(x.textContent.slice(0, 40)));
-    if (!p) return false;
-    p.scrollIntoView({ block: 'start' });
-    return true;
-  })()`);
-  await sleep(800);
+  // 按人员
+  await clickTab('按人员');
+  await sleep(700);
+  await scrollTo('.zt-sum-detail-pnl');
+  await sleep(400);
   await shot('6-persons');
 
-  // 人员下钻：点第一个人员行
+  // 人员下钻
   await ev(`(() => { const tr = document.querySelector('.zt-sum-prow'); if (tr) { tr.click(); return true; } return false; })()`);
   await sleep(1800);
   await shot('7-drill');
   await ev(`(() => { const b = [...document.querySelectorAll('.modal button')].find(x => x.textContent.trim() === '关闭'); if (b) { b.click(); return true; } return false; })()`);
   await sleep(500);
 
-  // 复制格式菜单：先滚到总计，再点开
-  await ev(`(() => { const c = document.querySelector('.zt-sum-cards'); if (c) c.scrollIntoView({ block: 'center' }); return true; })()`);
+  // 日报预览
+  await clickTab('日报预览');
+  await sleep(700);
+  await scrollTo('.zt-sum-detail-pnl');
+  await sleep(400);
+  await shot('10-daily');
+
+  // 复制菜单：回到概览再点开
+  await ev(`(() => { const c = document.querySelector('.zt-sum-kpis'); if (c) c.scrollIntoView({ block: 'center' }); return true; })()`);
   await sleep(600);
   const menuOpened = await ev(`(() => {
     const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('title') === '选择复制格式 / 导出');

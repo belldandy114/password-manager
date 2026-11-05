@@ -6,8 +6,11 @@ import { Modal } from './Modal';
 import { formatHm } from '../utils/time';
 import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
-  daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf, type ProjectSummary, type SummaryFormat,
+  daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf,
+  periodOf, growthOf, splitSecurity, dailyReportText,
+  type ProjectSummary, type SummaryFormat, type ReportInput,
 } from '../utils/bugSummary';
+import { pushHistory, prevOf, clearHistory, type SumSnapshot } from '../utils/sumHistory';
 
 /** 进入页面自动拉一次（每个会话只自动拉一次，避免来回切 tab 反复打禅道） */
 let autoPulledOnce = false;
@@ -22,18 +25,30 @@ const SINCE_OPTIONS: { v: number; label: string }[] = [
   { v: 90, label: '近 90 天' },
 ];
 
-const COPY_FORMATS: { v: SummaryFormat; label: string; hint: string }[] = [
-  { v: 'text', label: '纯文本', hint: '直接粘到群里' },
+type CopyFormat = SummaryFormat | 'daily';
+
+const COPY_FORMATS: { v: CopyFormat; label: string; hint: string }[] = [
+  { v: 'daily', label: '日报文本', hint: '跟定时任务一样的整段话' },
+  { v: 'text', label: '结构化文本', hint: '按项目分行，便于对照' },
   { v: 'markdown', label: 'Markdown', hint: '贴飞书 / 企微 保持表格' },
   { v: 'csv', label: 'CSV', hint: '粘到 Excel 自动分列' },
 ];
 
+type TabId = 'proj' | 'person' | 'daily';
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const nowStamp = (d: Date = new Date()) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
 /**
- * 缺陷汇总 tab：
- * 1. 多选项目，一次拉这些项目的全部 Bug（含已关闭）
- * 2. 统计 缺陷数 / 已修复 / 未修复 / 待验证 / 已关闭 / 修复率（全量或仅未关闭），可排除人员、可按时间窗
- * 3. 按项目列出、展开看模块；按人员列出、点人看明细
- * 4. 一键复制（文本 / Markdown / CSV）或导出
+ * 缺陷汇总 tab（日报口径）：
+ * 1. 多选项目，一次拉全部 Bug（含已关闭）
+ * 2. 概览：总数 / 已修复 / 未修复 / 待验证 / 修复率 + 本期新增·修复·关闭 + 总数环比 + 7 日趋势
+ * 3. 明细：按项目（可展开模块）/ 按人员（可下钻）/ 日报预览
+ * 4. 一键复制（日报 / 结构化 / Markdown / CSV）或导出
+ *
+ * 「本期」的窗口边界固定用换日时间（默认 17:30），不跟运行时刻走 ——
+ * 领导随时点开都是同一个区间；只有「较上次统计」的基准取历史快照。
  */
 export function ZentaoSummary({
   projects, getCfg, ready, onError,
@@ -48,21 +63,24 @@ export function ZentaoSummary({
   const dataIds = useZentaoStore(s => s.sumDataIds);
   const exclude = useZentaoStore(s => s.sumExclude);
   const testers = useZentaoStore(s => s.sumTesters);
+  const security = useZentaoStore(s => s.sumSecurity);
   const sinceDays = useZentaoStore(s => s.sumSince);
   const dayCutoff = useZentaoStore(s => s.sumDayCutoff);
-  const snapshot = useZentaoStore(s => s.sumSnapshot);
-  const format = useZentaoStore(s => s.sumFormat);
+  const format: CopyFormat = useZentaoStore(s => s.sumFormat);
   const fetchedAt = useZentaoStore(s => s.sumFetchedAt);
   const setSummary = useZentaoStore(s => s.setSummary);
   const setProductIds = useZentaoStore(s => s.setSumProductIds);
   const setExclude = useZentaoStore(s => s.setSumExclude);
   const setTesters = useZentaoStore(s => s.setSumTesters);
+  const setSecurity = useZentaoStore(s => s.setSumSecurity);
   const setSinceDays = useZentaoStore(s => s.setSumSince);
   const setDayCutoff = useZentaoStore(s => s.setSumDayCutoff);
   const setFormat = useZentaoStore(s => s.setSumFormat);
   const saveSnapshot = useZentaoStore(s => s.saveSumSnapshot);
 
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<TabId>('proj');
+  const [advanced, setAdvanced] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [pickQuery, setPickQuery] = useState('');
@@ -77,7 +95,9 @@ export function ZentaoSummary({
   const [copyOpen, setCopyOpen] = useState(false);
   const copyBtnRef = useRef<HTMLButtonElement>(null);
   const [withModules, setWithModules] = useState(true);
-  const [delta, setDelta] = useState<{ at: string; total: number; active: number; fixed: number } | null>(null);
+  const [secInput, setSecInput] = useState(security.join('、'));
+  const [histTick, setHistTick] = useState(0);
+  const [prev, setPrev] = useState<SumSnapshot | null>(null);
 
   const flash = (msg: string) => { setTip(msg); setTimeout(() => setTip(''), 2400); };
 
@@ -113,16 +133,31 @@ export function ZentaoSummary({
     return m;
   }, [projects]);
 
+  /* ---------- 统计日窗口（固定边界，不跟运行时刻走） ---------- */
+  const cutoffMin = useMemo(() => parseCutoff(dayCutoff), [dayCutoff]);
+  const daily = useMemo(
+    () => dailyNew(sumBugs, { cutoffMin, days: 7, now, since, ignored: security }),
+    [sumBugs, cutoffMin, now, since, security],
+  );
+  const currentDay = daily.currentDay;
+  const [winStart, winEnd] = useMemo(() => statWindowOf(currentDay, cutoffMin), [currentDay, cutoffMin]);
+
+  /* ---------- 安全问题剔除（单独统计，不计入功能缺陷） ---------- */
+  const { bugs: funcBugs, security: secTotal } = useMemo(
+    () => splitSecurity(sumBugs, security),
+    [sumBugs, security],
+  );
+
   // 统计结果（排除人员 / 时间窗改了立刻重算，不用重新拉数据）
   const result = useMemo(
-    () => summarize(sumBugs, { productIds, productNames, exclude, since, now }),
-    [sumBugs, productIds, productNames, exclude, since, now],
+    () => summarize(funcBugs, { productIds, productNames, exclude, since, now }),
+    [funcBugs, productIds, productNames, exclude, since, now],
   );
 
   // 人员候选：不带排除口径算一遍，否则被排除的人会从候选里消失，没法再点回来
   const allPersons = useMemo(
-    () => summarize(sumBugs, { productIds, productNames, exclude: [], since, now }).persons,
-    [sumBugs, productIds, productNames, since, now],
+    () => summarize(funcBugs, { productIds, productNames, exclude: [], since, now }).persons,
+    [funcBugs, productIds, productNames, since, now],
   );
 
   const assignedTotal = useMemo(() => result.persons.reduce((s, p) => s + p.total, 0), [result.persons]);
@@ -130,14 +165,20 @@ export function ZentaoSummary({
   const shownPersons = personAll ? result.persons : result.persons.slice(0, 12);
   const sevRows = useMemo(() => severityRows(result.severity), [result.severity]);
 
-  // 按「统计日」切分的新增趋势（默认 17:30 → 次日 17:30 算一天）
-  const cutoffMin = useMemo(() => parseCutoff(dayCutoff), [dayCutoff]);
-  const daily = useMemo(
-    () => dailyNew(sumBugs, { cutoffMin, days: 7, now, since }),
-    [sumBugs, cutoffMin, now, since],
+  /* ---------- 本期（固定窗口）：新增 / 修复 / 关闭 ---------- */
+  const period = useMemo(() => periodOf(funcBugs, winStart, winEnd), [funcBugs, winStart, winEnd]);
+  const atNow = nowStamp(now);
+
+  /* ---------- 总数环比（基准 = 上一个统计日的历史快照） ---------- */
+  const histKey = `${productIds.slice().sort().join(',')}|${sinceDays}`;
+  useEffect(() => {
+    setPrev(prevOf(histKey, currentDay));
+  }, [histKey, currentDay, histTick, result.overall.total]);
+
+  const growth = useMemo(
+    () => (prev ? growthOf(prev.at, prev.total, atNow, result.overall.total) : null),
+    [prev, atNow, result.overall.total],
   );
-  // 当前统计日的实际窗口，例如 2026-11-04 17:30 → 2026-11-05 17:30
-  const dailyWindow = useMemo(() => statWindowOf(daily.currentDay, cutoffMin), [daily.currentDay, cutoffMin]);
 
   const selectedProjects = useMemo(
     () => productIds.map(id => projects.find(p => String(p.id) === id)).filter(Boolean) as ZentaoProject[],
@@ -169,21 +210,22 @@ export function ZentaoSummary({
       const failed = res.errors || [];
       if (failed.length) onError(`部分项目拉取失败：${failed.slice(0, 3).join('；')}`);
 
-      // 环比：跟「上一次拉取」比，然后把这次存成新基准
+      // 记历史基准：同一天重跑会覆盖当天那条（避免环比退化成几小时）
       const fresh = summarize(res.data, { productIds, productNames, exclude, since, now: new Date() });
-      const key = `${productIds.slice().sort().join(',')}|${sinceDays}`;
-      if (snapshot && snapshot.key === key) {
-        setDelta({
-          at: snapshot.at,
-          total: fresh.overall.total - snapshot.total,
-          active: fresh.overall.active - snapshot.active,
-          fixed: fresh.overall.fixed - snapshot.fixed,
-        });
-      } else {
-        setDelta(null);
-      }
+      const day = dailyNew(res.data, { cutoffMin, days: 2, now: new Date(), ignored: security }).currentDay;
+      pushHistory({
+        key: histKey,
+        at: nowStamp(),
+        day,
+        total: fresh.overall.total,
+        fixed: fresh.overall.fixed,
+        active: fresh.overall.active,
+        resolved: fresh.overall.resolved,
+        closed: fresh.overall.closed,
+        security: splitSecurity(res.data, security).security,
+      });
       saveSnapshot({
-        key,
+        key: histKey,
         at: new Date().toISOString(),
         total: fresh.overall.total,
         fixed: fresh.overall.fixed,
@@ -191,6 +233,7 @@ export function ZentaoSummary({
         resolved: fresh.overall.resolved,
         closed: fresh.overall.closed,
       });
+      setHistTick(t => t + 1);
 
       flash(res.cached
         ? `命中缓存（${Math.max(1, Math.round((res.ageMs || 0) / 60000))} 分钟前）`
@@ -225,8 +268,8 @@ export function ZentaoSummary({
   }, [projects, pickQuery]);
 
   const toggleExpand = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
+    setExpanded(prevSet => {
+      const next = new Set(prevSet);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
@@ -234,22 +277,50 @@ export function ZentaoSummary({
 
   /* ---------------- 复制 / 导出 ---------------- */
 
-  const buildText = (fmt: SummaryFormat) => summaryTo(fmt, result.projects, result.overall, {
-    exclude,
-    persons: result.persons,
-    unassigned: result.unassigned,
-    skipped: result.skipped,
-    withModules,
-    sinceLabel,
-  });
+  const excludedAreTesters = exclude.length > 0 && exclude.every(n => testers.includes(n));
 
-  const copyAll = async (fmt: SummaryFormat = format) => {
+  /** 每个项目的日报段落输入 */
+  const reportInputs: ReportInput[] = useMemo(() => result.projects.map(p => {
+    const pbugs = funcBugs.filter(b => String(b.product) === p.id);
+    // 日报里用产品短名（不带项目集前缀），跟定时任务的标题一致
+    const short = projects.find(x => String(x.id) === p.id)?.name || p.name;
+    return {
+      name: short,
+      stat: p.stat,
+      period: periodOf(pbugs, winStart, winEnd),
+      growth: result.projects.length === 1 ? growth : null,
+      persons: p.persons,
+      excludedCount: exclude.length,
+      excludedAreTesters,
+      // 模块平铺到一句话里，用最后一段短名，否则「内控管理/…/添置资产」会把整段撑爆
+      modules: p.modules.map(m => ({
+        name: String(m.name).split('/').pop() || m.name,
+        total: m.total,
+        active: m.active,
+      })),
+      security: splitSecurity(pbugs, security).security,
+    };
+  }), [result.projects, funcBugs, winStart, winEnd, growth, exclude.length, excludedAreTesters, security]);
+
+  const buildText = (fmt: CopyFormat) => {
+    if (fmt === 'daily') return dailyReportText(reportInputs, atNow);
+    return summaryTo(fmt, result.projects, result.overall, {
+      exclude,
+      persons: result.persons,
+      unassigned: result.unassigned,
+      skipped: result.skipped,
+      withModules,
+      sinceLabel,
+    });
+  };
+
+  const copyAll = async (fmt: CopyFormat = format) => {
     if (result.projects.length === 0) return;
     setCopyOpen(false);
     setFormat(fmt);
     try {
       await navigator.clipboard.writeText(buildText(fmt));
-      flash(fmt === 'text' ? '已复制汇总' : fmt === 'markdown' ? '已复制 Markdown' : '已复制 CSV');
+      flash(fmt === 'daily' ? '已复制日报' : fmt === 'text' ? '已复制汇总' : fmt === 'markdown' ? '已复制 Markdown' : '已复制 CSV');
     } catch {
       flash('复制失败：窗口没有焦点，点一下窗口再试');
     }
@@ -292,6 +363,15 @@ export function ZentaoSummary({
     }
   };
 
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(dailyReportText(reportInputs, atNow));
+      flash('已复制日报');
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
+  };
+
   /* ---------------- 不计入人员表的人 ---------------- */
 
   const applyExclude = (names: string[]) => {
@@ -305,6 +385,17 @@ export function ZentaoSummary({
 
   const toggleTester = (name: string) => {
     setTesters(testers.includes(name) ? testers.filter(x => x !== name) : [...testers, name]);
+  };
+
+  const toggleSecurity = (name: string) => {
+    const next = security.includes(name) ? security.filter(x => x !== name) : [...security, name];
+    setSecurity(next);
+    setSecInput(next.join('、'));
+  };
+
+  const applySecInput = (text: string) => {
+    const names = text.split(/[、,，;；\s]+/).map(s => s.trim()).filter(Boolean);
+    setSecurity(Array.from(new Set(names)));
   };
 
   const excludeTesters = () => {
@@ -333,11 +424,11 @@ export function ZentaoSummary({
 
   const drillBugs = useMemo(() => {
     if (!drill) return [];
-    return sumBugs
+    return funcBugs
       .filter(b => personOf(b) === drill)
       .filter(b => !since || String(b.openedDate || b.date || '').slice(0, 10) >= since)
       .sort((a, b) => Number(b.id) - Number(a.id));
-  }, [drill, sumBugs, since]);
+  }, [drill, funcBugs, since]);
 
   const copyDrill = async () => {
     if (!drillBugs.length) return;
@@ -355,145 +446,160 @@ export function ZentaoSummary({
 
   const hasData = result.projects.length > 0 && sumBugs.length > 0;
   const rate = rateBasis === 'all' ? result.overall.rate : result.overall.openRate;
+  const fixedInClosed = result.overall.closed > 0
+    ? Math.round((result.overall.fixed / result.overall.closed) * 1000) / 10
+    : 0;
+  const reportText = reportInputs.length ? dailyReportText(reportInputs, atNow) : '';
+
+  /* ================================================================ */
 
   return (
     <>
-      {/* 汇总范围 */}
-      <Panel
-        title="汇总范围"
-        meta={productIds.length
-          ? `${productIds.length} 个项目${sinceDays ? ` · ${SINCE_OPTIONS.find(o => o.v === sinceDays)?.label}` : ''}`
-          : '未选择项目'}
-        tools={
-          <div className="zt-filters">
-            {tip && <span className="zt-sum-tip">{tip}</span>}
-            {fetchedAt && <span className="pg-sub" style={{ margin: 0 }}>{formatHm(fetchedAt)} 拉取</span>}
+      {/* ---------- 统计范围：一行工具条，次要项收进「高级」 ---------- */}
+      <section className="zt-sumbar">
+        <div className="zt-sumbar-main">
+          <div className="zt-sumbar-projects">
+            <span className="zt-sumbar-label">项目</span>
+            {selectedProjects.length === 0 && (
+              <span className="zt-sumbar-empty">还没选，点右侧「选择项目」可多选</span>
+            )}
+            {selectedProjects.map(p => (
+              <span key={p.id} className="zt-sum-chip">
+                <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
+                <button title="移除" onClick={() => setProductIds(productIds.filter(id => id !== String(p.id)))}>
+                  <Icons.close size={10} />
+                </button>
+              </span>
+            ))}
+            <button className="zt-sumbar-add" onClick={openPicker} title="选择要汇总的项目（可多选）">
+              <Icons.folder size={12} /> 选择项目
+            </button>
+            {selectedProjects.length > 1 && (
+              <button className="zt-sumbar-link" onClick={() => setProductIds([])}>清空</button>
+            )}
+          </div>
+
+          <div className="zt-sumbar-actions">
             <select
+              className="zt-sumbar-since"
               value={sinceDays}
               onChange={e => setSinceDays(Number(e.target.value))}
               title="只看这些天里新提交的缺陷（按提交时间筛选）"
             >
               {SINCE_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
             </select>
-            <button className="btn btn-ghost btn-sm" onClick={openPicker}>
-              <Icons.folder size={12} /> 选择项目
-            </button>
+            <label className="zt-sumbar-cutoff zt-sum-cutoff" title="每天几点换一天：默认 17:30，即「昨天 17:30 → 今天 17:30」算一个统计日">
+              换日
+              <input
+                type="time"
+                value={dayCutoff}
+                onChange={e => setDayCutoff(e.target.value || '17:30')}
+              />
+            </label>
             <button
               className="btn btn-ghost btn-sm"
               onClick={() => pull(true)}
               disabled={busy || !productIds.length}
               title="忽略 10 分钟缓存，重新拉取"
             >
-              <Icons.refresh size={12} /> 强制刷新
+              <Icons.refresh size={12} /> 刷新
             </button>
             <button className="btn btn-primary btn-sm" onClick={() => pull(false)} disabled={busy || !productIds.length}>
-              {busy ? '拉取中…' : '拉取并汇总'}
+              {busy ? '拉取中…' : '拉取'}
             </button>
           </div>
-        }
-      >
-        <div className="zt-sum-picked">
-          {selectedProjects.length === 0 && (
-            <span className="pg-sub" style={{ margin: 0 }}>还没选项目：点右上角「选择项目」，可多选</span>
-          )}
-          {selectedProjects.map(p => (
-            <span key={p.id} className="zt-sum-chip">
-              <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
-              <button
-                title="移除"
-                onClick={() => setProductIds(productIds.filter(id => id !== String(p.id)))}
-              >
-                <Icons.close size={10} />
-              </button>
-            </span>
-          ))}
-          {selectedProjects.length > 1 && (
-            <button className="btn btn-ghost btn-sm" onClick={() => setProductIds([])}>清空</button>
-          )}
         </div>
 
-        <div className="zt-sum-exclude">
-          <span className="zt-sum-exclude-label">不计入人员表</span>
-          <button className="btn btn-ghost btn-sm" onClick={openPersonPicker}>
-            <Icons.key size={12} /> 选择人员（已选 {exclude.length}）
-          </button>
+        <div className="zt-sumbar-sub zt-sum-exclude">
+          <span className="zt-sumbar-label">不计入人员表</span>
+          {exclude.length === 0
+            ? <span className="zt-sumbar-empty">未排除（一般把测试人员排掉，剩下的就是开发身上压着的）</span>
+            : exclude.map(name => (
+              <button key={name} className="zt-sum-person is-off" onClick={() => togglePerson(name)} title="点击恢复">
+                {name}<Icons.close size={10} />
+              </button>
+            ))}
+          <button className="zt-sumbar-link" onClick={openPersonPicker}>选择人员（{exclude.length}）</button>
           <button
-            className="btn btn-ghost btn-sm"
+            className="zt-sumbar-link"
             onClick={excludeTesters}
-            title={testers.length
-              ? `把标记为测试人员的 ${testers.length} 人一起排除`
-              : '还没标记测试人员：点这里会打开选人弹窗，把测试同学标成「测试」'}
+            title={testers.length ? `把标记为测试人员的 ${testers.length} 人一起排除` : '还没标记测试人员：点这里打开选人弹窗'}
           >
-            <Icons.bug size={12} /> 排除测试人员{testers.length ? `（${testers.length}）` : ''}
+            排除测试人员{testers.length ? `（${testers.length}）` : ''}
           </button>
           {exclude.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={() => applyExclude([])}>全部恢复</button>
-          )}
-          <span className="zt-sum-cutoff">
-            <span className="zt-sum-exclude-label">换日时间</span>
-            <input
-              type="time"
-              value={dayCutoff}
-              onChange={e => setDayCutoff(e.target.value || '17:30')}
-              title="每天几点换一天：默认 17:30，即「昨天 17:30 → 今天 17:30」算一天"
-            />
-            {dayCutoff !== '17:30' && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setDayCutoff('17:30')}>恢复 17:30</button>
-            )}
-          </span>
-        </div>
-
-        <div className="zt-sum-persons">
-          {exclude.length === 0 && (
-            <span className="pg-sub" style={{ margin: 0 }}>
-              没排除任何人；一般把测试人员排掉，剩下的就是「开发身上压着多少」
-            </span>
-          )}
-          {exclude.map(name => (
-            <button key={name} className="zt-sum-person is-off" onClick={() => togglePerson(name)} title="点击恢复">
-              {name}
-              <Icons.close size={10} />
+            <button className="zt-sumbar-link" onClick={() => applyExclude([])} title="把「不计入人员表」的名单清空">
+              全部恢复
             </button>
-          ))}
-        </div>
-
-        {/* 测试人员名单单独显示出来：以前藏在选人弹窗的小标签里，根本找不到 */}
-        <div className="zt-sum-persons">
-          <span className="zt-sum-exclude-label">测试人员</span>
-          {testers.length === 0 ? (
-            <span className="pg-sub" style={{ margin: 0 }}>
-              还没标记：在「选择人员」弹窗里点某人右侧的「测试」即可标上，标好后「排除测试人员」一键生效
-            </span>
-          ) : (
-            testers.map(name => (
-              <button
-                key={name}
-                className="zt-sum-person is-test"
-                onClick={() => toggleTester(name)}
-                title="点击取消「测试」标记"
-              >
-                {name}
-                <Icons.close size={10} />
-              </button>
-            ))
           )}
+          <span className="zt-sumbar-div" />
+          <span className="zt-sumbar-label">测试人员</span>
+          {testers.length === 0
+            ? <span className="zt-sumbar-empty">未标记</span>
+            : testers.map(name => (
+              <button key={name} className="zt-sum-person is-test" onClick={() => toggleTester(name)} title="点击取消「测试」标记">
+                {name}<Icons.close size={10} />
+              </button>
+            ))}
+          <button className={`zt-sumbar-more${advanced ? ' is-on' : ''}`} onClick={() => setAdvanced(v => !v)}>
+            {advanced ? '收起' : '更多设置'}
+            <Icons.chevron size={11} />
+          </button>
         </div>
 
-        <div className="pg-sub" style={{ marginTop: 10 }}>
-          统计口径：已修复 = 解决状态为「已修复」；未修复 = 仍为「激活」；待验证 = 「已解决」未关闭；
-          修复率 = 已修复 ÷ 缺陷总数（点「修复率」卡片可切成「仅未关闭」作分母）。「按人员」只统计未关闭且
-          指派到人的缺陷（禅道关闭后会清空指派人），排除人员只影响这张人员表，不改项目 / 模块 / 总数的数字。
-        </div>
-      </Panel>
+        {advanced && (
+          <div className="zt-sumbar-adv">
+            <div className="zt-adv-row">
+              <span className="zt-sumbar-label">安全问题提交人</span>
+              <input
+                className="zt-adv-input"
+                value={secInput}
+                onChange={e => setSecInput(e.target.value)}
+                onBlur={() => applySecInput(secInput)}
+                onKeyDown={e => { if (e.key === 'Enter') applySecInput(secInput); }}
+                placeholder="这些人提交的算安全问题，单独统计、不计入功能缺陷（多个用 、 或逗号分隔）"
+              />
+              {allPersons.slice(0, 6).map(p => (
+                <button
+                  key={p.name}
+                  className={`zt-sum-person${security.includes(p.name) ? ' is-test' : ''}`}
+                  onClick={() => toggleSecurity(p.name)}
+                  title={security.includes(p.name) ? '点击移出安全问题名单' : '标记为安全工程师'}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            <div className="zt-adv-row">
+              <span className="zt-sumbar-label">口径</span>
+              <span className="zt-adv-note">
+                已修复 = 解决的 Bug（含已关闭里的）；未修复 = 仍在「激活」；待验证 = 「已解决」未关闭；
+                修复率 = 已修复 ÷ 缺陷总数。「本期」按换日时间切分，边界固定，随时点开都是同一个区间；
+                「较上次统计」取上一次拉取的快照（跨启动保留）。
+              </span>
+              <button
+                className="zt-sumbar-link"
+                onClick={() => { clearHistory(); setPrev(null); setHistTick(t => t + 1); flash('已清空历史基准，下次拉取将作为首次统计'); }}
+                title="清掉本机的历史快照，下次拉取会显示「首次统计」"
+              >
+                清空历史基准
+              </button>
+            </div>
+          </div>
+        )}
+
+      </section>
 
       {stale && (
-        <div className="pill pill-warn" style={{ padding: '8px 12px', borderRadius: 8, fontWeight: 400 }}>
-          选择的项目与已拉取的数据不一致，点「拉取并汇总」更新（也可以先改排除人员 / 时间窗，统计会实时重算）。
+        <div className="zt-banner is-warn">
+          <Icons.bug size={13} />
+          选择的项目已变，但下面的数字还是上次拉的那批 —— 点「拉取并汇总」更新（改排除人员 / 时间窗会实时重算，不用重拉）。
         </div>
       )}
       {expired && !stale && (
-        <div className="pill pill-warn" style={{ padding: '8px 12px', borderRadius: 8, fontWeight: 400 }}>
-          数据是 {formatHm(fetchedAt)} 拉的，已超过 10 分钟缓存期，禅道里可能又变了——点「强制刷新」拿最新。
+        <div className="zt-banner is-warn">
+          <Icons.bug size={13} />
+          数据是 {formatHm(fetchedAt)} 拉的，已超过 10 分钟缓存期，禅道里可能又变了 —— 点「刷新」拿最新。
         </div>
       )}
 
@@ -503,8 +609,8 @@ export function ZentaoSummary({
             icon={<Icons.chart size={22} />}
             title={busy ? '正在拉取…' : productIds.length ? '还没有汇总数据' : '先选几个项目'}
             desc={productIds.length
-              ? '点「拉取并汇总」，会读取选中项目的全部缺陷（含已关闭）并按项目 / 模块 / 人员统计'
-              : '汇总支持多选项目，一次看清每个项目还剩多少未修复、多少待验证，以及压在谁身上'}
+              ? '点「拉取并汇总」，读取选中项目的全部缺陷（含已关闭），按日报口径统计'
+              : '支持多选项目，一次看清每个项目还剩多少未修复、压在谁身上、今天新增了多少'}
             action={
               <button className="btn btn-primary btn-sm" onClick={() => (productIds.length ? pull(false) : openPicker())} disabled={busy}>
                 {productIds.length ? '拉取并汇总' : '选择项目'}
@@ -514,12 +620,15 @@ export function ZentaoSummary({
         </Panel>
       ) : (
         <>
+          {/* ---------- 概览 ---------- */}
           <Panel
-            title="总计"
-            meta={`${result.projects.length} 个项目 · ${result.overall.total} 条缺陷`}
+            title="概览"
+            meta={`${result.projects.length} 个项目 · ${result.overall.total} 条${fetchedAt ? ` · ${formatHm(fetchedAt)} 拉取` : ''}`}
             tools={
-              <div className="zt-filters" style={{ position: 'relative' }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => copyAll()} title={`复制为${COPY_FORMATS.find(f => f.v === format)?.label}`}>
+              <div className="zt-filters zt-sum-copybar">
+                {tip && <span className="zt-sum-tip">{tip}</span>}
+                <span className="zt-sumbar-time">{currentDay.slice(5)} 统计日</span>
+                <button className="btn btn-secondary btn-sm" onClick={() => copyAll()} title={`复制为${COPY_FORMATS.find(f => f.v === format)?.label || '日报文本'}`}>
                   <Icons.copy size={12} /> 一键复制
                 </button>
                 <button
@@ -561,38 +670,84 @@ export function ZentaoSummary({
               </div>
             }
           >
-            <div className="zt-sum-cards">
-              <SumCard label="缺陷总数" value={result.overall.total} tone="info" />
-              <SumCard label="已修复" value={result.overall.fixed} tone="ok" />
-              <SumCard label="未修复" value={result.overall.active} tone="bad" />
-              <SumCard label="待验证" value={result.overall.resolved} tone="warn" />
-              <SumCard label="已关闭" value={result.overall.closed} tone="mute" />
+            <div className="zt-sum-kpis">
+              <SumCard label="缺陷总数" value={result.overall.total} tone="info" sub={`未关闭 ${result.overall.open}`} />
               <SumCard
-                label={rateBasis === 'all' ? '修复率' : '未关闭修复率'}
-                value={`${rate}%`}
+                label="已修复"
+                value={result.overall.fixed}
                 tone="ok"
-                bar={rate}
-                onClick={() => setRateBasis(v => (v === 'all' ? 'open' : 'all'))}
-                title={rateBasis === 'all'
-                  ? `已修复 ÷ 全部缺陷（${result.overall.fixed}/${result.overall.total}）· 点击换成「仅未关闭」口径`
-                  : `未关闭里已修复的比例（${result.overall.fixedOpen}/${result.overall.open}）· 点击换回「全部」口径`}
+                sub={`占已关闭 ${fixedInClosed}%`}
+                title={`已关闭 ${result.overall.closed} 条里有 ${result.overall.fixed} 条是「已修复」解决的`}
               />
-              <SumCard label="近 7 天新增" value={result.overall.recentNew} tone="info" />
-              <SumCard label="近 7 天修复" value={result.overall.recentFixed} tone="ok" />
+              <SumCard label="未修复" value={result.overall.active} tone="bad" sub={`占未关闭 ${result.overall.open ? Math.round((result.overall.active / result.overall.open) * 1000) / 10 : 0}%`} />
+              <SumCard label="待验证" value={result.overall.resolved} tone="warn" sub="已解决，等测试回归" />
               <SumCard
                 label="今日新增"
                 value={daily.today}
                 tone={daily.delta > 0 ? 'bad' : daily.delta < 0 ? 'ok' : 'info'}
-                title={`统计日「${daily.currentDay}」= ${dailyWindow[0]} → ${dailyWindow[1]}（昨天 ${daily.yesterday} 个）`}
+                sub={daily.delta === 0 ? '与昨日持平' : `较昨日 ${daily.delta > 0 ? '+' : ''}${daily.delta}`}
+                title={`统计日「${currentDay}」= ${winStart} → ${winEnd}（昨日 ${daily.yesterday} 个）`}
               />
+              <button
+                className="zt-sum-card is-rate is-clickable"
+                onClick={() => setRateBasis(v => (v === 'all' ? 'open' : 'all'))}
+                title={rateBasis === 'all'
+                  ? `已修复 ÷ 全部缺陷（${result.overall.fixed}/${result.overall.total}）· 点击换成「仅未关闭」口径`
+                  : `未关闭里已修复的比例（${result.overall.fixedOpen}/${result.overall.open}）· 点击换回「全部」口径`}
+              >
+                <Ring value={rate} size={52} />
+                <span className="zt-sum-card-body">
+                  <span className="zt-sum-card-num">{rate}%</span>
+                  <span className="zt-sum-card-label">{rateBasis === 'all' ? '修复率' : '未关闭修复率'}</span>
+                  <span className="zt-sum-card-sub">
+                    {rateBasis === 'all'
+                      ? `${result.overall.fixed} / ${result.overall.total}`
+                      : `${result.overall.fixedOpen} / ${result.overall.open}`}
+                  </span>
+                </span>
+              </button>
             </div>
 
-            {/* 按「统计日」切分的新增趋势：昨天 17:30 → 今天 17:30 算一天 */}
+            {/* 本期：固定窗口内的新增 / 修复 / 关闭 + 总数环比 */}
+            <div className="zt-sum-period">
+              <div className="zt-period-left">
+                <div className="zt-period-head">
+                  本期
+                  <code>{winStart.slice(5)} → {winEnd.slice(5)}</code>
+                  <span className="zt-period-live">进行中</span>
+                </div>
+                <div className="zt-period-nums">
+                  <span className="zt-period-num is-add"><b>{period.created}</b>新增</span>
+                  <span className="zt-period-num is-fix"><b>{period.resolved}</b>修复</span>
+                  <span className="zt-period-num is-close"><b>{period.closed}</b>关闭</span>
+                </div>
+              </div>
+              <div className="zt-period-right">
+                {growth ? (
+                  <>
+                    <div className="zt-period-growth">
+                      较上次统计（{growth.prevAt.slice(5)}，{growth.prevTotal} 个）
+                      <b className={growth.delta > 0 ? 'is-bad' : growth.delta < 0 ? 'is-ok' : ''}>
+                        净增 {growth.delta} 个
+                      </b>
+                    </div>
+                    <div className="zt-period-sub">
+                      增长 {growth.pct}% · 含 {growth.workdays} 个工作日 · 日均 {growth.daily}%
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="zt-period-growth">本次为首次统计，暂无环比基准</div>
+                    <div className="zt-period-sub">拉取一次后，下次就会显示总数环比</div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* 按统计日切分的新增趋势 */}
             <div className="zt-sum-daily">
               <div className="zt-sum-daily-head">
-                <span>
-                  今日新增 <strong>{daily.today}</strong> 个
-                </span>
+                <span>今日新增 <strong>{daily.today}</strong> 个</span>
                 <span className="zt-sum-sep" />
                 <span>
                   昨日 {daily.yesterday} 个 · 环比{' '}
@@ -605,7 +760,7 @@ export function ZentaoSummary({
                 <span>近 6 日日均 {daily.avg} 个</span>
               </div>
               <div className="zt-sum-daily-window">
-                统计窗口 <code>{dailyWindow[0]}</code> → <code>{dailyWindow[1]}</code>
+                统计窗口 <code>{winStart}</code> → <code>{winEnd}</code>
                 <span className="zt-sum-daily-note">
                   「今天」= 昨天 {fmtCutoff(cutoffMin)} 之后到今天 {fmtCutoff(cutoffMin)}；换日时间可改
                 </span>
@@ -631,6 +786,7 @@ export function ZentaoSummary({
                 })}
               </div>
             </div>
+
             <div className="zt-sum-meta">
               <span>
                 未关闭 <strong>{result.overall.open}</strong> 个（未修复 {result.overall.active} · 待验证 {result.overall.resolved}）
@@ -638,7 +794,7 @@ export function ZentaoSummary({
               {sevRows.length > 0 && (
                 <>
                   <span className="zt-sum-sep" />
-                  <span>严重程度：</span>
+                  <span>严重程度</span>
                   {sevRows.map(s => (
                     <Pill key={s.key} tone={s.key === '1' ? 'bad' : s.key === '2' ? 'warn' : 'mute'}>
                       {s.label} {s.count}
@@ -646,225 +802,265 @@ export function ZentaoSummary({
                   ))}
                 </>
               )}
-              {delta && (
+              {secTotal > 0 && (
                 <>
                   <span className="zt-sum-sep" />
-                  <span title={`上次拉取：${formatHm(delta.at)}`}>
-                    较上次：总数 {delta.total >= 0 ? '+' : ''}{delta.total}、未修复 {delta.active >= 0 ? '+' : ''}{delta.active}、已修复 {delta.fixed >= 0 ? '+' : ''}{delta.fixed}
-                  </span>
+                  <span className="zt-sum-sec">另有安全问题 {secTotal} 个，已单独统计、未计入以上数据</span>
                 </>
               )}
             </div>
           </Panel>
 
-          <Panel
-            title="按项目"
-            meta={`${result.projects.length} 个 · 点行展开模块明细`}
-            flush
-          >
-            <div className="zt-proj-wrap">
-              <table className="tbl zt-sum-tbl">
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 200 }}>项目</th>
-                    <th className="num">缺陷</th>
-                    <th className="num">已修复</th>
-                    <th className="num">未修复</th>
-                    <th className="num">待验证</th>
-                    <th className="num">已关闭</th>
-                    <th className="num" style={{ minWidth: 120 }}>修复率</th>
-                    <th style={{ width: 46 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.projects.map(p => {
-                    const open = expanded.has(p.id);
-                    return (
-                      <Fragment key={p.id}>
-                        <tr
-                          className={`zt-sum-row${open ? ' is-open' : ''}`}
-                          tabIndex={0}
-                          role="button"
-                          aria-expanded={open}
-                          onClick={() => toggleExpand(p.id)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              toggleExpand(p.id);
-                            }
-                          }}
-                        >
-                          <td>
-                            <span className="zt-sum-caret">{open ? '▾' : '▸'}</span>
-                            <span className="zt-sum-name" title={`#${p.id}`}>{p.name}</span>
-                            {p.skipped > 0 && (
-                              <span className="zt-sum-skip" title={`有 ${p.skipped} 条挂在你不计入的人员名下，没进「按人员」`}>
-                                排除 {p.skipped}
-                              </span>
-                            )}
-                          </td>
-                          <td className="cell-num">{p.stat.total}</td>
-                          <td className="cell-num is-ok">{p.stat.fixed}</td>
-                          <td className={`cell-num${p.stat.active ? ' is-bad' : ''}`}>{p.stat.active}</td>
-                          <td className={`cell-num${p.stat.resolved ? ' is-warn' : ''}`}>{p.stat.resolved}</td>
-                          <td className="cell-num">{p.stat.closed}</td>
-                          <td className="cell-num">
-                            <span className="zt-sum-rate">
-                              <span className="zt-sum-bar"><i style={{ width: `${Math.min(100, p.stat.rate)}%` }} /></span>
-                              {p.stat.rate}%
-                            </span>
-                          </td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <IconBtn title="复制这个项目" onClick={() => copyOne(p)}>
-                              <Icons.copy size={12} />
-                            </IconBtn>
-                          </td>
-                        </tr>
-                        {open && (
-                          <tr className="zt-sum-detail">
-                            <td colSpan={8}>
-                              {p.modules.length === 0 ? (
-                                <div className="zt-sum-empty">该项目没有可统计的缺陷</div>
-                              ) : (
-                                <table className="tbl zt-sum-mtbl">
-                                  <thead>
-                                    <tr>
-                                      <th>模块（{p.modules.length}）</th>
-                                      <th className="num">缺陷</th>
-                                      <th className="num">已修复</th>
-                                      <th className="num">未修复</th>
-                                      <th className="num">未验证</th>
-                                      <th className="num">已关闭</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {p.modules.map(m => (
-                                      <tr key={m.name}>
-                                        <td className="zt-sum-mod-name" title={m.name}>{m.name}</td>
-                                        <td className="cell-num">{m.total}</td>
-                                        <td className="cell-num is-ok">{m.fixed}</td>
-                                        <td className={`cell-num${m.active ? ' is-bad' : ''}`}>{m.active}</td>
-                                        <td className={`cell-num${m.resolved ? ' is-warn' : ''}`}>{m.resolved}</td>
-                                        <td className="cell-num">{m.closed}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              )}
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td>合计</td>
-                    <td className="cell-num">{result.overall.total}</td>
-                    <td className="cell-num is-ok">{result.overall.fixed}</td>
-                    <td className="cell-num is-bad">{result.overall.active}</td>
-                    <td className="cell-num is-warn">{result.overall.resolved}</td>
-                    <td className="cell-num">{result.overall.closed}</td>
-                    <td className="cell-num">{result.overall.rate}%</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </Panel>
-
-          <Panel
-            title="按人员（谁身上还挂着缺陷）"
-            meta={`${result.persons.length} 人 · 已指派 ${assignedTotal} 个${
-              result.unassigned > 0 ? ` · 未指派 ${result.unassigned} 个` : ''}${
-              result.skipped > 0 ? ` · 已排除 ${result.skipped} 个` : ''}`}
-            tools={
-              <button className="btn btn-secondary btn-sm" onClick={copyPersons} title="复制成「人员指派共 N 个：某某 X 个」一行文本">
-                <Icons.copy size={12} /> 复制人员分布
-              </button>
-            }
-            flush
-          >
-            {result.persons.length === 0 ? (
-              <div className="zt-sum-empty" style={{ padding: '14px 16px' }}>
-                {busy ? '正在拉取…' : exclude.length
-                  ? '选中的项目里，未关闭的缺陷都不在这些人的名下'
-                  : '这些项目没有指派到人的未关闭缺陷'}
+          {/* ---------- 明细：按项目 / 按人员 / 日报 ---------- */}
+          <section className="pnl zt-sum-detail-pnl">
+            <header className="pnl-head zt-detail-head">
+              <div className="zt-detail-tabs" role="tablist">
+                <button
+                  role="tab"
+                  aria-selected={tab === 'proj'}
+                  className={`zt-detail-tab${tab === 'proj' ? ' is-on' : ''}`}
+                  onClick={() => setTab('proj')}
+                >
+                  按项目 <span>{result.projects.length}</span>
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={tab === 'person'}
+                  className={`zt-detail-tab${tab === 'person' ? ' is-on' : ''}`}
+                  onClick={() => setTab('person')}
+                >
+                  按人员 <span>{result.persons.length}</span>
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={tab === 'daily'}
+                  className={`zt-detail-tab${tab === 'daily' ? ' is-on' : ''}`}
+                  onClick={() => setTab('daily')}
+                >
+                  日报预览
+                </button>
               </div>
-            ) : (
-              <>
+              <div className="pnl-tools">
+                {tab === 'person' && (
+                  <button className="btn btn-ghost btn-sm" onClick={copyPersons} title="复制成「人员分布共 N 个：某某 X 个」一行文本">
+                    <Icons.copy size={12} /> 复制人员分布
+                  </button>
+                )}
+                {tab === 'daily' && (
+                  <button className="btn btn-secondary btn-sm" onClick={copyReport}>
+                    <Icons.copy size={12} /> 复制日报
+                  </button>
+                )}
+                {tab === 'proj' && (
+                  <span className="zt-detail-hint">点行展开模块明细</span>
+                )}
+              </div>
+            </header>
+            <div className="pnl-body flush">
+              {tab === 'proj' && (
                 <div className="zt-proj-wrap">
                   <table className="tbl zt-sum-tbl">
                     <thead>
                       <tr>
-                        <th style={{ minWidth: 120 }}>人员</th>
-                        <th className="num">指派</th>
-                        <th className="num" style={{ minWidth: 90 }}>占比</th>
+                        <th style={{ minWidth: 200 }}>项目</th>
+                        <th className="num">缺陷</th>
+                        <th className="num">已修复</th>
                         <th className="num">未修复</th>
                         <th className="num">待验证</th>
-                        <th className="num">已修复</th>
-                        <th className="num">近 7 天新增</th>
-                        <th className="num">近 7 天修复</th>
+                        <th className="num">已关闭</th>
+                        <th className="num" style={{ minWidth: 120 }}>修复率</th>
+                        <th style={{ width: 46 }} />
                       </tr>
                     </thead>
                     <tbody>
-                      {shownPersons.map(p => (
-                        <tr
-                          key={p.name}
-                          className="zt-sum-prow"
-                          tabIndex={0}
-                          role="button"
-                          title={`点开看 ${p.name} 名下的缺陷`}
-                          onClick={() => setDrill(p.name)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDrill(p.name); }
-                          }}
-                        >
-                          <td>
-                            <span className="zt-sum-name">{p.name}</span>
-                            {testers.includes(p.name) && <span className="zt-sum-tag">测试</span>}
-                          </td>
-                          <td className="cell-num">{p.total}</td>
-                          <td className="cell-num">
-                            <span className="zt-sum-rate">
-                              <span className="zt-sum-bar"><i style={{ width: `${Math.min(100, p.share)}%` }} /></span>
-                              {p.share}%
-                            </span>
-                          </td>
-                          <td className={`cell-num${p.active ? ' is-bad' : ''}`}>{p.active}</td>
-                          <td className={`cell-num${p.resolved ? ' is-warn' : ''}`}>{p.resolved}</td>
-                          <td className="cell-num is-ok">{p.fixed}</td>
-                          <td className="cell-num">{p.recentNew || ''}</td>
-                          <td className="cell-num">{p.recentFixed || ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    {(result.unassigned > 0 || result.persons.length > 12) && (
-                      <tfoot>
-                        <tr>
-                          <td colSpan={8} className="zt-sum-more">
-                            {result.unassigned > 0 && <span>未指派 {result.unassigned} 个</span>}
-                            {result.persons.length > 12 && (
-                              <button className="btn btn-ghost btn-sm" onClick={() => setPersonAll(v => !v)}>
-                                {personAll ? '只看前 12 人' : `展开全部 ${result.persons.length} 人`}
-                              </button>
+                      {result.projects.map(p => {
+                        const open = expanded.has(p.id);
+                        return (
+                          <Fragment key={p.id}>
+                            <tr
+                              className={`zt-sum-row${open ? ' is-open' : ''}`}
+                              tabIndex={0}
+                              role="button"
+                              aria-expanded={open}
+                              onClick={() => toggleExpand(p.id)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  toggleExpand(p.id);
+                                }
+                              }}
+                            >
+                              <td>
+                                <span className="zt-sum-caret">{open ? '▾' : '▸'}</span>
+                                <span className="zt-sum-name" title={`#${p.id}`}>{p.name}</span>
+                                {p.skipped > 0 && (
+                                  <span className="zt-sum-skip" title={`有 ${p.skipped} 条挂在你不计入的人员名下，没进「按人员」`}>
+                                    排除 {p.skipped}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="cell-num">{p.stat.total}</td>
+                              <td className="cell-num is-ok">{p.stat.fixed}</td>
+                              <td className={`cell-num${p.stat.active ? ' is-bad' : ''}`}>{p.stat.active}</td>
+                              <td className={`cell-num${p.stat.resolved ? ' is-warn' : ''}`}>{p.stat.resolved}</td>
+                              <td className="cell-num">{p.stat.closed}</td>
+                              <td className="cell-num">
+                                <span className="zt-sum-rate">
+                                  <span className="zt-sum-bar"><i style={{ width: `${Math.min(100, p.stat.rate)}%` }} /></span>
+                                  {p.stat.rate}%
+                                </span>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                <IconBtn title="复制这个项目" onClick={() => copyOne(p)}>
+                                  <Icons.copy size={12} />
+                                </IconBtn>
+                              </td>
+                            </tr>
+                            {open && (
+                              <tr className="zt-sum-detail">
+                                <td colSpan={8}>
+                                  {p.modules.length === 0 ? (
+                                    <div className="zt-sum-empty">该项目没有可统计的缺陷</div>
+                                  ) : (
+                                    <table className="tbl zt-sum-mtbl">
+                                      <thead>
+                                        <tr>
+                                          <th>模块（{p.modules.length}）</th>
+                                          <th className="num">缺陷</th>
+                                          <th className="num">已修复</th>
+                                          <th className="num">未修复</th>
+                                          <th className="num">未验证</th>
+                                          <th className="num">已关闭</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {p.modules.map(m => (
+                                          <tr key={m.name}>
+                                            <td className="zt-sum-mod-name" title={m.name}>{m.name}</td>
+                                            <td className="cell-num">{m.total}</td>
+                                            <td className="cell-num is-ok">{m.fixed}</td>
+                                            <td className={`cell-num${m.active ? ' is-bad' : ''}`}>{m.active}</td>
+                                            <td className={`cell-num${m.resolved ? ' is-warn' : ''}`}>{m.resolved}</td>
+                                            <td className="cell-num">{m.closed}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </td>
+                              </tr>
                             )}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td>合计</td>
+                        <td className="cell-num">{result.overall.total}</td>
+                        <td className="cell-num is-ok">{result.overall.fixed}</td>
+                        <td className="cell-num is-bad">{result.overall.active}</td>
+                        <td className="cell-num is-warn">{result.overall.resolved}</td>
+                        <td className="cell-num">{result.overall.closed}</td>
+                        <td className="cell-num">{result.overall.rate}%</td>
+                        <td />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
-                <div className="zt-sum-note">
-                  {personsText()}
-                  <span className="zt-sum-note-sub">
-                    只算未关闭且指派到人的缺陷；点任意一行可看这人名下的缺陷清单。
-                  </span>
+              )}
+
+              {tab === 'person' && (
+                result.persons.length === 0 ? (
+                  <div className="zt-sum-empty" style={{ padding: '18px 16px' }}>
+                    {busy ? '正在拉取…' : exclude.length
+                      ? '选中的项目里，未关闭的缺陷都不在这些人的名下'
+                      : '这些项目没有指派到人的未关闭缺陷'}
+                  </div>
+                ) : (
+                  <>
+                    <div className="zt-proj-wrap">
+                      <table className="tbl zt-sum-tbl">
+                        <thead>
+                          <tr>
+                            <th style={{ minWidth: 120 }}>人员</th>
+                            <th className="num">指派</th>
+                            <th className="num" style={{ minWidth: 90 }}>占比</th>
+                            <th className="num">未修复</th>
+                            <th className="num">待验证</th>
+                            <th className="num">已修复</th>
+                            <th className="num">近 7 天新增</th>
+                            <th className="num">近 7 天修复</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shownPersons.map(p => (
+                            <tr
+                              key={p.name}
+                              className="zt-sum-prow"
+                              tabIndex={0}
+                              role="button"
+                              title={`点开看 ${p.name} 名下的缺陷`}
+                              onClick={() => setDrill(p.name)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDrill(p.name); }
+                              }}
+                            >
+                              <td>
+                                <span className="zt-sum-name">{p.name}</span>
+                                {testers.includes(p.name) && <span className="zt-sum-tag">测试</span>}
+                              </td>
+                              <td className="cell-num">{p.total}</td>
+                              <td className="cell-num">
+                                <span className="zt-sum-rate">
+                                  <span className="zt-sum-bar"><i style={{ width: `${Math.min(100, p.share)}%` }} /></span>
+                                  {p.share}%
+                                </span>
+                              </td>
+                              <td className={`cell-num${p.active ? ' is-bad' : ''}`}>{p.active}</td>
+                              <td className={`cell-num${p.resolved ? ' is-warn' : ''}`}>{p.resolved}</td>
+                              <td className="cell-num is-ok">{p.fixed}</td>
+                              <td className="cell-num">{p.recentNew || ''}</td>
+                              <td className="cell-num">{p.recentFixed || ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        {(result.unassigned > 0 || result.persons.length > 12) && (
+                          <tfoot>
+                            <tr>
+                              <td colSpan={8} className="zt-sum-more">
+                                {result.unassigned > 0 && <span>未指派 {result.unassigned} 个</span>}
+                                {result.persons.length > 12 && (
+                                  <button className="btn btn-ghost btn-sm" onClick={() => setPersonAll(v => !v)}>
+                                    {personAll ? '只看前 12 人' : `展开全部 ${result.persons.length} 人`}
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                    <div className="zt-sum-note">
+                      {personsText()}
+                      <span className="zt-sum-note-sub">
+                        只算未关闭且指派到人的缺陷；点任意一行可看这人名下的缺陷清单。
+                      </span>
+                    </div>
+                  </>
+                )
+              )}
+
+              {tab === 'daily' && (
+                <div className="zt-report">
+                  <pre className="zt-report-text">{reportText}</pre>
+                  <div className="zt-report-foot">
+                    直接粘到群里 / 日报里即可。窗口按换日时间固定切分（当前 {fmtCutoff(cutoffMin)} → 次日 {fmtCutoff(cutoffMin)}）。
+                  </div>
                 </div>
-              </>
-            )}
-          </Panel>
+              )}
+            </div>
+          </section>
         </>
       )}
 
@@ -909,7 +1105,7 @@ export function ZentaoSummary({
                 <input
                   type="checkbox"
                   checked={on}
-                  onChange={() => setDraft(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))}
+                  onChange={() => setDraft(prevD => (prevD.includes(id) ? prevD.filter(x => x !== id) : [...prevD, id]))}
                 />
                 <span className="zt-proj-name">
                   {p.programName && <span className="zt-proj-program" title={`项目集：${p.programName}`}>{p.programName} / </span>}
@@ -965,7 +1161,7 @@ export function ZentaoSummary({
                 <input
                   type="checkbox"
                   checked={on}
-                  onChange={() => setPersonDraft(prev => (prev.includes(p.name) ? prev.filter(x => x !== p.name) : [...prev, p.name]))}
+                  onChange={() => setPersonDraft(prevD => (prevD.includes(p.name) ? prevD.filter(x => x !== p.name) : [...prevD, p.name]))}
                 />
                 <span className="zt-proj-name">{p.name}</span>
                 <span className="zt-proj-id">{p.total} 个</span>
@@ -1018,35 +1214,52 @@ export function ZentaoSummary({
   );
 }
 
+/** KPI 卡：左侧一条语义色标记 + 数字 + 标签 + 一句补充 */
 function SumCard({
-  label, value, tone, bar, onClick, title,
+  label, value, tone, sub, onClick, title,
 }: {
   label: string;
   value: number | string;
   tone: string;
-  bar?: number;
+  sub?: string;
   onClick?: () => void;
   title?: string;
 }) {
   const cls = `zt-sum-card is-${tone}${onClick ? ' is-clickable' : ''}`;
-  if (onClick) {
-    return (
-      <button className={cls} onClick={onClick} title={title}>
-        <span className="zt-sum-card-num">{value}</span>
-        <span className="zt-sum-card-label">{label}</span>
-        {bar !== undefined && (
-          <span className="zt-sum-bar zt-sum-card-bar"><i style={{ width: `${Math.min(100, bar)}%` }} /></span>
-        )}
-      </button>
-    );
-  }
-  return (
-    <div className={cls} title={title}>
+  const inner = (
+    <>
       <span className="zt-sum-card-num">{value}</span>
       <span className="zt-sum-card-label">{label}</span>
-      {bar !== undefined && (
-        <span className="zt-sum-bar zt-sum-card-bar"><i style={{ width: `${Math.min(100, bar)}%` }} /></span>
-      )}
-    </div>
+      {sub && <span className="zt-sum-card-sub">{sub}</span>}
+    </>
+  );
+  if (onClick) {
+    return <button className={cls} onClick={onClick} title={title}>{inner}</button>;
+  }
+  return <div className={cls} title={title}>{inner}</div>;
+}
+
+/** 修复率环：只画弧，数字由旁边的 .zt-sum-card-num 承担（避免重复显示） */
+function Ring({ value, size = 52 }: { value: number; size?: number }) {
+  const stroke = 5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const v = Math.min(100, Math.max(0, value));
+  return (
+    <svg className="zt-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border-light)" strokeWidth={stroke} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="var(--success)"
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={c * (1 - v / 100)}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+    </svg>
   );
 }

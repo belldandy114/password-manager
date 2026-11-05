@@ -273,17 +273,27 @@ export interface DailyNew {
  */
 export function dailyNew(
   bugs: ZentaoBug[],
-  opts: { cutoff?: string; cutoffMin?: number; days?: number; now?: Date; since?: string } = {},
+  opts: {
+    cutoff?: string;
+    cutoffMin?: number;
+    days?: number;
+    now?: Date;
+    since?: string;
+    /** 这些提交人提的不算（安全工程师，单独统计） */
+    ignored?: string[];
+  } = {},
 ): DailyNew {
   const cutoffMin = opts.cutoffMin !== undefined ? opts.cutoffMin : parseCutoff(opts.cutoff || '17:30');
   const days = Math.max(2, opts.days || 7);
   const now = opts.now || new Date();
   const currentDay = statDayOf(localStamp(now), cutoffMin);
+  const ignored = new Set((opts.ignored || []).map(s => String(s).trim()).filter(Boolean));
 
   const map = new Map<string, number>();
   for (const b of bugs) {
     const t = String(b.openedDate || b.date || '').trim();
     if (!t) continue;
+    if (ignored.size && ignored.has(String(b.openedBy || '').trim())) continue;
     if (opts.since && t.slice(0, 10) < opts.since) continue;
     const d = statDayOf(t, cutoffMin);
     if (!d) continue;
@@ -682,4 +692,190 @@ export function projectToText(p: ProjectSummary, at?: string): string {
     unassigned: p.unassigned,
     skipped: p.skipped,
   });
+}
+
+/* ================================================================
+   日报口径（对齐 zt_daily.py）
+   ----------------------------------------------------------------
+   窗口边界固定用「换日时间」（默认 17:30），不跟运行时刻走：
+   领导随时点开都要是同一个区间。只有「总数环比」的基准取上一次统计快照。
+   ================================================================ */
+
+/** 'YYYY-MM-DD HH:mm(:ss)' → 'YYYY-MM-DD HH:mm'；只有日期时补 00:00 */
+const hmOf = (v?: string) => {
+  const s = String(v || '').trim();
+  if (s.length >= 16) return s.slice(0, 16);
+  if (s.length === 10) return `${s} 00:00`;
+  return s;
+};
+
+export interface PeriodStat {
+  /** 窗口起点 'YYYY-MM-DD HH:mm' */
+  since: string;
+  /** 窗口终点 'YYYY-MM-DD HH:mm' */
+  until: string;
+  /** 区间内提交的 */
+  created: number;
+  /** 区间内解决的（resolvedDate） */
+  resolved: number;
+  /** 区间内关闭的（closedDate） */
+  closed: number;
+}
+
+/**
+ * 统计一个区间内「新增 / 修复 / 关闭」三个量，口径同 zt_daily.py 的 in_window：
+ * 左开右闭 (since, until]，因为边界那一秒不该被两个窗口都算一次。
+ */
+export function periodOf(bugs: ZentaoBug[], since: string, until: string): PeriodStat {
+  const s = hmOf(since);
+  const u = hmOf(until);
+  let created = 0;
+  let resolved = 0;
+  let closed = 0;
+  for (const b of bugs) {
+    const o = hmOf(b.openedDate || b.date);
+    if (o && o > s && o <= u) created += 1;
+    const r = hmOf(b.resolvedDate);
+    if (r && r > s && r <= u) resolved += 1;
+    const c = hmOf(b.closedDate);
+    if (c && c > s && c <= u) closed += 1;
+  }
+  return { since: s, until: u, created, resolved, closed };
+}
+
+/** (since, until] 之间的工作日数（周一到周五），最少按 1 天算 */
+export function workdaysBetween(since: string, until: string): number {
+  const a = new Date(`${String(since).slice(0, 10)}T00:00:00`);
+  const b = new Date(`${String(until).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 1;
+  let n = 0;
+  const d = new Date(a);
+  while (d < b) {
+    d.setDate(d.getDate() + 1);
+    const wd = d.getDay(); // 0 = 周日
+    if (wd >= 1 && wd <= 5) n += 1;
+  }
+  return Math.max(1, n);
+}
+
+export interface Growth {
+  /** 上次统计的时刻 */
+  prevAt: string;
+  prevTotal: number;
+  /** 本次 - 上次 */
+  delta: number;
+  /** 增长百分比（分母是上次总数） */
+  pct: number;
+  workdays: number;
+  /** 按工作日折算的日均增长百分比 */
+  daily: number;
+}
+
+/** 缺陷总数的环比：分子分母都用「总数」，跟日报一致（不是新增量环比） */
+export function growthOf(prevAt: string, prevTotal: number, curAt: string, curTotal: number): Growth | null {
+  if (!prevAt || !prevTotal) return null;
+  const wd = workdaysBetween(prevAt, curAt);
+  const delta = curTotal - prevTotal;
+  const pct = Math.round((delta / prevTotal) * 1000) / 10;
+  return {
+    prevAt: hmOf(prevAt),
+    prevTotal,
+    delta,
+    pct,
+    workdays: wd,
+    daily: Math.round((pct / wd) * 10) / 10,
+  };
+}
+
+/**
+ * 把「安全工程师提交的」缺陷从功能缺陷里剔出来单独计数。
+ * 禅道里这些属于渗透测试问题，混进来会把功能缺陷的总数和修复率带偏。
+ */
+export function splitSecurity(bugs: ZentaoBug[], names: string[]): { bugs: ZentaoBug[]; security: number } {
+  const set = new Set((names || []).map(s => String(s).trim()).filter(Boolean));
+  if (!set.size) return { bugs, security: 0 };
+  const keep: ZentaoBug[] = [];
+  let security = 0;
+  for (const b of bugs) {
+    if (set.has(String(b.openedBy || '').trim())) security += 1;
+    else keep.push(b);
+  }
+  return { bugs: keep, security };
+}
+
+export interface ReportInput {
+  name: string;
+  stat: BugStat;
+  period: PeriodStat;
+  growth: Growth | null;
+  persons: PersonRow[];
+  /** 人员分布里被剔除的人数（用于「已剔除测试人员 / 已剔除 N 人」） */
+  excludedCount: number;
+  /** 被剔除的人是否恰好是标记的测试人员 */
+  excludedAreTesters: boolean;
+  modules: { name: string; total: number; active: number }[];
+  security: number;
+}
+
+/** 一行：人员分布（日报口径，只列有人的人） */
+const personLineOf = (r: ReportInput) => {
+  const head = r.excludedAreTesters && r.excludedCount > 0
+    ? '人员分布（按当前指派，已剔除测试人员）'
+    : r.excludedCount > 0
+      ? `人员分布（按当前指派，已剔除 ${r.excludedCount} 人）`
+      : '人员分布（按当前指派）';
+  const total = r.persons.reduce((s, p) => s + p.total, 0);
+  if (!r.persons.length) return `${head}：当前无在办缺陷挂在个人名下。`;
+  const items = r.persons.map(p => `${p.name} ${p.total} 个`).join('、');
+  return `${head}共 ${total} 个：${items}。`;
+};
+
+/** 一行：模块分布（全部缺陷，括号内是当前待修复数），平铺成一句话 */
+const moduleLineOf = (r: ReportInput) => {
+  if (!r.modules.length) return '';
+  const total = r.modules.reduce((s, m) => s + m.total, 0);
+  const items = r.modules.map(m => `${m.name} ${m.total} 个（待修复 ${m.active}）`).join('、');
+  return `模块分布（全部缺陷，括号内为当前待修复数）共 ${total} 个：${items}。`;
+};
+
+/** 一个项目的整段日报正文（不含标题行） */
+export function reportParaOf(r: ReportInput, at: string): string {
+  const hm = hmOf(at).slice(11, 16);
+  const s = r.stat;
+  const parts: string[] = [];
+  parts.push(
+    `截至 ${hm}，禅道中共记录缺陷 ${s.total} 个，其中已关闭 ${s.closed} 个，已修复 ${s.fixed} 个，`
+    + `待修复 ${s.active} 个，另有 ${s.resolved} 个已解决待验证，修复率 ${s.rate}%。`,
+  );
+  parts.push(
+    `本期（${r.period.since.slice(5)} — ${r.period.until.slice(5)}）新增 ${r.period.created} 个、`
+    + `修复 ${r.period.resolved} 个、关闭 ${r.period.closed} 个。`,
+  );
+  if (r.growth) {
+    parts.push(
+      `缺陷总数较上次统计（${r.growth.prevAt.slice(5)}，${r.growth.prevTotal} 个）`
+      + `净增 ${r.growth.delta} 个，增长 ${r.growth.pct}%；该区间含 ${r.growth.workdays} 个工作日，`
+      + `按工作日计日均增长 ${r.growth.daily}%。`,
+    );
+  } else {
+    parts.push('本次为首次统计，暂无环比基准。');
+  }
+  parts.push(personLineOf(r));
+  const ml = moduleLineOf(r);
+  if (ml) parts.push(ml);
+  if (r.security > 0) parts.push(`（另有安全问题 ${r.security} 个，由安全工程师提交，单独统计，未计入上述数据。）`);
+  return parts.join('');
+}
+
+/**
+ * 完整日报：标题 + 每个项目一段。
+ * 单项目时和定时任务输出的一致，多项目时按项目分段（每段前面带项目名）。
+ */
+export function dailyReportText(list: ReportInput[], at: string): string {
+  const stamp = hmOf(at);
+  const title = list.length === 1
+    ? `【${list[0].name}】禅道缺陷日报　${stamp}`
+    : `【缺陷汇总】禅道缺陷日报　${stamp}　${list.length} 个项目`;
+  const body = list.map((r, i) => (list.length === 1 ? reportParaOf(r, at) : `${i + 1}. ${r.name}\n${reportParaOf(r, at)}`));
+  return [title, '', ...body].join('\n');
 }

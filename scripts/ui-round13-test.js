@@ -170,6 +170,9 @@ const check = (name, ok, extra = '') => {
   await sleep(900);
   check('汇总面板已渲染', await ev(`(() => !!document.querySelector('.zt-sum-exclude'))()`));
 
+  // 明细区改成了三个页签，人员表 / 日报在各自的页签里
+  const switchDetailTab = (label) => ev(`(() => { const b = [...document.querySelectorAll('.zt-detail-tab')].find(x => x.textContent.includes(${JSON.stringify(label)})); if (b) { b.click(); return true; } return false; })()`);
+
   // 保存配置（顺带拉一次项目列表），再显式刷新一遍
   await clickHas('登录并保存');
   await sleep(11000);
@@ -199,7 +202,7 @@ const check = (name, ok, extra = '') => {
   const chip = await ev(`(() => { const c = document.querySelector('.zt-sum-chip-name'); return c ? c.textContent : ''; })()`);
   check('选中项目显示为标签', String(chip).length > 0, chip);
 
-  await clickHas('拉取并汇总');
+  await clickHas('拉取');
   const pulled = await waitFor(`(() => document.querySelectorAll('.zt-sum-tbl tbody tr.zt-sum-row').length > 0)()`, 120000, 900);
   check('拉取后出现项目行', pulled);
 
@@ -228,6 +231,8 @@ const check = (name, ok, extra = '') => {
   check('模块缺陷数之和 = 项目缺陷数', sumOfModules === uiTotal, `${sumOfModules} / ${uiTotal}`);
 
   // ---- 按人员（谁身上还挂着缺陷）----
+  await switchDetailTab('按人员');
+  await sleep(600);
   const personLine0 = await ev(`(() => { const n = document.querySelector('.zt-sum-note'); return n ? n.textContent : ''; })()`);
   check('有「人员指派共 N 个：某某 X 个」这一行',
     /人员指派共 \d+ 个：/.test(String(personLine0)), String(personLine0).slice(0, 64));
@@ -287,7 +292,7 @@ const check = (name, ok, extra = '') => {
   // ---- 排除人员（选人弹窗）----
   const before = uiTotal;
   const person = await ev(`(() => {
-    const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('选择人员（已选'));
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('选择人员（'));
     if (!b) return null;
     b.click();
     return 'opened';
@@ -309,6 +314,14 @@ const check = (name, ok, extra = '') => {
   const afterTotal = await ev(`(() => Number(document.querySelectorAll('.zt-sum-card-num')[0].textContent))()`);
   check('排除人员不影响缺陷总数（只改人员表）', afterTotal === before, `${before} → ${afterTotal}`);
 
+  // 「排除 N」标注在项目表的行上
+  await switchDetailTab('按项目');
+  await sleep(500);
+  const skipTags = await ev(`(() => document.querySelectorAll('.zt-sum-skip').length)()`);
+  check('项目行标注「排除 N」', Number(skipTags) > 0, `${skipTags} 个项目有标注`);
+
+  await switchDetailTab('按人员');
+  await sleep(500);
   const personRows1 = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
   check('被排除的人从人员表里消失', personRows1 === personRows0 - 1, `${personRows0} → ${personRows1} 行`);
 
@@ -320,10 +333,7 @@ const check = (name, ok, extra = '') => {
   check('人员分布行注明已排除', /已排除/.test(String(personLine1)),
     (String(personLine1).match(/（.*?）/) || [''])[0].slice(0, 46));
 
-  const skipTags = await ev(`(() => document.querySelectorAll('.zt-sum-skip').length)()`);
-  check('项目行标注「排除 N」', Number(skipTags) > 0, `${skipTags} 个项目有标注`);
-
-  await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '全部恢复'); if (b) { b.click(); return true; } return false; })()`);
+  await ev(`(() => { const b = [...document.querySelectorAll('.zt-sumbar-sub button')].find(x => x.textContent.trim() === '全部恢复'); if (b) { b.click(); return true; } return false; })()`);
   await sleep(800);
   const personRows2 = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
   const totalRestored = await ev(`(() => Number(document.querySelectorAll('.zt-sum-card-num')[0].textContent))()`);
@@ -369,7 +379,7 @@ const check = (name, ok, extra = '') => {
   // ---- 测试人员：标记 + 一键排除 ----
   const rowsBeforeTester = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
   const totalBeforeTester = await ev(`(() => Number(document.querySelectorAll('.zt-sum-card-num')[0].textContent))()`);
-  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('选择人员（已选')); if(b){b.click();return true} return false; })()`);
+  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('选择人员（')); if(b){b.click();return true} return false; })()`);
   await sleep(800);
   const testerName = await ev(`(() => {
     const t = document.querySelector('.modal .zt-test-tag');
@@ -400,7 +410,7 @@ const check = (name, ok, extra = '') => {
   await sleep(500);
   const rosterGone = await ev(`(() => document.querySelectorAll('.zt-sum-person.is-test').length)()`);
   check('点测试人员 chip 能取消标记', Number(rosterGone) === 0, `${rosterGone} 个标记`);
-  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='全部恢复'); if(b){b.click();return true} return false; })()`);
+  await ev(`(() => { const b=[...document.querySelectorAll('.zt-sumbar-sub button')].find(x=>x.textContent.trim()==='全部恢复'); if(b){b.click();return true} return false; })()`);
   await sleep(800);
   const rowsRestored = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
   check('恢复后人员表回到原样', rowsRestored === rowsBeforeTester, `${rowsAfterTester} → ${rowsRestored}`);
@@ -419,12 +429,15 @@ const check = (name, ok, extra = '') => {
     // 无窗口聚焦时读不到剪贴板，只有 writeText 成功才会出提示，按提示判定即可
     check('剪贴板为汇总文本（读取受限，按写入成功判定）', /已复制/.test(String(tip)), String(clip).slice(0, 40));
   } else {
-    check('剪贴板为本次汇总（含合计与模块）',
-      /【缺陷汇总】/.test(String(clip)) && new RegExp(`合计 缺陷 ${uiTotal}`).test(String(clip)) && /模块/.test(String(clip)),
-      String(clip).slice(0, 70).replace(/\n/g, ' | '));
-    check('剪贴板末尾带「人员指派共 N 个」',
-      /人员指派共 \d+ 个：/.test(String(clip)),
-      (String(clip).match(/人员指派共.*/) || [''])[0].slice(0, 60));
+    check('剪贴板是日报（含总数、本期、模块分布）',
+      /禅道缺陷日报/.test(String(clip))
+      && new RegExp(`共记录缺陷 ${uiTotal} 个`).test(String(clip))
+      && /本期（/.test(String(clip))
+      && /模块分布/.test(String(clip)),
+      String(clip).slice(0, 76).replace(/\n/g, ' | '));
+    check('日报里带「人员分布（按当前指派」',
+      /人员分布（按当前指派/.test(String(clip)),
+      (String(clip).match(/人员分布.*/) || [''])[0].slice(0, 60));
   }
 
   // ---- 复制为 Markdown ----
@@ -443,6 +456,8 @@ const check = (name, ok, extra = '') => {
     check('Markdown 格式有提示（剪贴板读取受限）', /Markdown/.test(String(mdTip)), String(mdTip));
   }
 
+  await switchDetailTab('按项目');
+  await sleep(500);
   await ev(`(() => { const b = document.querySelector('.zt-sum-row .ibtn'); if (b) { b.click(); return true; } return false; })()`);
   await waitFor(`(() => !!document.querySelector('.zt-sum-tip'))()`, 5000, 200);
   const tip2 = await ev(`(() => { const t = document.querySelector('.zt-sum-tip'); return t ? t.textContent : ''; })()`);
@@ -464,7 +479,7 @@ const check = (name, ok, extra = '') => {
   const chips = await ev(`(() => document.querySelectorAll('.zt-sum-chip').length)()`);
   check('选中项目以多个标签展示', chips === 2, `${chips} 个`);
 
-  await clickHas('拉取并汇总');
+  await clickHas('拉取');
   const rows2 = await waitFor(`(() => document.querySelectorAll('.zt-sum-tbl tbody tr.zt-sum-row').length === 2)()`, 120000, 900);
   check('两个项目各一行', rows2);
   const twoRows = await ev(`(() => [...document.querySelectorAll('.zt-sum-tbl tbody tr.zt-sum-row')].map(tr => [...tr.children].map(td => td.textContent.trim())))()`);
