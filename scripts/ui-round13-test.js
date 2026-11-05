@@ -330,6 +330,76 @@ const check = (name, ok, extra = '') => {
   check('取消排除后人员表与总数都恢复', personRows2 === personRows0 && totalRestored === before,
     `${personRows2} 行 / ${totalRestored}`);
 
+  // ---- 今日新增 + 统计日切换点 ----
+  const todayCard = await ev(`(() => { const c=[...document.querySelectorAll('.zt-sum-card')].find(x=>x.textContent.includes('今日新增')); return c ? c.textContent.trim() : ''; })()`);
+  check('总计里有「今日新增」卡片', /今日新增/.test(todayCard), todayCard);
+
+  const dayBars = await ev(`(() => document.querySelectorAll('.zt-sum-day').length)()`);
+  check('有按统计日切分的新增趋势柱', Number(dayBars) >= 5, `${dayBars} 天`);
+
+  const dailyHead0 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily-head'); return h ? h.textContent : ''; })()`);
+  check('趋势条上方有「环比昨日」说明', /环比/.test(dailyHead0) && /昨日/.test(dailyHead0), String(dailyHead0).slice(0, 60));
+
+  const cutExists = await ev(`(() => { const i=document.querySelector('.zt-sum-cutoff input[type=time]'); return i ? i.value : ''; })()`);
+  check('统计日切换点默认 17:30', cutExists === '17:30', String(cutExists));
+
+  await ev(`(() => {
+    const s = ${SETVAL};
+    const i = document.querySelector('.zt-sum-cutoff input[type=time]');
+    if (!i) return false;
+    s(i, '09:00');
+    return true;
+  })()`);
+  await sleep(700);
+  const dailyHead1 = await ev(`(() => { const h=document.querySelector('.zt-sum-daily-head'); return h ? h.textContent : ''; })()`);
+  check('改切分点后说明文字同步变成 09:00', /09:00/.test(dailyHead1), String(dailyHead1).slice(-40));
+  await ev(`(() => {
+    const s = ${SETVAL};
+    const i = document.querySelector('.zt-sum-cutoff input[type=time]');
+    if (i) s(i, '17:30');
+    return true;
+  })()`);
+  await sleep(500);
+
+  // ---- 测试人员：标记 + 一键排除 ----
+  const rowsBeforeTester = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
+  const totalBeforeTester = await ev(`(() => Number(document.querySelectorAll('.zt-sum-card-num')[0].textContent))()`);
+  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('选择人员（已选')); if(b){b.click();return true} return false; })()`);
+  await sleep(800);
+  const testerName = await ev(`(() => {
+    const t = document.querySelector('.modal .zt-test-tag');
+    if (!t) return null;
+    const row = t.closest('.zt-proj-item');
+    const name = row.querySelector('.zt-proj-name').textContent.trim();
+    t.click();
+    return name;
+  })()`);
+  await sleep(400);
+  check('弹窗里能把人标成「测试」', !!testerName, String(testerName));
+  await ev(`(() => { const b=[...document.querySelectorAll('.modal button')].find(x=>x.textContent.includes('确定（不计入')); if(b){b.click();return true} return false; })()`);
+  await sleep(600);
+
+  const rosterChip = await ev(`(() => { const c=document.querySelector('.zt-sum-person.is-test'); return c ? c.textContent.trim() : ''; })()`);
+  check('页面上能看到「测试人员」名单', !!rosterChip && rosterChip.includes(String(testerName)), String(rosterChip));
+
+  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('排除测试人员')); if(b){b.click();return true} return false; })()`);
+  await sleep(900);
+  const rowsAfterTester = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
+  const totalAfterTester = await ev(`(() => Number(document.querySelectorAll('.zt-sum-card-num')[0].textContent))()`);
+  check('「排除测试人员」真的从人员表里去掉了', rowsAfterTester === rowsBeforeTester - 1,
+    `${rowsBeforeTester} → ${rowsAfterTester} 行（${testerName}）`);
+  check('排除测试人员不影响缺陷总数', totalAfterTester === totalBeforeTester, `${totalBeforeTester} → ${totalAfterTester}`);
+
+  // 恢复：点掉测试人员名单里的 chip，再「全部恢复」
+  await ev(`(() => { const c=document.querySelector('.zt-sum-person.is-test'); if(c){c.click();return true} return false; })()`);
+  await sleep(500);
+  const rosterGone = await ev(`(() => document.querySelectorAll('.zt-sum-person.is-test').length)()`);
+  check('点测试人员 chip 能取消标记', Number(rosterGone) === 0, `${rosterGone} 个标记`);
+  await ev(`(() => { const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='全部恢复'); if(b){b.click();return true} return false; })()`);
+  await sleep(800);
+  const rowsRestored = await ev(`(() => document.querySelectorAll('.zt-sum-prow').length)()`);
+  check('恢复后人员表回到原样', rowsRestored === rowsBeforeTester, `${rowsAfterTester} → ${rowsRestored}`);
+
   // 复制前把窗口带到前台：无焦点的文档读不了也写不了剪贴板
   await send('Page.bringToFront').catch(() => {});
   await sleep(600);

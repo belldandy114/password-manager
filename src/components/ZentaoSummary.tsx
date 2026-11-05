@@ -6,7 +6,7 @@ import { Modal } from './Modal';
 import { formatHm } from '../utils/time';
 import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
-  daysAgoDay, type ProjectSummary, type SummaryFormat,
+  daysAgoDay, dailyNew, parseCutoff, fmtCutoff, type ProjectSummary, type SummaryFormat,
 } from '../utils/bugSummary';
 
 /** 进入页面自动拉一次（每个会话只自动拉一次，避免来回切 tab 反复打禅道） */
@@ -49,6 +49,7 @@ export function ZentaoSummary({
   const exclude = useZentaoStore(s => s.sumExclude);
   const testers = useZentaoStore(s => s.sumTesters);
   const sinceDays = useZentaoStore(s => s.sumSince);
+  const dayCutoff = useZentaoStore(s => s.sumDayCutoff);
   const snapshot = useZentaoStore(s => s.sumSnapshot);
   const format = useZentaoStore(s => s.sumFormat);
   const fetchedAt = useZentaoStore(s => s.sumFetchedAt);
@@ -57,6 +58,7 @@ export function ZentaoSummary({
   const setExclude = useZentaoStore(s => s.setSumExclude);
   const setTesters = useZentaoStore(s => s.setSumTesters);
   const setSinceDays = useZentaoStore(s => s.setSumSince);
+  const setDayCutoff = useZentaoStore(s => s.setSumDayCutoff);
   const setFormat = useZentaoStore(s => s.setSumFormat);
   const saveSnapshot = useZentaoStore(s => s.saveSumSnapshot);
 
@@ -127,6 +129,13 @@ export function ZentaoSummary({
   // 人员表默认只列前 12 人（一个项目动辄二三十人，全列出来表格太长）
   const shownPersons = personAll ? result.persons : result.persons.slice(0, 12);
   const sevRows = useMemo(() => severityRows(result.severity), [result.severity]);
+
+  // 按「统计日」切分的新增趋势（默认 17:30 → 次日 17:30 算一天）
+  const cutoffMin = useMemo(() => parseCutoff(dayCutoff), [dayCutoff]);
+  const daily = useMemo(
+    () => dailyNew(sumBugs, { cutoffMin, days: 7, now, since }),
+    [sumBugs, cutoffMin, now, since],
+  );
 
   const selectedProjects = useMemo(
     () => productIds.map(id => projects.find(p => String(p.id) === id)).filter(Boolean) as ZentaoProject[],
@@ -297,7 +306,11 @@ export function ZentaoSummary({
   };
 
   const excludeTesters = () => {
-    if (!testers.length) return;
+    if (!testers.length) {
+      openPersonPicker();
+      flash('先把测试同学标成「测试」，再点这里一键排除');
+      return;
+    }
     applyExclude([...exclude, ...testers]);
     flash(`已排除 ${testers.length} 名测试人员`);
   };
@@ -405,17 +418,29 @@ export function ZentaoSummary({
           <button
             className="btn btn-ghost btn-sm"
             onClick={excludeTesters}
-            disabled={!testers.length}
             title={testers.length
               ? `把标记为测试人员的 ${testers.length} 人一起排除`
-              : '还没标记测试人员：在「选择人员」里把人标成「测试」'}
+              : '还没标记测试人员：点这里会打开选人弹窗，把测试同学标成「测试」'}
           >
             <Icons.bug size={12} /> 排除测试人员{testers.length ? `（${testers.length}）` : ''}
           </button>
           {exclude.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={() => applyExclude([])}>全部恢复</button>
           )}
+          <span className="zt-sum-cutoff">
+            <span className="pg-sub" style={{ margin: 0 }}>统计日切换点</span>
+            <input
+              type="time"
+              value={dayCutoff}
+              onChange={e => setDayCutoff(e.target.value || '17:30')}
+              title="按这个时间切分「一天」：17:30 → 次日 17:30 算一个统计日"
+            />
+            <span className="pg-sub" style={{ margin: 0 }}>
+              {fmtCutoff(cutoffMin)} → 次日 {fmtCutoff(cutoffMin)}
+            </span>
+          </span>
         </div>
+
         <div className="zt-sum-persons">
           {exclude.length === 0 && (
             <span className="pg-sub" style={{ margin: 0 }}>
@@ -428,6 +453,28 @@ export function ZentaoSummary({
               <Icons.close size={10} />
             </button>
           ))}
+        </div>
+
+        {/* 测试人员名单单独显示出来：以前藏在选人弹窗的小标签里，根本找不到 */}
+        <div className="zt-sum-persons">
+          <span className="zt-sum-exclude-label">测试人员</span>
+          {testers.length === 0 ? (
+            <span className="pg-sub" style={{ margin: 0 }}>
+              还没标记：在「选择人员」弹窗里点某人右侧的「测试」即可标上，标好后「排除测试人员」一键生效
+            </span>
+          ) : (
+            testers.map(name => (
+              <button
+                key={name}
+                className="zt-sum-person is-test"
+                onClick={() => toggleTester(name)}
+                title="点击取消「测试」标记"
+              >
+                {name}
+                <Icons.close size={10} />
+              </button>
+            ))
+          )}
         </div>
 
         <div className="pg-sub" style={{ marginTop: 10 }}>
@@ -530,6 +577,53 @@ export function ZentaoSummary({
               />
               <SumCard label="近 7 天新增" value={result.overall.recentNew} tone="info" />
               <SumCard label="近 7 天修复" value={result.overall.recentFixed} tone="ok" />
+              <SumCard
+                label="今日新增"
+                value={daily.today}
+                tone={daily.delta > 0 ? 'bad' : daily.delta < 0 ? 'ok' : 'info'}
+                title={`统计日 ${daily.currentDay} ${fmtCutoff(cutoffMin)} 起算；昨日 ${daily.yesterday} 个`}
+              />
+            </div>
+
+            {/* 按「统计日」切分的新增趋势：17:30 → 次日 17:30 算一天 */}
+            <div className="zt-sum-daily">
+              <div className="zt-sum-daily-head">
+                <span>
+                  今日新增 <strong>{daily.today}</strong> 个
+                </span>
+                <span className="zt-sum-sep" />
+                <span>
+                  昨日 {daily.yesterday} 个 · 环比{' '}
+                  <strong className={daily.delta > 0 ? 'is-bad' : daily.delta < 0 ? 'is-ok' : ''}>
+                    {daily.delta >= 0 ? '+' : ''}{daily.delta}
+                    {daily.pct === null ? '' : `（${daily.pct >= 0 ? '+' : ''}${daily.pct}%）`}
+                  </strong>
+                </span>
+                <span className="zt-sum-sep" />
+                <span>近 6 日日均 {daily.avg} 个</span>
+                <span className="zt-sum-daily-note">
+                  统计日按每天 {fmtCutoff(cutoffMin)} 切分，可在上方改时间
+                </span>
+              </div>
+              <div className="zt-sum-days">
+                {daily.series.map(p => {
+                  const max = Math.max(1, ...daily.series.map(x => x.count));
+                  const isToday = p.day === daily.currentDay;
+                  return (
+                    <div
+                      key={p.day}
+                      className={`zt-sum-day${isToday ? ' is-today' : ''}`}
+                      title={`${p.day} ${fmtCutoff(cutoffMin)} → 次日 ${fmtCutoff(cutoffMin)}：新增 ${p.count} 个${isToday ? '（进行中）' : ''}`}
+                    >
+                      <span className="zt-sum-day-n">{p.count}</span>
+                      <span className="zt-sum-day-bar">
+                        <i style={{ height: `${Math.max(4, Math.round((p.count / max) * 100))}%` }} />
+                      </span>
+                      <span className="zt-sum-day-label">{p.day.slice(5)}{isToday ? ' 今' : ''}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             <div className="zt-sum-meta">
               <span>

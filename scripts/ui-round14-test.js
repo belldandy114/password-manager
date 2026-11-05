@@ -144,7 +144,7 @@ const check = (name, ok, extra = '') => {
   check('表格有「模块」列', (headers || []).includes('模块'), JSON.stringify(headers));
 
   const modOpts = await ev(`(() => {
-    const sels = [...document.querySelectorAll('.zt-filters select')];
+    const sels = [...document.querySelectorAll('.zt-filterbar select')];
     const s = sels.find(x => [...x.options].some(o => /全部模块/.test(o.textContent)));
     if (!s) return null;
     return { total: s.options.length - 1, sample: s.options[1] ? s.options[1].textContent : '' };
@@ -154,7 +154,7 @@ const check = (name, ok, extra = '') => {
   // 选第一个模块 → 行数应等于该模块条数，且每行模块列都是它
   const beforeRows = await ev(`(() => document.querySelectorAll('.zt-row').length)()`);
   const modPick = await ev(`(() => {
-    const sels = [...document.querySelectorAll('.zt-filters select')];
+    const sels = [...document.querySelectorAll('.zt-filterbar select')];
     const s = sels.find(x => [...x.options].some(o => /全部模块/.test(o.textContent)));
     if (!s || !s.options[1]) return null;
     const name = s.options[1].value;

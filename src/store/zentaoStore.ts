@@ -60,6 +60,8 @@ interface ZentaoState {
   sumTesters: string[];
   /** 时间窗（天）：0 = 全部，7 / 30 / 90 = 只看这些天里提交的缺陷 */
   sumSince: number;
+  /** 统计日切分点（HH:mm，默认 17:30）：17:30 → 次日 17:30 记作一个统计日 */
+  sumDayCutoff: string;
   /** 上次汇总的关键数字，用来显示「较上次 +N/-N」 */
   sumSnapshot: SumSnapshot | null;
   /** 复制格式偏好 */
@@ -82,6 +84,7 @@ interface ZentaoState {
   setSumExclude: (names: string[]) => void;
   setSumTesters: (names: string[]) => void;
   setSumSince: (days: number) => void;
+  setSumDayCutoff: (hhmm: string) => void;
   setSumFormat: (fmt: SummaryFormat) => void;
   /** 记下本次结果作为下次的环比基准 */
   saveSumSnapshot: (snap: SumSnapshot) => void;
@@ -119,6 +122,7 @@ export const useZentaoStore = create<ZentaoState>()(
   sumExclude: [],
   sumTesters: [],
   sumSince: 0,
+  sumDayCutoff: '17:30',
   sumSnapshot: null,
   sumFormat: 'text',
   sumFetchedAt: '',
@@ -148,6 +152,7 @@ export const useZentaoStore = create<ZentaoState>()(
   setSumExclude: (sumExclude) => set({ sumExclude }),
   setSumTesters: (sumTesters) => set({ sumTesters }),
   setSumSince: (sumSince) => set({ sumSince }),
+  setSumDayCutoff: (sumDayCutoff) => set({ sumDayCutoff }),
   setSumFormat: (sumFormat) => set({ sumFormat }),
   saveSumSnapshot: (sumSnapshot) => set({ sumSnapshot }),
   clear: () => set({
@@ -170,7 +175,8 @@ export const useZentaoStore = create<ZentaoState>()(
         pStatus: st.pStatus, pSeverity: st.pSeverity, pModule: st.pModule, pQuery: st.pQuery,
         // 汇总的 Bug 量大，只把「选了哪些项目 / 排除了谁 / 测试人员名单 / 时间窗 / 上次快照」留在会话里，数据每次重拉
         sumProductIds: st.sumProductIds, sumExclude: st.sumExclude, sumTesters: st.sumTesters,
-        sumSince: st.sumSince, sumSnapshot: st.sumSnapshot, sumFormat: st.sumFormat,
+        sumSince: st.sumSince, sumDayCutoff: st.sumDayCutoff,
+        sumSnapshot: st.sumSnapshot, sumFormat: st.sumFormat,
       }),
       version: 2,
     },

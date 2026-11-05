@@ -97,14 +97,21 @@ const SETVAL = `(el, v) => {
   await ev(`(() => { const n = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes('缺陷管理')); if (n) n.click(); return !!n; })()`);
   await sleep(900);
 
-  await ev(`(() => {
-    const s = ${SETVAL};
-    const set = (sel, v) => { const el = document.querySelector(sel); if (el) { s(el, v); return true; } return false; };
-    set('input[placeholder^="http://"]', ${JSON.stringify(ZT.baseUrl)});
-    set('input[placeholder="用户名"]', ${JSON.stringify(ZT.account)});
-    set('input[placeholder="密码"]', ${JSON.stringify(ZT.password)});
-    return 1;
-  })()`);
+  // 配置集合是异步读出来的，读完后会把表单重置成已存的值 —— 太早填会被冲掉，
+  // 所以填完要校验，没写进去就再填一次（最多 8 次）
+  for (let i = 0; i < 8; i++) {
+    const ok = await ev(`(() => {
+      const s = ${SETVAL};
+      const set = (sel, v) => { const el = document.querySelector(sel); if (el) { s(el, v); return true; } return false; };
+      set('input[placeholder^="http://"]', ${JSON.stringify(ZT.baseUrl)});
+      set('input[placeholder="用户名"]', ${JSON.stringify(ZT.account)});
+      set('input[placeholder="密码"]', ${JSON.stringify(ZT.password)});
+      const el = document.querySelector('input[placeholder^="http://"]');
+      return !!el && el.value === ${JSON.stringify(ZT.baseUrl)};
+    })()`);
+    if (ok) break;
+    await sleep(700);
+  }
   await sleep(300);
   await shot('1-config');
 
@@ -177,6 +184,13 @@ const SETVAL = `(el, v) => {
   const menuShown = await ev(`(() => { const m = document.querySelector('.zt-sum-menu'); return m ? m.getBoundingClientRect().toJSON() : null; })()`);
   console.log('menu:', menuOpened, JSON.stringify(menuShown));
   await shot('8-copy-menu');
+
+  // 项目 Bug 页（验证筛选条与复制/导出按钮的新排版）
+  await ev(`(() => { const b=[...document.querySelectorAll('.tabs .tab2')].find(x=>x.textContent.includes('项目 Bug')); if(b){b.click();return true} return false; })()`);
+  await sleep(1200);
+  await ev(`(() => { const s = ${SETVAL}; const el = document.querySelector('.zt-proj-pick select'); if (!el) return false; s(el, ${JSON.stringify(process.env.ZT_PRODUCT || '58')}); return true; })()`);
+  await sleep(5000);
+  await shot('9-project-tab');
 
   console.log('done');
   app.kill();

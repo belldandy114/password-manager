@@ -1718,6 +1718,37 @@
   flex-wrap: wrap;
 }
 
+/* 面板头右侧的操作组（复制 / 导出）：只有两个按钮，不再和筛选挤在一行 */
+.zt-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* 表格上方的筛选条：独占一行，窄窗口自动换行，不会把标题挤变形 */
+.zt-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.zt-filterbar select {
+  font-size: 12px;
+  padding: 6px 26px 6px 10px;
+  max-width: 200px;
+}
+
+.zt-filterbar .search input {
+  width: 170px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
 .zt-filters select {
   font-size: 12px;
   padding: 6px 26px 6px 10px;
@@ -7327,6 +7358,114 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px;
+}
+
+/* ---- 汇总 · 统计日新增趋势 ---- */
+.zt-sum-daily {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.zt-sum-daily-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.zt-sum-daily-head strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.zt-sum-daily-head .is-bad { color: var(--danger); }
+.zt-sum-daily-head .is-ok { color: var(--success); }
+
+.zt-sum-daily-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.zt-sum-days {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  height: 68px;
+}
+
+.zt-sum-day {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.zt-sum-day-n {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.zt-sum-day-bar {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  min-height: 8px;
+}
+
+.zt-sum-day-bar i {
+  display: block;
+  width: 100%;
+  min-height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--border-light);
+}
+
+.zt-sum-day.is-today .zt-sum-day-bar i {
+  background: var(--accent);
+}
+
+.zt-sum-day-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.zt-sum-day.is-today .zt-sum-day-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 统计日切换点 */
+.zt-sum-cutoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 10px;
+}
+
+.zt-sum-cutoff input[type="time"] {
+  width: 104px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+/* 已标记为测试的人（点击取消标记） */
+.zt-sum-person.is-test {
+  border-style: dashed;
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
 .zt-sum-card {

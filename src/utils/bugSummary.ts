@@ -196,6 +196,109 @@ export function daysAgoDay(n: number, now: Date = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/* ---------------- 按「统计日」切分的新增趋势 ---------------- */
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** 'HH:mm' → 当天分钟数；写错就退回默认 17:30 */
+export function parseCutoff(hhmm: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+  if (!m) return 17 * 60 + 30;
+  const h = Math.min(23, Math.max(0, Number(m[1])));
+  const mi = Math.min(59, Math.max(0, Number(m[2])));
+  return h * 60 + mi;
+}
+
+export const fmtCutoff = (min: number) => `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
+
+/** 'YYYY-MM-DD HH:mm' 的本地格式（now 用） */
+function localStamp(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** 日期串前后移动 n 天 */
+export function shiftDay(day: string, n: number): string {
+  const t = new Date(`${day}T00:00:00`);
+  t.setDate(t.getDate() + n);
+  return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+}
+
+/**
+ * 某个时间点属于哪个「统计日」。默认以 17:30 为界：
+ * 17:30 之前算前一天，17:30 及之后算当天 —— 也就是 17:30 → 次日 17:30 为一个统计日。
+ */
+export function statDayOf(dateTime: string, cutoffMin: number): string {
+  const s = String(dateTime || '').trim();
+  const d = s.slice(0, 10);
+  const hm = s.slice(11, 16);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  if (!/^\d{2}:\d{2}$/.test(hm)) return d; // 只有日期：算当天
+  const [h, mi] = hm.split(':').map(Number);
+  return h * 60 + mi >= cutoffMin ? d : shiftDay(d, -1);
+}
+
+export interface DailyPoint {
+  /** 统计日（YYYY-MM-DD，指该日的 17:30 → 次日 17:30） */
+  day: string;
+  count: number;
+}
+
+export interface DailyNew {
+  /** 当前统计日（还没走完）已新增 */
+  today: number;
+  /** 上一个完整统计日 */
+  yesterday: number;
+  /** today - yesterday */
+  delta: number;
+  /** 环比百分比；昨天为 0 时为 null（除不了） */
+  pct: number | null;
+  currentDay: string;
+  /** 最近 N 个统计日（含当前这个），从旧到新 */
+  series: DailyPoint[];
+  /** 除当前这天外，前几天的日均 */
+  avg: number;
+}
+
+/**
+ * 按「统计日」统计新增缺陷数。
+ * 之所以不按自然日：需求方每天 17:30 出日报，17:30 之后提的缺陷应算到第二天。
+ */
+export function dailyNew(
+  bugs: ZentaoBug[],
+  opts: { cutoff?: string; cutoffMin?: number; days?: number; now?: Date; since?: string } = {},
+): DailyNew {
+  const cutoffMin = opts.cutoffMin !== undefined ? opts.cutoffMin : parseCutoff(opts.cutoff || '17:30');
+  const days = Math.max(2, opts.days || 7);
+  const now = opts.now || new Date();
+  const currentDay = statDayOf(localStamp(now), cutoffMin);
+
+  const map = new Map<string, number>();
+  for (const b of bugs) {
+    const t = String(b.openedDate || b.date || '').trim();
+    if (!t) continue;
+    if (opts.since && t.slice(0, 10) < opts.since) continue;
+    const d = statDayOf(t, cutoffMin);
+    if (!d) continue;
+    map.set(d, (map.get(d) || 0) + 1);
+  }
+
+  const series: DailyPoint[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = shiftDay(currentDay, -i);
+    series.push({ day, count: map.get(day) || 0 });
+  }
+
+  const today = map.get(currentDay) || 0;
+  const yesterday = map.get(shiftDay(currentDay, -1)) || 0;
+  const delta = today - yesterday;
+  const pct = yesterday > 0 ? Math.round((delta / yesterday) * 1000) / 10 : null;
+  // 日均只看已经走完的天数（不含今天，否则会被半天拉低）
+  const past = series.slice(0, -1);
+  const avg = past.length ? Math.round((past.reduce((s, p) => s + p.count, 0) / past.length) * 10) / 10 : 0;
+
+  return { today, yesterday, delta, pct, currentDay, series, avg };
+}
+
 export interface SummarizeOpts {
   productIds: string[];
   productNames?: Record<string, string>;

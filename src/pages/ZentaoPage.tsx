@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ZentaoBug, ZentaoConfig, ZentaoPreset, MyBugScope } from '../types';
+import type { ZentaoBug, ZentaoConfig, MyBugScope } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useZentaoStore } from '../store/zentaoStore';
 
@@ -79,7 +79,6 @@ let lastCmdAt = 0;
 
 export function ZentaoPage() {
   const { items, save } = useCollection<ZentaoConfig>('integrations');
-  const { items: presets, save: savePresets } = useCollection<ZentaoPreset>('ztPresets');
   const { ask, confirmNode } = useConfirm();
   // 多套禅道配置：items 里每条都是一套 {baseUrl, account, password}，
   // editingId 指向「当前正在看/用」的那套（新建时先是一个还不存在的 uuid）。
@@ -140,8 +139,6 @@ export function ZentaoPage() {
   // 批量选择
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // 预设管理弹窗
-  const [presetOpen, setPresetOpen] = useState(false);
-  const [presetName, setPresetName] = useState('');
   const [copiedTip, setCopiedTip] = useState('');
   // 分页（两个 tab 各记各的）
   const [pageMine, setPageMine] = useState(1);
@@ -573,40 +570,6 @@ export function ZentaoPage() {
     }
   };
 
-  /* ---------- 预设 ---------- */
-  const applyPreset = (id: string) => {
-    const p = presets.find(x => x.id === id);
-    if (!p) return;
-    if (tab === 'mine') {
-      setFilter({ project: p.project || '', status: p.status || '', severity: p.severity || '', query: p.query || '' });
-    } else {
-      setPFilter({ pStatus: p.status || '', pSeverity: p.severity || '', pQuery: p.query || '' });
-    }
-  };
-
-  const savePreset = async () => {
-    const name = presetName.trim();
-    if (!name) return;
-    const entry: ZentaoPreset = {
-      id: `p-${Date.now().toString(36)}`,
-      name,
-      project: tab === 'mine' ? project : '',
-      status: tab === 'mine' ? status : pStatus,
-      severity: tab === 'mine' ? severity : pSeverity,
-      query: tab === 'mine' ? query : pQuery,
-      updatedAt: new Date().toISOString(),
-    };
-    const exist = presets.find(p => p.name === name);
-    const next = exist ? presets.map(p => (p.name === name ? { ...entry, id: p.id } : p)) : [...presets, entry];
-    await savePresets(next);
-    setPresetOpen(false);
-    setPresetName('');
-  };
-
-  const removePreset = async (id: string) => {
-    await savePresets(presets.filter(p => p.id !== id));
-  };
-
   /* ---------- 复制汇报文本 ---------- */
   const copyBugs = async (list: ZentaoBug[], format: 'list' | 'table' = 'list') => {
     // 没勾选就复制「当前筛选后的全部」，不再偷偷截断到前 50 条（以前提示写着 N 条，其实只给了 50 条）
@@ -895,25 +858,7 @@ export function ZentaoPage() {
                 title={scopeLabel}
                 meta={`${visibleMine.length} / ${bugs.length} 条`}
                 tools={
-                  <div className="zt-filters">
-                    <select className="zt-preset" value="" onChange={e => { if (e.target.value) applyPreset(e.target.value); }} title="筛选预设">
-                      <option value="">预设…</option>
-                      {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    <button className="btn btn-ghost btn-sm" onClick={() => { setPresetName(''); setPresetOpen(true); }} title="把当前筛选保存为预设">存预设</button>
-                    <select value={project} onChange={e => setFilter({ project: e.target.value })}>
-                      <option value="">全部项目</option>
-                      {myProjects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
-                    </select>
-                    <select value={status} onChange={e => setFilter({ status: e.target.value })}>
-                      <option value="">全部状态</option>
-                      {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
-                    </select>
-                    <select value={severity} onChange={e => setFilter({ severity: e.target.value })}>
-                      <option value="">全部严重程度</option>
-                      {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                    </select>
-                    <SearchBox value={query} onChange={v => setFilter({ query: v })} placeholder="标题 / ID" />
+                  <div className="zt-actions">
                     <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleMine)} title="复制为汇报文本">
                       <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
                     </button>
@@ -924,6 +869,21 @@ export function ZentaoPage() {
                 }
                 flush
               >
+                <div className="zt-filterbar">
+                  <select value={project} onChange={e => setFilter({ project: e.target.value })}>
+                    <option value="">全部项目</option>
+                    {myProjects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
+                  </select>
+                  <select value={status} onChange={e => setFilter({ status: e.target.value })}>
+                    <option value="">全部状态</option>
+                    {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                  </select>
+                  <select value={severity} onChange={e => setFilter({ severity: e.target.value })}>
+                    <option value="">全部严重程度</option>
+                    {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                  <SearchBox value={query} onChange={v => setFilter({ query: v })} placeholder="标题 / ID" />
+                </div>
                 <FilterBar
                   chips={[
                     project && { label: project, tone: 'info' as PillTone, clear: () => setFilter({ project: '' }) },
@@ -1048,32 +1008,7 @@ export function ZentaoPage() {
                     title={projName ? `${projName} · 全部 Bug` : '全部 Bug'}
                     meta={`${visibleProject.length} / ${pBugs.length} 条`}
                     tools={
-                      <div className="zt-filters">
-                        <select className="zt-preset" value="" onChange={e => { if (e.target.value) applyPreset(e.target.value); }} title="筛选预设">
-                          <option value="">预设…</option>
-                          {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                        <button className="btn btn-ghost btn-sm" onClick={() => { setPresetName(''); setPresetOpen(true); }}>存预设</button>
-                        <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })}>
-                          <option value="">全部状态</option>
-                          {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
-                        </select>
-                        <select value={pSeverity} onChange={e => setPFilter({ pSeverity: e.target.value })}>
-                          <option value="">全部严重程度</option>
-                          {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                        </select>
-                        {pModuleList.length > 0 && (
-                          <select
-                            value={pModule}
-                            onChange={e => setPFilter({ pModule: e.target.value })}
-                            title="按模块筛选（模块名由禅道模块树解析）"
-                            style={{ maxWidth: 220 }}
-                          >
-                            <option value="">全部模块（{pModuleList.length}）</option>
-                            {pModuleList.map(([name, n]) => <option key={name} value={name}>{name}（{n}）</option>)}
-                          </select>
-                        )}
-                        <SearchBox value={pQuery} onChange={v => setPFilter({ pQuery: v })} placeholder="标题 / 指派给" />
+                      <div className="zt-actions">
                         <button className="btn btn-secondary btn-sm" onClick={() => copyBugs(visibleProject)} title="复制为汇报文本">
                           <Icons.copy size={12} /> {selected.size > 0 ? `复制 ${selected.size}` : '复制'}
                         </button>
@@ -1084,6 +1019,28 @@ export function ZentaoPage() {
                     }
                     flush
                   >
+                    <div className="zt-filterbar">
+                      <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })}>
+                        <option value="">全部状态</option>
+                        {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                      </select>
+                      <select value={pSeverity} onChange={e => setPFilter({ pSeverity: e.target.value })}>
+                        <option value="">全部严重程度</option>
+                        {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                      </select>
+                      {pModuleList.length > 0 && (
+                        <select
+                          value={pModule}
+                          onChange={e => setPFilter({ pModule: e.target.value })}
+                          title="按模块筛选（模块名由禅道模块树解析）"
+                          style={{ maxWidth: 220 }}
+                        >
+                          <option value="">全部模块（{pModuleList.length}）</option>
+                          {pModuleList.map(([name, n]) => <option key={name} value={name}>{name}（{n}）</option>)}
+                        </select>
+                      )}
+                      <SearchBox value={pQuery} onChange={v => setPFilter({ pQuery: v })} placeholder="标题 / 指派给" />
+                    </div>
                     <FilterBar
                       chips={[
                         pStatus && { label: dimLabel(pStatus), tone: 'warn' as PillTone, clear: () => setPFilter({ pStatus: '' }) },
@@ -1198,49 +1155,6 @@ export function ZentaoPage() {
 
       <BugDrawer bug={detailBug} cfg={cfg || null} onClose={() => setDetailBug(null)} />
       {confirmNode}
-
-      {/* 筛选预设 */}
-      <Modal
-        open={presetOpen}
-        onClose={() => setPresetOpen(false)}
-        title="筛选预设"
-        footer={
-          <>
-            <button className="btn btn-secondary" onClick={() => setPresetOpen(false)}>取消</button>
-            <button className="btn btn-primary" onClick={savePreset} disabled={!presetName.trim()}>保存</button>
-          </>
-        }
-      >
-        <div className="form-group">
-          <label>预设名称</label>
-          <input
-            value={presetName}
-            onChange={e => setPresetName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') savePreset(); }}
-            placeholder="例如：我的未关闭致命/严重"
-            autoFocus
-          />
-        </div>
-        <div className="pg-sub" style={{ marginTop: 8 }}>
-          会保存当前的「项目 / 状态 / 严重程度 / 搜索词」，下次从筛选栏的「预设…」一键套用。
-        </div>
-        {presets.length > 0 && (
-          <div className="preset-list">
-            {presets.map(p => (
-              <div key={p.id} className="preset-row">
-                <span className="preset-name">{p.name}</span>
-                <span className="preset-desc">
-                  {[p.project, dimLabel(p.status || ''), p.severity ? (SEVERITY[p.severity]?.label || p.severity) : '', p.query]
-                    .filter(Boolean).join(' · ') || '无筛选条件'}
-                </span>
-                <button className="ibtn" title="删除预设" onClick={() => removePreset(p.id)}>
-                  <Icons.trash size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
 
       {copiedTip && <div className="toast-inline">{copiedTip}</div>}
     </div>

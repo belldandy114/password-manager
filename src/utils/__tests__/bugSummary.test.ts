@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   summarize, isExcluded, bugIsFixed, summaryToText, projectToText, personsToText,
   summaryToMarkdown, summaryToCsv, summaryTo, severityRows, daysAgoDay, personOf,
+  dailyNew, parseCutoff, fmtCutoff, statDayOf,
 } from '../bugSummary';
 import type { ZentaoBug } from '../../types';
 
@@ -427,5 +428,78 @@ describe('bugSummary 导出格式', () => {
     expect(summaryTo('text', s.projects, s.overall)).toContain('【缺陷汇总】');
     expect(summaryTo('markdown', s.projects, s.overall)).toContain('| 项目 |');
     expect(summaryTo('csv', s.projects, s.overall)).toContain('项目,模块');
+  });
+});
+
+describe('bugSummary 统计日切分（默认 17:30）', () => {
+  it('parseCutoff：正常/异常输入都能给出分钟数', () => {
+    expect(parseCutoff('17:30')).toBe(17 * 60 + 30);
+    expect(parseCutoff('00:00')).toBe(0);
+    expect(parseCutoff('')).toBe(17 * 60 + 30);      // 空 → 默认
+    expect(parseCutoff('abc')).toBe(17 * 60 + 30);   // 乱写 → 默认
+    expect(fmtCutoff(parseCutoff('9:05'))).toBe('09:05');
+  });
+
+  it('17:30 之前算前一天，之后算当天', () => {
+    const c = parseCutoff('17:30');
+    expect(statDayOf('2026-11-05 17:29', c)).toBe('2026-11-04');
+    expect(statDayOf('2026-11-05 17:30', c)).toBe('2026-11-05');
+    expect(statDayOf('2026-11-05 23:59', c)).toBe('2026-11-05');
+    expect(statDayOf('2026-11-06 00:10', c)).toBe('2026-11-05'); // 次日凌晨仍属前一天
+    expect(statDayOf('2026-11-06 17:29', c)).toBe('2026-11-05');
+    expect(statDayOf('2026-11-06 17:30', c)).toBe('2026-11-06');
+  });
+
+  it('只有日期（没有时分）时按当天算', () => {
+    expect(statDayOf('2026-11-05', parseCutoff('17:30'))).toBe('2026-11-05');
+    expect(statDayOf('', 0)).toBe('');
+  });
+
+  it('切分点可自定义：改成 09:00 后归属跟着变', () => {
+    const c = parseCutoff('09:00');
+    expect(statDayOf('2026-11-05 08:59', c)).toBe('2026-11-04');
+    expect(statDayOf('2026-11-05 09:00', c)).toBe('2026-11-05');
+  });
+
+  it('dailyNew：今日 / 昨日 / 环比 / 序列', () => {
+    const now = new Date('2026-11-05T15:00:00'); // 还没到 17:30 → 当前统计日是 11-04
+    const mk = (id: string, t: string) => ({ ...bug(id, '58', 'active'), openedDate: t }) as ZentaoBug;
+    const bugs = [
+      mk('1', '2026-11-04 18:00'), // 统计日 11-04
+      mk('2', '2026-11-05 09:00'), // 仍属 11-04（18:00 → 次日 17:30）
+      mk('3', '2026-11-03 20:00'), // 11-03
+      mk('4', '2026-11-03 21:00'), // 11-03
+      mk('5', '2026-11-02 18:00'), // 11-02
+    ];
+    const d = dailyNew(bugs, { cutoff: '17:30', days: 4, now });
+    expect(d.currentDay).toBe('2026-11-04');
+    expect(d.today).toBe(2);
+    expect(d.yesterday).toBe(2);
+    expect(d.delta).toBe(0);
+    expect(d.pct).toBe(0);
+    expect(d.series.map(p => [p.day, p.count])).toEqual([
+      ['2026-11-01', 0],
+      ['2026-11-02', 1],
+      ['2026-11-03', 2],
+      ['2026-11-04', 2],
+    ]);
+    expect(d.avg).toBe(1); // 前 3 天 (0+1+2)/3
+  });
+
+  it('dailyNew：昨天为 0 时环比给 null（不除零）', () => {
+    const now = new Date('2026-11-05T18:00:00'); // 已过 17:30 → 统计日 11-05
+    const bugs = [{ ...bug('1', '58', 'active'), openedDate: '2026-11-05 18:30' }] as ZentaoBug[];
+    const d = dailyNew(bugs, { cutoff: '17:30', days: 3, now });
+    expect(d.currentDay).toBe('2026-11-05');
+    expect(d.today).toBe(1);
+    expect(d.yesterday).toBe(0);
+    expect(d.delta).toBe(1);
+    expect(d.pct).toBeNull();
+  });
+
+  it('dailyNew：没有提交时间的条目不参与', () => {
+    const d = dailyNew([bug('1', '58', 'active')], { days: 3, now: new Date('2026-11-05T18:00:00') });
+    expect(d.today).toBe(0);
+    expect(d.series.every(p => p.count === 0)).toBe(true);
   });
 });
