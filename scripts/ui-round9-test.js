@@ -610,13 +610,10 @@ const echo = http.createServer((req, res) => {
       !!parRes && parRes.success === true && parRes.data && parRes.data.verified === true && parRes.data.threads === 6,
       parRes && JSON.stringify({ ok: parRes.success, th: parRes.data && parRes.data.threads, v: parRes.data && parRes.data.verified }));
   }
-  /* ================= C. 缺陷管理：全局项目作用域（V9.2 起） =================
-     旧用例断言「每个视图各自多选项目弹窗 + 全部按钮」，已被「选一次项目、
-     三个 tab 共用同一份数据」取代。这里改为验证新行为：
-       1) 登录后自动选定一个项目，只拉一次该项目全量缺陷
-       2) 切视图 / 切 tab 零网络请求（本地派生）
-       3) 当前项目下拉可搜索定位、切换项目按 project 重拉
-       4) 每个 tab 的「重新拉取」按当前项目拿最新数据                 */
+  /* ================= C. 缺陷管理：多选项目作用域（V9.6 起） =================
+     默认不选任何项目、不加载数据；用户在可搜索多选下拉里选完才拉一次，
+     三个 tab 共用这份数据。回归重点：默认空 / 选择后才请求 / 多选按项目并发 /
+     切视图与切 tab 零请求。                                              */
   if (want('zentao')) {
     await navTo('缺陷管理');
     await sleep(500);
@@ -626,7 +623,6 @@ const echo = http.createServer((req, res) => {
       Array.isArray(scopes) && scopes.length === 3, (scopes || []).map(s => s.t).join(' | '));
     check('禅道：默认选中「指派给我」', !!scopes && scopes[0] && scopes[0].on, scopes && scopes[0] && scopes[0].t);
 
-    // 填配置（桩服务地址），按字段标签填，不靠 input 顺序
     await ev(`(() => {
       const s = ${SETVAL};
       const setByLabel = (label, v) => {
@@ -649,30 +645,48 @@ const echo = http.createServer((req, res) => {
       return 0;
     };
     const bugReqs = () => zt.log.filter(l => /\/api\.php\/v1\/bugs/.test(l.url));
-    const waitCombo = async () => {
+    const waitPicker = async () => {
       for (let i = 0; i < 48; i++) {
-        const ok = await ev(`(() => { const s = document.querySelector('.project-combo-control select'); return !!s && s.options.length > 1 && !!s.value; })()`);
+        const ok = await ev(`(() => !!document.querySelector('.project-picker .person-picker-trigger:not([disabled])'))()`);
         if (ok) return true;
         await sleep(250);
       }
       return false;
     };
 
-    // 显式登录：触发「拉项目列表 → 自动选一个项目 → 拉一次该项目全量」
+    // 登录只拉项目列表，不自动选项目、不拉缺陷
     await clickHas('登录并保存');
-    const comboReady = await waitCombo();
-    const combo = await ev(`(() => { const s = document.querySelector('.project-combo-control select'); return s ? { value: s.value, label: (s.selectedOptions[0] || {}).textContent || '', options: s.options.length } : null; })()`);
-    check('禅道：登录后出现全局「当前项目」原生下拉', !!comboReady && !!combo, JSON.stringify(combo));
-    check('禅道：默认只选中 1 个项目（不再全量遍历）',
-      !!combo && !!combo.value && /^\d+$/.test(String(combo.value)), combo && combo.label);
+    const pickerReady = await waitPicker();
+    const defaultState = await ev(`(() => ({
+      hint: !!document.querySelector('.zt-scope-hint'),
+      chips: document.querySelectorAll('.project-picker .person-picker-chip').length,
+    }))()`);
+    check('禅道：读取项目后出现多选搜索下拉', !!pickerReady, JSON.stringify(defaultState));
+    check('禅道：默认不选项目（chips 为 0 且显示引导条）',
+      !!defaultState && defaultState.hint === true && defaultState.chips === 0, JSON.stringify(defaultState));
+    check('禅道：未选项目时零缺陷请求', bugReqs().length === 0, `${bugReqs().length} 次`);
 
-    const firstPull = bugReqs();
-    const firstUrl = firstPull.length ? firstPull[0].url : '';
-    check('禅道：首次只拉 1 次项目全量缺陷', firstPull.length === 1, `${firstPull.length} 次 · ${firstUrl.slice(0, 100)}`);
-    check('禅道：按当前项目查询（带 product + status=all，不带账号过滤参数）',
-      /[?&]product=\d+/.test(firstUrl) && /status=all/.test(firstUrl)
-        && !/openedBy=/.test(firstUrl) && !/assignedTo=/.test(firstUrl),
-      firstUrl.slice(0, 120));
+    // 打开下拉：按关键字搜索定位
+    await ev(`document.querySelector('.project-picker .person-picker-trigger')?.click()`);
+    await sleep(300);
+    await setVal('.project-picker .person-picker-search input', 'B');
+    await sleep(400);
+    const searched = await ev(`(() => ({
+      items: document.querySelectorAll('.project-picker .person-picker-item').length,
+      count: (document.querySelector('.project-picker .person-picker-count') || {}).textContent || '',
+    }))()`);
+    check('禅道：项目下拉可按关键字搜索定位',
+      !!searched && searched.items === 1 && /1 \/ 2/.test(String(searched.count)), JSON.stringify(searched));
+    await setVal('.project-picker .person-picker-search input', '');
+    await sleep(300);
+
+    // 只选 1 个项目 → 只拉它
+    await ev(`(() => { const b = [...document.querySelectorAll('.project-picker .person-picker-item')].find(x => /桩项目A/.test(x.textContent)); if (b) b.click(); return !!b; })()`);
+    await sleep(1600);
+    const afterOne = bugReqs();
+    check('禅道：选 1 个项目后只拉 1 次且带 product=1',
+      afterOne.length === 1 && /[?&]product=1/.test(afterOne[0]?.url || ''),
+      `${afterOne.length} 次 · ${(afterOne[0] || {}).url || ''}`.slice(0, 130));
 
     // 核心：切视图 / 切 tab 都不得再发请求
     const beforeViews = bugReqs().length;
@@ -690,40 +704,37 @@ const echo = http.createServer((req, res) => {
     const beforeTabs = bugReqs().length;
     await clickTab('项目 Bug');
     const projRows = await waitRows();
-    check('禅道：项目 Bug tab 显示该项目全部缺陷（桩服务 3 条）', projRows === 3, `${projRows} 行`);
+    check('禅道：项目 Bug tab 显示所选项目全部缺陷（桩服务 3 条）', projRows === 3, `${projRows} 行`);
     await clickTab('汇总');
     await sleep(700);
     check('禅道：切到项目 Bug / 汇总 tab 零重复拉取', bugReqs().length === beforeTabs,
       `${beforeTabs} → ${bugReqs().length}`);
 
-    // 项目条只读显示当前项目，不再有各自的「全部」按钮（须回到「我的 Bug」tab）
+    // 再多选一个项目 → 应该按两个 product 各拉一次
     await clickTab('我的 Bug');
+    // CDP 的 element.click() 不派发 mousedown，浮层不会因「点外部」自动关；
+    // 这里先判断浮层状态，避免把已打开的浮层又点关了。
+    const popOpen = await ev(`!!document.querySelector('.project-picker .person-picker-pop')`);
+    if (!popOpen) await ev(`document.querySelector('.project-picker .person-picker-trigger')?.click()`);
+    await sleep(300);
+    const beforeMulti = bugReqs().length;
+    await ev(`(() => { const b = [...document.querySelectorAll('.project-picker .person-picker-item')].find(x => /桩项目B/.test(x.textContent)); if (b) b.click(); return !!b; })()`);
+    await sleep(4000);
+    const chipsNow = await ev(`(() => [...document.querySelectorAll('.project-picker .person-picker-chip')].map(x => x.textContent.trim()))()`);
+    const multi = bugReqs().slice(beforeMulti);
+    const multiProducts = new Set(multi.map(l => (/[?&]product=(\d+)/.exec(l.url) || [])[1]).filter(Boolean));
+    check('禅道：多选 2 个项目后按两个 project 拉取',
+      multiProducts.size === 2 && multiProducts.has('1') && multiProducts.has('2'),
+      'products=' + [...multiProducts].join(',') + ' chips=' + JSON.stringify(chipsNow)
+        + ' reqs=' + multi.map(l => l.url.replace(/^.*\/bugs\?/, '')).join(' ; '));
+    await ev(`document.querySelector('.project-picker .person-picker-trigger')?.click()`);
+
+    // 项目条只读、不再有各自的「全部」按钮
     const projBar = await ev(`(() => ({ row: !!document.querySelector('.zt-mine-proj'), all: !!document.querySelector('.zt-mine-proj-all') }))()`);
     check('禅道：我的 Bug 项目条只读、不再有重复的项目选择器',
       !!projBar && projBar.row === true && projBar.all === false, JSON.stringify(projBar));
 
-    // 当前项目下拉可搜索定位：点放大镜 → 输入 B → 只匹配 1 个项目
-    await ev(`document.querySelector('.project-combo-search-btn')?.click()`);
-    await sleep(300);
-    await setVal('.project-combo-filter input', 'B');
-    await sleep(400);
-    const filtered = await ev(`(() => ({
-      count: (document.querySelector('.project-combo-count') || {}).textContent || '',
-      hasB: [...(document.querySelector('.project-combo-control select') || { options: [] }).options].some(o => /桩项目B/.test(o.textContent)),
-    }))()`);
-    check('禅道：当前项目下拉可按关键字搜索定位',
-      !!filtered && /1 \/ 2/.test(String(filtered.count)) && filtered.hasB === true, JSON.stringify(filtered));
-
-    // 切换项目 → 按新 project 重拉一次
-    const beforeSwitch = bugReqs().length;
-    await setVal('.project-combo-control select', '2');
-    await sleep(1500);
-    const switched = bugReqs().slice(beforeSwitch);
-    check('禅道：切换项目后按新 project 重新拉取',
-      switched.length >= 1 && switched.some(l => /[?&]product=2/.test(l.url)),
-      switched.map(l => l.url).join(' | ').slice(0, 140));
-
-    // 每个 tab 都保留「重新拉取」，点击后按当前项目拿最新
+    // 每个 tab 都保留「重新拉取」，点击后按当前所选项目拿最新
     const refreshBtns = [];
     for (const label of ['我的 Bug', '项目 Bug', '汇总']) {
       await clickTab(label);
@@ -736,10 +747,9 @@ const echo = http.createServer((req, res) => {
       refreshBtns.length === 3 && refreshBtns.every(x => x.has === true), JSON.stringify(refreshBtns));
     const beforeRefresh = bugReqs().length;
     await clickHas('重新拉取');
-    await sleep(1500);
-    check('禅道：重新拉取按当前项目发出新请求',
-      bugReqs().length > beforeRefresh && bugReqs().slice(beforeRefresh).every(l => /[?&]product=2/.test(l.url)),
-      `${beforeRefresh} → ${bugReqs().length}`);
+    await sleep(1800);
+    check('禅道：重新拉取按当前所选项目发出新请求',
+      bugReqs().length > beforeRefresh, `${beforeRefresh} → ${bugReqs().length}`);
 
     // 切页面回来视图保留（状态在 store 里）
     await navTo('周报');

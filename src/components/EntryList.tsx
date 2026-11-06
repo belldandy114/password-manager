@@ -14,6 +14,16 @@ interface Props {
 }
 
 /* ---------- helpers ---------- */
+/** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
+const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+/** 容器内还有按钮时，只在焦点落在容器本身才响应，避免按内部按钮误触发 */
+const onKeyClickStrict = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+
 
 const envLabel: Record<string, string> = {
   production: '\u6B63\u5F0F',
@@ -213,13 +223,13 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                 else selectAll(entries.map(e => e.id));
               }} />
           </th>
-          <th className="col-name" onClick={() => handleSort('name')}>名称{sortArrow('name')}</th>
-          <th className="col-env" onClick={() => handleSort('envType')}>环境{sortArrow('envType')}</th>
-          <th className="col-url" onClick={() => handleSort('url')}>URL{sortArrow('url')}</th>
-          <th className="col-username" onClick={() => handleSort('username')}>账号{sortArrow('username')}</th>
+          <th className="col-name" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('name')}>名称{sortArrow('name')}</th>
+          <th className="col-env" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('envType')}>环境{sortArrow('envType')}</th>
+          <th className="col-url" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('url')}>URL{sortArrow('url')}</th>
+          <th className="col-username" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('username')}>账号{sortArrow('username')}</th>
           <th className="col-password">密码</th>
           <th className="col-tags">标签</th>
-          <th className="col-updated" onClick={() => handleSort('updatedAt')}>修改时间{sortArrow('updatedAt')}</th>
+          <th className="col-updated" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('updatedAt')}>修改时间{sortArrow('updatedAt')}</th>
           <th className="col-actions">操作</th>
         </tr>
       </thead>
@@ -234,6 +244,9 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
 
           return (
             <tr key={entry.id} className={isSelected ? 'selected' : ''}
+              tabIndex={0}
+              aria-selected={isSelected}
+              onKeyDown={onKeyClickStrict}
               onClick={() => handleRowClick(entry.id)}>
 
               {/* Checkbox */}
@@ -372,7 +385,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                     </svg>
                     {showMore && (
                       <div className="action-dropdown" onClick={e => e.stopPropagation()}>
-                        <div className="action-dropdown-item" onClick={() => {
+                        <div className="action-dropdown-item" role="menuitem" tabIndex={0} onKeyDown={onKeyClick} onClick={() => {
                           const info = '名称：' + entry.name + '\nURL：' + entry.url + '\n账号：' + entry.username + '\n密码：' + entry.password;
                           handleCopyWithFeedback(info, '全部信息', entry.id, 'all-dropdown');
                           setOpenDropdown(null);
@@ -383,7 +396,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                           复制全部信息
                         </div>
                         <div className="action-dropdown-sep" />
-                        <div className="action-dropdown-item" onClick={() => {
+                        <div className="action-dropdown-item" role="menuitem" tabIndex={0} onKeyDown={onKeyClick} onClick={() => {
                           setOpenDropdown(null);
                           ask({
                             title: '移入回收站',
@@ -401,7 +414,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                           </svg>
                           移入回收站
                         </div>
-                        <div className="action-dropdown-item danger" onClick={() => {
+                        <div className="action-dropdown-item danger" role="menuitem" tabIndex={0} onKeyDown={onKeyClick} onClick={() => {
                           setOpenDropdown(null);
                           ask({
                             title: '彻底删除网址',

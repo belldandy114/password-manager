@@ -16,7 +16,7 @@ import { bugsToText, bugsToCsv } from '../utils/bugText';
 import { Pager } from '../components/Pager';
 import { BugTrend } from '../components/BugTrend';
 import { ZentaoSummary } from '../components/ZentaoSummary';
-import { ProjectCombo } from '../components/ProjectCombo';
+import { ProjectPicker } from '../components/ProjectPicker';
 import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
 import { formatHm } from '../utils/time';
@@ -130,8 +130,8 @@ export function ZentaoPage() {
   const setProjectBugs = useZentaoStore(s => s.setProjectBugs);
   const setPFilter = useZentaoStore(s => s.setPFilter);
 
-  const scopeProjectId = useZentaoStore(s => s.scopeProjectId);
-  const setScopeProject = useZentaoStore(s => s.setScopeProject);
+  const scopeProjectIds = useZentaoStore(s => s.scopeProjectIds);
+  const setScopeProjects = useZentaoStore(s => s.setScopeProjects);
   const setScopeData = useZentaoStore(s => s.setScopeData);
 
   const [tab, setTab] = useState<TabId>('mine');
@@ -224,8 +224,8 @@ export function ZentaoPage() {
     if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
     if (cmdSignal.kind !== 'zentao:refresh-mine') return;
     lastCmdAt = cmdSignal.at;
-    if (scopeProjectId) void loadScopeData(scopeProjectId, true);
-    else void loadMine();
+    if (scopeProjectIds.length) void loadScopeData(scopeProjectIds, true);
+    else void loadProjects();
   }, [cmdSignal]);
 
   // 筛选条件变了就回到第一页
@@ -289,7 +289,7 @@ export function ZentaoPage() {
   const scopeLabel = SCOPE_LABEL[mineScope];
   // 「我提交的 / 待我验证」按项目拉：记住选中的项目，默认挑当前项目
   // 最近一次「我的 Bug」响应的过滤信息（服务端可能不按账号过滤，主进程会本地再过一遍）
-  const [mineMeta, setMineMeta] = useState<{ account: string; filtered: boolean; dropped: number; scanned: number; withAccount: number } | null>(null);
+  const [mineMeta, setMineMeta] = useState<{ account: string; filtered: boolean; dropped: number; scanned: number; withAccount: number; unknown: number } | null>(null);
   const [projOpen, setProjOpen] = useState(false);
   const [projDraft, setProjDraft] = useState<string[]>([]);
 
@@ -333,7 +333,7 @@ export function ZentaoPage() {
     setError('');
     if (!ready()) return;
     // 已有当前项目的全量数据时，三个视图都从它本地派生，避免重复拉取
-    if (scopeProjectId && pBugs.length && !mineAllProjects && !idsOverride && allOverride === undefined) {
+    if (scopeProjectIds.length && pBugs.length && !mineAllProjects && !idsOverride && allOverride === undefined) {
       deriveMine(pBugs, scope);
       return;
     }
@@ -372,6 +372,7 @@ export function ZentaoPage() {
         dropped: Number(res.dropped) || 0,
         scanned: Number(res.scanned) || 0,
         withAccount: Number(res.withAccount) || 0,
+        unknown: 0,
       });
       setBugs(res.data, res.total || res.data.length);
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
@@ -396,13 +397,9 @@ export function ZentaoPage() {
       });
       setProjects(sorted);
       projectsOwnerModule = cfgIdentity;
-      // 已选项目若不属于这套地址的项目列表，换回第一个，避免后续拉取带着旧 id 报错
-      const stillValid = mineProductIds.filter(id => sorted.some(p => String(p.id) === String(id)));
-      if (stillValid.length !== mineProductIds.length) {
-        setMineProductIds(stillValid.length ? stillValid : (sorted[0] ? [String(sorted[0].id)] : []));
-      }
-      const first = sorted.find(p => String(p.id) === String(scopeProjectId)) || sorted[0];
-      if (first) await changeScopeProject(String(first.id));
+      // 只拉项目列表，不自动选、不自动拉数据；由用户在上方选择后才加载
+      const stillValid = scopeProjectIds.filter(id => sorted.some(p => String(p.id) === String(id)));
+      if (stillValid.length !== scopeProjectIds.length) setScopeProjects(stillValid);
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
       // 「先点刷新、配置才第一次落库」时，configIdentity 会从空值变成真实地址，
       // 上面那个 effect 会误判成「换了配置」而把刚拉到的项目列表清空。
@@ -416,10 +413,13 @@ export function ZentaoPage() {
   /** 从当前项目的全量 Bug 里本地派生「我的 Bug」三个视图，零网络请求 */
   const deriveMine = (all: ZentaoBug[], scope: MyBugScope = mineScope) => {
     const acct = form.account.trim().toLowerCase();
+    const fieldOf = (b: ZentaoBug) => (scope === 'opened' ? b.openedByAccount : b.assignedToAccount);
     const withAccount = all.filter(b => b.assignedToAccount || b.openedByAccount).length;
-    // 服务端没给账号字段时不过滤，避免把数据误杀成 0 条（与主进程 filterMineBugs 同策略）
+    // 部分 Bug 缺账号字段时，它们无法判定归属，会被过滤掉；单独计数并在界面显式说明
+    const unknown = withAccount > 0 ? all.filter(b => !fieldOf(b)).length : 0;
+    // 服务端完全没给账号字段时保留全量，但界面会明确标红「未过滤 · 含项目全量」
     const rows = withAccount === 0 ? all : all.filter(b => {
-      const who = String((scope === 'opened' ? b.openedByAccount : b.assignedToAccount) || '').toLowerCase();
+      const who = String(fieldOf(b) || '').toLowerCase();
       if (who !== acct) return false;
       const st = String(b.status || '').toLowerCase();
       if (scope === 'verify') return st === 'resolved';
@@ -429,25 +429,22 @@ export function ZentaoPage() {
     setBugs(rows, rows.length);
     setMineMeta({
       account: form.account.trim(), filtered: withAccount > 0,
-      dropped: all.length - rows.length, scanned: all.length, withAccount,
+      dropped: all.length - rows.length, scanned: all.length, withAccount, unknown,
     });
   };
 
   /** 一次拉取当前项目的全量 Bug，三个 tab 共享这一份数据 */
-  const loadScopeData = async (productId: string, force = false) => {
-    if (!productId || productId === ALL_PROJECT || !ready()) return;
+  const loadScopeData = async (productIds: string[], force = false) => {
+    const ids = productIds.filter(Boolean);
+    if (!ids.length || !ready()) return;
     setError('');
     setBusy('pb');
     setCacheInfo('');
-    const res = await window.electronAPI.zentaoProjectBugs(currentCfg(), productId, force);
+    // 多项目用 summary 接口一次拿全（它内部按 id 去重、并发抓各产品，并返回模块名表）
+    const res = await window.electronAPI.zentaoSummary(currentCfg(), ids, force);
     setBusy('');
     if (res.success && res.data) {
-      // 模块名已由主进程写进每条 Bug 的 moduleName，这里反推一份给汇总用
-      const moduleMap: Record<string, string> = {};
-      for (const b of res.data) {
-        if (b.module && b.moduleName) moduleMap[String(b.module)] = String(b.moduleName);
-      }
-      setScopeData(res.data, { [String(productId)]: moduleMap }, productId);
+      setScopeData(res.data, res.modules || {}, ids);
       deriveMine(res.data);
       if (res.cached) {
         const min = Math.max(1, Math.round((res.ageMs || 0) / 60000));
@@ -455,30 +452,26 @@ export function ZentaoPage() {
       } else if (res.fetchedAt) {
         setCacheInfo(`刚更新 · ${formatHm(res.fetchedAt)}`);
       }
+      const failed = res.errors || [];
+      if (failed.length) setError(`部分项目拉取失败：${failed.slice(0, 3).join('；')}`);
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
-      setError(res.error || '拉取项目 Bug 失败');
+      setError(res.error || '拉取项目缺陷失败');
     }
   };
 
-  /** 三个 tab 共用的「按当前项目重新拉取最新」入口 */
+  /** 三个 tab 共用的「按当前所选项目重新拉取最新」入口 */
   const refreshScope = () => {
-    const id = String(scopeProjectId || activeProject || '');
-    if (!id || id === ALL_PROJECT) { void loadProjects(); return; }
-    void loadScopeData(id, true);
+    if (!scopeProjectIds.length) { void loadProjects(); return; }
+    void loadScopeData(scopeProjectIds, true);
   };
 
-  /** 全局只在这里换项目：同步三个视图的选择，再拉一次数据 */
-  const changeScopeProject = async (id: string) => {
-    if (!id) return;
-    if (id === ALL_PROJECT) {
-      setScopeProject('');
-      setActiveProject(ALL_PROJECT);
-      await loadProjectBugs(ALL_PROJECT);
-      return;
-    }
-    if (id !== scopeProjectId) setScopeProject(id);
-    await loadScopeData(id, false);
+  /** 全局只在这里换项目集合：清空时只清数据，选中后才拉一次 */
+  const changeScopeProjects = async (ids: string[]) => {
+    if (ids.length === scopeProjectIds.length && ids.every(id => scopeProjectIds.includes(id))) return;
+    setScopeProjects(ids);
+    setSelected(new Set());
+    if (ids.length) await loadScopeData(ids, false);
   };
 
   const loadProjectBugs = async (productId: string, force = false) => {
@@ -590,8 +583,10 @@ export function ZentaoPage() {
   }, [pBugs]);
 
   const projName = useMemo(
-    () => (activeProject === ALL_PROJECT ? '全部项目' : projects.find(p => p.id === activeProject)?.name || ''),
-    [projects, activeProject],
+    () => scopeProjectIds.length > 1
+      ? `${scopeProjectIds.length} 个项目`
+      : (activeProject === ALL_PROJECT ? '全部项目' : projects.find(p => String(p.id) === String(scopeProjectIds[0] || activeProject))?.name || ''),
+    [projects, activeProject, scopeProjectIds],
   );
 
   /** 「全部项目」时按项目汇总，点一行就能跳到该项目 */
@@ -814,16 +809,22 @@ export function ZentaoPage() {
           </button>
           <div className="zt-global-scope">
             <span className="zt-global-scope-label">当前项目</span>
-            <ProjectCombo
+            <ProjectPicker
               projects={projects}
-              value={scopeProjectId || activeProject}
-              onChange={id => void changeScopeProject(id)}
-              allValue={ALL_PROJECT}
-              allLabel="全部项目（总览）"
-              disabled={busy === 'pb'}
+              value={scopeProjectIds}
+              onChange={ids => void changeScopeProjects(ids)}
+              placeholder={projects.length ? `从 ${projects.length} 个项目中选择` : '请先读取项目列表'}
+              disabled={busy === 'pb' || projects.length === 0}
             />
           </div>
         </div>
+
+        {projects.length > 0 && scopeProjectIds.length === 0 && (
+          <div className="zt-scope-hint">
+            <Icons.folder size={13} />
+            请先从上方「当前项目」选择 1 个或多个项目，选好后才会加载下面三个标签的数据。
+          </div>
+        )}
 
         {tab === 'mine' && (
           <div className="zt-scope-row">
@@ -848,7 +849,7 @@ export function ZentaoPage() {
             <button
               className="btn btn-secondary btn-sm zt-tab-refresh"
               onClick={refreshScope}
-              disabled={busy === 'pb' || !scopeProjectId}
+              disabled={busy === 'pb' || !scopeProjectIds.length}
               title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
             >
               <Icons.refresh size={12} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
@@ -870,15 +871,15 @@ export function ZentaoPage() {
               const text = empty
                 ? `${mineMeta.account} · 0 条${mineMeta.scanned ? `（服务端 ${mineMeta.scanned} 条）` : ''}`
                 : mineMeta.filtered
-                  ? `${mineMeta.account}${mineMeta.dropped ? ` · 已滤掉 ${mineMeta.dropped} 条` : ''}`
-                  : '未按账号复核';
+                  ? `${mineMeta.account}${mineMeta.dropped ? ` · 已滤掉 ${mineMeta.dropped} 条` : ''}${mineMeta.unknown ? ` · ${mineMeta.unknown} 条无账号字段` : ''}`
+                  : '未过滤 · 含项目全量';
               const tip = noMatch
                 ? `服务端返回 ${mineMeta.scanned} 条，但没有一条属于账号「${mineMeta.account}」。请确认登录账号是否为禅道登录名（不是姓名/邮箱）。`
                 : empty
                   ? `服务端没有返回该项目的记录（账号 ${mineMeta.account}）。可能项目选错，或该项目下确实没有你的「${scopeLabel}」。`
                   : mineMeta.filtered
                     ? `服务端未按账号过滤，已本地保留 ${mineMeta.account} 的记录`
-                    : '服务端没有返回账号字段，无法本地复核，结果可能含他人数据';
+                    : `禅道未返回创建人账号字段，无法按登录账号「${mineMeta.account}」过滤；当前列表是所选项目的全部缺陷，可能包含他人数据。请确认禅道 REST 版本，或到「项目 Bug」查看全量。`;
               return (
                 <span
                   className={`zt-mine-account${warn || noMatch ? ' is-warn' : ''}`}
@@ -1035,7 +1036,7 @@ export function ZentaoPage() {
                   <button
                     className="btn btn-secondary btn-sm zt-tab-refresh"
                     onClick={refreshScope}
-                    disabled={busy === 'pb' || !scopeProjectId}
+                    disabled={busy === 'pb' || !scopeProjectIds.length}
                     title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
                   >
                     <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
@@ -1165,7 +1166,7 @@ export function ZentaoPage() {
             onError={setError}
             sharedBugs={pBugs}
             sharedModules={useZentaoStore.getState().sumModules}
-            scopeProjectId={scopeProjectId}
+            scopeProjectIds={scopeProjectIds}
             onRefresh={refreshScope}
           />
         )}

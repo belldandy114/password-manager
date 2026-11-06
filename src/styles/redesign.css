@@ -242,19 +242,26 @@ body {
   box-shadow: none;
 }
 
-/* ---------------- 9. 按钮 ---------------- */
+/* ---------------- 9. 按钮 ----------------
+   旧样式是 14px / 600 / var(--font)（Fira Sans），比页面正文粗一号，
+   页头按钮因此和整页格格不入。统一到 --fs-sm / 500 / --font-sans。 */
 .btn {
   height: var(--d-control-h);
   padding: 0 14px;
   border-radius: var(--r-sm);
-  font-size: var(--d-fs);
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
   transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
     color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
 }
 
-.btn-sm { height: calc(var(--d-control-h) - 6px); padding: 0 10px; font-size: var(--fs-sm); }
-.btn-lg { height: calc(var(--d-control-h) + 8px); padding: 0 20px; font-size: var(--fs-lg); }
+.btn-sm { height: calc(var(--d-control-h) - 6px); padding: 0 10px; font-size: var(--fs-sm); font-weight: 500; }
+.btn-lg { height: calc(var(--d-control-h) + 8px); padding: 0 20px; font-size: var(--fs-md); font-weight: 500; }
+/* 按钮里的图标跟着文字走，别比字大一圈 */
+.btn svg { width: 13px; height: 13px; flex: none; }
 
 .btn-primary {
   background: color-mix(in srgb, var(--accent) 74%, #0a1012);
@@ -893,3 +900,118 @@ select {
 .person-picker-tag { font-size: 10.5px; color: var(--text-3); }
 .person-picker-none { padding: 16px; text-align: center; font-size: 12px; color: var(--text-3); }
 .person-picker-foot { padding: 6px 10px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--text-3); }
+
+/* ---------------- 22. 当前项目：可搜索多选下拉 ---------------- */
+/* 复用人员下拉骨架（.person-picker-*），只补项目专属部分 */
+.zt-global-scope .project-picker { width: 280px; min-width: 220px; flex: none; }
+.project-picker-actions {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; border-bottom: 1px solid var(--line);
+  font-size: 11px; color: var(--text-3); flex: none;
+}
+.project-picker-actions button {
+  padding: 2px 4px; border: 0; background: transparent;
+  color: var(--accent); font-size: 11.5px; cursor: pointer;
+}
+.project-picker-actions button:hover { text-decoration: underline; }
+.project-picker-actions span { margin-left: auto; }
+.project-picker-id {
+  font-family: var(--font-code); font-size: 10.5px;
+  color: var(--text-3); min-width: 30px; flex: none;
+}
+/* 还没选项目时的引导条 */
+.zt-scope-hint {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 13px; margin-top: 2px;
+  border: 1px dashed var(--accent-line); border-radius: var(--r-md);
+  background: var(--accent-soft); color: var(--text-2);
+  font-size: 12.5px;
+}
+.zt-scope-hint svg { color: var(--accent); flex: none; }
+
+/* ---------------- 23. 多选触发框恒定尺寸（勾得再多也不长高） ----------------
+   旧规则 .person-picker-chips { flex-wrap: wrap } + trigger 只有 min-height，
+   长项目名一个 chip 就占满一行，选 10 个会堆成 10 行并把整个标签行撑变形。
+   这里统一改为：固定 32px 单行 + 最多 2 个截断 chip + "+N" 折叠计数。 */
+.person-picker-trigger {
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.person-picker-placeholder {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.person-picker-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+.person-picker-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 116px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 只选 1 项时名称占满整行，别被 116px 无谓截断 */
+.person-picker-chip.is-single { max-width: none; flex: 1 1 auto; }
+/* 只选 1 项时名称占满整行，别被 116px 无谓截断 */
+.person-picker-chip.is-single { max-width: none; flex: 1 1 auto; }
+.person-picker-more {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.person-picker-caret { flex: none; }
+
+/* 标签行：作用域控件固定尺寸，不再被 chips 挤动 */
+.zt-global-scope { flex: none; align-self: center; }
+.tabs .zt-global-scope { margin-left: auto; }
+.zt-global-scope .project-picker { width: 280px; min-width: 220px; max-width: 280px; flex: none; }
+
+/* 标签文字与正文用同一套字体，消除最后一点旧版 Fira Sans 残留 */
+.tab2 { font-family: var(--font-sans); font-size: var(--fs-sm); font-weight: 500; }
+
+/* ---------------- 24. 强调色预设：按主题分深浅两套 ----------------
+   theme.ts 只写 html[data-accent]，不再用 inline style 覆盖 --accent。
+   浅色值经对比度求解：文字/白底、文字/页面底、白字/按钮底均 >= 4.5:1。
+   注意规则顺序：先深色 :root[...]，再浅色 [data-theme='light'][...]
+   （两者特异性相同，靠顺序让浅色生效）。 */
+:root[data-accent='teal']   { --accent: #4f9d99; --accent-hover: #5cb0ab; --accent-soft: rgba(79,157,153,.14);  --accent-line: rgba(79,157,153,.34); }
+:root[data-accent='indigo'] { --accent: #6366f1; --accent-hover: #5558e6; --accent-soft: rgba(99,102,241,.12);  --accent-line: rgba(99,102,241,.34); }
+:root[data-accent='blue']   { --accent: #3b82f6; --accent-hover: #2f74e0; --accent-soft: rgba(59,130,246,.12);  --accent-line: rgba(59,130,246,.34); }
+:root[data-accent='green']  { --accent: #10b981; --accent-hover: #0ea472; --accent-soft: rgba(16,185,129,.12);  --accent-line: rgba(16,185,129,.34); }
+:root[data-accent='amber']  { --accent: #f59e0b; --accent-hover: #dd8b09; --accent-soft: rgba(245,158,11,.12);  --accent-line: rgba(245,158,11,.34); }
+:root[data-accent='rose']   { --accent: #f43f5e; --accent-hover: #e11d48; --accent-soft: rgba(244,63,94,.12);   --accent-line: rgba(244,63,94,.34); }
+
+[data-theme='light'][data-accent='teal']   { --accent: #2f7a77; --accent-hover: #276663; --accent-soft: rgba(47,122,119,.09); --accent-line: rgba(47,122,119,.28); }
+[data-theme='light'][data-accent='indigo'] { --accent: #5f62e7; --accent-hover: #575ad5; --accent-soft: rgba(95,98,231,.10); --accent-line: rgba(95,98,231,.28); }
+[data-theme='light'][data-accent='blue']   { --accent: #326ed1; --accent-hover: #2e66c0; --accent-soft: rgba(50,110,209,.10); --accent-line: rgba(50,110,209,.28); }
+[data-theme='light'][data-accent='green']  { --accent: #0b825a; --accent-hover: #0a7753; --accent-soft: rgba(11,130,90,.10);  --accent-line: rgba(11,130,90,.28); }
+[data-theme='light'][data-accent='amber']  { --accent: #9d6507; --accent-hover: #905d06; --accent-soft: rgba(157,101,7,.10);  --accent-line: rgba(157,101,7,.28); }
+[data-theme='light'][data-accent='rose']   { --accent: #d23651; --accent-hover: #c1324a; --accent-soft: rgba(210,54,81,.10);  --accent-line: rgba(210,54,81,.28); }
+
+/* 按钮统一继承字体：自定义 button（tag-sidebar-toggle / zt-cfg-chip / accent-dot 等）
+   不写 font-family 会回退到浏览器默认 Arial，与全站 Segoe UI 不一致。 */
+button { font-family: inherit; }
+
+/* ---------------- 25. P2 清理 ---------------- */
+/* sticky 侧栏原本背景透明，长内容滚动时有穿透风险 */
+.tb-rail, .set-rail { background: var(--surface-2); }

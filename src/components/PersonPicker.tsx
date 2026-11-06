@@ -84,6 +84,10 @@ export function PersonPicker({
     onChange(value.includes(name) ? value.filter(n => n !== name) : [...value, name]);
   };
 
+  // 与项目选择器一致：触发框恒定单行，最多露出 2 个名字，其余折叠成 "+N"
+  const visible = value.slice(0, 2);
+  const rest = value.length - visible.length;
+
   return (
     <div className="person-picker" ref={rootRef}>
       <button
@@ -93,13 +97,18 @@ export function PersonPicker({
         onClick={() => setOpen(o => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="点击展开，可按姓名搜索并多选"
+        title={value.length
+          ? `已选 ${value.length} 人：\n${value.join('\n')}\n\n点击展开可搜索、多选或清空`
+          : '点击展开，可按姓名搜索并多选'}
       >
         {value.length === 0 ? (
           <span className="person-picker-placeholder">{placeholder || '请选择人员'}</span>
         ) : (
           <span className="person-picker-chips">
-            {value.map(n => <span key={n} className="person-picker-chip">{n}</span>)}
+            {visible.map(n => (
+              <span key={n} className={`person-picker-chip${visible.length === 1 ? ' is-single' : ''}`} title={n}>{n}</span>
+            ))}
+            {rest > 0 && <span className="person-picker-more">+{rest}</span>}
           </span>
         )}
         <span className="person-picker-caret">▾</span>

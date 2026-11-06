@@ -3,6 +3,16 @@ import type { PasswordEntry } from '../types';
 import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { TotpBadge } from './EntryExtras';
+/** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
+const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+/** 容器内还有按钮时，只在焦点落在容器本身才响应，避免按内部按钮误触发 */
+const onKeyClickStrict = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+
 
 interface Props {
   entry: PasswordEntry;
@@ -36,7 +46,13 @@ export function EntryCard({ entry, onEdit, onCopy, security, onToggleFavorite }:
   }, [showPassword, settings.passwordAutoHideDelay]);
 
   return (
-    <div className={`entry-card ${selected ? 'selected' : ''}`} onClick={() => toggleSelected(entry.id)}>
+    <div
+      className={`entry-card ${selected ? 'selected' : ''}`}
+      onClick={() => toggleSelected(entry.id)}
+      tabIndex={0}
+      aria-selected={selected}
+      onKeyDown={onKeyClickStrict}
+    >
       {/* Row 1: Title + Env badge */}
       <div className="card-header">
         {onToggleFavorite && (

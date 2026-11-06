@@ -52,7 +52,7 @@ const nowStamp = (d: Date = new Date()) =>
  * 领导随时点开都是同一个区间；只有「较上次统计」的基准取历史快照。
  */
 export function ZentaoSummary({
-  projects, getCfg, ready, onError, sharedBugs, sharedModules, scopeProjectId, onRefresh,
+  projects, getCfg, ready, onError, sharedBugs, sharedModules, scopeProjectIds, onRefresh,
 }: {
   projects: ZentaoProject[];
   getCfg: () => ZentaoConfig;
@@ -61,11 +61,12 @@ export function ZentaoSummary({
   /** 页面已按「当前项目」拉好的全量 Bug：有它就本地统计，不再请求禅道 */
   sharedBugs?: ZentaoBug[];
   sharedModules?: Record<string, Record<string, string>>;
-  scopeProjectId?: string;
+  scopeProjectIds?: string[];
   /** 宿主提供的「按当前项目拉取最新」，三个 tab 共用同一个动作 */
   onRefresh?: () => void;
 }) {
-  const useShared = !!scopeProjectId && Array.isArray(sharedBugs);
+  const scopeIds = scopeProjectIds || [];
+  const useShared = scopeIds.length > 0 && Array.isArray(sharedBugs);
   const sumBugs = useZentaoStore(s => s.sumBugs);
   const productIds = useZentaoStore(s => s.sumProductIds);
   const dataIds = useZentaoStore(s => s.sumDataIds);
@@ -211,7 +212,7 @@ export function ZentaoSummary({
     setCopyOpen(false);
     // 共享模式：直接用页面已拉取的同一份项目数据，零网络请求
     // 即使没拿到共享数据，也只查当前项目，绝不退回「全部项目」
-    const ids = scopeProjectId ? [String(scopeProjectId)] : productIds;
+    const ids = scopeIds.length ? scopeIds : productIds;
     const res = useShared
       ? { success: true, data: sharedBugs || [], modules: sharedModules || {}, errors: [], error: '', cached: false, ageMs: 0 }
       : await (async () => { setBusy(true); const r = await window.electronAPI.zentaoSummary(getCfg(), ids, force); setBusy(false); return r; })();
@@ -467,7 +468,7 @@ export function ZentaoSummary({
         <div className="zt-sumbar-main">
           <div className="zt-sumbar-projects">
             <span className="zt-sumbar-label">项目</span>
-            {scopeProjectId ? (
+            {scopeIds.length ? (
               <>
                 {selectedProjects.map(p => (
                   <span key={p.id} className="zt-sum-chip">
@@ -519,7 +520,7 @@ export function ZentaoSummary({
             <button
               className="btn btn-secondary btn-sm"
               onClick={() => onRefresh ? onRefresh() : pull(true)}
-              disabled={busy || !scopeProjectId}
+              disabled={busy || !scopeIds.length}
               title="忽略 10 分钟缓存，按当前项目重新拉取最新缺陷，三个标签同步更新"
             >
               <Icons.refresh size={12} /> {busy ? '拉取中…' : '重新拉取'}
@@ -619,7 +620,7 @@ export function ZentaoSummary({
               : '支持多选项目，一次看清每个项目还剩多少未修复、压在谁身上、今天新增了多少'}
             action={
               <button className="btn btn-primary btn-sm" onClick={() => onRefresh ? onRefresh() : (productIds.length ? pull(false) : openPicker())} disabled={busy}>
-                {scopeProjectId || productIds.length ? '重新拉取' : '选择项目'}
+                {scopeIds.length || productIds.length ? '重新拉取' : '选择项目'}
               </button>
             }
           />

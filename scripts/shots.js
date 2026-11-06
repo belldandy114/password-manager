@@ -17,7 +17,7 @@ const PORT = 9666;
 const PASSWORD = 'Shots#2026';
 
 const PAGES = [
-  ['网址管理', 'passwordManager'],
+  ['网址管理', 'passwordManager'], ['测试账号', 'accounts'],
   ['周报', 'weekly'],
   ['测试笔记', 'notes'],
   ['缺陷管理', 'zentao'],

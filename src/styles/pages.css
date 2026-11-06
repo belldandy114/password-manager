@@ -4595,7 +4595,7 @@
   gap: 6px;
   margin: -8px -8px 6px;
   padding: 8px;
-  background: var(--bg-panel);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--pm-line);
 }
 
@@ -4655,7 +4655,7 @@
   color: var(--text-muted);
   position: sticky;
   top: 34px;
-  background: var(--bg-panel);
+  background: var(--surface-2);
   z-index: 1;
 }
 
@@ -4694,7 +4694,7 @@
   padding: 0 10px;
   border: 1px solid var(--pm-line);
   border-radius: 8px;
-  background: var(--bg-panel);
+  background: var(--surface-2);
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
@@ -4819,7 +4819,7 @@
   padding: 2px 7px;
   border: 1px solid var(--pm-line);
   border-radius: 6px;
-  background: var(--bg-panel);
+  background: var(--surface-2);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -5488,7 +5488,7 @@
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.7;
-  color: #5a6478;
+  color: #8b959c;
   background: #171b22;
   user-select: none;
   overflow: hidden;
@@ -5512,7 +5512,7 @@
   caret-color: var(--accent);
 }
 
-.codelab-code::placeholder { color: #5a6478; }
+.codelab-code::placeholder { color: #8b959c; }
 
 /* 输出区：固定高度 + 内部滚动，深色终端风 */
 .codelab-out {
@@ -5528,7 +5528,7 @@
 }
 
 .codelab-out-empty {
-  color: #5a6478;
+  color: #8b959c;
   font-family: inherit;
   font-size: 12px;
   padding: 6px 0;
@@ -5537,7 +5537,7 @@
 .codelab-line { white-space: pre-wrap; word-break: break-all; }
 .codelab-line.is-stdout { color: #c9d1d9; }
 .codelab-line.is-stderr { color: #ff7b72; }
-.codelab-line.is-system { color: #6e7681; font-style: italic; }
+.codelab-line.is-system { color: #8b959c; font-style: italic; }
 .codelab-line.is-error { color: #ffa198; font-weight: 500; }
 
 /* 窄屏/矮屏：两块都缩一点，仍然不出现「按钮被顶走」 */
@@ -5577,7 +5577,7 @@
   min-height: 140px;
   width: 100%;
   border: 0;
-  background: #fff;
+  background: var(--surface-2);
 }
 
 /* ================================================================
@@ -6070,6 +6070,7 @@
 
 /* 二维码 / 图片 */
 .qr-box { display: flex; align-items: center; justify-content: center; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; background: #fff; }
+[data-theme='dark'] .qr-box { background: #e8ebed; }
 .qr-img { width: 220px; height: 220px; image-rendering: pixelated; }
 .media-img { max-width: 100%; max-height: 320px; border-radius: 6px; }
 

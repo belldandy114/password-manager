@@ -12,12 +12,16 @@ export const ACCENTS: Record<AccentColor, { label: string; value: string; hover:
   rose: { label: '玫红', value: '#f43f5e', hover: '#e11d48', light: 'rgba(244, 63, 94, 0.1)' },
 };
 
+/**
+ * 强调色只写 data-accent 属性，具体色值交给 CSS 按主题解析。
+ *
+ * 旧实现用 inline style 直接写 --accent / --accent-hover / --accent-light，
+ * 会盖掉 tokens.css 的浅色主题令牌，导致浅色下强调色仍是深色值（约 3:1，
+ * 不达 AA），而且切换主题时不会重算。改为属性后主题切换由 CSS 自动生效。
+ */
 export function applyAccent(accent: AccentColor | undefined) {
-  const preset = ACCENTS[accent || 'teal'] || ACCENTS.teal;
-  const root = document.documentElement;
-  root.style.setProperty('--accent', preset.value);
-  root.style.setProperty('--accent-hover', preset.hover);
-  root.style.setProperty('--accent-light', preset.light);
+  const key = accent && ACCENTS[accent] ? accent : 'teal';
+  document.documentElement.setAttribute('data-accent', key);
 }
 
 export function systemPrefersDark(): boolean {

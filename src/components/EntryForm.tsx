@@ -3,6 +3,16 @@ import type { PasswordEntry, PasswordGenOptions } from '../types';
 import { Modal } from './Modal';
 import { EntryExtras } from './EntryExtras';
 import { passwordStrength } from '../utils/security';
+/** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
+const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+/** 容器内还有按钮时，只在焦点落在容器本身才响应，避免按内部按钮误触发 */
+const onKeyClickStrict = (e: React.KeyboardEvent<HTMLElement>) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+};
+
 
 interface Props {
   open: boolean;
@@ -244,7 +254,14 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
             {form.tags.map(t => (
               <span key={t} className="tag">
                 {t}
-                <span className="remove-tag" onClick={() => removeTag(t)}>&times;</span>
+                <span
+                  className="remove-tag"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`移除标签 ${t}`}
+                  onClick={() => removeTag(t)}
+                  onKeyDown={onKeyClick}
+                >&times;</span>
               </span>
             ))}
             <input
