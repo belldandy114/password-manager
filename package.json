@@ -96,7 +96,7 @@
     "concurrently": "^9.2.1",
     "electron": "^37.10.3",
     "electron-builder": "^26.8.1",
-    "jsdom": "^31.0.0",
+    "jsdom": "^26.1.0",
     "png-to-ico": "^3.0.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.14",
