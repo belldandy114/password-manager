@@ -9,13 +9,14 @@ import { useZentaoStore } from '../store/zentaoStore';
  * 会把「配置已加载」误判成「换了配置」，进而清空已拉取的 Bug（1.12.x 修）。
  */
 let projectsOwnerModule = '';
-import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, type PillTone } from '../components/ui';
+import { Page, PageHead, Panel, Empty, Field, Icons, Pill, SearchBox, BusyProgress, type PillTone } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { BugDrawer } from '../components/BugDrawer';
 import { bugsToText, bugsToCsv } from '../utils/bugText';
 import { Pager } from '../components/Pager';
 import { BugTrend } from '../components/BugTrend';
 import { ZentaoSummary } from '../components/ZentaoSummary';
+import { ProjectCombo } from '../components/ProjectCombo';
 import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
 import { formatHm } from '../utils/time';
@@ -129,6 +130,10 @@ export function ZentaoPage() {
   const setProjectBugs = useZentaoStore(s => s.setProjectBugs);
   const setPFilter = useZentaoStore(s => s.setPFilter);
 
+  const scopeProjectId = useZentaoStore(s => s.scopeProjectId);
+  const setScopeProject = useZentaoStore(s => s.setScopeProject);
+  const setScopeData = useZentaoStore(s => s.setScopeData);
+
   const [tab, setTab] = useState<TabId>('mine');
   const [form, setForm] = useState<{ company?: string; baseUrl: string; account: string; password: string }>({ company: '', baseUrl: '', account: '', password: '' });
   const [busy, setBusy] = useState('');
@@ -153,19 +158,7 @@ export function ZentaoPage() {
   // 不清会报「所选项目不在项目列表里（选了 22）」——那是旧地址的项目 id。
   const cfgIdentity = `${(cfg && cfg.baseUrl) || ''}|${(cfg && cfg.account) || ''}`;
 
-  // 挂载兜底：store 里没数据但本地有上次结果 → 直接回填，避免「切页回来一片空白」
-  useEffect(() => {
-    if (!cfgIdentity || cfgIdentity === '|') return;
-    if (useZentaoStore.getState().bugs.length > 0) return;
-    try {
-      const raw = localStorage.getItem(`pm.zt.cache.${cfgIdentity}`);
-      if (!raw) return;
-      const cached = JSON.parse(raw);
-      if (Array.isArray(cached?.bugs) && cached.bugs.length) {
-        useZentaoStore.getState().setBugs(cached.bugs, cached.total || cached.bugs.length);
-      }
-    } catch { /* 忽略损坏缓存 */ }
-  }, [cfgIdentity]);
+  // 数据持久化统一由 zentaoStore（IndexedDB）负责，不再往 localStorage 写大对象
   // 记住「当前项目列表属于哪套配置」：只有身份真的变了才清，
   // 否则登录成功后 baseUrl 落库导致的身份变化会把刚拉到的项目又清空。
 
@@ -231,7 +224,8 @@ export function ZentaoPage() {
     if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
     if (cmdSignal.kind !== 'zentao:refresh-mine') return;
     lastCmdAt = cmdSignal.at;
-    loadMine();
+    if (scopeProjectId) void loadScopeData(scopeProjectId, true);
+    else void loadMine();
   }, [cmdSignal]);
 
   // 筛选条件变了就回到第一页
@@ -278,12 +272,13 @@ export function ZentaoPage() {
     }
   };
 
-  /** 切换「指派给我 / 我提交的 / 待我验证」：换视图同时重新拉一次 */
+  /** 切换「指派给我 / 我提交的 / 待我验证」：直接在同一份项目数据上本地过滤，不再请求禅道 */
   const switchScope = (v: MyBugScope) => {
     if (v === mineScope) return;
     setMineScope(v);
     setFilter({ project: '', status: '', severity: '', query: '' });
-    void loadMine(v);
+    if (pBugs.length) deriveMine(pBugs, v);
+    else void loadMine(v);
   };
 
   const SCOPE_LABEL: Record<MyBugScope, string> = {
@@ -337,6 +332,11 @@ export function ZentaoPage() {
   const loadMine = async (scope: MyBugScope = mineScope, idsOverride?: string[], allOverride?: boolean) => {
     setError('');
     if (!ready()) return;
+    // 已有当前项目的全量数据时，三个视图都从它本地派生，避免重复拉取
+    if (scopeProjectId && pBugs.length && !mineAllProjects && !idsOverride && allOverride === undefined) {
+      deriveMine(pBugs, scope);
+      return;
+    }
     setBusy('mine');
     // 「全部项目」以前只改了标签，实际还是查选中的项目 —— 这里真的用全部 id
     const useAll = allOverride === undefined ? mineAllProjects : allOverride;
@@ -374,9 +374,6 @@ export function ZentaoPage() {
         withAccount: Number(res.withAccount) || 0,
       });
       setBugs(res.data, res.total || res.data.length);
-      try {
-        localStorage.setItem(`pm.zt.cache.${cfgIdentity}`, JSON.stringify({ at: Date.now(), bugs: res.data, total: res.total || res.data.length }));
-      } catch { /* 缓存失败不影响主流程 */ }
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
     } else {
       setError(res.error || '拉取失败');
@@ -404,8 +401,8 @@ export function ZentaoPage() {
       if (stillValid.length !== mineProductIds.length) {
         setMineProductIds(stillValid.length ? stillValid : (sorted[0] ? [String(sorted[0].id)] : []));
       }
-      const first = sorted.find(p => p.id === activeProject) || sorted[0];
-      if (first) await loadProjectBugs(first.id);
+      const first = sorted.find(p => String(p.id) === String(scopeProjectId)) || sorted[0];
+      if (first) await changeScopeProject(String(first.id));
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
       // 「先点刷新、配置才第一次落库」时，configIdentity 会从空值变成真实地址，
       // 上面那个 effect 会误判成「换了配置」而把刚拉到的项目列表清空。
@@ -414,6 +411,74 @@ export function ZentaoPage() {
     } else {
       setError(res.error || '拉取项目列表失败');
     }
+  };
+
+  /** 从当前项目的全量 Bug 里本地派生「我的 Bug」三个视图，零网络请求 */
+  const deriveMine = (all: ZentaoBug[], scope: MyBugScope = mineScope) => {
+    const acct = form.account.trim().toLowerCase();
+    const withAccount = all.filter(b => b.assignedToAccount || b.openedByAccount).length;
+    // 服务端没给账号字段时不过滤，避免把数据误杀成 0 条（与主进程 filterMineBugs 同策略）
+    const rows = withAccount === 0 ? all : all.filter(b => {
+      const who = String((scope === 'opened' ? b.openedByAccount : b.assignedToAccount) || '').toLowerCase();
+      if (who !== acct) return false;
+      const st = String(b.status || '').toLowerCase();
+      if (scope === 'verify') return st === 'resolved';
+      if (scope === 'assigned') return st !== 'closed';
+      return true;
+    });
+    setBugs(rows, rows.length);
+    setMineMeta({
+      account: form.account.trim(), filtered: withAccount > 0,
+      dropped: all.length - rows.length, scanned: all.length, withAccount,
+    });
+  };
+
+  /** 一次拉取当前项目的全量 Bug，三个 tab 共享这一份数据 */
+  const loadScopeData = async (productId: string, force = false) => {
+    if (!productId || productId === ALL_PROJECT || !ready()) return;
+    setError('');
+    setBusy('pb');
+    setCacheInfo('');
+    const res = await window.electronAPI.zentaoProjectBugs(currentCfg(), productId, force);
+    setBusy('');
+    if (res.success && res.data) {
+      // 模块名已由主进程写进每条 Bug 的 moduleName，这里反推一份给汇总用
+      const moduleMap: Record<string, string> = {};
+      for (const b of res.data) {
+        if (b.module && b.moduleName) moduleMap[String(b.module)] = String(b.moduleName);
+      }
+      setScopeData(res.data, { [String(productId)]: moduleMap }, productId);
+      deriveMine(res.data);
+      if (res.cached) {
+        const min = Math.max(1, Math.round((res.ageMs || 0) / 60000));
+        setCacheInfo(`缓存 · ${min} 分钟前`);
+      } else if (res.fetchedAt) {
+        setCacheInfo(`刚更新 · ${formatHm(res.fetchedAt)}`);
+      }
+      await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
+    } else {
+      setError(res.error || '拉取项目 Bug 失败');
+    }
+  };
+
+  /** 三个 tab 共用的「按当前项目重新拉取最新」入口 */
+  const refreshScope = () => {
+    const id = String(scopeProjectId || activeProject || '');
+    if (!id || id === ALL_PROJECT) { void loadProjects(); return; }
+    void loadScopeData(id, true);
+  };
+
+  /** 全局只在这里换项目：同步三个视图的选择，再拉一次数据 */
+  const changeScopeProject = async (id: string) => {
+    if (!id) return;
+    if (id === ALL_PROJECT) {
+      setScopeProject('');
+      setActiveProject(ALL_PROJECT);
+      await loadProjectBugs(ALL_PROJECT);
+      return;
+    }
+    if (id !== scopeProjectId) setScopeProject(id);
+    await loadScopeData(id, false);
   };
 
   const loadProjectBugs = async (productId: string, force = false) => {
@@ -634,10 +699,16 @@ export function ZentaoPage() {
   return (
     <div className="content-area">
       <Page>
+        <BusyProgress active={!!busy} label={
+          busy === 'projects' ? '正在读取禅道项目列表…'
+            : busy === 'pb' ? '正在拉取当前项目全部缺陷…'
+              : busy === 'mine' ? '正在筛选我的 Bug…'
+                : busy === 'login' ? '正在登录禅道…' : '正在处理…'
+        } />
         <PageHead
           icon={<Icons.bug size={16} />}
           title="缺陷管理"
-          desc="连接公司禅道：我的 Bug 按项目统计；「项目 Bug」看整个项目的全部缺陷；「汇总」多选项目统计修复率与模块剩余"
+          desc="选一次项目即可：三个标签共用同一份缺陷数据，切换视图不再重复拉取；汇总按当前项目统计修复率与模块剩余"
           tools={
             <>
               <button className="btn btn-secondary btn-sm" onClick={login} disabled={busy === 'login'}>
@@ -741,9 +812,21 @@ export function ZentaoPage() {
           <button className={`tab2${tab === 'summary' ? ' is-active' : ''}`} onClick={() => setTab('summary')}>
             <Icons.chart size={13} /><span>汇总</span>
           </button>
+          <div className="zt-global-scope">
+            <span className="zt-global-scope-label">当前项目</span>
+            <ProjectCombo
+              projects={projects}
+              value={scopeProjectId || activeProject}
+              onChange={id => void changeScopeProject(id)}
+              allValue={ALL_PROJECT}
+              allLabel="全部项目（总览）"
+              disabled={busy === 'pb'}
+            />
+          </div>
         </div>
 
         {tab === 'mine' && (
+          <div className="zt-scope-row">
           <div className="zt-scope" role="tablist" aria-label="我的 Bug 视图">
             {([
               { v: 'assigned' as MyBugScope, label: '指派给我', hint: '别人指派给我、还没关闭的 Bug' },
@@ -762,35 +845,22 @@ export function ZentaoPage() {
               </button>
             ))}
           </div>
+            <button
+              className="btn btn-secondary btn-sm zt-tab-refresh"
+              onClick={refreshScope}
+              disabled={busy === 'pb' || !scopeProjectId}
+              title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
+            >
+              <Icons.refresh size={12} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
+            </button>
+          </div>
         )}
 
         {tab === 'mine' && (
           <div className="zt-mine-proj">
             <span className="zt-mine-proj-label">项目</span>
-            <button
-              className="zt-mine-proj-btn"
-              onClick={openProjPicker}
-              title="只查询选中的项目（禅道 REST 要求按项目查询，全量遍历会很慢）"
-            >
-              <Icons.folder size={12} />
-              <span className="zt-mine-proj-name">{mineProjectLabel}</span>
-              <span className="zt-mine-proj-caret">▾</span>
-            </button>
-            <button
-              className={`zt-mine-proj-all${mineAllProjects ? ' is-on' : ''}`}
-              onClick={() => {
-                const next = !mineAllProjects;
-                setMineAllProjects(next);
-                // 两个方向都要重拉：以前只有「开」会拉，「关」只改标签不换数据
-                void loadMine(mineScope, undefined, next);
-              }}
-              title={mineAllProjects ? '当前查询全部项目，点一下改回单项目' : '查询全部项目（项目多时会慢一些）'}
-            >
-              {mineAllProjects ? '全部项目' : '全部'}
-            </button>
-            <span className="zt-mine-proj-hint">
-              {mineAllProjects ? `本次查全部 ${projects.length} 个项目` : mineProductIds.length > 1 ? `本次只查 ${mineProductIds.length} 个项目` : '只查所选项目'}
-            </span>
+            <Pill tone="info">{mineProjectLabel}</Pill>
+            <span className="zt-mine-proj-hint">与上方「当前项目」一致，切换项目只需操作一次</span>
             {mineMeta && (() => {
               // 0 条时不报「未按账号复核」：那是「没有数据」，不是「无法复核」
               const empty = bugs.length === 0;
@@ -900,7 +970,8 @@ export function ZentaoPage() {
                   </div>
                 )}
                 {visibleMine.length === 0 ? (
-                  <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部" />
+                  <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部"
+                    hint={<>也可以按 <kbd>Ctrl+K</kbd> 全局搜索，或用上方「刷新」重新拉取</>} />
                 ) : (
                   <>
                     <BugTable
@@ -952,26 +1023,24 @@ export function ZentaoPage() {
               </Panel>
             ) : (
               <>
-                <Panel title="选择项目" meta={`${filteredProjects.length} / ${projects.length} 个`} tools={
-                  <SearchBox value={projQuery} onChange={setProjQuery} placeholder="搜索项目名" />
-                }>
-                  <div className="zt-proj-pick">
-                    <select value={activeProject} onChange={e => loadProjectBugs(e.target.value)}>
-                      <option value={ALL_PROJECT}>全部项目（查看总 Bug 数）</option>
-                      <option value="">请选择项目</option>
-                      {selectProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    <button className="btn btn-secondary btn-sm" onClick={() => activeProject && loadProjectBugs(activeProject, true)} disabled={!activeProject || busy === 'pb'}>
-                      <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
-                    </button>
-                    {projName && <Pill tone="info">{projName}</Pill>}
-                    {pBugs.length > 0 && (
-                      <span className="pg-sub" style={{ margin: 0 }}>
-                        该项目共 <strong>{pTotal || pBugs.length}</strong> 条缺陷{pFetchedAt ? ` · ${formatHm(pFetchedAt)} 拉取` : ''}{cacheInfo ? ` · ${cacheInfo}` : ''}
-                      </span>
-                    )}
-                  </div>
-                </Panel>
+                <div className="zt-proj-status">
+                  <span className="zt-proj-status-label">当前项目</span>
+                  {projName && <Pill tone="info">{projName}</Pill>}
+                  {pBugs.length > 0 && (
+                    <span className="pg-sub" style={{ margin: 0 }}>
+                      共 <strong>{pTotal || pBugs.length}</strong> 条缺陷{pFetchedAt ? ` · ${formatHm(pFetchedAt)} 拉取` : ''}{cacheInfo ? ` · ${cacheInfo}` : ''}
+                    </span>
+                  )}
+                  <span className="pg-sub" style={{ margin: 0 }}>换项目请用上方「当前项目」，可按名称搜索定位</span>
+                  <button
+                    className="btn btn-secondary btn-sm zt-tab-refresh"
+                    onClick={refreshScope}
+                    disabled={busy === 'pb' || !scopeProjectId}
+                    title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
+                  >
+                    <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
+                  </button>
+                </div>
 
                 {pBugs.length > 0 && (
                   <Panel
@@ -1094,6 +1163,10 @@ export function ZentaoPage() {
             getCfg={currentCfg}
             ready={ready}
             onError={setError}
+            sharedBugs={pBugs}
+            sharedModules={useZentaoStore.getState().sumModules}
+            scopeProjectId={scopeProjectId}
+            onRefresh={refreshScope}
           />
         )}
       </Page>

@@ -94,6 +94,30 @@ step('构建子应用 (test-data-generator)', 'node scripts/build-subapp.js');
 // 3. Pack Electron app
 step('打包 Electron 应用', 'npx electron-builder --dir --publish never');
 
+// 3.1 打包产物自检：防「asar 里是旧 CSS」「漏了 dist-tdg / unpacked」这两类历史事故
+console.log(`\n${CYAN}▶ 打包产物自检${RESET}`);
+try {
+  const asar = require('@electron/asar');
+  const asarPath = path.join(ROOT, 'release', 'win-unpacked', 'resources', 'app.asar');
+  if (!fs.existsSync(asarPath)) throw new Error('app.asar 不存在');
+  const entries = asar.listPackage(asarPath).map(p => String(p).replace(/\\/g, '/'));
+  const distCss = fs.readdirSync(path.join(ROOT, 'dist', 'assets')).filter(f => f.endsWith('.css')).sort();
+  const packedCss = entries
+    .filter(p => p.includes('dist/assets/') && p.endsWith('.css'))
+    .map(p => path.basename(p)).sort();
+  if (JSON.stringify(distCss) !== JSON.stringify(packedCss)) {
+    throw new Error(`CSS 不一致：dist=[${distCss}] asar=[${packedCss}]`);
+  }
+  if (!entries.some(p => p.includes('dist-tdg/'))) throw new Error('asar 缺少 dist-tdg');
+  const unp = path.join(ROOT, 'release', 'win-unpacked', 'resources', 'app.asar.unpacked', 'dist-tdg', 'index.html');
+  if (!fs.existsSync(unp)) throw new Error('app.asar.unpacked/dist-tdg 缺失（测试数据页会报 ERR_FILE_NOT_FOUND）');
+  console.log(`${GREEN}✓ CSS hash / 子应用 / unpacked 项齐全${RESET}`);
+} catch (e) {
+  console.error(`${RED}✗ 打包产物自检失败: ${e.message}${RESET}`);
+  patchElectronDist('remove');
+  process.exit(1);
+}
+
 // 3. Icon: electron-builder already embeds buildResources/icon.ico via rcedit during
 //    the `--dir` step, so no post-processing is needed. The old fix-icon.js step is
 //    kept for reference but disabled: it targeted `password-manager-temp.exe`, a file

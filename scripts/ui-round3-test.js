@@ -136,7 +136,7 @@ const check = (name, ok, detail) => {
     }
     check('禅道：项目列表加载', opts > 1, `${opts - 2} 个项目`);
 
-    // 先选「示例系统-管理后台V2.0」(58)，验证是全量（禅道网页显示 680+）
+    // 先选一个样本产品，验证是全量（与禅道网页显示的总数对照）
     const picked = await evaluate(`(() => {
       const s = document.querySelector('.zt-proj-pick select');
       const opt = Array.from(s.options).find(o => /管理后台V2\.0\.0/.test(o.textContent));

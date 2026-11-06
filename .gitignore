@@ -31,3 +31,7 @@ _shots*/
 
 /main.js
 
+# 视觉回归调试脚本（本机临时产物，含模拟数据与测试口令，不进公开仓库）
+scripts/shot-*.js
+# 解包自检目录
+.asar-check/

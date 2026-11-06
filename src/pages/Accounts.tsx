@@ -145,6 +145,7 @@ export function Accounts() {
               icon={<Icons.key size={22} />}
               title={search ? '没有匹配的账号' : '还没有测试账号'}
               desc={search ? '换个关键词试试' : '把各系统的常用测试账号存进来，按角色区分，取用时不用再去问同事'}
+              hint={<>存好后按 <kbd>Ctrl+K</kbd> 可直接搜账号名</>}
               action={search ? undefined : (
                 <button className="btn btn-primary btn-sm" onClick={() => setEditing(empty())}>
                   <Icons.plus size={13} /> 新增账号
@@ -239,7 +240,7 @@ export function Accounts() {
             value={bulkText}
             onChange={e => setBulkText(e.target.value)}
             spellCheck={false}
-            placeholder={'示例系统A | 管理员 | admin | 123456\n示例系统 | 教师 | t001 | Test@123 | 只读账号'}
+            placeholder={'示例系统A | 管理员 | demo_admin | 示例密码\n示例系统B | 教师 | demo_t01 | 示例密码 | 只读账号'}
             autoFocus
           />
           <div className="input-hint">也支持从 Excel 复制（Tab 分隔）；<code>#</code> 开头的行当注释跳过。</div>
@@ -268,7 +269,7 @@ export function Accounts() {
             <div className="form-group">
               <label>系统 *</label>
               <input value={editing.system} onChange={e => setEditing({ ...editing, system: e.target.value })}
-                placeholder="例如：示例系统A" autoFocus />
+                placeholder="例如：示例系统 A" autoFocus />
               {/* 不要用 <datalist>（会导致 Chromium 原生崩溃），用下拉 + 可点标签 */}
               {systemOptions.length > 0 && (
                 <select

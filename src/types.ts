@@ -52,7 +52,10 @@ export type KeybindingId = 'newEntry' | 'search' | 'settings' | 'lock' | 'trash'
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 
-export type AccentColor = 'indigo' | 'blue' | 'green' | 'orange' | 'rose';
+export type AccentColor = 'teal' | 'indigo' | 'blue' | 'green' | 'orange' | 'rose';
+
+/** 界面密度三档 */
+export type Density = 'compact' | 'standard' | 'cozy';
 
 export interface AppSettings {
   clipboardClearDelay: number;
@@ -63,6 +66,8 @@ export interface AppSettings {
   theme: ThemeMode;
   /** 主题强调色 */
   accent: AccentColor;
+  /** 界面密度（紧凑/标准/宽松） */
+  density: Density;
   /** 点最小化时隐藏到系统托盘 */
   minimizeToTray: boolean;
   /** 点关闭按钮时隐藏到托盘（不退出程序） */
@@ -152,6 +157,9 @@ export interface ZentaoBug {
   type?: string;
   assignedTo?: string;
   openedBy?: string;
+  /** 禅道登录账号（非显示名）：用于在同一份项目数据里本地派生「我的 Bug」 */
+  assignedToAccount?: string;
+  openedByAccount?: string;
   product?: string;
   productName?: string;
   date?: string;

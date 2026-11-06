@@ -2,6 +2,24 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { ZentaoBug, ZentaoProject, MyBugScope } from '../types';
 import type { SummaryFormat } from '../utils/bugSummary';
+import { zentaoStorage } from './idbStorage';
+
+/* ---- 汇总偏好：小型配置走 localStorage（同步、跨重启可靠） ----
+   大数组在 IndexedDB，但 Electron file:// 下 IndexedDB 有可能不可用而降级，
+   那时「测试人员 / 排除人员 / 安全工程师」会被 sessionStorage 一起丢掉。
+   这些偏好单独同步写一份，启动时优先恢复。 */
+const ZT_PREFS_KEY = 'pm.zt.prefs';
+type ZtPrefs = {
+  exclude?: string[]; testers?: string[]; security?: string[];
+  since?: number; dayCutoff?: string; format?: SummaryFormat | 'daily';
+};
+function readZtPrefs(): ZtPrefs {
+  try { return JSON.parse(localStorage.getItem(ZT_PREFS_KEY) || '{}') || {}; } catch { return {}; }
+}
+function writeZtPrefs(patch: ZtPrefs) {
+  try { localStorage.setItem(ZT_PREFS_KEY, JSON.stringify({ ...readZtPrefs(), ...patch })); } catch { /* ignore */ }
+}
+const savedPrefs = readZtPrefs();
 
 /** 上一次汇总的关键数字（同项目组合下用来算环比） */
 export interface SumSnapshot {
@@ -19,6 +37,12 @@ export interface SumSnapshot {
  * 侧边栏切走页面会卸载组件，useState 会丢 —— 表现为「拉取完切个页面内容就没了」。
  */
 interface ZentaoState {
+  /* ---- 全局项目作用域：登录后只选一次，三个 tab 共享同一份数据 ---- */
+  /** 当前项目（产品 id）。三个视图都只按它统计，不再各自选项目 */
+  scopeProjectId: string;
+  /** 这份数据属于哪个项目、哪次拉取（用于判断缓存是否还有效） */
+  scopeFetchedAt: string;
+
   /* ---- 我的 Bug ---- */
   bugs: ZentaoBug[];
   total: number;
@@ -71,6 +95,10 @@ interface ZentaoState {
   sumFetchedAt: string;
 
   setBugs: (bugs: ZentaoBug[], total: number) => void;
+  /** 切换当前项目：一次性同步三个视图的选择，并清掉上一项目的数据 */
+  setScopeProject: (id: string) => void;
+  /** 一次拉取写入三份视图数据，避免每个 tab 各拉一次 */
+  setScopeData: (bugs: ZentaoBug[], modules: Record<string, Record<string, string>>, productId: string) => void;
   setMineScope: (scope: MyBugScope) => void;
   setMineProductIds: (ids: string[]) => void;
   setMineAllProjects: (all: boolean) => void;
@@ -97,6 +125,9 @@ interface ZentaoState {
 export const useZentaoStore = create<ZentaoState>()(
   persist(
     (set) => ({
+  scopeProjectId: '',
+  scopeFetchedAt: '',
+
   bugs: [],
   total: 0,
   fetchedAt: '',
@@ -122,20 +153,43 @@ export const useZentaoStore = create<ZentaoState>()(
   sumModules: {},
   sumProductIds: [],
   sumDataIds: [],
-  sumExclude: [],
-  sumTesters: [],
-  sumSecurity: [],
-  sumSince: 0,
-  sumDayCutoff: '17:30',
+  sumExclude: savedPrefs.exclude || [],
+  sumTesters: savedPrefs.testers || [],
+  sumSecurity: savedPrefs.security || [],
+  sumSince: savedPrefs.since ?? 0,
+  sumDayCutoff: savedPrefs.dayCutoff || '17:30',
   sumSnapshot: null,
-  sumFormat: 'daily',
+  sumFormat: savedPrefs.format || 'daily',
   sumFetchedAt: '',
 
   setBugs: (bugs, total) => set({ bugs, total, fetchedAt: new Date().toISOString() }),
+  setScopeProject: (id) => set({
+    scopeProjectId: id,
+    // 三个视图的选择统一到同一个项目，界面上不再出现各自的项目选择器
+    activeProject: id,
+    mineProductIds: id ? [String(id)] : [],
+    mineAllProjects: false,
+    sumProductIds: id ? [String(id)] : [],
+    // 换项目后旧数据立即失效，避免看到上一个项目的统计
+    bugs: [], total: 0, fetchedAt: '',
+    projectBugs: [], projectTotal: 0, projectFetchedAt: '',
+    sumBugs: [], sumModules: {}, sumDataIds: [], sumFetchedAt: '',
+    pStatus: '', pSeverity: '', pModule: '', pQuery: '',
+    project: '', status: '', severity: '', query: '',
+  }),
+  setScopeData: (bugs, modules, productId) => {
+    const at = new Date().toISOString();
+    set({
+      projectBugs: bugs, projectTotal: bugs.length, projectFetchedAt: at,
+      sumBugs: bugs, sumModules: modules, sumDataIds: [String(productId)], sumFetchedAt: at,
+      scopeProjectId: String(productId), scopeFetchedAt: at,
+    });
+  },
   setMineScope: (mineScope) => set({ mineScope }),
   setMineProductIds: (mineProductIds) => set({ mineProductIds, mineAllProjects: false }),
   setMineAllProjects: (mineAllProjects) => set({ mineAllProjects }),
   resetProjectScope: () => set({
+    scopeProjectId: '', scopeFetchedAt: '',
     projects: [], activeProject: '', projectBugs: [], projectTotal: 0, projectFetchedAt: '',
     mineProductIds: [], mineAllProjects: false,
     sumBugs: [], sumModules: {}, sumProductIds: [], sumDataIds: [], sumFetchedAt: '',
@@ -153,14 +207,15 @@ export const useZentaoStore = create<ZentaoState>()(
     sumFetchedAt: new Date().toISOString(),
   }),
   setSumProductIds: (sumProductIds) => set({ sumProductIds }),
-  setSumExclude: (sumExclude) => set({ sumExclude }),
-  setSumTesters: (sumTesters) => set({ sumTesters }),
-  setSumSecurity: (sumSecurity) => set({ sumSecurity }),
-  setSumSince: (sumSince) => set({ sumSince }),
-  setSumDayCutoff: (sumDayCutoff) => set({ sumDayCutoff }),
-  setSumFormat: (sumFormat) => set({ sumFormat }),
+  setSumExclude: (sumExclude) => { writeZtPrefs({ exclude: sumExclude }); set({ sumExclude }); },
+  setSumTesters: (sumTesters) => { writeZtPrefs({ testers: sumTesters }); set({ sumTesters }); },
+  setSumSecurity: (sumSecurity) => { writeZtPrefs({ security: sumSecurity }); set({ sumSecurity }); },
+  setSumSince: (sumSince) => { writeZtPrefs({ since: sumSince }); set({ sumSince }); },
+  setSumDayCutoff: (sumDayCutoff) => { writeZtPrefs({ dayCutoff: sumDayCutoff }); set({ sumDayCutoff }); },
+  setSumFormat: (sumFormat) => { writeZtPrefs({ format: sumFormat }); set({ sumFormat }); },
   saveSumSnapshot: (sumSnapshot) => set({ sumSnapshot }),
   clear: () => set({
+    scopeProjectId: '', scopeFetchedAt: '',
     bugs: [], total: 0, fetchedAt: '', project: '', status: '', severity: '', query: '',
     projects: [], activeProject: '', projectBugs: [], projectTotal: 0, projectFetchedAt: '',
     pStatus: '', pSeverity: '', pModule: '', pQuery: '', mineProductIds: [], mineAllProjects: false,
@@ -169,9 +224,11 @@ export const useZentaoStore = create<ZentaoState>()(
     }),
     {
       name: 'pm.zentao.store',
-      storage: createJSONStorage(() => sessionStorage),
+      // 全量 Bug 可能上万条，改用 IndexedDB 避免 sessionStorage 配额溢出
+      storage: createJSONStorage(() => zentaoStorage),
       // 只存数据与筛选状态：函数、临时 busy 标记不进存储
       partialize: (st) => ({
+        scopeProjectId: st.scopeProjectId, scopeFetchedAt: st.scopeFetchedAt,
         bugs: st.bugs, total: st.total, fetchedAt: st.fetchedAt,
         mineScope: st.mineScope, mineProductIds: st.mineProductIds, mineAllProjects: st.mineAllProjects,
         projects: st.projects, activeProject: st.activeProject,
@@ -183,7 +240,21 @@ export const useZentaoStore = create<ZentaoState>()(
         sumSince: st.sumSince, sumDayCutoff: st.sumDayCutoff,
         sumSnapshot: st.sumSnapshot, sumFormat: st.sumFormat,
       }),
-      version: 2,
+      version: 3,
+      // IndexedDB hydrate 是异步的，可能晚于组件挂载并覆盖默认值；
+      // hydrate 完成后再按 localStorage 的偏好钉一次。
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        const p = readZtPrefs();
+        const patch: Partial<ZentaoState> = {};
+        if (p.testers?.length) patch.sumTesters = p.testers;
+        if (p.exclude?.length) patch.sumExclude = p.exclude;
+        if (p.security?.length) patch.sumSecurity = p.security;
+        if (p.since !== undefined) patch.sumSince = p.since;
+        if (p.dayCutoff) patch.sumDayCutoff = p.dayCutoff;
+        if (p.format) patch.sumFormat = p.format;
+        if (Object.keys(patch).length) useZentaoStore.setState(patch);
+      },
     },
   ),
 );

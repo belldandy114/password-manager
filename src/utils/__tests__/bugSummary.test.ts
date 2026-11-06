@@ -197,7 +197,7 @@ describe('bugSummary 复制文本', () => {
     expect(text).toContain('合计 缺陷 2 · 已修复 1（50%）· 未修复 1 · 待验证 0 · 已关闭 1');
     expect(text).toContain('1. 项目 58');
     expect(text).toContain('模块 1 个：');
-    expect(text).toContain('- 登录/密码登录：2 个（未修复 1、待验证 0）');
+    expect(text).toContain('（1）登录/密码登录：2 个（未修复 1、待验证 0）');
     expect(text).toContain('人员分布已排除（只看开发者）');
     expect(text).toContain('张三');
   });
@@ -400,7 +400,7 @@ describe('bugSummary 导出格式', () => {
     expect(md).toContain('| 项目 | 缺陷 | 已修复 |');
     expect(md).toContain('| **合计** | **2** |');
     expect(md).toContain('**模块明细**');
-    expect(md).toContain('| 登录/密码 |');
+    expect(md).toContain('| （1）登录/密码 |');
     expect(md).toContain('**人员分布（按当前指派人）**');
     expect(md).toContain('| 人员 | 指派 |');
   });
@@ -608,7 +608,8 @@ describe('bugSummary 日报口径（本期 / 环比 / 安全 / 正文）', () =>
     expect(text).toContain('缺陷总数较上次统计（11-04 17:30，944 个）净增 38 个，增长 4%');
     expect(text).toContain('该区间含 1 个工作日，按工作日计日均增长 4%');
     expect(text).toContain('人员分布（按当前指派，已剔除测试人员）共 1 个：lisi 1 个。');
-    expect(text).toContain('模块分布（全部缺陷，括号内为当前待修复数）共 1 个：登录 1 个（待修复 1）。');
+    expect(text).toContain('模块分布（全部缺陷，括号内为当前待修复数）共 1 个：');
+    expect(text).toContain('（1）登录 1 个（待修复 1）');
     expect(text).toContain('（另有安全问题 27 个，由安全工程师提交，单独统计，未计入上述数据。）');
   });
 

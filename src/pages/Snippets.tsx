@@ -103,6 +103,7 @@ export function Snippets() {
               icon={<Icons.db size={22} />}
               title={search ? '没有匹配的片段' : '还没有 SQL 片段'}
               desc={search ? '换个关键词或点上面的标签筛选' : '把常用的查数、造数、清理语句存进来，下次直接复制'}
+              hint={<>按 <kbd>Ctrl+K</kbd> 可全局搜索片段</>}
               action={search ? undefined : (
                 <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptySnippet())}>
                   <Icons.plus size={13} /> 新增片段

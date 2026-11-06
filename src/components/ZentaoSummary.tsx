@@ -1,8 +1,9 @@
 import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { ZentaoConfig, ZentaoProject } from '../types';
+import type { ZentaoConfig, ZentaoProject, ZentaoBug } from '../types';
 import { useZentaoStore } from '../store/zentaoStore';
 import { Panel, Empty, Icons, SearchBox, IconBtn, Pill } from './ui';
 import { Modal } from './Modal';
+import { PersonPicker } from './PersonPicker';
 import { formatHm } from '../utils/time';
 import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
@@ -51,13 +52,20 @@ const nowStamp = (d: Date = new Date()) =>
  * 领导随时点开都是同一个区间；只有「较上次统计」的基准取历史快照。
  */
 export function ZentaoSummary({
-  projects, getCfg, ready, onError,
+  projects, getCfg, ready, onError, sharedBugs, sharedModules, scopeProjectId, onRefresh,
 }: {
   projects: ZentaoProject[];
   getCfg: () => ZentaoConfig;
   ready: () => boolean;
   onError: (msg: string) => void;
+  /** 页面已按「当前项目」拉好的全量 Bug：有它就本地统计，不再请求禅道 */
+  sharedBugs?: ZentaoBug[];
+  sharedModules?: Record<string, Record<string, string>>;
+  scopeProjectId?: string;
+  /** 宿主提供的「按当前项目拉取最新」，三个 tab 共用同一个动作 */
+  onRefresh?: () => void;
 }) {
+  const useShared = !!scopeProjectId && Array.isArray(sharedBugs);
   const sumBugs = useZentaoStore(s => s.sumBugs);
   const productIds = useZentaoStore(s => s.sumProductIds);
   const dataIds = useZentaoStore(s => s.sumDataIds);
@@ -95,7 +103,6 @@ export function ZentaoSummary({
   const [copyOpen, setCopyOpen] = useState(false);
   const copyBtnRef = useRef<HTMLButtonElement>(null);
   const [withModules, setWithModules] = useState(true);
-  const [secInput, setSecInput] = useState(security.join('、'));
   const [histTick, setHistTick] = useState(0);
   const [prev, setPrev] = useState<SumSnapshot | null>(null);
 
@@ -201,10 +208,13 @@ export function ZentaoSummary({
       return;
     }
     onError('');
-    setBusy(true);
     setCopyOpen(false);
-    const res = await window.electronAPI.zentaoSummary(getCfg(), productIds, force);
-    setBusy(false);
+    // 共享模式：直接用页面已拉取的同一份项目数据，零网络请求
+    // 即使没拿到共享数据，也只查当前项目，绝不退回「全部项目」
+    const ids = scopeProjectId ? [String(scopeProjectId)] : productIds;
+    const res = useShared
+      ? { success: true, data: sharedBugs || [], modules: sharedModules || {}, errors: [], error: '', cached: false, ageMs: 0 }
+      : await (async () => { setBusy(true); const r = await window.electronAPI.zentaoSummary(getCfg(), ids, force); setBusy(false); return r; })();
     if (res.success && res.data) {
       setSummary(res.data, res.modules || {}, productIds);
       const failed = res.errors || [];
@@ -235,9 +245,11 @@ export function ZentaoSummary({
       });
       setHistTick(t => t + 1);
 
-      flash(res.cached
-        ? `命中缓存（${Math.max(1, Math.round((res.ageMs || 0) / 60000))} 分钟前）`
-        : `已拉取 ${res.data.length} 条缺陷`);
+      flash(useShared
+        ? `已按当前项目统计 ${res.data.length} 条缺陷`
+        : res.cached
+          ? `命中缓存（${Math.max(1, Math.round((res.ageMs || 0) / 60000))} 分钟前）`
+          : `已拉取 ${res.data.length} 条缺陷`);
     } else {
       onError(res.error || '拉取失败');
     }
@@ -246,7 +258,7 @@ export function ZentaoSummary({
   useEffect(() => {
     if (autoPulledOnce || busy) return;
     if (!productIds.length) return;
-    if (sumBugs.length > 0) return;
+    if (sumBugs.length > 0 && !useShared) return;
     autoPulledOnce = true;
     void pull();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -387,16 +399,11 @@ export function ZentaoSummary({
     setTesters(testers.includes(name) ? testers.filter(x => x !== name) : [...testers, name]);
   };
 
-  const toggleSecurity = (name: string) => {
-    const next = security.includes(name) ? security.filter(x => x !== name) : [...security, name];
-    setSecurity(next);
-    setSecInput(next.join('、'));
-  };
-
-  const applySecInput = (text: string) => {
-    const names = text.split(/[、,，;；\s]+/).map(s => s.trim()).filter(Boolean);
-    setSecurity(Array.from(new Set(names)));
-  };
+  /** 当前项目缺陷的创建人（安全问题提交人的候选项，不掺指派人） */
+  const creatorNames = useMemo(
+    () => Array.from(new Set(sumBugs.map(b => String(b.openedBy || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    [sumBugs],
+  );
 
   const excludeTesters = () => {
     if (!testers.length) {
@@ -460,22 +467,35 @@ export function ZentaoSummary({
         <div className="zt-sumbar-main">
           <div className="zt-sumbar-projects">
             <span className="zt-sumbar-label">项目</span>
-            {selectedProjects.length === 0 && (
-              <span className="zt-sumbar-empty">还没选，点右侧「选择项目」可多选</span>
-            )}
-            {selectedProjects.map(p => (
-              <span key={p.id} className="zt-sum-chip">
-                <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
-                <button title="移除" onClick={() => setProductIds(productIds.filter(id => id !== String(p.id)))}>
-                  <Icons.close size={10} />
+            {scopeProjectId ? (
+              <>
+                {selectedProjects.map(p => (
+                  <span key={p.id} className="zt-sum-chip">
+                    <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
+                  </span>
+                ))}
+                <span className="zt-sumbar-hint">与页面顶部「当前项目」一致，切换只需操作一次</span>
+              </>
+            ) : (
+              <>
+                {selectedProjects.length === 0 && (
+                  <span className="zt-sumbar-empty">还没选，点右侧「选择项目」可多选</span>
+                )}
+                {selectedProjects.map(p => (
+                  <span key={p.id} className="zt-sum-chip">
+                    <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
+                    <button title="移除" onClick={() => setProductIds(productIds.filter(id => id !== String(p.id)))}>
+                      <Icons.close size={10} />
+                    </button>
+                  </span>
+                ))}
+                <button className="zt-sumbar-add" onClick={openPicker} title="选择要汇总的项目（可多选）">
+                  <Icons.folder size={12} /> 选择项目
                 </button>
-              </span>
-            ))}
-            <button className="zt-sumbar-add" onClick={openPicker} title="选择要汇总的项目（可多选）">
-              <Icons.folder size={12} /> 选择项目
-            </button>
-            {selectedProjects.length > 1 && (
-              <button className="zt-sumbar-link" onClick={() => setProductIds([])}>清空</button>
+                {selectedProjects.length > 1 && (
+                  <button className="zt-sumbar-link" onClick={() => setProductIds([])}>清空</button>
+                )}
+              </>
             )}
           </div>
 
@@ -497,15 +517,12 @@ export function ZentaoSummary({
               />
             </label>
             <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => pull(true)}
-              disabled={busy || !productIds.length}
-              title="忽略 10 分钟缓存，重新拉取"
+              className="btn btn-secondary btn-sm"
+              onClick={() => onRefresh ? onRefresh() : pull(true)}
+              disabled={busy || !scopeProjectId}
+              title="忽略 10 分钟缓存，按当前项目重新拉取最新缺陷，三个标签同步更新"
             >
-              <Icons.refresh size={12} /> 刷新
-            </button>
-            <button className="btn btn-primary btn-sm" onClick={() => pull(false)} disabled={busy || !productIds.length}>
-              {busy ? '拉取中…' : '拉取'}
+              <Icons.refresh size={12} /> {busy ? '拉取中…' : '重新拉取'}
             </button>
           </div>
         </div>
@@ -551,24 +568,13 @@ export function ZentaoSummary({
           <div className="zt-sumbar-adv">
             <div className="zt-adv-row">
               <span className="zt-sumbar-label">安全问题提交人</span>
-              <input
-                className="zt-adv-input"
-                value={secInput}
-                onChange={e => setSecInput(e.target.value)}
-                onBlur={() => applySecInput(secInput)}
-                onKeyDown={e => { if (e.key === 'Enter') applySecInput(secInput); }}
-                placeholder="这些人提交的算安全问题，单独统计、不计入功能缺陷（多个用 、 或逗号分隔）"
+              <PersonPicker
+                options={creatorNames}
+                value={security}
+                onChange={setSecurity}
+                placeholder={`从当前项目 ${creatorNames.length} 位缺陷创建人中搜索选择`}
               />
-              {allPersons.slice(0, 6).map(p => (
-                <button
-                  key={p.name}
-                  className={`zt-sum-person${security.includes(p.name) ? ' is-test' : ''}`}
-                  onClick={() => toggleSecurity(p.name)}
-                  title={security.includes(p.name) ? '点击移出安全问题名单' : '标记为安全工程师'}
-                >
-                  {p.name}
-                </button>
-              ))}
+              <span className="zt-adv-hint">这些人提交的算安全问题，单独统计、不计入功能缺陷</span>
             </div>
             <div className="zt-adv-row">
               <span className="zt-sumbar-label">口径</span>
@@ -612,8 +618,8 @@ export function ZentaoSummary({
               ? '点「拉取并汇总」，读取选中项目的全部缺陷（含已关闭），按日报口径统计'
               : '支持多选项目，一次看清每个项目还剩多少未修复、压在谁身上、今天新增了多少'}
             action={
-              <button className="btn btn-primary btn-sm" onClick={() => (productIds.length ? pull(false) : openPicker())} disabled={busy}>
-                {productIds.length ? '拉取并汇总' : '选择项目'}
+              <button className="btn btn-primary btn-sm" onClick={() => onRefresh ? onRefresh() : (productIds.length ? pull(false) : openPicker())} disabled={busy}>
+                {scopeProjectId || productIds.length ? '重新拉取' : '选择项目'}
               </button>
             }
           />

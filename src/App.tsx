@@ -3,7 +3,7 @@ import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
-import { applyTheme, watchSystemTheme, applyAccent } from './utils/theme';
+import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
 
 /**
  * 工作台页面按需加载：首屏只装登录 + 侧边栏，
@@ -259,6 +259,7 @@ function App() {
           setSettings(prefs);
           applyTheme(prefs.theme);
           applyAccent(prefs.accent);
+          applyDensity(prefs.density);
         }
       } catch {
         setLocked(true);
@@ -278,6 +279,10 @@ function App() {
   // 强调色
   const accentColor = useStore(s => s.settings.accent);
   useEffect(() => { applyAccent(accentColor); }, [accentColor]);
+
+  // 密度三档
+  const density = useStore(s => s.settings.density);
+  useEffect(() => { applyDensity(density); }, [density]);
 
   // 解锁后回到上次停留的页面
   useEffect(() => {

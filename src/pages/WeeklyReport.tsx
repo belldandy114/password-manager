@@ -357,6 +357,7 @@ export function WeeklyReport() {
                 icon={<Icons.note size={20} />}
                 title={files.length === 0 ? '目录里没有周报文件' : '没有匹配项'}
                 desc={files.length === 0 ? '点右上角「新建周报」写第一篇' : '换个关键词，或关掉正文搜索'}
+                hint={<>周报以 .md 保存，可用 <kbd>Ctrl+K</kbd> 搜到</>}
               />
             ) : (
               <div className="wk-list">

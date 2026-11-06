@@ -1,7 +1,7 @@
 import type { ZentaoBug } from '../types';
 
 /**
- * 缺陷汇总口径（与 ~/workspace/samples/zt_daily.py 保持一致）：
+ * 缺陷汇总口径（对齐历史日报脚本口径）：
  * - 总数      = 该项目全部 Bug（含已关闭、含已解决待验证）
  * - 已修复    = resolution === 'fixed'
  * - 未修复    = status === 'active'
@@ -544,9 +544,9 @@ export function summaryToText(
     lines.push(`   ${lineOf(p.stat)}`);
     if (opts.withModules !== false && p.modules.length) {
       lines.push(`   模块 ${p.modules.length} 个：`);
-      for (const m of p.modules) {
-        lines.push(`   - ${m.name}：${m.total} 个（未修复 ${m.active}、待验证 ${m.resolved}）`);
-      }
+      p.modules.forEach((m, mi) => {
+        lines.push(`   （${mi + 1}）${m.name}：${m.total} 个（未修复 ${m.active}、待验证 ${m.resolved}）`);
+      });
     }
   });
 
@@ -598,9 +598,9 @@ export function summaryToMarkdown(
       out.push('| 项目 | 模块 | 缺陷 | 已修复 | 未修复 | 待验证 |');
       out.push('|---|---|---:|---:|---:|---:|');
       for (const p of withMods) {
-        for (const m of p.modules) {
-          out.push(`| ${p.name} | ${m.name} | ${m.total} | ${m.fixed} | ${m.active} | ${m.resolved} |`);
-        }
+        p.modules.forEach((m, mi) => {
+          out.push(`| ${p.name} | （${mi + 1}）${m.name} | ${m.total} | ${m.fixed} | ${m.active} | ${m.resolved} |`);
+        });
       }
     }
   }
@@ -830,12 +830,12 @@ const personLineOf = (r: ReportInput) => {
   return `${head}共 ${total} 个：${items}。`;
 };
 
-/** 一行：模块分布（全部缺陷，括号内是当前待修复数），平铺成一句话 */
+/** 模块分布：编号分点、一个模块一行（日报/一键复制共用） */
 const moduleLineOf = (r: ReportInput) => {
   if (!r.modules.length) return '';
   const total = r.modules.reduce((s, m) => s + m.total, 0);
-  const items = r.modules.map(m => `${m.name} ${m.total} 个（待修复 ${m.active}）`).join('、');
-  return `模块分布（全部缺陷，括号内为当前待修复数）共 ${total} 个：${items}。`;
+  const items = r.modules.map((m, i) => `（${i + 1}）${m.name} ${m.total} 个（待修复 ${m.active}）`);
+  return `\n模块分布（全部缺陷，括号内为当前待修复数）共 ${total} 个：\n${items.join('\n')}\n`;
 };
 
 /** 一个项目的整段日报正文（不含标题行） */

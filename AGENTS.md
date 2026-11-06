@@ -278,7 +278,7 @@ vault 从 `{ entries, tags }` 扩展为：
 
 - `assignedTo` / `openedBy` 是对象 `{account, realname}`，渲染前要取 `realname`。
 - token 有有效期，主进程里缓存 token；遇到 401 强制换新 token 重试一次（`ztApiGet`）。
-- 实测该实例：31 个产品、产品 58（示例系统-管理后台V2.0）共 数百条 Bug。
+- 实测该实例：数十个产品，单个产品下可有数百条 Bug（具体名称与数量以实际环境为准）。
 - 项目列表排序：把「我有 Bug 的项目」排前面，默认选中即可看到自己正在测的项目。
 
 ### 周报（本地 Markdown）约定
@@ -1002,7 +1002,7 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 
 多项目缺陷汇总：在「缺陷管理」里与「我提交的 / 项目 Bug」并列的第三个 tab，代码 `src/components/ZentaoSummary.tsx` + `src/utils/bugSummary.ts`。
 
-### 统计口径（与 `~/workspace/samples/zt_daily.py` 对齐，别自己发明）
+### 统计口径（与历史日报脚本对齐，别自己发明）
 
 | 指标 | 判定 |
 |---|---|
@@ -1036,7 +1036,7 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 | 排除人员 | 按**指派人**匹配（不是提交人），且**只影响「按人员」这一块**——项目 / 模块 / 总数 / 修复率永远按全量算。用途就是把测试人员去掉，别让待验证的 Bug 堆在开发头上 |
 | 文案 | `人员指派共 N 个：某某 X 个、……（未指派 a 个，已关闭 b 个不计，已排除 某某 名下 c 个）`，与 `zt_daily.py` 的 `人员分布（按当前指派，已剔除测试人员）共 N 个` 同义 |
 
-> 口径来源：`~/workspace/samples/zt_daily.py` 的 `persons()`（脚本里有一份 `TESTERS` 账号白名单，把测试人员从人员分布里剔除）；它还有 `SECURITY`（安全工程师提交的单独统计），我们**没有**复刻，需要时再加。
+> 口径来源：历史日报脚本的 `persons()`（脚本里有一份 `TESTERS` 账号白名单，把测试人员从人员分布里剔除）；它还有 `SECURITY`（安全工程师提交的单独统计），我们**没有**复刻，需要时再加。
 
 ### 1.13.x 追加：统计口径扩展与导出
 

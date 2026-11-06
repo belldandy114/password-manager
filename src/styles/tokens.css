@@ -1,0 +1,161 @@
+/* ================================================================
+   Design Tokens — Graphite Instrument (V9)
+   ----------------------------------------------------------------
+   三层结构：
+   1. semantic  : 语义表面 / 线条 / 文字 / 强调色（随主题切换）
+   2. scale     : 字号、间距、圆角、层级、动效（与主题无关）
+   3. density   : 密度相关的尺寸（随 data-density 切换）
+
+   旧变量（--bg-primary 等）不在这里定义，由 redesign.css 末尾
+   统一别名映射，保证 12k 行历史样式无需改动即可换肤。
+   ================================================================ */
+
+:root {
+  /* ---------- 1. Semantic — Dark（默认） ---------- */
+  --surface-0: #0d0f10;      /* 画布 */
+  --surface-1: #121517;      /* 侧栏 / 工具栏 */
+  --surface-2: #171b1e;      /* 卡片 / 面板 */
+  --surface-3: #1e2327;      /* hover / 抬升 */
+  --surface-inset: #0f1213;  /* 输入框（内凹） */
+  --surface-selected: #1b2c2c;
+  --surface-overlay: #191e21; /* 弹层 / 菜单 */
+  --input-bg: #0f1213;       /* 输入控件底：与画布拉开层次 */
+  --input-line: #343b40;      /* 输入控件边框：比发丝线更明确 */
+
+  --line-subtle: #1d2225;
+  --line: #262b2f;
+  --line-strong: #343b40;
+
+  --text-1: #e6e9ea;         /* 主文字 12.6:1 */
+  --text-2: #a0a9ae;         /* 次要 6.4:1 */
+  --text-3: #8b959c;         /* 弱化 6.3:1 —— 仍满足 AA，用于时间戳/占位符 */
+
+  --accent: #4f9d99;         /* 青瓷 */
+  --accent-hover: #5cb0ab;
+  --accent-soft: rgba(79, 157, 153, 0.14);
+  --accent-line: rgba(79, 157, 153, 0.34);
+
+  --ok: #4f9e6e;
+  --warn: #c9963f;
+  --bad: #d15a54;
+  --bad-hover: #bb4b46;
+  --info: #5b8fb0;
+
+  /* ---------- 2. Scale ---------- */
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system,
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --font-code: 'Cascadia Mono', 'Cascadia Code', Consolas, 'SF Mono', 'Menlo', monospace;
+
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+
+  --lh-tight: 1.28;
+  --lh-normal: 1.55;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 48px;
+
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --shadow-3: 0 24px 56px rgba(0, 0, 0, 0.46);
+
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ---------- Semantic — Light ---------- */
+[data-theme='light'] {
+  --surface-0: #f7f8fa;
+  --surface-1: #fdfdfe;
+  --surface-2: #ffffff;
+  --surface-3: #eef0f3;
+  --surface-inset: #f8f9fb;
+  --surface-selected: #eef5f4;
+  --surface-overlay: #ffffff;
+  --input-bg: #ffffff;        /* 纯白输入底，配深色边框才有清晰边界 */
+  --input-line: #c2c9d1;
+
+  --line-subtle: #eef0f3;
+  --line: #e2e5e9;
+  --line-strong: #c9cfd6;
+
+  --text-1: #17191a;
+  --text-2: #565f64;
+  --text-3: #656e76;
+
+  --accent: #2f7a77;
+  --accent-hover: #276663;
+  --accent-soft: rgba(47, 122, 119, 0.09);
+  --accent-line: rgba(47, 122, 119, 0.28);
+
+  --ok: #2f7d52;
+  --warn: #9a6f1f;
+  --bad: #b8443f;
+  --bad-hover: #a13a36;
+  --info: #3f6f8e;
+
+  --shadow-1: 0 1px 2px rgba(23, 25, 26, 0.06);
+  --shadow-2: 0 8px 24px rgba(23, 25, 26, 0.08);
+  --shadow-3: 0 24px 56px rgba(23, 25, 26, 0.12);
+}
+
+/* ---------- 3. Density ---------- */
+:root {
+  --d-row-py: 10px;          /* 表格单元格纵向内边距 */
+  --d-row-min: 44px;         /* 列表行最小高度 */
+  --d-nav-py: 7px;           /* 侧栏导航项 */
+  --d-control-h: 34px;       /* 输入框 / 按钮 */
+  --d-card-py: 14px;
+  --d-card-px: 16px;
+  --d-panel-py: 14px;
+  --d-panel-px: 18px;
+  --d-toolbar-py: 10px;
+  --d-gap: 12px;
+  --d-fs: var(--fs-md);
+}
+
+html[data-density='compact'] {
+  --d-row-py: 5px;
+  --d-row-min: 34px;
+  --d-nav-py: 4px;
+  --d-control-h: 28px;
+  --d-card-py: 10px;
+  --d-card-px: 12px;
+  --d-panel-py: 10px;
+  --d-panel-px: 14px;
+  --d-toolbar-py: 6px;
+  --d-gap: 8px;
+  --d-fs: var(--fs-sm);
+}
+
+html[data-density='cozy'] {
+  --d-row-py: 16px;
+  --d-row-min: 56px;
+  --d-nav-py: 10px;
+  --d-control-h: 40px;
+  --d-card-py: 20px;
+  --d-card-px: 22px;
+  --d-panel-py: 20px;
+  --d-panel-px: 24px;
+  --d-toolbar-py: 14px;
+  --d-gap: 16px;
+  --d-fs: 14px;
+}

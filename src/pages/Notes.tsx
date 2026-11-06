@@ -340,6 +340,7 @@ export function Notes() {
               icon={<Icons.note size={22} />}
               title={search ? '没有匹配的笔记' : '还没有笔记'}
               desc={search ? '换个关键词试试' : '记下第一个测试结论或踩坑记录，支持 Markdown 语法'}
+              hint={<>写完后用 <kbd>Ctrl+K</kbd> 全局搜索，随时找回</>}
               action={search ? undefined : (
                 <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>
                   <Icons.plus size={13} /> 新建笔记

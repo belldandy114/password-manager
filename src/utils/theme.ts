@@ -4,6 +4,7 @@ const MEDIA = '(prefers-color-scheme: dark)';
 
 /** 强调色预设（值 + hover 近似色） */
 export const ACCENTS: Record<AccentColor, { label: string; value: string; hover: string; light: string }> = {
+  teal: { label: '青瓷', value: '#4f9d99', hover: '#5cb0ab', light: 'rgba(79, 157, 153, 0.14)' },
   indigo: { label: '靛蓝', value: '#6366f1', hover: '#5558e6', light: 'rgba(99, 102, 241, 0.1)' },
   blue: { label: '科技蓝', value: '#3b82f6', hover: '#2f74e0', light: 'rgba(59, 130, 246, 0.1)' },
   green: { label: '青绿', value: '#10b981', hover: '#0ea472', light: 'rgba(16, 185, 129, 0.1)' },
@@ -12,7 +13,7 @@ export const ACCENTS: Record<AccentColor, { label: string; value: string; hover:
 };
 
 export function applyAccent(accent: AccentColor | undefined) {
-  const preset = ACCENTS[accent || 'indigo'] || ACCENTS.indigo;
+  const preset = ACCENTS[accent || 'teal'] || ACCENTS.teal;
   const root = document.documentElement;
   root.style.setProperty('--accent', preset.value);
   root.style.setProperty('--accent-hover', preset.hover);
@@ -35,6 +36,14 @@ export function resolveTheme(mode: ThemeMode | undefined): 'dark' | 'light' {
 
 export function applyTheme(mode: ThemeMode | undefined) {
   document.documentElement.setAttribute('data-theme', resolveTheme(mode));
+}
+
+/** 密度三档：compact / standard / cozy，写到 <html data-density> */
+export type DensityMode = 'compact' | 'standard' | 'cozy';
+
+export function applyDensity(density: string | undefined) {
+  const d = density === 'compact' || density === 'cozy' ? density : 'standard';
+  document.documentElement.setAttribute('data-density', d);
 }
 
 /** 订阅系统主题变化，返回取消订阅函数 */

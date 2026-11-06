@@ -5,8 +5,8 @@ import { callIpc } from '../utils/ipc';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Icons } from '../components/ui';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
-import { applyTheme, applyAccent, ACCENTS } from '../utils/theme';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
+import { applyTheme, applyAccent, applyDensity, ACCENTS } from '../utils/theme';
 import { formatDateTime } from '../utils/time';
 
 interface BrowserInfo {
@@ -588,6 +588,25 @@ export function Settings() {
 
             <div className="setting-row">
               <div>
+                <div className="setting-label">界面密度</div>
+                <div className="setting-desc">紧凑适合小屏多行，宽松适合演示与阅读</div>
+              </div>
+              <div className="setting-control">
+                <select value={settings.density || 'standard'} onChange={e => {
+                  const val = e.target.value as Density;
+                  updateSettings({ density: val });
+                  applyDensity(val);
+                  window.electronAPI.settingsSave({ density: val });
+                }}>
+                  <option value="compact">紧凑</option>
+                  <option value="standard">标准</option>
+                  <option value="cozy">宽松</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div>
                 <div className="setting-label">强调色</div>
                 <div className="setting-desc">按钮、选中态等强调元素的颜色</div>
               </div>
@@ -595,7 +614,7 @@ export function Settings() {
                 {(Object.keys(ACCENTS) as AccentColor[]).map(key => (
                   <button
                     key={key}
-                    className={`accent-dot ${(settings.accent || 'indigo') === key ? 'active' : ''}`}
+                    className={`accent-dot ${(settings.accent || 'teal') === key ? 'active' : ''}`}
                     style={{ background: ACCENTS[key].value }}
                     title={ACCENTS[key].label}
                     onClick={() => {

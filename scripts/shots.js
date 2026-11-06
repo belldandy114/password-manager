@@ -20,10 +20,12 @@ const PAGES = [
   ['网址管理', 'passwordManager'],
   ['周报', 'weekly'],
   ['测试笔记', 'notes'],
-  ['禅道', 'zentao'],
-  ['JSON 转化', 'json'],
+  ['缺陷管理', 'zentao'],
+  ['SQL 片段', 'snippets'],
   ['工具箱', 'toolbox'],
   ['接口调试', 'api'],
+  ['压力测试', 'perf'],
+  ['代码调试', 'codelab'],
   ['设置', 'settings'],
 ];
 
@@ -91,12 +93,31 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       await ev(`(()=>{const n=[...document.querySelectorAll('.nav-item')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(n){n.click();return true}return false})()`);
       await sleep(1200);
     }
+    // 每页重新钉一次主题：个别页面（如工具箱）会按 settings 重设 data-theme
+    await ev(`document.documentElement.setAttribute('data-theme', ${JSON.stringify(THEME)})`);
+    await sleep(300);
     await shot(key);
   }
   // 设置页滚动一点，看到更多控件
   await ev(`(()=>{const n=[...document.querySelectorAll('.nav-item')].find(x=>x.textContent.includes('设置'));if(n)n.click();return 1})()`);
   await sleep(1000);
   await shot('settings-2');
+
+  // 网址管理里的三个子页面（回收站 / 导入 / 导出）
+  await ev(`(()=>{const n=[...document.querySelectorAll('.nav-item')].find(x=>x.textContent.includes('网址管理'));if(n){n.click();return true}return false})()`);
+  await sleep(900);
+  for (const [label, key] of [['回收站', 'trash'], ['导入数据', 'import'], ['导出数据', 'export']]) {
+    await ev(`(()=>{const n=[...document.querySelectorAll('.tab2')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(n){n.click();return true}return false})()`);
+    await sleep(900);
+    await ev(`document.documentElement.setAttribute('data-theme', ${JSON.stringify(THEME)})`);
+    await sleep(250);
+    await shot(key);
+  }
+
+  // 锁屏页（放最后，锁定后无需再解锁）
+  await ev(`(()=>{const n=[...document.querySelectorAll('.nav-item')].find(x=>x.textContent.includes('锁定'));if(n){n.click();return true}return false})()`);
+  await sleep(1200);
+  await shot('locked');
 
   app.kill();
   await sleep(800);

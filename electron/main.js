@@ -515,7 +515,8 @@ const DEFAULT_SETTINGS = {
   defaultViewMode: 'card',
   defaultEnvFilter: 'all',
   theme: 'dark',
-  accent: 'indigo',
+  accent: 'teal',
+  density: 'standard',
   minimizeToTray: false,
   closeToTray: false,
   contentProtection: false,
@@ -1326,6 +1327,7 @@ function setupIpcHandlers() {
       defaultEnvFilter: s.defaultEnvFilter || DEFAULT_SETTINGS.defaultEnvFilter,
       theme: s.theme || DEFAULT_SETTINGS.theme,
       accent: s.accent || DEFAULT_SETTINGS.accent,
+      density: s.density || DEFAULT_SETTINGS.density,
       minimizeToTray: !!s.minimizeToTray,
       closeToTray: !!s.closeToTray,
       contentProtection: !!s.contentProtection,
@@ -3065,14 +3067,19 @@ function setupIpcHandlers() {
     throw new Error('禅道 API 认证失败，请重试');
   }
 
-  /** REST 里 assignedTo / openedBy 是对象 {account, realname} */
+  /** REST 里 assignedTo / openedBy 是对象 {account, realname}：显示名与登录账号分别保留 */
   const ztUserName = (v) => {
     if (!v) return '';
     if (typeof v === 'string') return v;
     return String(v.realname || v.account || '');
   };
+  const ztUserAccount = (v) => {
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    return String(v.account || '');
+  };
 
-  /** 拉产品清单（禅道里「产品」就是大家口中的项目，如「示例系统-管理后台V2.0」） */
+  /** 拉产品清单（禅道里「产品」就是大家口中的项目，如「某业务系统-管理后台 V2.0」） */
   /** 项目集（programs）：产品只给 program id，重名项目靠项目集名区分 */
   async function ztApiPrograms(cfg) {
     const key = 'programs|' + ztApiCacheKey(cfg);
@@ -3123,6 +3130,8 @@ function setupIpcHandlers() {
       productName: nameMap[String(b.product)] || '',
       assignedTo: ztUserName(b.assignedTo),
       openedBy: ztUserName(b.openedBy),
+      assignedToAccount: ztUserAccount(b.assignedTo),
+      openedByAccount: ztUserAccount(b.openedBy),
       date: ztApiLocalTime(b.openedDate).slice(0, 10),
       deadline: b.deadline ? String(b.deadline).slice(0, 10) : '',
       resolution: String(b.resolution || ''),
