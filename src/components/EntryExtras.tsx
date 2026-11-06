@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { PasswordEntry, PasswordHistoryItem, CustomField, Attachment } from '../types';
+import { copySensitive } from '../utils/clipboard';
 
 interface Props {
   form: PasswordEntry;
@@ -40,7 +41,7 @@ function TotpPreview({ secret }: { secret: string }) {
       <button
         type="button"
         className="btn btn-sm btn-secondary"
-        onClick={() => navigator.clipboard.writeText(code)}
+        onClick={() => void copySensitive(code, '两步验证码')}
       >
         复制验证码
       </button>
@@ -70,7 +71,7 @@ export function TotpBadge({ secret, onCopy }: { secret: string; onCopy?: (code: 
       onClick={e => {
         e.stopPropagation();
         if (onCopy) onCopy(code);
-        else navigator.clipboard.writeText(code);
+        else void copySensitive(code, '两步验证码');
       }}
     >
       🔐 {code}

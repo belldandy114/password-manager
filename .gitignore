@@ -35,3 +35,6 @@ _shots*/
 scripts/shot-*.js
 # 解包自检目录
 .asar-check/
+
+# 覆盖率报告（本地生成）
+coverage/

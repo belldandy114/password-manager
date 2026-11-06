@@ -11,6 +11,8 @@
  * - 从旧版本升级 → 首次读取时把 sessionStorage 里的旧值迁进 IndexedDB 并清掉
  */
 
+import { logWarn } from '../utils/log';
+
 const DB_NAME = 'pm-zentao';
 const STORE = 'kv';
 
@@ -111,8 +113,9 @@ export const zentaoStorage = {
           } catch { /* ignore */ }
         }
         return null;
-      } catch {
-        // IndexedDB 不可用（隐私模式 / 被禁用）→ 静默退回
+      } catch (e) {
+        // IndexedDB 不可用（隐私模式 / 被禁用）→ 退回 sessionStorage / 内存
+        logWarn('idbStorage.getItem', e);
       }
     }
     return legacyGet(name);

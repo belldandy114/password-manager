@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -26,5 +27,15 @@ export default defineConfig({
   },
   server: {
     port: 5173
-  }
+  },
+  test: {
+    // 既有工具层测试仍在 node 环境；组件测试文件用 @vitest-environment jsdom 单独声明
+    environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/__tests__/**', 'src/**/*.d.ts', 'src/main.tsx', 'src/vite-env.d.ts'],
+    },
+  },
 })

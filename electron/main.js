@@ -816,7 +816,10 @@ async function fetchLatestRelease() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    const res = await fetch('https://api.github.com/repos/belldandy114/password-manager/releases/latest', {
+    // PM_UPDATE_API 仅供本地回归脚本指向桩服务（视觉验证更新弹窗用），正常启动不会设置
+    const apiUrl = process.env.PM_UPDATE_API
+      || 'https://api.github.com/repos/belldandy114/password-manager/releases/latest';
+    const res = await fetch(apiUrl, {
       headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
       signal: controller.signal,
     });
@@ -902,6 +905,15 @@ ipcMain.handle('log:tail', async (_e, lines = 200) => ({
   data: { path: logPath() || "", text: String(logTail(Number(lines) || 200) || "") },
 }));
 
+/** 渲染层错误/警告转写到主进程 app.log（app-log.js 已劫持 console.warn/error） */
+ipcMain.handle('log:renderer', async (_e, payload = {}) => {
+  const level = payload.level === 'error' ? 'error' : 'warn';
+  const line = '[renderer] ' + String(payload.message || '').slice(0, 600);
+  if (level === 'error') console.error(line);
+  else console.warn(line);
+  return { success: true };
+});
+
 ipcMain.handle('update:check', async () => {
   try {
     const rel = await fetchLatestRelease();
@@ -951,7 +963,12 @@ async function autoCheckUpdate() {
           current,
           latest: rel.latest,
           url: rel.htmlUrl || '',
+          // 带上更新说明与安装包直链：横幅「去更新」点开弹窗即可展示内容并直接下载，
+          // 不用再等一次 update:check 往返
+          notes: rel.notes || '',
           downloadUrl: rel.downloadUrl || '',
+          assetName: rel.assetName || '',
+          digest: rel.digest || '',
         });
       } catch { /* 窗口已关 */ }
     }
@@ -1998,6 +2015,10 @@ function setupIpcHandlers() {
   ipcMain.handle('update:install', async (_event, { file, silent } = {}) => {
     try {
       if (!file || !fs.existsSync(file)) return { success: false, error: '安装包不存在，请重新下载' };
+      // 自动化脚本用：只校验流程，不真的拉起安装程序、也不退出（否则截图跑一半应用就没了）
+      if (process.env.PM_UPDATE_NO_INSTALL === '1') {
+        return { success: true, data: { silent: false, skipped: true } };
+      }
       // 默认走安装向导：能看清进度、能选目录。
       // ⚠️ 不要默认 /S 静默安装 —— 它会装到默认目录，跟用户自定义的安装路径变成两份。
       const args = silent ? ['/S', `/D=${path.dirname(app.getPath('exe'))}`] : [];

@@ -547,6 +547,8 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;
+  /** 渲染层错误/警告写入主进程 app.log */
+  logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;
   onClipboardCleared: (cb: () => void) => () => void;
   /** 托盘菜单「锁定」触发 */
@@ -740,7 +742,7 @@ export interface ElectronAPI {
   logOpen: () => Promise<{ success: boolean; data?: { path: string }; error?: string }>;
   logTail: (lines?: number) => Promise<{ success: boolean; data?: { path: string; text: string } }>;
   /** 启动检查发现新版本时主进程推过来（应用内提示用，不发系统通知） */
-  onUpdateAvailable: (cb: (payload: { current: string; latest: string; url: string; downloadUrl: string }) => void) => () => void;
+  onUpdateAvailable: (cb: (payload: { current: string; latest: string; url: string; downloadUrl: string; notes?: string; assetName?: string; digest?: string }) => void) => () => void;
   onJmeterOutput: (cb: (payload: JmeterLogLine) => void) => () => void;
   onJmeterDone: (cb: (payload: JmeterDone) => void) => () => void;
   /** 保存文本到文件（导出 CSV 等），自动加 BOM */

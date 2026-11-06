@@ -3,6 +3,7 @@ import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
+import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
 
 /**
@@ -306,10 +307,17 @@ function App() {
   // 注意：这些 hooks 必须在下面的 `if (isLocked) return` 之前，否则锁定/解锁切换时
   // hooks 数量会变化，触发 React error #310。
   // 启动检查发现新版本：在应用内横向提示条里告知（不再弹 Windows 系统通知）
-  const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; url: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; url: string; notes?: string; downloadUrl?: string; assetName?: string; digest?: string } | null>(null);
+  // 更新弹窗：点横幅上的「去更新」直接在这里看说明 + 下载 + 安装，不再跳设置页
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   useEffect(() => {
     const off = window.electronAPI.onUpdateAvailable((d) => {
-      if (d && d.latest) setUpdateInfo({ latest: d.latest, current: d.current, url: d.url || "" });
+      if (d && d.latest) {
+        setUpdateInfo({
+          latest: d.latest, current: d.current, url: d.url || '',
+          notes: d.notes, downloadUrl: d.downloadUrl, assetName: d.assetName, digest: d.digest,
+        });
+      }
     });
     return () => { try { off(); } catch { /* 忽略 */ } };
   }, []);
@@ -356,8 +364,14 @@ function App() {
         onNavigate={setCurrentPage}
         onLock={handleLock}
       />
+      <UpdateDialog
+        open={updateDialogOpen}
+        info={updateInfo}
+        onClose={() => setUpdateDialogOpen(false)}
+      />
       <div className="main-content">
-        {updateInfo && (
+        {/* 弹窗打开时收起横幅，避免和弹窗内容重复 */}
+        {updateInfo && !updateDialogOpen && (
           <div className="update-banner" role="status">
             <span className="update-banner-dot" />
             <span className="update-banner-text">
@@ -365,7 +379,8 @@ function App() {
             </span>
             <button
               className="btn btn-primary btn-sm"
-              onClick={() => { setCurrentPage('settings'); setUpdateInfo(null); }}
+              onClick={() => setUpdateDialogOpen(true)}
+              title="直接查看更新内容并下载安装，不用再去设置页"
             >
               去更新
             </button>

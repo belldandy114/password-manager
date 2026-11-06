@@ -7,6 +7,7 @@ import { Modal } from '../components/Modal';
 import { Page, PageHead, Icons } from '../components/ui';
 import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
 import { applyTheme, applyAccent, applyDensity, ACCENTS } from '../utils/theme';
+import { logWarn } from '../utils/log';
 import { formatDateTime } from '../utils/time';
 
 interface BrowserInfo {
@@ -119,14 +120,14 @@ export function Settings() {
     try {
       const r = await window.electronAPI.auditList?.(30);
       if (r && r.success) setAudit(r.data || []);
-    } catch { /* 忽略 */ }
+    } catch (e) { logWarn('Settings.loadAudit', e); }
   }, []);
 
   const refreshNotifyStatus = useCallback(async () => {
     try {
       const r = await window.electronAPI.zentaoNotifyStatus?.();
       if (r && r.success) setNotifyStatus(r.data || null);
-    } catch { /* 忽略 */ }
+    } catch (e) { logWarn('Settings.refreshNotifyStatus', e); }
   }, []);
 
   useEffect(() => {

@@ -10,6 +10,7 @@ import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
 import { callIpc } from '../utils/ipc';
+import { isSensitiveLabel } from '../utils/clipboard';
 
 export function Dashboard() {
   const store = useStore();
@@ -92,14 +93,15 @@ export function Dashboard() {
 
   // Copy handler
   const handleCopy = useCallback(async (text: string, label: string, entryName?: string) => {
-    const delay = label === '密码' ? store.settings.clipboardClearDelay * 1000 : 0;
+    const sensitive = isSensitiveLabel(label);
+    const delay = sensitive ? store.settings.clipboardClearDelay * 1000 : 0;
     await window.electronAPI.clipboardCopy({ text, delay });
-    // 审计：复制密码属于敏感操作，记一笔（不写内容，只写条目名）
-    if (label === '密码') {
-      window.electronAPI.auditLog?.('复制密码', entryName || '').catch(() => { /* 忽略 */ });
+    // 审计：复制敏感内容记一笔（不写内容，只写条目名与标签）
+    if (sensitive) {
+      window.electronAPI.auditLog?.(`复制${label}`, entryName || '').catch(() => { /* 忽略 */ });
     }
     addToast(`${label}已复制到剪贴板`, 'success');
-    if (label === '密码' && delay > 0) {
+    if (sensitive && delay > 0) {
       addToast(`剪贴板将在 ${store.settings.clipboardClearDelay} 秒后自动清空`, 'info', 2000);
     }
   }, [store.settings.clipboardClearDelay]);

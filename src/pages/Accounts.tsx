@@ -7,6 +7,7 @@ import { newId } from '../utils/id';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 import { useStore } from '../store/useStore';
 import { parseAccountLines, daysSince } from '../../electron/accounts-import';
+import { copySensitive, copyPlain, isSensitiveLabel } from '../utils/clipboard';
 
 const ENVS = [
   { id: 'production', label: '正式', tone: 'bad' as const },
@@ -112,7 +113,8 @@ export function Accounts() {
   };
 
   const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+    if (isSensitiveLabel(label)) void copySensitive(text, label);
+    else void copyPlain(text);
     setToast(`${label}已复制`);
     setTimeout(() => setToast(''), 1500);
   };

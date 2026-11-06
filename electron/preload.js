@@ -197,6 +197,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   logInfo: () => ipcRenderer.invoke('log:info'),
   logOpen: () => ipcRenderer.invoke('log:open'),
   logTail: (lines) => ipcRenderer.invoke('log:tail', lines),
+  logRenderer: (level, message) => ipcRenderer.invoke('log:renderer', { level, message }),
 
   // 应用内「有新版本」提示（替代系统通知）
   onUpdateAvailable: (cb) => {

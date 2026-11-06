@@ -1015,3 +1015,211 @@ button { font-family: inherit; }
 /* ---------------- 25. P2 清理 ---------------- */
 /* sticky 侧栏原本背景透明，长内容滚动时有穿透风险 */
 .tb-rail, .set-rail { background: var(--surface-2); }
+
+/* ---------------- 26. 弹窗布局 / 表单统一 / 搜索图标 ---------------- */
+
+/* 弹窗改为「头尾固定 + 表单区内部滚动」：长表单不会把保存按钮顶出视口 */
+.modal {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+  overflow: hidden;
+}
+.modal-header {
+  flex: none;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.modal-footer {
+  flex: none;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-overlay);
+}
+
+/* 表单控件收编到设计令牌：旧 .form-group input 特异性更高，绕过了第 10 节，
+   导致弹窗里的输入框还是 14px / 旧蓝框，与其它页面不一致。 */
+.form-group { margin-bottom: 14px; }
+.form-group label { font-size: var(--fs-sm); color: var(--text-2); font-weight: 500; }
+.form-group > input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.form-group > select,
+.form-group > textarea,
+.password-input-wrapper > input {
+  width: 100%;
+  height: var(--d-control-h);
+  padding: 0 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+.form-group > textarea { height: auto; min-height: 76px; padding: 8px 10px; resize: vertical; }
+.password-input-wrapper > input { padding-right: 40px; }
+.form-group > input:hover, .form-group > select:hover, .form-group > textarea:hover,
+.password-input-wrapper > input:hover { border-color: var(--line-strong); }
+.form-group > input:focus, .form-group > select:focus, .form-group > textarea:focus,
+.password-input-wrapper > input:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.form-group .input-hint { font-size: 11px; color: var(--text-3); }
+
+/* 标签输入框是无边框的嵌套输入，别被上面的统一规则套上边框 */
+.tags-input {
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+}
+.tags-input:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.tags-input input {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  height: auto !important;
+  padding: 2px 0 !important;
+  font-family: var(--font-sans);
+}
+
+/* 所有带放大镜的搜索框：钉死左内边距。
+   .zt-filterbar / .zt-filters / .zt-proj-search 等旧规则特异性更高，
+   会把第 19 节的修复覆盖掉，图标又压回 placeholder 上。 */
+.search input { padding-left: 34px !important; }
+.search .search-ico { left: 11px; color: var(--text-3); }
+
+/* 弹窗内标签建议：改成文档流内联展开，避免被 .modal-body 的滚动容器裁切 */
+.modal-body .tag-suggestions {
+  position: static;
+  margin-top: 4px;
+  max-height: 160px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-overlay);
+}
+
+/* ---------------- 27. 渲染层错误兜底 ---------------- */
+.app-error {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-0); padding: 24px;
+}
+.app-error-card {
+  width: 420px; max-width: 100%; padding: 24px;
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+.app-error-title { font-size: 15px; font-weight: 500; color: var(--text-1); }
+.app-error-desc { font-size: var(--fs-sm); color: var(--bad); word-break: break-all; }
+.app-error-hint { font-size: var(--fs-sm); color: var(--text-2); line-height: 1.6; }
+
+/* ---------------- 28. 长列表渲染优化 ----------------
+   视口外的列表项跳过布局/绘制，contain-intrinsic-size 保持滚动条高度稳定。
+   表格行已有分页，这里只作用于非表格列表。 */
+.api-list-item, .entry-card, .tb-rail-item, .tag-sidebar-item,
+.codelab-line, .zt-sum-person, .hist-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+
+/* ---------------- 29. 更新弹窗 ----------------
+   点横幅「去更新」直接弹这里：更新说明 + 自动下载 + 倒计时自动安装，
+   取代原来「设置 › 通用 › 检查更新 › 下载 › 安装」的多步操作。 */
+.update-dlg { width: 560px; max-width: 92vw; }
+.update-dlg .modal-body { padding: 16px 20px 4px; }
+
+.update-dlg-vers {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 14px;
+}
+.update-dlg-ver {
+  padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-3);
+  color: var(--text-2); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.update-dlg-ver.is-new {
+  border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent);
+  font-weight: 500;
+}
+.update-dlg-arrow { color: var(--text-3); font-size: 12px; }
+.update-dlg-asset {
+  margin-left: auto; font-family: var(--font-code); font-size: 10.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
+}
+
+.update-dlg-section-title {
+  font-size: 11.5px; color: var(--text-3);
+  letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.update-dlg-notes {
+  max-height: 260px; overflow-y: auto; overscroll-behavior: contain;
+  padding: 12px 14px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-inset);
+  font-size: 12.5px; line-height: 1.75; color: var(--text-2);
+}
+.update-dlg-notes.is-more {
+  /* 还有内容没滚到：底部渐隐，避免半行字被生硬切断 */
+  mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
+}
+.update-dlg-notes > :first-child { margin-top: 0; }
+.update-dlg-notes .md-h { font-size: 13px; color: var(--text-1); margin: 12px 0 6px; }
+.update-dlg-notes .md-h:first-child { margin-top: 0; }
+.update-dlg-notes .md-list { padding-left: 18px; }
+.update-dlg-notes code {
+  font-family: var(--font-code); font-size: 11.5px;
+  padding: 1px 4px; border-radius: 4px;
+  background: var(--surface-3); color: var(--text-1);
+}
+.update-dlg-empty { color: var(--text-3); font-size: 12.5px; }
+
+.update-dlg-progress { margin-bottom: 10px; }
+.update-dlg-progress .dl-meta { margin-top: 6px; }
+
+.update-dlg-done {
+  display: flex; align-items: center; gap: 7px;
+  margin-bottom: 10px; padding: 8px 11px;
+  border: 1px solid var(--accent-line); border-radius: var(--r-sm);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 12px; word-break: break-all;
+}
+.update-dlg-error {
+  margin-bottom: 10px; padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  color: var(--text-2); font-size: 12px; line-height: 1.7;
+}
+.update-dlg-error-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+.update-dlg-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-bottom: 12px; padding: 0;
+  border: 0; background: transparent;
+  color: var(--text-3); font-size: 11.5px; cursor: pointer;
+}
+.update-dlg-link:hover { color: var(--accent); }
+
+.update-dlg-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+}
+.update-dlg-foot-hint { font-size: 11.5px; color: var(--text-3); }
+.update-dlg-foot-btns { display: flex; align-items: center; gap: 8px; margin-left: auto; }

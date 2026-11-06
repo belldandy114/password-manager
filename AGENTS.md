@@ -217,7 +217,12 @@ vault 从 `{ entries, tags }` 扩展为：
   vault 里只存元数据，删除附件要同时删文件。
 - **导入别名表**（`IMPORT_FIELD_ALIASES`）已覆盖本应用导出、Chrome/Edge、Bitwarden、1Password；
   新增字段要同时补别名，否则导出→导入会丢值。
-- **更新检查**只读 GitHub Releases 做版本比对，不自动下载安装（避免签名/发布链路依赖）。
+- **更新链路**：`update:check` 读 GitHub Releases 比对版本 → 启动时静默检查推 `update:available`
+  → 顶部横幅 + `UpdateDialog` 弹窗（展示更新说明、自动下载、倒计时自动安装）。
+  点「去更新」**不再跳设置页**；设置页里的旧版内联更新 UI 保留为高级入口（多线程/镜像）。
+  `update:available` 推送必须带 `notes/downloadUrl/assetName/digest`，否则弹窗要先补一次 `update:check`。
+- 更新弹窗的回归：`scripts/shot-update-dialog.js` 用 `PM_UPDATE_API` 指向桩服务冒充 Releases，
+  `PM_UPDATE_NO_INSTALL=1` 让安装只走流程不真拉安装程序（否则截图跑一半应用就退出了）。
 - 测试数据子应用（webview）**保活**：`App.tsx` 用 `tdgMounted` + `display:none` 隐藏，绝不卸载；
   登录后空闲 3 秒预热。实测首次 ~1s、再次进入 ~2ms（不重新加载）。
 
