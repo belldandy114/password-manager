@@ -311,11 +311,16 @@ function App() {
   // 更新弹窗：点横幅上的「去更新」直接在这里看说明 + 下载 + 安装，不再跳设置页
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
 
-  // 托盘 / Ctrl+Shift+P 唤起窗口时直接打开命令面板（未解锁时不弹）
+  // 托盘 / 全局搜索快捷键（Ctrl+空格）触发：只打开搜索面板，不切换窗口显隐（未解锁时不弹）
   useEffect(() => {
     const off = window.electronAPI.onOpenCommandPalette?.(() => {
       if (!useStore.getState().isLocked) setCmdkOpen(true);
     });
+    return () => { try { off?.(); } catch { /* 忽略 */ } };
+  }, []);
+  // 窗口被隐藏时收起搜索面板，免得下次唤起看到上次没关的面板
+  useEffect(() => {
+    const off = window.electronAPI.onCloseCommandPalette?.(() => setCmdkOpen(false));
     return () => { try { off?.(); } catch { /* 忽略 */ } };
   }, []);
   useEffect(() => {

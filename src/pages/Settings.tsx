@@ -69,6 +69,8 @@ export function Settings() {
   // 敏感复制历史（内存级，默认关闭）
   const [clipHistoryOn, setClipHistoryOn] = useState(settings.clipboardHistory === true);
   const [clipItems, setClipItems] = useState<{ text: string; at: string }[]>([]);
+  // 全局快捷键实际生效的键位（Ctrl+空格被占用时主进程会回退，不能写死）
+  const [hotkeys, setHotkeys] = useState<{ search: string; toggle: string; searchOk?: boolean; toggleOk?: boolean }>({ search: '', toggle: 'Ctrl+Shift+P' });
   const [passwordAutoHideDelay, setPasswordAutoHideDelay] = useState(settings.passwordAutoHideDelay);
   const [autoLockDelay, setAutoLockDelay] = useState(settings.autoLockDelay);
   const [defaultViewMode, setDefaultViewMode] = useState(settings.defaultViewMode);
@@ -131,6 +133,15 @@ export function Settings() {
       const r = await window.electronAPI.clipboardHistory?.();
       if (r?.success && r.data) setClipItems(r.data.items || []);
     } catch { /* 读不到就显示空 */ }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.electronAPI.hotkeyInfo?.();
+        if (r?.success && r.data) setHotkeys(r.data);
+      } catch { /* 拿不到就用默认文案 */ }
+    })();
   }, []);
 
   useEffect(() => {
@@ -858,7 +869,8 @@ export function Settings() {
               </div>
             </div>
             <div className="setting-desc" style={{ padding: '4px 0 0' }}>
-              托盘图标单击可恢复窗口；全局快捷键 <kbd>Ctrl+Shift+P</kbd> 也可随时唤起。
+              托盘图标单击可恢复窗口；全局快捷键 <kbd>{hotkeys.toggle}</kbd> 显示/隐藏窗口，
+              <kbd>{hotkeys.search || 'Ctrl+空格'}</kbd> 直接搜索（隐藏状态下按下即弹出搜索框）。
             </div>
 
             <h3 style={{ marginTop: 24 }}>隐私与系统</h3>
@@ -1117,7 +1129,21 @@ export function Settings() {
               })}
             </div>
             <div className="shortcut-note">
-              提示：全局快捷键 <kbd>Ctrl+Shift+P</kbd> 用于显示/隐藏应用窗口，可在系统设置中修改。
+              全局快捷键（系统级，应用在后台也生效）：
+              <kbd>{hotkeys.search || 'Ctrl+空格'}</kbd> 打开搜索，
+              <kbd>{hotkeys.toggle}</kbd> 显示 / 隐藏窗口。
+              {(!hotkeys.search || hotkeys.search.includes('空格')) && (
+                <div style={{ marginTop: 6 }}>
+                  提示：<kbd>Ctrl+空格</kbd> 被本应用占用后，输入法的「Ctrl+空格 切中英文」会失效（可用 Shift 切换）。
+                  若该组合已被别的程序占用，应用会自动退到 <kbd>Ctrl+Shift+空格</kbd>。
+                </div>
+              )}
+              {hotkeys.toggleOk === false && (
+                <div style={{ marginTop: 6 }}>
+                  注意：<kbd>{hotkeys.toggle}</kbd> 当前被别的程序占用（常见原因是已经开了一个「测试中台」），
+                  显示/隐藏窗口的快捷键暂时无效，关掉多余实例后重新启动即可。
+                </div>
+              )}
             </div>
           </div>
         );

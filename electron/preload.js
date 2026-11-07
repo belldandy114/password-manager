@@ -35,10 +35,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardClear: () => ipcRenderer.invoke('clipboard:clear'),
   clipboardHistory: () => ipcRenderer.invoke('clipboard:history'),
   clipboardHistoryClear: () => ipcRenderer.invoke('clipboard:history-clear'),
+  /** 实际生效的全局快捷键（Ctrl+空格被占用时主进程会自动回退） */
+  hotkeyInfo: () => ipcRenderer.invoke('app:hotkeys'),
   onOpenCommandPalette: (cb) => {
     const h = () => cb();
     ipcRenderer.on('app:cmd-palette', h);
     return () => ipcRenderer.removeListener('app:cmd-palette', h);
+  },
+  /** 窗口隐藏时主进程要求关掉命令面板 */
+  onCloseCommandPalette: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('app:cmd-palette-close', h);
+    return () => ipcRenderer.removeListener('app:cmd-palette-close', h);
   },
   onClipboardCleared: (cb) => {
     ipcRenderer.on('clipboard-cleared', () => cb());

@@ -558,18 +558,91 @@ function appIconPath() {
     : path.join(process.resourcesPath, 'app.asar.unpacked', 'buildResources', 'icon.ico');
 }
 
-/** 显示窗口并让渲染层打开命令面板（托盘 / 全局快捷键共用） */
-function openSearchPalette() {
-  showMainWindow();
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const send = () => {
-    try { mainWindow.webContents.send('app:cmd-palette'); } catch { /* 窗口已关 */ }
-  };
-  if (mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.once('did-finish-load', () => setTimeout(send, 120));
-  } else {
-    setTimeout(send, 120);
+/**
+ * 显示/隐藏窗口的全局快捷键（只负责显隐，不碰搜索）。
+ * PM_HOTKEY_TOGGLE 仅供本地回归脚本换一个不冲突的组合（正常启动不会设置）。
+ */
+const TOGGLE_HOTKEY = process.env.PM_HOTKEY_TOGGLE || 'CommandOrControl+Shift+P';
+/**
+ * 搜索快捷键候选：优先 Ctrl+空格（实测本机无冲突），被别的程序占走时依次回退。
+ * 注意：注册成功会抢走输入法的「Ctrl+空格 切中英文」，设置页里有提示。
+ */
+const SEARCH_HOTKEY_CANDIDATES = [
+  'CommandOrControl+Space',
+  'CommandOrControl+Shift+Space',
+  'CommandOrControl+Shift+F',
+];
+/** 实际注册成功的搜索快捷键，空字符串表示全失败 */
+let searchHotkey = '';
+/** 打开搜索时那 30ms 的「稍后显示窗口」定时器，被显隐键打断时要取消，否则刚隐藏又被弹回来 */
+let paletteShowTimer = null;
+
+function cancelPaletteShow() {
+  if (paletteShowTimer) {
+    clearTimeout(paletteShowTimer);
+    paletteShowTimer = null;
   }
+}
+
+/** 快捷键显示名：CommandOrControl → Ctrl、Space → 空格 */
+function accelLabel(accel) {
+  return String(accel || '')
+    .replace(/CommandOrControl|Control/g, 'Ctrl')
+    .replace(/Space/g, '空格');
+}
+
+/** 只通知渲染层打开命令面板 */
+function sendPalette() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { mainWindow.webContents.send('app:cmd-palette'); } catch { /* 窗口已关 */ }
+}
+
+/**
+ * 只打开搜索，不切换窗口显隐。
+ * 顺序很关键：先把「打开命令面板」发给渲染层，等它挂到 DOM 上再把窗口显示出来 ——
+ * 这样窗口出现的第一帧就带着搜索框，不会先闪一下主页面。
+ */
+function openSearchPalette() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // 窗口还没建过（冷启动/被彻底关掉）：建出来，加载完再开面板
+    createWindow();
+    if (!mainWindow) return;
+    mainWindow.webContents.once('did-finish-load', () => {
+      sendPalette();
+      showMainWindow();
+    });
+    return;
+  }
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      sendPalette();
+      showMainWindow();
+    });
+    return;
+  }
+  sendPalette();
+  // 给渲染层一帧时间把面板挂上去（隐藏窗口里 React 的 MessageChannel 不会被节流）
+  cancelPaletteShow();
+  paletteShowTimer = setTimeout(() => {
+    paletteShowTimer = null;
+    showMainWindow();
+  }, 30);
+}
+
+/** 只切换显示/隐藏，不弹搜索 */
+function toggleMainWindow() {
+  cancelPaletteShow();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (process.env.PM_DEBUG_HOTKEY) console.log('[toggle] before visible=' + mainWindow.isVisible() + ' min=' + mainWindow.isMinimized());
+  if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+    mainWindow.hide();
+  } else {
+    showMainWindow();
+  }
+  if (process.env.PM_DEBUG_HOTKEY) console.log('[toggle] after  visible=' + mainWindow.isVisible());
 }
 
 function showMainWindow() {
@@ -586,6 +659,7 @@ function showMainWindow() {
 }
 
 function hideToTray() {
+  cancelPaletteShow();
   createTray();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
 }
@@ -632,8 +706,8 @@ function buildTrayMenu() {
   }
 
   template.push(
-    { label: '显示主窗口', click: () => showMainWindow() },
-    { label: '搜索（Ctrl+Shift+P）', click: () => openSearchPalette() },
+    { label: '显示 / 隐藏主窗口（Ctrl+Shift+P）', click: () => toggleMainWindow() },
+    { label: `搜索（${accelLabel(searchHotkey) || 'Ctrl+空格'}）`, click: () => openSearchPalette() },
     {
       label: '锁定', click: () => {
         showMainWindow();
@@ -761,6 +835,11 @@ function createWindow() {
       return;
     }
     mainWindow.show();
+  });
+  // 窗口被隐藏（托盘 / 快捷键 / 最小化到托盘）时把命令面板收起来，
+  // 否则下次唤起会看到一个「上次没关」的搜索框。
+  mainWindow.on('hide', () => {
+    try { mainWindow.webContents.send('app:cmd-palette-close'); } catch { /* 窗口已关 */ }
   });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -929,6 +1008,18 @@ ipcMain.handle('app:relaunch', async () => {
   app.exit(0);
   return { success: true };
 });
+
+/** 设置页显示真实生效的全局快捷键（Ctrl+空格被占用时会回退，不能写死） */
+ipcMain.handle('app:hotkeys', async () => ({
+  success: true,
+  data: {
+    search: accelLabel(searchHotkey) || '',
+    toggle: accelLabel(TOGGLE_HOTKEY),
+    // 注册失败一般是「已经开了另一个实例」或别的程序占了这个组合
+    searchOk: !!searchHotkey,
+    toggleOk: globalShortcut.isRegistered(TOGGLE_HOTKEY),
+  },
+}));
 
 ipcMain.handle('log:info', async () => ({ success: true, data: { path: logPath() || '' } }));
 ipcMain.handle('log:open', async () => {
@@ -3814,16 +3905,24 @@ app.whenReady().then(() => {
   // 放最后 + setTimeout：网络请求绝不能影响启动速度。
   setTimeout(() => { autoCheckUpdate(); }, 8000);
 
-  // Global shortcut: Ctrl+Shift+P or Cmd+Shift+P to show/hide the window
-  globalShortcut.register('CommandOrControl+Shift+P', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
-      mainWindow.hide();
-    } else {
-      // 从隐藏状态唤起时直接把搜索面板拉到前台，省掉「再按一次 Ctrl+K」
-      openSearchPalette();
-    }
-  });
+  // 全局快捷键拆成两个，别让一个键同时管两件事：
+  //   Ctrl+Shift+P → 只显示/隐藏窗口
+  //   Ctrl+空格（或回退键）→ 只打开搜索；隐藏时按下去直接是搜索框，不会先闪主页面
+  globalShortcut.register(TOGGLE_HOTKEY, () => toggleMainWindow());
+  for (const accel of SEARCH_HOTKEY_CANDIDATES) {
+    try {
+      if (globalShortcut.register(accel, () => openSearchPalette())) {
+        searchHotkey = accel;
+        break;
+      }
+    } catch { /* 非法组合，换下一个 */ }
+  }
+  if (!searchHotkey) console.warn('[hotkey] 搜索快捷键全部注册失败，只剩托盘入口');
+  else if (searchHotkey !== SEARCH_HOTKEY_CANDIDATES[0]) {
+    console.log(`[hotkey] ${SEARCH_HOTKEY_CANDIDATES[0]} 被占用，搜索改用 ${searchHotkey}`);
+  } else {
+    console.log(`[hotkey] 搜索 ${accelLabel(searchHotkey)} / 显隐 ${accelLabel(TOGGLE_HOTKEY)}`);
+  }
 });
 
 app.on('before-quit', () => { isQuitting = true; });

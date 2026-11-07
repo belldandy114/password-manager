@@ -148,7 +148,11 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   iconic 状态再被 `hide()`。所以 `showMainWindow()` 必须 **先 `show()` 再 `restore()`**：
   窗口隐藏状态下 `isMinimized()` 会返回 false，先 restore 会被跳过，
   从托盘唤醒后会得到一个「任务栏最小化」的窗口。
-- 全局快捷键 `Ctrl+Shift+P` 也走 `showMainWindow()`，不要重复实现恢复逻辑。
+- 全局快捷键拆成两个，别合并回一个键：
+  - `Ctrl+Shift+P` → `toggleMainWindow()`，**只**显示/隐藏窗口。
+  - `Ctrl+空格` → `openSearchPalette()`，**只**开搜索（被占用时按 `SEARCH_HOTKEY_CANDIDATES` 回退到 `Ctrl+Shift+空格` / `Ctrl+Shift+F`）。
+  - `openSearchPalette()` 必须**先 `send('app:cmd-palette')` 再显示窗口**（中间留约 30ms），
+    否则隐藏状态下按搜索键会先闪一下主页面再弹面板。窗口的显示/恢复仍统一走 `showMainWindow()`。
 
 ## 1.1.0 新增能力（改动时注意联动）
 

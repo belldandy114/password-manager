@@ -552,8 +552,12 @@ export interface ElectronAPI {
   /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
   clipboardHistory: () => Promise<{ success: boolean; data?: { enabled: boolean; items: { text: string; at: string }[] } }>;
   clipboardHistoryClear: () => Promise<{ success: boolean }>;
+  /** 实际生效的全局快捷键（搜索键被占用时主进程会回退，显示用） */
+  hotkeyInfo: () => Promise<{ success: boolean; data?: { search: string; toggle: string; searchOk?: boolean; toggleOk?: boolean } }>;
   /** 托盘 / 全局快捷键要求打开命令面板 */
   onOpenCommandPalette: (cb: () => void) => () => void;
+  /** 窗口隐藏时要求关闭命令面板 */
+  onCloseCommandPalette: (cb: () => void) => () => void;
   /** 渲染层错误/警告写入主进程 app.log */
   logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;
