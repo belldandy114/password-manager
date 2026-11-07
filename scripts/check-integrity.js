@@ -18,7 +18,10 @@ const RELEASE = path.join(ROOT, process.env.PM_RELEASE_DIR || 'release');
 const UNPACKED = path.join(RELEASE, 'win-unpacked');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const installer = path.join(RELEASE, `测试工具 Setup ${pkg.version}.exe`);
+// 产品名从 package.json 读（1.8.0 起叫「测试中台」，别再写死旧名字，
+// 否则安装包这一项会因为路径不存在被 filter 掉，等于没检查）
+const productName = (pkg.build && pkg.build.productName) || pkg.productName || '测试中台';
+const installer = path.join(RELEASE, `${productName} Setup ${pkg.version}.exe`);
 
 // 关键路径（不必扫描几千个文件：关键路径没问题，其余同目录文件继承同一标签）
 const targets = [
@@ -44,9 +47,17 @@ function readLabel(p) {
 }
 
 function fix(p) {
+  // (OI)(CI) 是「容器/对象继承」标志，只能用在目录上。
+  // 早先无差别地传 (OI)(CI)Medium /T，作用到 app.asar 这种文件上会被 icacls 判为
+  // 无效参数 → 修复静默失败 → 每次发版都卡在这一项。文件改用不带标志的 Medium。
+  const isDir = (() => {
+    try { return fs.statSync(p).isDirectory(); } catch { return false; }
+  })();
+  const args = isDir
+    ? [p, '/setintegritylevel', '(OI)(CI)Medium', '/T']
+    : [p, '/setintegritylevel', 'Medium'];
   try {
-    execFileSync('icacls', [p, '/setintegritylevel', '(OI)(CI)Medium', '/T'],
-      { encoding: 'latin1', windowsHide: true, stdio: 'ignore', timeout: 300000 });
+    execFileSync('icacls', args, { encoding: 'latin1', windowsHide: true, stdio: 'ignore', timeout: 300000 });
     return true;
   } catch (e) {
     return false;
