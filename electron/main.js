@@ -729,9 +729,9 @@ let appUnlocked = false;
 function createSearchWindow() {
   searchWin = new BrowserWindow({
     width: 720,
-    height: 540,
+    height: 96,
     minWidth: 560,
-    minHeight: 400,
+    minHeight: 96,
     frame: false,
     transparent: true,
     hasShadow: true,
@@ -787,8 +787,11 @@ function placeSearchWindow() {
 function showSearchWindow() {
   if (!searchWin || searchWin.isDestroyed()) createSearchWindow();
   if (!searchWin || searchWin.isDestroyed()) return;
-  placeSearchWindow();
   if (!searchWin.isVisible()) {
+    // 每次弹出先收成「只有搜索框」的高度，避免闪一下上一次的结果列表
+    const [w] = searchWin.getSize();
+    searchWin.setSize(w, 96);
+    placeSearchWindow();
     searchWin.show();
     searchWin.focus();
     // 每次弹出都让窗口重取一遍数据（网址/片段/笔记可能刚在主窗口里改过）
@@ -1228,9 +1231,41 @@ ipcMain.handle('palette:hide', () => {
   return { success: true };
 });
 
-/** 选中一条命令：收起小窗 → 把主窗口带到前台 → 让主窗口执行 */
+/** 按结果条数调整小窗高度：没输入时只留一个搜索框 */
+ipcMain.handle('palette:resize', (_event, height) => {
+  try {
+    if (!searchWin || searchWin.isDestroyed()) return { success: false };
+    const h = Math.min(540, Math.max(96, Math.round(Number(height) || 96)));
+    const [w] = searchWin.getSize();
+    if (Math.abs(searchWin.getSize()[1] - h) > 1) searchWin.setSize(w, h);
+  } catch { /* 忽略 */ }
+  return { success: true };
+});
+
+/** 网址条目：补上协议后交给系统默认浏览器，不要把应用窗口拉出来 */
+function openEntryInBrowser(raw) {
+  let url = String(raw || '').trim();
+  if (!url) return false;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'https://' + url.replace(/^\/+/, '');
+  // 只允许 http(s)，避免把奇怪的 scheme 丢给系统
+  if (!/^https?:\/\//i.test(url)) return false;
+  try {
+    shell.openExternal(url);
+    if (process.env.PM_DEBUG_HOTKEY) console.log('[palette] open-url ' + url);
+    return true;
+  } catch (e) {
+    console.warn('[palette] 打开网址失败: ' + e.message);
+    return false;
+  }
+}
+
+/** 选中一条命令：网址 → 默认浏览器；其它 → 收起小窗并让主窗口执行 */
 ipcMain.handle('palette:run', (_event, item) => {
   hideSearchWindow();
+  // 网址类：直接开浏览器，应用保持原样（不用跳转、不用弹出主窗口）
+  if (item && typeof item.id === 'string' && item.id.startsWith('entry:') && item.url) {
+    if (openEntryInBrowser(item.url)) return { success: true };
+  }
   if (item && item.id === 'action:lock') {
     // 锁定不需要把窗口提前拉出来，原地锁就行
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('palette:run', item); } catch { /* 忽略 */ }

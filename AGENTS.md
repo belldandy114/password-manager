@@ -161,8 +161,17 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   不是主窗口里的面板：
   - 渲染层入口在 `main.tsx` 按 `?window=palette` 分流到 `PaletteApp`；数据由小窗自己走 IPC 现取
     （`entries:get-all` / `ws:get`，主进程持有解锁态），每次弹出 `palette:refresh` 重取。
-  - 选中命令走 `palette:run` IPC → 主进程 `hideSearchWindow() + showMainWindow()` → 转发给主窗口，
-    由 `App.tsx` 的 `onPaletteRun` 落地（导航 / 填搜索词 / 锁定…），**不要在小窗里复制业务逻辑**。
+  - **主题必须走 `settings:get`**（`applyPrefs()`），不要用 zustand `useStore(s => s.settings.theme)`：
+    新窗口的 persist 是异步 rehydrate，拿到的是默认深色，会和主窗口设置不一致。
+  - **空查询只显示搜索框**：`filtered=[]`、不渲染 `.cmdk-list` / `.cmdk-foot`，`palette:resize` 把窗口收到
+    96px；有结果时按 `MIN_H + min(n,10)*36 + 34` 撑高（主进程 clamp 96–540，注意 BrowserWindow 的
+    `minHeight` 也要设成 96，否则 setSize 被拦）。
+  - ⚠️ `CommandPalette.tsx` 模块底部有 `PAGES.push(...PAGES_MORE)`，**PAGES 已含全部菜单页**：
+    小窗里只能展开 `PAGES`，再展开 `PAGES_MORE` 会重复；末尾统一按 `id` 去重，重复 key 会让 React
+    在结果变化时留下上一屏的残留行（表现为「回显一堆重复内容」）。
+  - 选中**网址**条目：`palette:run` 带 `url` → 主进程 `shell.openExternal()` 直接用默认浏览器打开，
+    **不要 `showMainWindow()`**（只补 `https://`、只允许 http/https；url 为空/invalid 才回退到应用内跳转）。
+    选中**菜单页**：正常 `hideSearchWindow() + showMainWindow()` 转发给主窗口落地。
   - 未解锁时按搜索键**不出小窗**，直接 `showMainWindow()`（模块级 `appUnlocked` 标志，session:unlock/lock 维护）。
     ⚠️ 这类标志必须放**模块作用域**——放进 `setupIpcHandlers()` 的话模块级函数读不到，
     ReferenceError 会被快捷键回调静默吞掉；排查要在回调第一行加日志。

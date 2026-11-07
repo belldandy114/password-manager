@@ -606,12 +606,14 @@ export interface ElectronAPI {
   onPaletteRefresh: (cb: () => void) => () => void;
   /** 小窗收起自己 */
   paletteHide: () => Promise<{ success: boolean }>;
-  /** 小窗把选中的命令交给主窗口执行 */
-  paletteRun: (item: { id: string; title?: string }) => Promise<{ success: boolean }>;
+  /** 小窗把选中的命令交给主进程（网址带 url → 直接用默认浏览器打开） */
+  paletteRun: (item: { id: string; title?: string; url?: string }) => Promise<{ success: boolean }>;
+  /** 小窗按结果条数调整自身高度 */
+  paletteResize: (height: number) => Promise<{ success: boolean }>;
   /** 小窗里未解锁：让主窗口出来解锁 */
   paletteUnlock: () => Promise<{ success: boolean }>;
   /** 主窗口接收小窗转发的命令 */
-  onPaletteRun: (cb: (item: { id: string; title?: string }) => void) => () => void;
+  onPaletteRun: (cb: (item: { id: string; title?: string; url?: string }) => void) => () => void;
   /** 渲染层错误/警告写入主进程 app.log */
   logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;

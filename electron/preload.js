@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   paletteHide: () => ipcRenderer.invoke('palette:hide'),
   /** 小窗把选中的命令交给主窗口执行 */
   paletteRun: (item) => ipcRenderer.invoke('palette:run', item),
+  /** 小窗按结果条数调整自身高度（空查询时只留搜索框） */
+  paletteResize: (height) => ipcRenderer.invoke('palette:resize', height),
   /** 小窗里发现未解锁：让主窗口出来解锁 */
   paletteUnlock: () => ipcRenderer.invoke('palette:unlock'),
   /** 主窗口接小窗转发过来的命令 */
