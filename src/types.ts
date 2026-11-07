@@ -61,6 +61,10 @@ export interface AppSettings {
   clipboardClearDelay: number;
   /** 记录最近 10 条敏感复制（仅内存，锁屏即清空）；默认关闭 */
   clipboardHistory?: boolean;
+  /** 全局搜索快捷键（Electron 加速键，如 CommandOrControl+Space）；空 = 用默认 */
+  hotkeySearch?: string;
+  /** 显示/隐藏窗口的全局快捷键；空 = 用默认 */
+  hotkeyToggle?: string;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
   defaultViewMode: 'card' | 'list';
@@ -517,6 +521,47 @@ export interface JmeterDetectInfo {
   };
   candidates: string[];
 }
+
+/** 单个全局快捷键的注册结果 */
+export interface HotkeySlotResult {
+  /** 想注册的加速键，如 CommandOrControl+Space */
+  want: string;
+  /** 展示名，如 Ctrl+空格 */
+  label: string;
+  ok: boolean;
+  accel: string;
+  /** conflict=被占用 / same=和另一个键重复 / '' */
+  reason: '' | 'conflict' | 'same';
+  /** 默认键被占用后自动换成了兜底键 */
+  fallback?: boolean;
+}
+
+export interface HotkeyApplyResult {
+  success: boolean;
+  error?: string;
+  rolledBack?: boolean;
+  data?: { search: HotkeySlotResult; toggle: HotkeySlotResult };
+  /** 应用后的实际状态（失败时是回滚后的状态） */
+  info?: HotkeyInfo;
+}
+
+/** 实际生效的全局快捷键 */
+export interface HotkeyInfo {
+  search: string;
+  toggle: string;
+  searchOk: boolean;
+  toggleOk: boolean;
+  searchAccel: string;
+  toggleAccel: string;
+  searchDefault: string;
+  toggleDefault: string;
+  /** 默认键的加速键原值（「恢复默认」时直接发给主进程） */
+  searchDefaultAccel: string;
+  toggleDefaultAccel: string;
+  searchIsDefault: boolean;
+  toggleIsDefault: boolean;
+}
+
 export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
@@ -548,12 +593,13 @@ export interface ElectronAPI {
   trashEmpty: () => Promise<{ success: boolean; error?: string }>;
 
   // Clipboard
-  clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;
-  /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
+  clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;  /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
   clipboardHistory: () => Promise<{ success: boolean; data?: { enabled: boolean; items: { text: string; at: string }[] } }>;
   clipboardHistoryClear: () => Promise<{ success: boolean }>;
   /** 实际生效的全局快捷键（搜索键被占用时主进程会回退，显示用） */
-  hotkeyInfo: () => Promise<{ success: boolean; data?: { search: string; toggle: string; searchOk?: boolean; toggleOk?: boolean } }>;
+  hotkeyInfo: () => Promise<{ success: boolean; data?: HotkeyInfo }>;
+  /** 修改全局快捷键；冲突时 success:false + error（conflict / same），并回滚到原来能用的键 */
+  hotkeyApply: (payload: { search?: string; toggle?: string }) => Promise<HotkeyApplyResult>;
   /** 托盘 / 全局快捷键要求打开命令面板 */
   onOpenCommandPalette: (cb: () => void) => () => void;
   /** 窗口隐藏时要求关闭命令面板 */

@@ -150,9 +150,15 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   从托盘唤醒后会得到一个「任务栏最小化」的窗口。
 - 全局快捷键拆成两个，别合并回一个键：
   - `Ctrl+Shift+P` → `toggleMainWindow()`，**只**显示/隐藏窗口。
-  - `Ctrl+空格` → `openSearchPalette()`，**只**开搜索（被占用时按 `SEARCH_HOTKEY_CANDIDATES` 回退到 `Ctrl+Shift+空格` / `Ctrl+Shift+F`）。
-  - `openSearchPalette()` 必须**先 `send('app:cmd-palette')` 再显示窗口**（中间留约 30ms），
-    否则隐藏状态下按搜索键会先闪一下主页面再弹面板。窗口的显示/恢复仍统一走 `showMainWindow()`。
+  - `Ctrl+空格` → `openSearchPalette()`，**只**开搜索。
+  - 两个键都可在「设置 › 快捷键」里自定义（存 `settings.hotkeySearch` / `hotkeyToggle`，值为 Electron 加速键）。
+- 键位统一走 `applyHotkeys()`：
+  - 注册失败**整体回滚**到上一次能用的组合（不能把用户原本可用的键弄丢），失败原因 `conflict` / `same` 回给渲染层显示。
+  - 默认搜索键被占用时才走 `SEARCH_HOTKEY_FALLBACKS`；**用户自定义的键冲突就如实报错，不静默替换**。
+  - 等于默认值的键不写盘（`delete s.hotkeyX`），`PM_HOTKEY_*` 环境变量覆盖也不写盘。
+  - 改完要 `buildTrayMenu()`，托盘菜单里显示的是实际键位。
+- `openSearchPalette()` 必须**先 `send('app:cmd-palette')` 再显示窗口**（中间约 30ms），
+  否则隐藏状态下按搜索键会先闪一下主页面再弹面板；`cancelPaletteShow()` 负责取消这个挂起的显示。
 
 ## 1.1.0 新增能力（改动时注意联动）
 

@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardHistoryClear: () => ipcRenderer.invoke('clipboard:history-clear'),
   /** 实际生效的全局快捷键（Ctrl+空格被占用时主进程会自动回退） */
   hotkeyInfo: () => ipcRenderer.invoke('app:hotkeys'),
+  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
+  hotkeyApply: (payload) => ipcRenderer.invoke('app:hotkeys-apply', payload),
   onOpenCommandPalette: (cb) => {
     const h = () => cb();
     ipcRenderer.on('app:cmd-palette', h);

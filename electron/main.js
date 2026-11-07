@@ -559,21 +559,21 @@ function appIconPath() {
 }
 
 /**
- * 显示/隐藏窗口的全局快捷键（只负责显隐，不碰搜索）。
- * PM_HOTKEY_TOGGLE 仅供本地回归脚本换一个不冲突的组合（正常启动不会设置）。
+ * 全局快捷键：两个动作拆开注册（显隐 / 搜索），都支持在设置里自定义。
+ * PM_HOTKEY_SEARCH / PM_HOTKEY_TOGGLE 仅供本地回归脚本临时换键（正常启动不会设置）。
  */
-const TOGGLE_HOTKEY = process.env.PM_HOTKEY_TOGGLE || 'CommandOrControl+Shift+P';
+const DEFAULT_HOTKEY_SEARCH = 'CommandOrControl+Space';
+const DEFAULT_HOTKEY_TOGGLE = 'CommandOrControl+Shift+P';
 /**
- * 搜索快捷键候选：优先 Ctrl+空格（实测本机无冲突），被别的程序占走时依次回退。
- * 注意：注册成功会抢走输入法的「Ctrl+空格 切中英文」，设置页里有提示。
+ * 默认搜索键被别的程序占走时的兜底。只在「没自定义过」时生效，
+ * 用户自己改的键冲突就如实报错，不做静默替换。
  */
-const SEARCH_HOTKEY_CANDIDATES = [
-  'CommandOrControl+Space',
-  'CommandOrControl+Shift+Space',
-  'CommandOrControl+Shift+F',
-];
-/** 实际注册成功的搜索快捷键，空字符串表示全失败 */
-let searchHotkey = '';
+const SEARCH_HOTKEY_FALLBACKS = ['CommandOrControl+Shift+Space', 'CommandOrControl+Shift+F'];
+
+/** 每个动作「实际注册成功」的加速键，'' 表示没注册上 */
+const hotkeys = { search: '', toggle: '' };
+/** 本应用当前占用的加速键，改动前要全部注销 */
+const registeredAccels = new Set();
 /** 打开搜索时那 30ms 的「稍后显示窗口」定时器，被显隐键打断时要取消，否则刚隐藏又被弹回来 */
 let paletteShowTimer = null;
 
@@ -590,6 +590,138 @@ function accelLabel(accel) {
     .replace(/CommandOrControl|Control/g, 'Ctrl')
     .replace(/Space/g, '空格');
 }
+
+/** 规范化加速键（去空格、统一大小写太麻烦，只做 trim） */
+function normAccel(v) {
+  return String(v == null ? '' : v).trim();
+}
+
+/** 设置里「想要」的键位：入参 > 环境变量 > 设置 > 默认 */
+function desiredHotkeys(override) {
+  const s = loadSettings() || {};
+  const o = override || {};
+  const envSearch = normAccel(process.env.PM_HOTKEY_SEARCH);
+  const envToggle = normAccel(process.env.PM_HOTKEY_TOGGLE);
+  const sSearch = normAccel(o.search) || envSearch || normAccel(s.hotkeySearch);
+  const sToggle = normAccel(o.toggle) || envToggle || normAccel(s.hotkeyToggle);
+  return {
+    search: sSearch || DEFAULT_HOTKEY_SEARCH,
+    toggle: sToggle || DEFAULT_HOTKEY_TOGGLE,
+    // 自定义过就不走兜底，冲突要如实报出来
+    searchCustom: !!(normAccel(s.hotkeySearch) || envSearch || normAccel(o.search)),
+    toggleCustom: !!(normAccel(s.hotkeyToggle) || envToggle || normAccel(o.toggle)),
+    // 回归脚本用环境变量临时换键，不能写进用户设置
+    searchFromEnv: !normAccel(o.search) && !!envSearch,
+    toggleFromEnv: !normAccel(o.toggle) && !!envToggle,
+  };
+}
+
+function unregisterHotkeys() {
+  for (const acc of registeredAccels) {
+    try { globalShortcut.unregister(acc); } catch { /* 忽略 */ }
+  }
+  registeredAccels.clear();
+  hotkeys.search = '';
+  hotkeys.toggle = '';
+}
+
+/** 注册单个键；非法或已被占用都返回 false，不抛 */
+function tryRegister(accel, handler) {
+  try {
+    if (globalShortcut.register(accel, handler)) {
+      registeredAccels.add(accel);
+      return true;
+    }
+  } catch { /* 非法加速键 */ }
+  return false;
+}
+
+function hotkeyInfo() {
+  const want = desiredHotkeys();
+  return {
+    search: accelLabel(hotkeys.search),
+    toggle: accelLabel(hotkeys.toggle),
+    searchOk: !!hotkeys.search,
+    toggleOk: !!hotkeys.toggle,
+    searchAccel: hotkeys.search,
+    toggleAccel: hotkeys.toggle,
+    searchDefault: accelLabel(DEFAULT_HOTKEY_SEARCH),
+    toggleDefault: accelLabel(DEFAULT_HOTKEY_TOGGLE),
+    searchDefaultAccel: DEFAULT_HOTKEY_SEARCH,
+    toggleDefaultAccel: DEFAULT_HOTKEY_TOGGLE,
+    searchIsDefault: !want.searchCustom,
+    toggleIsDefault: !want.toggleCustom,
+  };
+}
+
+/**
+ * 应用键位。任一键注册失败则整体回滚到上一次可用的组合，并把失败原因带回去，
+ * 这样设置页能直接提示「Ctrl+X 被占用」，而不会把原本能用的键弄丢。
+ */
+function applyHotkeys(override, { persist = false } = {}) {
+  const want = desiredHotkeys(override);
+  const res = {
+    search: { want: want.search, label: accelLabel(want.search), ok: false, accel: '', reason: '', fallback: false },
+    toggle: { want: want.toggle, label: accelLabel(want.toggle), ok: false, accel: '', reason: '' },
+  };
+
+  if (want.search.toLowerCase() === want.toggle.toLowerCase()) {
+    res.search.reason = 'same';
+    res.toggle.reason = 'same';
+    return { ok: false, data: res };
+  }
+
+  const prev = { search: hotkeys.search, toggle: hotkeys.toggle };
+  // 搜索候选：自定义的只试一次；默认键失败才走兜底
+  const searchList = want.searchCustom ? [want.search] : [want.search, ...SEARCH_HOTKEY_FALLBACKS];
+
+  unregisterHotkeys();
+  for (const acc of searchList) {
+    if (tryRegister(acc, () => openSearchPalette())) {
+      hotkeys.search = acc;
+      res.search.ok = true;
+      res.search.accel = acc;
+      res.search.label = accelLabel(acc);
+      res.search.fallback = acc !== want.search;
+      break;
+    }
+  }
+  if (!hotkeys.search) res.search.reason = 'conflict';
+
+  if (tryRegister(want.toggle, () => toggleMainWindow())) {
+    hotkeys.toggle = want.toggle;
+    res.toggle.ok = true;
+    res.toggle.accel = want.toggle;
+    res.toggle.label = accelLabel(want.toggle);
+  } else {
+    res.toggle.reason = 'conflict';
+  }
+
+  const allOk = res.search.ok && res.toggle.ok;
+  if (!allOk) {
+    // 整体回滚：不把用户原来能用的键弄丢
+    unregisterHotkeys();
+    if (prev.search && tryRegister(prev.search, () => openSearchPalette())) hotkeys.search = prev.search;
+    if (prev.toggle && tryRegister(prev.toggle, () => toggleMainWindow())) hotkeys.toggle = prev.toggle;
+    return { ok: false, data: res, rolledBack: true };
+  }
+
+  if (persist) {
+    const s = loadSettings() || {};
+    // 和默认值一致（或是默认键的兜底）就不写盘，避免以后默认键变化时用户被钉在旧值上
+    const write = (slot, def, key) => {
+      if (!slot.accel || slot.fallback || slot.accel === def) delete s[key];
+      else s[key] = slot.accel;
+    };
+    // 环境变量临时覆盖的键位不落盘
+    if (!want.searchFromEnv) write(res.search, DEFAULT_HOTKEY_SEARCH, 'hotkeySearch');
+    if (!want.toggleFromEnv) write(res.toggle, DEFAULT_HOTKEY_TOGGLE, 'hotkeyToggle');
+    saveSettings(s);
+  }
+  if (tray) buildTrayMenu();
+  return { ok: true, data: res };
+}
+
 
 /** 只通知渲染层打开命令面板 */
 function sendPalette() {
@@ -706,8 +838,8 @@ function buildTrayMenu() {
   }
 
   template.push(
-    { label: '显示 / 隐藏主窗口（Ctrl+Shift+P）', click: () => toggleMainWindow() },
-    { label: `搜索（${accelLabel(searchHotkey) || 'Ctrl+空格'}）`, click: () => openSearchPalette() },
+    { label: `显示 / 隐藏主窗口（${accelLabel(hotkeys.toggle) || '未设置'}）`, click: () => toggleMainWindow() },
+    { label: `搜索（${accelLabel(hotkeys.search) || '未设置'}）`, click: () => openSearchPalette() },
     {
       label: '锁定', click: () => {
         showMainWindow();
@@ -1009,17 +1141,27 @@ ipcMain.handle('app:relaunch', async () => {
   return { success: true };
 });
 
-/** 设置页显示真实生效的全局快捷键（Ctrl+空格被占用时会回退，不能写死） */
-ipcMain.handle('app:hotkeys', async () => ({
-  success: true,
-  data: {
-    search: accelLabel(searchHotkey) || '',
-    toggle: accelLabel(TOGGLE_HOTKEY),
-    // 注册失败一般是「已经开了另一个实例」或别的程序占了这个组合
-    searchOk: !!searchHotkey,
-    toggleOk: globalShortcut.isRegistered(TOGGLE_HOTKEY),
-  },
-}));
+/** 设置页显示真实生效的全局快捷键（自定义或回退后都不能写死） */
+ipcMain.handle('app:hotkeys', async () => ({ success: true, data: hotkeyInfo() }));
+
+/**
+ * 改全局快捷键：先试着注册，成功才落盘；失败会把原因（conflict / same）带回去，
+ * 并回滚到原来能用的组合。
+ */
+ipcMain.handle('app:hotkeys-apply', async (_event, payload) => {
+  try {
+    const r = applyHotkeys({ search: payload && payload.search, toggle: payload && payload.toggle }, { persist: true });
+    return {
+      success: r.ok,
+      data: r.data,
+      rolledBack: !!r.rolledBack,
+      error: r.ok ? '' : (r.data.search.reason || r.data.toggle.reason || 'conflict'),
+      info: hotkeyInfo(),
+    };
+  } catch (e) {
+    return { success: false, error: e.message, info: hotkeyInfo() };
+  }
+});
 
 ipcMain.handle('log:info', async () => ({ success: true, data: { path: logPath() || '' } }));
 ipcMain.handle('log:open', async () => {
@@ -3906,22 +4048,17 @@ app.whenReady().then(() => {
   setTimeout(() => { autoCheckUpdate(); }, 8000);
 
   // 全局快捷键拆成两个，别让一个键同时管两件事：
-  //   Ctrl+Shift+P → 只显示/隐藏窗口
-  //   Ctrl+空格（或回退键）→ 只打开搜索；隐藏时按下去直接是搜索框，不会先闪主页面
-  globalShortcut.register(TOGGLE_HOTKEY, () => toggleMainWindow());
-  for (const accel of SEARCH_HOTKEY_CANDIDATES) {
-    try {
-      if (globalShortcut.register(accel, () => openSearchPalette())) {
-        searchHotkey = accel;
-        break;
-      }
-    } catch { /* 非法组合，换下一个 */ }
-  }
-  if (!searchHotkey) console.warn('[hotkey] 搜索快捷键全部注册失败，只剩托盘入口');
-  else if (searchHotkey !== SEARCH_HOTKEY_CANDIDATES[0]) {
-    console.log(`[hotkey] ${SEARCH_HOTKEY_CANDIDATES[0]} 被占用，搜索改用 ${searchHotkey}`);
+  //   显隐 → 只显示/隐藏窗口；搜索 → 只打开搜索（隐藏时按下去直接是搜索框，不先闪主页面）
+  // 键位来自设置（可自定义），注册失败会回滚并在设置页提示。
+  const boot = applyHotkeys(null, { persist: false });
+  if (boot.data.search.ok && boot.data.toggle.ok) {
+    console.log(`[hotkey] 搜索 ${boot.data.search.label} / 显隐 ${boot.data.toggle.label}`);
+    if (boot.data.search.fallback) console.log(`[hotkey] 默认搜索键被占用，暂用 ${boot.data.search.label}`);
   } else {
-    console.log(`[hotkey] 搜索 ${accelLabel(searchHotkey)} / 显隐 ${accelLabel(TOGGLE_HOTKEY)}`);
+    console.warn('[hotkey] 注册失败：' + JSON.stringify({
+      search: boot.data.search.reason || boot.data.search.label,
+      toggle: boot.data.toggle.reason || boot.data.toggle.label,
+    }));
   }
 });
 

@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { callIpc } from '../utils/ipc';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Icons } from '../components/ui';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo } from '../types';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo, HotkeyInfo } from '../types';
+import { accelFromKeyEvent, accelLabel, isImeClash, sameAccel } from '../utils/hotkey';
 import { applyTheme, applyAccent, applyDensity, ACCENTS } from '../utils/theme';
 import { logWarn } from '../utils/log';
 import { formatDateTime } from '../utils/time';
@@ -69,8 +70,12 @@ export function Settings() {
   // 敏感复制历史（内存级，默认关闭）
   const [clipHistoryOn, setClipHistoryOn] = useState(settings.clipboardHistory === true);
   const [clipItems, setClipItems] = useState<{ text: string; at: string }[]>([]);
-  // 全局快捷键实际生效的键位（Ctrl+空格被占用时主进程会回退，不能写死）
-  const [hotkeys, setHotkeys] = useState<{ search: string; toggle: string; searchOk?: boolean; toggleOk?: boolean }>({ search: '', toggle: 'Ctrl+Shift+P' });
+  // 全局快捷键：实际生效的键位 + 正在改的那一个 + 冲突提示
+  const [hkInfo, setHkInfo] = useState<HotkeyInfo | null>(null);
+  const [capturingHotkey, setCapturingHotkey] = useState<'search' | 'toggle' | null>(null);
+  const [hkError, setHkError] = useState<{ slot: 'search' | 'toggle'; msg: string } | null>(null);
+  const [hkSaved, setHkSaved] = useState<{ slot: 'search' | 'toggle'; msg: string } | null>(null);
+  const hkCaptureRef = useRef<HTMLDivElement>(null);
   const [passwordAutoHideDelay, setPasswordAutoHideDelay] = useState(settings.passwordAutoHideDelay);
   const [autoLockDelay, setAutoLockDelay] = useState(settings.autoLockDelay);
   const [defaultViewMode, setDefaultViewMode] = useState(settings.defaultViewMode);
@@ -135,14 +140,14 @@ export function Settings() {
     } catch { /* 读不到就显示空 */ }
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await window.electronAPI.hotkeyInfo?.();
-        if (r?.success && r.data) setHotkeys(r.data);
-      } catch { /* 拿不到就用默认文案 */ }
-    })();
+  const refreshHotkeys = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.hotkeyInfo?.();
+      if (r?.success && r.data) setHkInfo(r.data);
+    } catch { /* 拿不到就用默认文案 */ }
   }, []);
+
+  useEffect(() => { void refreshHotkeys(); }, [refreshHotkeys]);
 
   useEffect(() => {
     if (clipHistoryOn) void refreshClipHistory();
@@ -400,6 +405,68 @@ export function Settings() {
   useEffect(() => {
     setLocalKeybindings(settings.keybindings);
   }, [settings.keybindings]);
+
+  // --- 全局快捷键：捕获与生效 ---
+  const startHotkeyCapture = useCallback((slot: 'search' | 'toggle') => {
+    setHkError(null);
+    setHkSaved(null);
+    setCapturingHotkey(slot);
+    // 捕获靠 keydown，得让容器拿到焦点
+    requestAnimationFrame(() => hkCaptureRef.current?.focus());
+  }, []);
+
+  /** 交给主进程去注册；注册成功才落盘，失败会回滚并带回原因 */
+  const applyHotkey = useCallback(async (slot: 'search' | 'toggle', accel: string) => {
+    // 只发改的这个：另一个键由主进程从设置里取，避免把「兜底键」当成用户自定义值写死
+    const next = slot === 'search' ? { search: accel } : { toggle: accel };
+    const other = slot === 'search' ? hkInfo?.toggleAccel : hkInfo?.searchAccel;
+    // 先用本地判断挡掉「两个键撞车」，省一轮 IPC（也避免把可用状态打乱）
+    if (other && sameAccel(accel, other)) {
+      setHkError({ slot, msg: '这个组合已经用在另一个快捷键上了，换一个' });
+      return;
+    }
+    try {
+      const r = await window.electronAPI.hotkeyApply(next);
+      if (r?.info) setHkInfo(r.info);
+      if (r?.success) {
+        setHkError(null);
+        setHkSaved({ slot, msg: `已生效：${accelLabel(accel)}` });
+      } else {
+        const slotRes = slot === 'search' ? r?.data?.search : r?.data?.toggle;
+        setHkError({
+          slot,
+          msg: slotRes?.reason === 'same'
+            ? '这个组合已经用在另一个快捷键上了，换一个'
+            : '这个组合被其它程序（或另一个「测试中台」实例）占用了，换一个试试',
+        });
+      }
+    } catch (e) {
+      setHkError({ slot, msg: '设置失败：' + (e instanceof Error ? e.message : String(e)) });
+    }
+  }, [hkInfo]);
+
+  const onHotkeyKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!capturingHotkey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') { setCapturingHotkey(null); return; }
+    const accel = accelFromKeyEvent(e.nativeEvent);
+    if (!accel) {
+      setHkError({ slot: capturingHotkey, msg: '请用 Ctrl / Alt 加一个字母、数字或 F1–F24' });
+      return;
+    }
+    const slot = capturingHotkey;
+    setCapturingHotkey(null);
+    void applyHotkey(slot, accel);
+  }, [capturingHotkey, applyHotkey]);
+
+  /** 恢复默认：把默认加速键再发一次，主进程会顺手清掉设置里的自定义值 */
+  const resetHotkey = useCallback(async (slot: 'search' | 'toggle') => {
+    const accel = slot === 'search' ? hkInfo?.searchDefaultAccel : hkInfo?.toggleDefaultAccel;
+    if (!accel) return;
+    setHkSaved(null);
+    await applyHotkey(slot, accel);
+  }, [hkInfo, applyHotkey]);
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -869,8 +936,8 @@ export function Settings() {
               </div>
             </div>
             <div className="setting-desc" style={{ padding: '4px 0 0' }}>
-              托盘图标单击可恢复窗口；全局快捷键 <kbd>{hotkeys.toggle}</kbd> 显示/隐藏窗口，
-              <kbd>{hotkeys.search || 'Ctrl+空格'}</kbd> 直接搜索（隐藏状态下按下即弹出搜索框）。
+              托盘图标单击可恢复窗口；全局快捷键 <kbd>{hkInfo?.toggle || 'Ctrl+Shift+P'}</kbd> 显示/隐藏窗口，
+              <kbd>{hkInfo?.search || 'Ctrl+空格'}</kbd> 直接搜索（隐藏状态下按下即弹出搜索框，可在「快捷键」里改）。
             </div>
 
             <h3 style={{ marginTop: 24 }}>隐私与系统</h3>
@@ -1089,9 +1156,82 @@ export function Settings() {
       case 'shortcuts':
         return (
           <div className="settings-section shortcuts-tab">
-            <h3>快捷键设置</h3>
+            <h3>全局快捷键</h3>
             <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-              点击快捷键组合即可修改。修改后点击页面底部的「保存设置」生效。
+              系统级生效（应用在后台也有效）。点右侧键位即可重新设置，改完立即生效；被其它程序占用时会直接提示。
+            </p>
+            <div
+              ref={hkCaptureRef}
+              onKeyDown={onHotkeyKeyDown}
+              tabIndex={-1}
+              style={{ outline: 'none' }}
+            >
+              {([
+                {
+                  slot: 'search' as const,
+                  label: '打开搜索',
+                  desc: '任何时候按一下就能搜网址、笔记、SQL 片段和页面',
+                  shown: hkInfo?.search || hkInfo?.searchDefault || 'Ctrl+空格',
+                  isDefault: hkInfo ? hkInfo.searchIsDefault : true,
+                },
+                {
+                  slot: 'toggle' as const,
+                  label: '显示 / 隐藏窗口',
+                  desc: '从任何界面把窗口叫出来，再按一次收回去',
+                  shown: hkInfo?.toggle || hkInfo?.toggleDefault || 'Ctrl+Shift+P',
+                  isDefault: hkInfo ? hkInfo.toggleIsDefault : true,
+                },
+              ]).map(row => {
+                const editing = capturingHotkey === row.slot;
+                return (
+                  <div key={row.slot} className={`setting-row shortcut-row ${editing ? 'capturing' : ''}`}>
+                    <div>
+                      <div className="setting-label">{row.label}</div>
+                      <div className="setting-desc">{row.desc}</div>
+                      {hkError?.slot === row.slot && <div className="hotkey-msg is-error">{hkError.msg}</div>}
+                      {hkSaved?.slot === row.slot && <div className="hotkey-msg is-ok">{hkSaved.msg}</div>}
+                    </div>
+                    <div className="shortcut-key-wrapper">
+                      {editing ? (
+                        <span className="shortcut-key shortcut-key-capturing">按下新快捷键…（Esc 取消）</span>
+                      ) : (
+                        <span
+                          className="shortcut-key"
+                          onClick={() => startHotkeyCapture(row.slot)}
+                          title="点击修改快捷键"
+                        >
+                          <kbd>{row.shown}</kbd>
+                          <svg className="shortcut-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
+                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                          </svg>
+                        </span>
+                      )}
+                      {!row.isDefault && !editing && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => void resetHotkey(row.slot)}>
+                          恢复默认
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {(hkInfo?.searchOk === false || hkInfo?.toggleOk === false) && (
+              <div className="hotkey-msg is-error">
+                有快捷键没注册成功，现在按了没反应。常见原因是同时开了两个「测试中台」，
+                或者该组合已被别的程序占用——换一个组合即可。
+              </div>
+            )}
+            {isImeClash(hkInfo?.searchAccel || '') && (
+              <div className="shortcut-note" style={{ marginTop: 8 }}>
+                提示：<kbd>Ctrl+空格</kbd> 被本应用占用后，输入法的「Ctrl+空格 切中英文」会失效（可继续用 Shift 切换）。
+                想留输入法的话，把搜索键改成 <kbd>Ctrl+Shift+空格</kbd> 之类即可。
+              </div>
+            )}
+
+            <h3 style={{ marginTop: 28 }}>应用内快捷键</h3>
+            <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
+              只在应用窗口内生效。点击快捷键组合即可修改，修改后点击页面底部的「保存设置」生效。
             </p>
             <div
               onKeyDown={handleCaptureKey}
@@ -1127,23 +1267,6 @@ export function Settings() {
                   </div>
                 );
               })}
-            </div>
-            <div className="shortcut-note">
-              全局快捷键（系统级，应用在后台也生效）：
-              <kbd>{hotkeys.search || 'Ctrl+空格'}</kbd> 打开搜索，
-              <kbd>{hotkeys.toggle}</kbd> 显示 / 隐藏窗口。
-              {(!hotkeys.search || hotkeys.search.includes('空格')) && (
-                <div style={{ marginTop: 6 }}>
-                  提示：<kbd>Ctrl+空格</kbd> 被本应用占用后，输入法的「Ctrl+空格 切中英文」会失效（可用 Shift 切换）。
-                  若该组合已被别的程序占用，应用会自动退到 <kbd>Ctrl+Shift+空格</kbd>。
-                </div>
-              )}
-              {hotkeys.toggleOk === false && (
-                <div style={{ marginTop: 6 }}>
-                  注意：<kbd>{hotkeys.toggle}</kbd> 当前被别的程序占用（常见原因是已经开了一个「测试中台」），
-                  显示/隐藏窗口的快捷键暂时无效，关掉多余实例后重新启动即可。
-                </div>
-              )}
             </div>
           </div>
         );
