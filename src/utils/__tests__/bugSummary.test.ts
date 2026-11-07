@@ -4,6 +4,7 @@ import {
   summaryToMarkdown, summaryToCsv, summaryTo, severityRows, daysAgoDay, personOf,
   dailyNew, parseCutoff, fmtCutoff, statDayOf, statWindowOf,
   periodOf, workdaysBetween, growthOf, splitSecurity, dailyReportText,
+  securityStatOf, securityReportText,
 } from '../bugSummary';
 import type { ZentaoBug } from '../../types';
 
@@ -649,5 +650,47 @@ describe('bugSummary 日报口径（本期 / 环比 / 安全 / 正文）', () =>
     expect(text).toContain('【缺陷汇总】禅道缺陷日报　2026-11-05 15:54　2 个项目');
     expect(text).toContain('1. A');
     expect(text).toContain('2. B');
+  });
+});
+
+describe('安全问题统计（按创建人）', () => {
+  const secBugs: ZentaoBug[] = [
+    bug('1', '58', 'closed', 'fixed', '安全张三'),
+    bug('2', '58', 'closed', 'fixed', '安全张三'),
+    bug('3', '58', 'resolved', 'fixed', '安全张三'),
+    bug('4', '58', 'active', '', '安全张三'),
+    bug('5', '58', 'closed', 'duplicate', '安全李四'),
+    bug('6', '58', 'active', '', '普通王五'),
+  ];
+
+  it('只统计创建人命中名单的缺陷', () => {
+    const st = securityStatOf(secBugs, ['安全张三']);
+    expect(st.total).toBe(4);
+    expect(st.closed).toBe(2);
+    expect(st.fixed).toBe(3);   // 含已关闭的两条 fixed
+    expect(st.active).toBe(1);
+    expect(st.resolved).toBe(1);
+    expect(st.rate).toBe(75);   // 3 / 4
+  });
+
+  it('多人名单合并统计；没选人时全为 0', () => {
+    const st = securityStatOf(secBugs, ['安全张三', '安全李四']);
+    expect(st.total).toBe(5);
+    expect(st.closed).toBe(3);
+    expect(st.fixed).toBe(3);
+    expect(st.rate).toBe(60);
+    expect(securityStatOf(secBugs, []).total).toBe(0);
+    expect(securityStatOf(secBugs, ['  ']).total).toBe(0);
+  });
+
+  it('复制文案按固定格式输出', () => {
+    const st = securityStatOf(secBugs, ['安全张三']);
+    expect(securityReportText(st)).toBe(
+      '禅道中共记录安全缺陷 4 个，其中已关闭 2 个，已修复 3 个，待修复 1 个，另有 1 个已解决待验证，修复率75%。',
+    );
+  });
+
+  it('没有安全缺陷时文案给出空态而不是 0 个', () => {
+    expect(securityReportText(securityStatOf(secBugs, ['查无此人']))).toBe('禅道中暂无安全缺陷。');
   });
 });

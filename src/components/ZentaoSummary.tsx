@@ -9,6 +9,7 @@ import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
   daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf,
   periodOf, growthOf, splitSecurity, dailyReportText,
+  securityStatOf, securityReportText,
   type ProjectSummary, type SummaryFormat, type ReportInput,
 } from '../utils/bugSummary';
 import { pushHistory, prevOf, clearHistory, type SumSnapshot } from '../utils/sumHistory';
@@ -155,6 +156,8 @@ export function ZentaoSummary({
     () => splitSecurity(sumBugs, security),
     [sumBugs, security],
   );
+  // 安全问题自己的统计：按「安全问题提交人」（创建人）筛选，与功能缺陷分开
+  const secStat = useMemo(() => securityStatOf(sumBugs, security), [sumBugs, security]);
 
   // 统计结果（排除人员 / 时间窗改了立刻重算，不用重新拉数据）
   const result = useMemo(
@@ -362,6 +365,15 @@ export function ZentaoSummary({
     try {
       await navigator.clipboard.writeText(personsText());
       flash('已复制人员分布');
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
+  };
+
+  const copySecurity = async () => {
+    try {
+      await navigator.clipboard.writeText(securityReportText(secStat));
+      flash('已复制安全问题修复情况');
     } catch {
       flash('复制失败：窗口没有焦点，点一下窗口再试');
     }
@@ -749,6 +761,43 @@ export function ZentaoSummary({
                   </>
                 )}
               </div>
+            </div>
+
+            {/* 安全问题：按创建人单独统计 + 一键复制 */}
+            <div className="zt-sum-sec">
+              <div className="zt-sum-sec-head">
+                <span className="zt-sum-sec-title">
+                  安全问题
+                  <span className="zt-sum-sec-tag">按创建人</span>
+                </span>
+                <span className="zt-sum-sec-who" title="在「更多设置 › 安全问题提交人」里调整">
+                  {security.length ? security.join('、') : '未选择提交人'}
+                </span>
+                <button
+                  className="btn btn-sm btn-secondary zt-sum-sec-copy"
+                  onClick={copySecurity}
+                  disabled={!secStat.total}
+                  title="复制安全问题修复情况，可直接粘到群里"
+                >
+                  <Icons.copy size={12} /> 一键复制
+                </button>
+              </div>
+              {secStat.total === 0 ? (
+                <div className="zt-sum-sec-empty">
+                  {security.length
+                    ? '这些创建人名下暂无缺陷'
+                    : '在「更多设置 › 安全问题提交人」里选创建人后，这里出统计'}
+                </div>
+              ) : (
+                <div className="zt-sum-sec-nums">
+                  <span className="zt-sec-num"><b>{secStat.total}</b>安全缺陷</span>
+                  <span className="zt-sec-num is-ok"><b>{secStat.closed}</b>已关闭</span>
+                  <span className="zt-sec-num is-ok"><b>{secStat.fixed}</b>已修复</span>
+                  <span className="zt-sec-num is-bad"><b>{secStat.active}</b>待修复</span>
+                  <span className="zt-sec-num is-warn"><b>{secStat.resolved}</b>待验证</span>
+                  <span className="zt-sec-num is-rate"><b>{secStat.rate}%</b>修复率</span>
+                </div>
+              )}
             </div>
 
             {/* 按统计日切分的新增趋势 */}

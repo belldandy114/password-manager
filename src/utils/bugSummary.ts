@@ -803,6 +803,45 @@ export function splitSecurity(bugs: ZentaoBug[], names: string[]): { bugs: Zenta
   return { bugs: keep, security };
 }
 
+/** 安全问题统计（按「安全问题提交人」= 缺陷创建人筛选） */
+export interface SecurityStat {
+  total: number;
+  closed: number;
+  fixed: number;
+  active: number;
+  resolved: number;
+  rate: number;
+}
+
+/**
+ * 安全问题单独统计：只算 openedBy 命中名单的缺陷。
+ * 口径与概览一致——已修复 = resolution 为 fixed（含已关闭），待验证 = 状态仍是「已解决」。
+ */
+export function securityStatOf(bugs: ZentaoBug[], names: string[]): SecurityStat {
+  const set = new Set((names || []).map(n => String(n).trim()).filter(Boolean));
+  const stat: SecurityStat = { total: 0, closed: 0, fixed: 0, active: 0, resolved: 0, rate: 0 };
+  if (!set.size) return stat;
+  for (const b of bugs) {
+    if (!set.has(String(b.openedBy || '').trim())) continue;
+    stat.total += 1;
+    if (bugIsClosed(b)) stat.closed += 1;
+    if (bugIsFixed(b)) stat.fixed += 1;
+    const st = String(b.status || '');
+    if (st === 'active') stat.active += 1;
+    else if (st === 'resolved') stat.resolved += 1;
+  }
+  stat.rate = rateOf(stat.fixed, stat.total);
+  return stat;
+}
+
+/** 一键复制的文案（固定格式，直接粘到群里/周报里） */
+export function securityReportText(stat: SecurityStat): string {
+  if (!stat.total) return '禅道中暂无安全缺陷。';
+  return `禅道中共记录安全缺陷 ${stat.total} 个，其中已关闭 ${stat.closed} 个，`
+    + `已修复 ${stat.fixed} 个，待修复 ${stat.active} 个，`
+    + `另有 ${stat.resolved} 个已解决待验证，修复率${stat.rate}%。`;
+}
+
 export interface ReportInput {
   name: string;
   stat: BugStat;

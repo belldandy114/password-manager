@@ -964,10 +964,8 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 只选 1 项时名称占满整行，别被 116px 无谓截断 */
-.person-picker-chip.is-single { max-width: none; flex: 1 1 auto; }
-/* 只选 1 项时名称占满整行，别被 116px 无谓截断 */
-.person-picker-chip.is-single { max-width: none; flex: 1 1 auto; }
+/* 只选 1 项时按内容宽度显示（不被 116px 截断，也不拉伸填满整行） */
+.person-picker-chip.is-single { max-width: 100%; flex: 0 1 auto; }
 .person-picker-more {
   flex: none;
   padding: 1px 6px;
@@ -1223,3 +1221,56 @@ button { font-family: inherit; }
 }
 .update-dlg-foot-hint { font-size: 11.5px; color: var(--text-3); }
 .update-dlg-foot-btns { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* ---------------- 30. 安全问题统计（按创建人） ----------------
+   与功能缺陷分开统计：口径同概览——已修复含已关闭，待验证 = 状态仍是「已解决」。 */
+.zt-sum-sec {
+  margin-top: 12px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.zt-sum-sec-head {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 24px;
+}
+.zt-sum-sec-title {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  white-space: nowrap;
+}
+.zt-sum-sec-tag {
+  padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--accent-line); background: var(--accent-soft);
+  color: var(--accent); font-size: 10.5px; font-weight: 400;
+}
+.zt-sum-sec-who {
+  flex: 1; min-width: 0;
+  font-size: 11.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.zt-sum-sec-copy { flex: none; }
+.zt-sum-sec-empty {
+  margin-top: 8px; font-size: 11.5px; color: var(--text-3);
+}
+.zt-sum-sec-nums {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: 8px 22px; margin-top: 8px;
+}
+.zt-sec-num { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.zt-sec-num b {
+  margin-right: 4px;
+  font-size: 17px; font-weight: 600; color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.zt-sec-num.is-ok b { color: var(--accent); }
+.zt-sec-num.is-bad b { color: var(--bad); }
+.zt-sec-num.is-warn b { color: var(--warn); }
+.zt-sec-num.is-rate {
+  /* 跟在前面的数字后面读起来才连成一句，不要甩到卡片最右边 */
+  margin-left: 6px;
+  padding-left: 20px;
+  border-left: 1px solid var(--line);
+}
+.zt-sec-num.is-rate b { font-size: 18px; }
