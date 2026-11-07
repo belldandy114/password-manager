@@ -9,10 +9,12 @@ import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
   daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf,
   periodOf, growthOf, splitSecurity, dailyReportText,
-  securityStatOf, securityReportText,
+  securityStatOf, securityReportText, securityBugs, securityListText, SEVERITY_LABELS,
   type ProjectSummary, type SummaryFormat, type ReportInput,
 } from '../utils/bugSummary';
-import { pushHistory, prevOf, clearHistory, type SumSnapshot } from '../utils/sumHistory';
+import { pushHistory, prevOf, clearHistory, readHistory, type SumSnapshot } from '../utils/sumHistory';
+import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
+import { useStore } from '../store/useStore';
 
 /** 进入页面自动拉一次（每个会话只自动拉一次，避免来回切 tab 反复打禅道） */
 let autoPulledOnce = false;
@@ -158,6 +160,14 @@ export function ZentaoSummary({
   );
   // 安全问题自己的统计：按「安全问题提交人」（创建人）筛选，与功能缺陷分开
   const secStat = useMemo(() => securityStatOf(sumBugs, security), [sumBugs, security]);
+  const secBugs = useMemo(() => securityBugs(sumBugs, security), [sumBugs, security]);
+  const secSev = useMemo(
+    () => (['1', '2', '3', '4'] as const)
+      .map(k => ({ key: k, label: SEVERITY_LABELS[k], count: secStat.bySeverity[k] || 0 }))
+      .filter(x => x.count > 0),
+    [secStat],
+  );
+
 
   // 统计结果（排除人员 / 时间窗改了立刻重算，不用重新拉数据）
   const result = useMemo(
@@ -176,6 +186,21 @@ export function ZentaoSummary({
   const shownPersons = personAll ? result.persons : result.persons.slice(0, 12);
   const sevRows = useMemo(() => severityRows(result.severity), [result.severity]);
 
+  /** 剩余缺陷最多的模块 Top5（跨项目按模块短名合并） */
+  const topModules = useMemo(() => {
+    const m = new Map<string, { name: string; active: number; total: number }>();
+    for (const p of result.projects) {
+      for (const mod of p.modules) {
+        const name = String(mod.name).split('/').pop() || mod.name;
+        const cur = m.get(name) || { name, active: 0, total: 0 };
+        cur.active += mod.active;
+        cur.total += mod.total;
+        m.set(name, cur);
+      }
+    }
+    return [...m.values()].filter(x => x.active > 0).sort((a, b) => b.active - a.active).slice(0, 5);
+  }, [result.projects]);
+
   /* ---------- 本期（固定窗口）：新增 / 修复 / 关闭 ---------- */
   const period = useMemo(() => periodOf(funcBugs, winStart, winEnd), [funcBugs, winStart, winEnd]);
   const atNow = nowStamp(now);
@@ -185,6 +210,31 @@ export function ZentaoSummary({
   useEffect(() => {
     setPrev(prevOf(histKey, currentDay));
   }, [histKey, currentDay, histTick, result.overall.total]);
+
+  /** 历史趋势：同一项目组合 + 时间窗的最近 10 次统计 */
+  const history = useMemo(() => readHistory().filter(x => x.key === histKey).slice(-10), [histKey, histTick]);
+
+  /** 历史趋势的小折线：总数 / 未关闭 两条线 */
+  const spark = useMemo(() => {
+    const pts = history.slice(-10);
+    if (pts.length < 2) return null;
+    const W = 220;
+    const H = 46;
+    const pad = 5;
+    // 用两条线的实际范围做纵向映射：否则「总数」贴着顶边、「未关闭」贴底边，看不出起伏
+    const vals = pts.flatMap(p => [p.total, Math.max(0, p.total - p.closed)]);
+    const maxV = Math.max(...vals);
+    const minV = Math.min(...vals);
+    const span = Math.max(2, maxV - minV);
+    const x = (i: number) => pad + (i * (W - pad * 2)) / (pts.length - 1);
+    const y = (v: number) => H - pad - ((Math.max(0, v) - minV) / span) * (H - pad * 2);
+    return {
+      W,
+      H,
+      total: pts.map((p, i) => `${x(i).toFixed(1)},${y(p.total).toFixed(1)}`).join(' '),
+      open: pts.map((p, i) => `${x(i).toFixed(1)},${y(p.total - p.closed).toFixed(1)}`).join(' '),
+    };
+  }, [history]);
 
   const growth = useMemo(
     () => (prev ? growthOf(prev.at, prev.total, atNow, result.overall.total) : null),
@@ -368,6 +418,50 @@ export function ZentaoSummary({
     } catch {
       flash('复制失败：窗口没有焦点，点一下窗口再试');
     }
+  };
+
+  const copySecurityList = async () => {
+    if (!secBugs.length) return;
+    try {
+      await navigator.clipboard.writeText(securityListText(secBugs));
+      flash(`已复制 ${secBugs.length} 条安全清单`);
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
+  };
+
+  const exportSecurity = async () => {
+    if (!secBugs.length) return;
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const head = ['编号', '标题', '严重程度', '状态', '指派人', '创建人', '提交时间'];
+    const rows = secBugs.map(b => [
+      b.id,
+      b.title,
+      SEVERITY_LABELS[String(b.severity || '')] || '未分级',
+      ({ active: '待修复', resolved: '待验证', closed: '已关闭' } as Record<string, string>)[String(b.status || '')] || b.status,
+      b.assignedTo || '',
+      b.openedBy || '',
+      b.openedDate || b.date || '',
+    ].map(esc).join(','));
+    const r = await window.electronAPI.saveText(
+      [head.map(esc).join(','), ...rows].join('\r\n'),
+      `安全问题-${new Date().toISOString().slice(0, 10)}.csv`,
+      [{ name: 'CSV', extensions: ['csv'] }],
+    );
+    if (r.success) flash(`已导出 ${secBugs.length} 条`);
+    else if (!r.canceled) flash(r.error || '导出失败');
+  };
+
+  /** 用当前汇总的数据起草周报（跳到周报页并填入内容） */
+  const makeWeeklyDraft = () => {
+    const w = weekRange(0);
+    const text = buildWeeklyDraft(sumBugs, w.start, w.end);
+    try {
+      localStorage.setItem('pm.weekly.pendingDraft', JSON.stringify({
+        name: `${w.end}.md`, text, at: Date.now(),
+      }));
+    } catch { /* 配额满：退化为只跳页 */ }
+    useStore.getState().requestNavigate('weeklyReport');
   };
 
   const copySecurity = async () => {
@@ -651,6 +745,14 @@ export function ZentaoSummary({
                   <Icons.copy size={12} /> 一键复制
                 </button>
                 <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={makeWeeklyDraft}
+                  disabled={!sumBugs.length}
+                  title="用当前汇总数据生成本周周报草稿，自动跳到周报页"
+                >
+                  <Icons.note size={12} /> 生成周报
+                </button>
+                <button
                   ref={copyBtnRef}
                   className="btn btn-ghost btn-sm zt-sum-menu-btn"
                   onClick={toggleCopyMenu}
@@ -763,39 +865,109 @@ export function ZentaoSummary({
               </div>
             </div>
 
+            {/* 模块剩余 Top5 + 历史趋势 */}
+            <div className="zt-sum-insights">
+              <div className="zt-insight">
+                <div className="zt-insight-head">
+                  剩余最多模块
+                  <span className="zt-insight-sub">{topModules.length ? `Top ${topModules.length}` : '暂无'}</span>
+                </div>
+                {topModules.length === 0 ? (
+                  <div className="zt-insight-empty">没有未修复的模块缺陷</div>
+                ) : (
+                  <div className="zt-insight-bars">
+                    {topModules.map(m => (
+                      <div key={m.name} className="zt-mod-row" title={`${m.name}：未修复 ${m.active} / 共 ${m.total}`}>
+                        <span className="zt-mod-name">{m.name}</span>
+                        <span className="zt-mod-track">
+                          <i style={{ width: `${Math.max(8, Math.round((m.active / topModules[0].active) * 100))}%` }} />
+                        </span>
+                        <span className="zt-mod-num">{m.active}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="zt-insight">
+                <div className="zt-insight-head">
+                  历史趋势
+                  <span className="zt-insight-sub">{history.length >= 2 ? `最近 ${history.length} 次统计` : '需要 2 次以上统计'}</span>
+                </div>
+                {spark ? (
+                  <div className="zt-spark">
+                    <svg viewBox={`0 0 ${spark.W} ${spark.H}`} preserveAspectRatio="none" aria-hidden="true">
+                      <polyline className="zt-spark-line is-total" points={spark.total} />
+                      <polyline className="zt-spark-line is-open" points={spark.open} />
+                    </svg>
+                    <div className="zt-spark-legend">
+                      <span><i className="is-total" />总数 {history[history.length - 1].total}</span>
+                      <span><i className="is-open" />未关闭 {Math.max(0, history[history.length - 1].total - history[history.length - 1].closed)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="zt-insight-empty">再统计一次就能看到走势（每天保留一条）</div>
+                )}
+              </div>
+            </div>
+
             {/* 安全问题：按创建人单独统计 + 一键复制 */}
-            <div className="zt-sum-sec">
-              <div className="zt-sum-sec-head">
-                <span className="zt-sum-sec-title">
+            <div className="zt-sum-security">
+              <div className="zt-sum-security-head">
+                <span className="zt-sum-security-title">
                   安全问题
-                  <span className="zt-sum-sec-tag">按创建人</span>
+                  <span className="zt-sum-security-tag">按创建人</span>
                 </span>
-                <span className="zt-sum-sec-who" title="在「更多设置 › 安全问题提交人」里调整">
+                <span className="zt-sum-security-who" title="在「更多设置 › 安全问题提交人」里调整">
                   {security.length ? security.join('、') : '未选择提交人'}
                 </span>
-                <button
-                  className="btn btn-sm btn-secondary zt-sum-sec-copy"
-                  onClick={copySecurity}
-                  disabled={!secStat.total}
-                  title="复制安全问题修复情况，可直接粘到群里"
-                >
-                  <Icons.copy size={12} /> 一键复制
-                </button>
+                <div className="zt-sum-security-actions">
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    onClick={copySecurityList}
+                    disabled={!secBugs.length}
+                    title="复制安全问题明细清单（编号+标题+严重程度+状态）"
+                  >
+                    <Icons.list size={12} /> 清单
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    onClick={exportSecurity}
+                    disabled={!secBugs.length}
+                    title="导出安全问题明细为 CSV"
+                  >
+                    <Icons.download size={12} /> CSV
+                  </button>
+                  <button
+                    className="btn btn-sm btn-secondary zt-sum-security-copy"
+                    onClick={copySecurity}
+                    disabled={!secStat.total}
+                    title="复制安全问题修复情况，可直接粘到群里"
+                  >
+                    <Icons.copy size={12} /> 一键复制
+                  </button>
+                </div>
               </div>
               {secStat.total === 0 ? (
-                <div className="zt-sum-sec-empty">
+                <div className="zt-sum-security-empty">
                   {security.length
                     ? '这些创建人名下暂无缺陷'
                     : '在「更多设置 › 安全问题提交人」里选创建人后，这里出统计'}
                 </div>
               ) : (
-                <div className="zt-sum-sec-nums">
+                <div className="zt-sum-security-nums">
                   <span className="zt-sec-num"><b>{secStat.total}</b>安全缺陷</span>
                   <span className="zt-sec-num is-ok"><b>{secStat.closed}</b>已关闭</span>
                   <span className="zt-sec-num is-ok"><b>{secStat.fixed}</b>已修复</span>
                   <span className="zt-sec-num is-bad"><b>{secStat.active}</b>待修复</span>
                   <span className="zt-sec-num is-warn"><b>{secStat.resolved}</b>待验证</span>
                   <span className="zt-sec-num is-rate"><b>{secStat.rate}%</b>修复率</span>
+                </div>
+              )}
+              {secSev.length > 0 && (
+                <div className="zt-sum-security-sev">
+                  {secSev.map(x => (
+                    <span key={x.key} className={`zt-sev-chip is-${x.key}`}>{x.label} {x.count}</span>
+                  ))}
                 </div>
               )}
             </div>
@@ -826,18 +998,28 @@ export function ZentaoSummary({
                   const max = Math.max(1, ...daily.series.map(x => x.count));
                   const isToday = p.day === daily.currentDay;
                   const [ws, we] = statWindowOf(p.day, cutoffMin);
+                  // 最低 3%：0 个也留一条细柱，否则那一天看起来像缺数据
+                  const h = p.count > 0 ? Math.max(3, Math.round((p.count / max) * 100)) : 3;
                   return (
                     <div
                       key={p.day}
                       className={`zt-sum-day${isToday ? ' is-today' : ''}`}
                       title={`${p.day}：${ws} → ${we}，新增 ${p.count} 个${isToday ? '（进行中）' : ''}`}
                     >
-                      <span className="zt-sum-day-n">{p.count}</span>
-                      <span className="zt-sum-day-bar">
-                        <i style={{ height: `${Math.max(4, Math.round((p.count / max) * 100))}%` }} />
-                      </span>
-                      <span className="zt-sum-day-label">{p.day.slice(5)}{isToday ? ' 今' : ''}</span>
+                      <i style={{ height: `${h}%` }}>
+                        <span className="zt-sum-day-n">{p.count}</span>
+                      </i>
                     </div>
+                  );
+                })}
+              </div>
+              <div className="zt-sum-day-row">
+                {daily.series.map(p => {
+                  const isToday = p.day === daily.currentDay;
+                  return (
+                    <span key={p.day} className={`zt-sum-day-label${isToday ? ' is-today' : ''}`}>
+                      {p.day.slice(5)}{isToday && <em>今天</em>}
+                    </span>
                   );
                 })}
               </div>

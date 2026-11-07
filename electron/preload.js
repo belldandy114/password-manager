@@ -33,6 +33,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Clipboard
   clipboardCopy: (data) => ipcRenderer.invoke('clipboard:copy', data),
   clipboardClear: () => ipcRenderer.invoke('clipboard:clear'),
+  clipboardHistory: () => ipcRenderer.invoke('clipboard:history'),
+  clipboardHistoryClear: () => ipcRenderer.invoke('clipboard:history-clear'),
+  onOpenCommandPalette: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('app:cmd-palette', h);
+    return () => ipcRenderer.removeListener('app:cmd-palette', h);
+  },
   onClipboardCleared: (cb) => {
     ipcRenderer.on('clipboard-cleared', () => cb());
     return () => ipcRenderer.removeAllListeners('clipboard-cleared');

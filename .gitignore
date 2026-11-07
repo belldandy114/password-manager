@@ -38,3 +38,4 @@ scripts/shot-*.js
 
 # 覆盖率报告（本地生成）
 coverage/
+.asar-stage/

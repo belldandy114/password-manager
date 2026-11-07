@@ -95,3 +95,16 @@ describe('weeklyDraft.buildWeeklyDraft（原有能力不回退）', () => {
     expect(text).toContain('新提 1 条');
   });
 });
+
+describe('weeklyDraft.buildWeeklyDraft', () => {
+  it('同一条缺陷本周提交又关闭时，按项目的数字不会重复累加', () => {
+    const bugs = [
+      bug('1', '2026-11-03', '2', { resolvedDate: '2026-11-04 10:00:00', closedDate: '2026-11-05 10:00:00', status: 'closed' }),
+      bug('2', '2026-11-03'),
+    ];
+    const text = buildWeeklyDraft(bugs, '2026-11-02', '2026-11-08');
+    expect(text).toContain('新提 2 条、解决 1 条、关闭 1 条');
+    // 项目行只能是 2/1/1，不能出现 3 条以上
+    expect(text).toContain('新提 2、解决 1、关闭 1');
+  });
+});

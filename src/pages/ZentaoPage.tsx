@@ -119,6 +119,19 @@ export function ZentaoPage() {
   const projects = useZentaoStore(s => s.projects);
   const activeProject = useZentaoStore(s => s.activeProject);
   const pBugs = useZentaoStore(s => s.projectBugs);
+  const sumBugs = useZentaoStore(s => s.sumBugs);
+  /** 今日待办：指派给我未关闭 / 待我验证 / 今日新增致命严重 */
+  const todo = useMemo(() => {
+    const st = (b: ZentaoBug) => String(b.status || '');
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      open: bugs.filter(b => st(b) !== 'closed').length,
+      verify: bugs.filter(b => st(b) === 'resolved').length,
+      severeToday: sumBugs.filter(b => String(b.openedDate || b.date || '').slice(0, 10) === today
+        && ['1', '2'].includes(String(b.severity || ''))).length,
+    };
+  }, [bugs, sumBugs]);
+
   const pTotal = useZentaoStore(s => s.projectTotal);
   const pStatus = useZentaoStore(s => s.pStatus);
   const pSeverity = useZentaoStore(s => s.pSeverity);
@@ -796,6 +809,37 @@ export function ZentaoPage() {
             「项目 Bug」走禅道 REST API（<code>api.php/v1</code>），取的是该项目下所有指派人的缺陷。
           </div>
         </Panel>
+
+        {/* 今日待办：三个数字点一下直达对应视图 */}
+        {(bugs.length > 0 || sumBugs.length > 0) && (
+          <div className="zt-todo">
+            <span className="zt-todo-label">今日待办</span>
+            <button
+              className="zt-todo-item is-bad"
+              onClick={() => { setTab('mine'); switchScope('assigned'); }}
+              disabled={!bugs.length}
+              title="指派给我且未关闭的缺陷"
+            >
+              <b>{todo.open}</b> 未关闭
+            </button>
+            <button
+              className="zt-todo-item is-warn"
+              onClick={() => { setTab('mine'); switchScope('verify'); }}
+              disabled={!bugs.length}
+              title="已解决、等我回归验证"
+            >
+              <b>{todo.verify}</b> 待我验证
+            </button>
+            <button
+              className="zt-todo-item"
+              onClick={() => { setTab('project'); }}
+              disabled={!sumBugs.length}
+              title="今天新增的致命 / 严重缺陷（当前项目）"
+            >
+              <b>{todo.severeToday}</b> 今日致命/严重
+            </button>
+          </div>
+        )}
 
         <div className="tabs">
           <button className={`tab2${tab === 'mine' ? ' is-active' : ''}`} onClick={() => setTab('mine')}>

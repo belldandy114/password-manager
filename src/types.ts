@@ -59,6 +59,8 @@ export type Density = 'compact' | 'standard' | 'cozy';
 
 export interface AppSettings {
   clipboardClearDelay: number;
+  /** 记录最近 10 条敏感复制（仅内存，锁屏即清空）；默认关闭 */
+  clipboardHistory?: boolean;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
   defaultViewMode: 'card' | 'list';
@@ -547,6 +549,11 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;
+  /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
+  clipboardHistory: () => Promise<{ success: boolean; data?: { enabled: boolean; items: { text: string; at: string }[] } }>;
+  clipboardHistoryClear: () => Promise<{ success: boolean }>;
+  /** 托盘 / 全局快捷键要求打开命令面板 */
+  onOpenCommandPalette: (cb: () => void) => () => void;
   /** 渲染层错误/警告写入主进程 app.log */
   logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;

@@ -134,7 +134,11 @@ export function buildWeeklyDraft(bugs: ZentaoBug[], start: string, end: string):
       (b[1].created + b[1].resolved + b[1].closed) - (a[1].created + a[1].resolved + a[1].closed));
   };
 
-  const perProject = group([...created, ...resolved, ...closed]);
+  // 同一条缺陷可能同时出现在 created / resolved / closed 三个列表里（本周提交又本周关闭），
+  // 直接拼起来 group 会把它算 2~3 遍 → 按项目的数字比总数还大。先按 id 去重。
+  const all = new Map<string, ZentaoBug>();
+  for (const b of [...created, ...resolved, ...closed]) all.set(String(b.id), b);
+  const perProject = group([...all.values()]);
   const unclosed = bugs.filter(b => !isClosed(b));
   const fatal = unclosed.filter(b => String(b.severity) === '1');
   const serious = unclosed.filter(b => String(b.severity) === '2');

@@ -7892,59 +7892,112 @@
 .zt-sum-days {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  margin-top: 9px;
-  height: 84px;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 18px;      /* 顶部留给柱子上的数字 */
+  height: 96px;
+  border-bottom: 1px solid var(--line);
 }
 
 .zt-sum-day {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
-  max-width: 110px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
+  max-width: 96px;
   height: 100%;
-  justify-content: flex-end;
-}
-
-.zt-sum-day-n {
-  font-size: 11px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.zt-sum-day-bar {
-  width: 100%;
-  flex: 1;
   display: flex;
   align-items: flex-end;
-  min-height: 8px;
 }
 
-.zt-sum-day-bar i {
+.zt-sum-day i {
+  position: relative;
   display: block;
   width: 100%;
   min-height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: var(--border-light);
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--line-strong), color-mix(in srgb, var(--line-strong) 55%, transparent));
   transition: height 0.3s ease;
 }
 
-.zt-sum-day.is-today .zt-sum-day-bar i {
-  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 45%, transparent));
+.zt-sum-day.is-today i {
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+/* 数字跟着柱顶走，不再飘在列的顶端 */
+.zt-sum-day-n {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.zt-sum-day.is-today .zt-sum-day-n {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.zt-sum-day-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
 }
 
 .zt-sum-day-label {
-  font-size: 10px;
-  color: var(--text-muted);
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 96px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-3);
   white-space: nowrap;
+}
+
+.zt-sum-day-label.is-today {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.zt-sum-day-label em {
+  font-style: normal;
+  margin-left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  font-size: 9px;
 }
 
 .zt-sum-day.is-today .zt-sum-day-label {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* 深色下 --line-strong 太暗，柱子会糊进背景，单独提亮一档 */
+[data-theme='dark'] .zt-sum-days {
+  border-bottom-color: var(--line-strong);
+}
+[data-theme='dark'] .zt-sum-day i {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text-2) 62%, transparent),
+    color-mix(in srgb, var(--text-2) 34%, transparent)
+  );
+}
+
+/* 深色下 --line-strong 太暗，柱子会糊进背景，单独提亮一档 */
+[data-theme='dark'] .zt-sum-days {
+  border-bottom-color: var(--line-strong);
+}
+[data-theme='dark'] .zt-sum-day i {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text-2) 62%, transparent),
+    color-mix(in srgb, var(--text-2) 34%, transparent)
+  );
 }
 
 /* ---------------- 概览底部一行 ---------------- */

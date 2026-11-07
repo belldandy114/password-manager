@@ -66,6 +66,9 @@ export function Settings() {
   const [knownBrowsers, setKnownBrowsers] = useState<BrowserInfo[]>([]);
   const [browserPaths, setBrowserPaths] = useState<Record<string, string>>(settings.browserPaths || {});
   const [clipboardClearDelay, setClipboardClearDelay] = useState(settings.clipboardClearDelay);
+  // 敏感复制历史（内存级，默认关闭）
+  const [clipHistoryOn, setClipHistoryOn] = useState(settings.clipboardHistory === true);
+  const [clipItems, setClipItems] = useState<{ text: string; at: string }[]>([]);
   const [passwordAutoHideDelay, setPasswordAutoHideDelay] = useState(settings.passwordAutoHideDelay);
   const [autoLockDelay, setAutoLockDelay] = useState(settings.autoLockDelay);
   const [defaultViewMode, setDefaultViewMode] = useState(settings.defaultViewMode);
@@ -122,6 +125,18 @@ export function Settings() {
       if (r && r.success) setAudit(r.data || []);
     } catch (e) { logWarn('Settings.loadAudit', e); }
   }, []);
+
+  const refreshClipHistory = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.clipboardHistory?.();
+      if (r?.success && r.data) setClipItems(r.data.items || []);
+    } catch { /* 读不到就显示空 */ }
+  }, []);
+
+  useEffect(() => {
+    if (clipHistoryOn) void refreshClipHistory();
+    else setClipItems([]);
+  }, [clipHistoryOn, refreshClipHistory]);
 
   const refreshNotifyStatus = useCallback(async () => {
     try {
@@ -649,6 +664,68 @@ export function Settings() {
               <div className="setting-control">
                 <input type="number" value={clipboardClearDelay} onChange={e => setClipboardClearDelay(Number(e.target.value))} min={5} max={300} />
                 <span className="text-sm text-muted">秒</span>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">记录最近复制（最多 10 条）</div>
+                <div className="setting-desc">
+                  只记密码 / 验证码这类敏感内容，仅存在内存里，锁屏或退出即清空，不落盘。
+                  默认关闭：开启后本机其它程序理论上可通过剪贴板读取到这些历史。
+                </div>
+                {clipHistoryOn && clipItems.length > 0 && (
+                  <div className="clip-history">
+                    {clipItems.map((it, i) => (
+                      <div key={`${it.at}-${i}`} className="clip-history-item">
+                        <span className="clip-history-text" title="内容不显示，点右侧按钮可直接复制">
+                          {'•'.repeat(Math.min(12, Math.max(4, it.text.length)))}
+                          <span className="clip-history-len">{it.text.length} 位</span>
+                        </span>
+                        <span className="clip-history-time">{it.at.slice(11, 16)}</span>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={async () => {
+                            await window.electronAPI.clipboardCopy({ text: it.text, delay: settings.clipboardClearDelay * 1000 });
+                            addToast('已复制（仍会按设置自动清空）', 'success');
+                          }}
+                        >
+                          <Icons.copy size={12} /> 复制
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {clipHistoryOn && clipItems.length === 0 && (
+                  <div className="setting-desc" style={{ marginTop: 4 }}>还没有记录：复制一次密码或验证码后回来刷新。</div>
+                )}
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {clipHistoryOn && clipItems.length > 0 && (
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={async () => {
+                      await window.electronAPI.clipboardHistoryClear();
+                      setClipItems([]);
+                      addToast('已清空复制历史', 'success');
+                    }}
+                  >
+                    清空
+                  </button>
+                )}
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={clipHistoryOn}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setClipHistoryOn(val);
+                      const r = await callIpc(() => window.electronAPI.settingsSave({ clipboardHistory: val }));
+                      if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
+                      addToast(val ? '已开启复制历史（仅内存）' : '已关闭复制历史', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
               </div>
             </div>
 

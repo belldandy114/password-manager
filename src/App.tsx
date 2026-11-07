@@ -310,6 +310,14 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; url: string; notes?: string; downloadUrl?: string; assetName?: string; digest?: string } | null>(null);
   // 更新弹窗：点横幅上的「去更新」直接在这里看说明 + 下载 + 安装，不再跳设置页
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+
+  // 托盘 / Ctrl+Shift+P 唤起窗口时直接打开命令面板（未解锁时不弹）
+  useEffect(() => {
+    const off = window.electronAPI.onOpenCommandPalette?.(() => {
+      if (!useStore.getState().isLocked) setCmdkOpen(true);
+    });
+    return () => { try { off?.(); } catch { /* 忽略 */ } };
+  }, []);
   useEffect(() => {
     const off = window.electronAPI.onUpdateAvailable((d) => {
       if (d && d.latest) {

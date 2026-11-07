@@ -558,6 +558,20 @@ function appIconPath() {
     : path.join(process.resourcesPath, 'app.asar.unpacked', 'buildResources', 'icon.ico');
 }
 
+/** 显示窗口并让渲染层打开命令面板（托盘 / 全局快捷键共用） */
+function openSearchPalette() {
+  showMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const send = () => {
+    try { mainWindow.webContents.send('app:cmd-palette'); } catch { /* 窗口已关 */ }
+  };
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', () => setTimeout(send, 120));
+  } else {
+    setTimeout(send, 120);
+  }
+}
+
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -619,6 +633,7 @@ function buildTrayMenu() {
 
   template.push(
     { label: '显示主窗口', click: () => showMainWindow() },
+    { label: '搜索（Ctrl+Shift+P）', click: () => openSearchPalette() },
     {
       label: '锁定', click: () => {
         showMainWindow();
@@ -754,6 +769,28 @@ function createWindow() {
 // Clipboard auto-clear helpers
 // ----------------------------------------------------------------
 let clipboardTimers = {};
+
+/**
+ * 敏感复制历史（内存级，最多 10 条）。
+ * 只在设置里显式开启才记录；锁屏、退出、点「清空」都会清掉，不落盘。
+ */
+const CLIP_HISTORY_MAX = 10;
+const clipHistory = [];
+
+function rememberClipboard(text) {
+  try {
+    if (!(loadSettings() || {}).clipboardHistory) return;
+    const t = String(text || '');
+    if (!t) return;
+    if (clipHistory[0] && clipHistory[0].text === t) return;
+    clipHistory.unshift({ text: t, at: new Date().toISOString() });
+    while (clipHistory.length > CLIP_HISTORY_MAX) clipHistory.pop();
+  } catch { /* 记录失败不影响复制 */ }
+}
+
+function clearClipHistory() {
+  clipHistory.length = 0;
+}
 
 function clearClipboardAfter(delayMs) {
   const type = 'clipboard';
@@ -1167,6 +1204,7 @@ function setupIpcHandlers() {
   ipcMain.handle('session:lock', () => {
     currentPassword = null;
     clearCaches();
+    clearClipHistory();
     try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
     return { success: true };
   });
@@ -1319,8 +1357,20 @@ function setupIpcHandlers() {
   ipcMain.handle('clipboard:copy', (_event, { text, delay }) => {
     clipboard.writeText(text);
     if (delay > 0) {
+      rememberClipboard(text);
       clearClipboardAfter(delay);
     }
+    return { success: true };
+  });
+
+  /** 敏感复制历史（设置页展示；默认关闭时不记录） */
+  ipcMain.handle('clipboard:history', () => ({
+    success: true,
+    data: { enabled: !!(loadSettings() || {}).clipboardHistory, items: clipHistory.slice() },
+  }));
+
+  ipcMain.handle('clipboard:history-clear', () => {
+    clearClipHistory();
     return { success: true };
   });
 
@@ -3395,6 +3445,8 @@ function setupIpcHandlers() {
         for (;;) {
           const pid = queue.shift();
           if (!pid) return;
+          // 单个产品失败重试一次：偶发超时不该让整个汇总缺一个项目
+          for (let attempt = 0; attempt < 2; attempt++) {
           try {
             // 模块名与 Bug 并行取：模块接口失败不影响 Bug
             const modPromise = ztFetchModuleNames(cfg, pid);
@@ -3411,8 +3463,14 @@ function setupIpcHandlers() {
             }
             modules[pid] = await modPromise;
             for (const b of bugs) collected.push(b);
+            break;
           } catch (e) {
+            if (attempt === 0) {
+              await new Promise(r => setTimeout(r, 500));
+              continue;
+            }
             errors.push(`${pid}: ${e.message}`);
+          }
           }
         }
       };
@@ -3762,7 +3820,8 @@ app.whenReady().then(() => {
     if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
       mainWindow.hide();
     } else {
-      showMainWindow();
+      // 从隐藏状态唤起时直接把搜索面板拉到前台，省掉「再按一次 Ctrl+K」
+      openSearchPalette();
     }
   });
 });

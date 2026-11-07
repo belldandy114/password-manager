@@ -811,6 +811,8 @@ export interface SecurityStat {
   active: number;
   resolved: number;
   rate: number;
+  /** 按严重程度分布：'1' 致命 / '2' 严重 / '3' 一般 / '4' 轻微 */
+  bySeverity: Record<string, number>;
 }
 
 /**
@@ -819,7 +821,7 @@ export interface SecurityStat {
  */
 export function securityStatOf(bugs: ZentaoBug[], names: string[]): SecurityStat {
   const set = new Set((names || []).map(n => String(n).trim()).filter(Boolean));
-  const stat: SecurityStat = { total: 0, closed: 0, fixed: 0, active: 0, resolved: 0, rate: 0 };
+  const stat: SecurityStat = { total: 0, closed: 0, fixed: 0, active: 0, resolved: 0, rate: 0, bySeverity: {} };
   if (!set.size) return stat;
   for (const b of bugs) {
     if (!set.has(String(b.openedBy || '').trim())) continue;
@@ -829,9 +831,38 @@ export function securityStatOf(bugs: ZentaoBug[], names: string[]): SecurityStat
     const st = String(b.status || '');
     if (st === 'active') stat.active += 1;
     else if (st === 'resolved') stat.resolved += 1;
+    const sev = String(b.severity || '').trim() || '0';
+    stat.bySeverity[sev] = (stat.bySeverity[sev] || 0) + 1;
   }
   stat.rate = rateOf(stat.fixed, stat.total);
   return stat;
+}
+
+/** 安全问题明细清单：按状态（待修复 → 待验证 → 已关闭）与严重程度排序 */
+export function securityBugs(bugs: ZentaoBug[], names: string[]): ZentaoBug[] {
+  const set = new Set((names || []).map(n => String(n).trim()).filter(Boolean));
+  if (!set.size) return [];
+  const rank = (b: ZentaoBug) => {
+    const st = String(b.status || '');
+    if (st === 'active') return 0;
+    if (st === 'resolved') return 1;
+    if (st === 'closed') return 2;
+    return 3;
+  };
+  return bugs
+    .filter(b => set.has(String(b.openedBy || '').trim()))
+    .sort((a, b) => rank(a) - rank(b)
+      || String(a.severity || '9').localeCompare(String(b.severity || '9'))
+      || Number(b.id) - Number(a.id));
+}
+
+/** 问题清单文本（复制到会议纪要 / 群里） */
+export function securityListText(bugs: ZentaoBug[]): string {
+  if (!bugs.length) return '暂无安全问题。';
+  const sev = (b: ZentaoBug) => SEVERITY_LABELS[String(b.severity || '')] || '未分级';
+  const st = (b: ZentaoBug) => ({ active: '待修复', resolved: '待验证', closed: '已关闭' } as Record<string, string>)[String(b.status || '')] || String(b.status || '');
+  const lines = bugs.map((b, i) => `${i + 1}. #${b.id} ${b.title}（${sev(b)} · ${st(b)}${b.assignedTo ? ` · ${b.assignedTo}` : ''}）`);
+  return [`安全问题清单（共 ${bugs.length} 条）`, ...lines].join('\n');
 }
 
 /** 一键复制的文案（固定格式，直接粘到群里/周报里） */

@@ -3,7 +3,7 @@ import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
-import { buildWeeklyDraft, weekRange, buildGroupMessage } from '../utils/weeklyDraft';
+import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
 import { useZentaoStore } from '../store/zentaoStore';
 import { useStore } from '../store/useStore';
 
@@ -54,12 +54,24 @@ export function WeeklyReport() {
 
   // 编辑器：draft=null 表示查看模式
   const [draft, setDraft] = useState<{ name: string; text: string; isNew: boolean } | null>(null);
+
+  // 汇总页「生成周报」把草稿写进 localStorage 再跳过来：这里接住并填入编辑器
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('pm.weekly.pendingDraft');
+      if (!raw) return;
+      localStorage.removeItem('pm.weekly.pendingDraft');
+      const d = JSON.parse(raw);
+      if (d && typeof d.text === 'string' && d.text.trim()) {
+        setDraft({ name: d.name || `${today()}.md`, text: d.text, isNew: true });
+      }
+    } catch { /* 草稿坏了就当没给过 */ }
+  }, []);
   const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 禅道数据（周报草稿用）
   const ztBugs = useZentaoStore(s => s.bugs);
-  const [msgCopied, setMsgCopied] = useState(false);
   // 命令面板「生成周报草稿」
   const cmdSignal = useStore(s => s.cmdSignal);
 
@@ -266,20 +278,6 @@ export function WeeklyReport() {
               )}
               <button className="btn btn-secondary btn-sm" onClick={() => load(dir)} disabled={loading}>
                 <Icons.refresh size={13} /> {loading ? '刷新中…' : '刷新'}
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                title="复制成一段可以直接发群里的纯文本（本周口径）"
-                onClick={async () => {
-                  try {
-                    const w = weekRange(0);
-                    await navigator.clipboard.writeText(buildGroupMessage(ztBugs, w.start, w.end));
-                    setMsgCopied(true);
-                    setTimeout(() => setMsgCopied(false), 1600);
-                  } catch { setError('复制失败，请检查剪贴板权限'); }
-                }}
-              >
-                <Icons.copy size={12} /> {msgCopied ? '已复制' : '复制群消息'}
               </button>
               <button
                 className="btn btn-secondary btn-sm"
