@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   /** 小窗收起自己 */
   paletteHide: () => ipcRenderer.invoke('palette:hide'),
+  /** 弹出/聚焦小窗（与全局快捷键等价，托盘与回归脚本用） */
+  paletteShow: () => ipcRenderer.invoke('palette:show'),
   /** 小窗把选中的命令交给主窗口执行 */
   paletteRun: (item) => ipcRenderer.invoke('palette:run', item),
   /** 小窗按结果条数调整自身高度（空查询时只留搜索框） */

@@ -606,6 +606,8 @@ export interface ElectronAPI {
   onPaletteRefresh: (cb: () => void) => () => void;
   /** 小窗收起自己 */
   paletteHide: () => Promise<{ success: boolean }>;
+  /** 弹出/聚焦小窗（与全局快捷键等价） */
+  paletteShow: () => Promise<{ success: boolean; error?: string }>;
   /** 小窗把选中的命令交给主进程（网址带 url → 直接用默认浏览器打开） */
   paletteRun: (item: { id: string; title?: string; url?: string }) => Promise<{ success: boolean }>;
   /** 小窗按结果条数调整自身高度 */

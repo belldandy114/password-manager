@@ -166,6 +166,11 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   - **空查询只显示搜索框**：`filtered=[]`、不渲染 `.cmdk-list` / `.cmdk-foot`，`palette:resize` 把窗口收到
     96px；有结果时按 `MIN_H + min(n,10)*36 + 34` 撑高（主进程 clamp 96–540，注意 BrowserWindow 的
     `minHeight` 也要设成 96，否则 setSize 被拦）。
+  - ⚠️ **Windows 透明无边框窗 `setSize()` 在「变大之后再变小」会被忽略**（放大有效、缩小无效，
+    setBounds / setContentSize 有效）。所以改高度统一走 `setSearchWindowHeight()` → `setBounds({x,y,width,height})`。
+    另外隐藏状态下改尺寸也可能被忽略，`showSearchWindow()` 要在 show() 前后各收一次 96；
+    `palette:refresh` 里渲染层还要主动 `paletteResize(96)`（q 本来就是空时 resize effect 不会触发）。
+  - `palette:show` IPC 与全局快捷键等价（未解锁时只出主窗口），回归脚本用它避免本机按键被别的程序吃掉。
   - ⚠️ `CommandPalette.tsx` 模块底部有 `PAGES.push(...PAGES_MORE)`，**PAGES 已含全部菜单页**：
     小窗里只能展开 `PAGES`，再展开 `PAGES_MORE` 会重复；末尾统一按 `id` 去重，重复 key 会让 React
     在结果变化时留下上一屏的残留行（表现为「回显一堆重复内容」）。

@@ -133,6 +133,8 @@ export function PaletteApp() {
     const off = window.electronAPI.onPaletteRefresh?.(() => {
       setQ('');            // 每次弹出都是干净的搜索框，不带上次结果
       setIdx(0);
+      // 物理高度主动收回去：q 本来就是空时，下面的 resize effect 因依赖没变不会触发
+      void window.electronAPI.paletteResize?.(MIN_H);
       void applyPrefs();   // 主窗口里刚换的主题也要跟上
       void load();
     });
@@ -158,10 +160,10 @@ export function PaletteApp() {
 
   useEffect(() => { setIdx(0); }, [q]);
 
-  // 结果条数变了就调整窗口高度：空查询时只留搜索框
+  // 结果条数 / 查询内容变了就调整窗口高度：空查询时只留搜索框
   useEffect(() => {
     void window.electronAPI.paletteResize?.(desiredHeight(filtered.length + (locked ? 1 : 0)));
-  }, [filtered.length, locked]);
+  }, [filtered.length, locked, q]);
 
   const run = useCallback((c: Cmd) => {
     void window.electronAPI.paletteRun({ id: c.id, title: c.title, url: c.url });

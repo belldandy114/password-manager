@@ -769,6 +769,21 @@ function createSearchWindow() {
   searchWin.on('closed', () => { searchWin = null; });
 }
 
+/**
+ * 改小窗高度。⚠️ Windows 上透明无边框窗「先变大再变小」时 setSize() 会被忽略，
+ * 必须用 setBounds()（实测 setContentSize 也行）。同时保留 x/y，避免窗口跳位。
+ */
+function setSearchWindowHeight(height) {
+  if (!searchWin || searchWin.isDestroyed()) return;
+  try {
+    const b = searchWin.getBounds();
+    const h = Math.min(540, Math.max(96, Math.round(Number(height) || 96)));
+    if (Math.abs(b.height - h) <= 1) return;
+    searchWin.setBounds({ x: b.x, y: b.y, width: b.width, height: h });
+    if (process.env.PM_DEBUG_HOTKEY) console.log('[palette] height -> ' + h + ' now=' + JSON.stringify(searchWin.getSize()));
+  } catch { /* 忽略 */ }
+}
+
 /** 摆到鼠标所在屏幕的中上部，像 Spotlight */
 function placeSearchWindow() {
   if (!searchWin || searchWin.isDestroyed()) return;
@@ -788,11 +803,12 @@ function showSearchWindow() {
   if (!searchWin || searchWin.isDestroyed()) createSearchWindow();
   if (!searchWin || searchWin.isDestroyed()) return;
   if (!searchWin.isVisible()) {
-    // 每次弹出先收成「只有搜索框」的高度，避免闪一下上一次的结果列表
-    const [w] = searchWin.getSize();
-    searchWin.setSize(w, 96);
+    // 每次弹出先收成「只有搜索框」的高度，避免闪一下上一次的结果列表。
+    // 隐藏状态下改尺寸可能被系统忽略，show() 之后再收一次。
+    setSearchWindowHeight(96);
     placeSearchWindow();
     searchWin.show();
+    setSearchWindowHeight(96);
     searchWin.focus();
     // 每次弹出都让窗口重取一遍数据（网址/片段/笔记可能刚在主窗口里改过）
     try { searchWin.webContents.send('palette:refresh'); } catch { /* 忽略 */ }
@@ -1231,14 +1247,16 @@ ipcMain.handle('palette:hide', () => {
   return { success: true };
 });
 
+/** 与全局快捷键等价的入口（托盘/回归脚本用；未解锁时只把主窗口带出来） */
+ipcMain.handle('palette:show', () => {
+  if (!appUnlocked) { showMainWindow(); return { success: false, error: 'locked' }; }
+  showSearchWindow();
+  return { success: true };
+});
+
 /** 按结果条数调整小窗高度：没输入时只留一个搜索框 */
 ipcMain.handle('palette:resize', (_event, height) => {
-  try {
-    if (!searchWin || searchWin.isDestroyed()) return { success: false };
-    const h = Math.min(540, Math.max(96, Math.round(Number(height) || 96)));
-    const [w] = searchWin.getSize();
-    if (Math.abs(searchWin.getSize()[1] - h) > 1) searchWin.setSize(w, h);
-  } catch { /* 忽略 */ }
+  setSearchWindowHeight(height);
   return { success: true };
 });
 
