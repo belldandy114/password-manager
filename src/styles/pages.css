@@ -8373,3 +8373,44 @@
     grid-column: span 2;
   }
 }
+
+/* ---------------- 19.24 独立快速搜索小窗（Ctrl+空格，?window=palette） ---------------- */
+/* 窗口本身是透明的，只有面板卡片可见 —— 所以 body 不能有背景 */
+html.palette-root,
+html.palette-root body {
+  background: transparent !important;
+  overflow: hidden;
+  height: 100%;
+}
+
+html.palette-root #root {
+  height: 100%;
+}
+
+.palette-root {
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.palette-root .cmdk {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-width: none;
+  height: calc(100vh - 20px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+}
+
+.palette-root .cmdk-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.palette-root .cmdk-foot {
+  flex-shrink: 0;
+}

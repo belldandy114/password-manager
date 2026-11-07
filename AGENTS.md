@@ -157,8 +157,16 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   - 默认搜索键被占用时才走 `SEARCH_HOTKEY_FALLBACKS`；**用户自定义的键冲突就如实报错，不静默替换**。
   - 等于默认值的键不写盘（`delete s.hotkeyX`），`PM_HOTKEY_*` 环境变量覆盖也不写盘。
   - 改完要 `buildTrayMenu()`，托盘菜单里显示的是实际键位。
-- `openSearchPalette()` 必须**先 `send('app:cmd-palette')` 再显示窗口**（中间约 30ms），
-  否则隐藏状态下按搜索键会先闪一下主页面再弹面板；`cancelPaletteShow()` 负责取消这个挂起的显示。
+- `openSearchPalette()` 弹的是**独立快速搜索小窗**（`searchWin`，加载 `dist/index.html?window=palette`），
+  不是主窗口里的面板：
+  - 渲染层入口在 `main.tsx` 按 `?window=palette` 分流到 `PaletteApp`；数据由小窗自己走 IPC 现取
+    （`entries:get-all` / `ws:get`，主进程持有解锁态），每次弹出 `palette:refresh` 重取。
+  - 选中命令走 `palette:run` IPC → 主进程 `hideSearchWindow() + showMainWindow()` → 转发给主窗口，
+    由 `App.tsx` 的 `onPaletteRun` 落地（导航 / 填搜索词 / 锁定…），**不要在小窗里复制业务逻辑**。
+  - 未解锁时按搜索键**不出小窗**，直接 `showMainWindow()`（模块级 `appUnlocked` 标志，session:unlock/lock 维护）。
+    ⚠️ 这类标志必须放**模块作用域**——放进 `setupIpcHandlers()` 的话模块级函数读不到，
+    ReferenceError 会被快捷键回调静默吞掉；排查要在回调第一行加日志。
+  - 小窗 `blur` 即隐藏、`close` 被 `!isQuitting` 拦截转隐藏；`session:lock` 时也要 `hideSearchWindow()`。
 
 ## 1.1.0 新增能力（改动时注意联动）
 

@@ -311,10 +311,40 @@ function App() {
   // 更新弹窗：点横幅上的「去更新」直接在这里看说明 + 下载 + 安装，不再跳设置页
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
 
-  // 托盘 / 全局搜索快捷键（Ctrl+空格）触发：只打开搜索面板，不切换窗口显隐（未解锁时不弹）
+  // 快速搜索小窗把选中的命令转发过来：在主窗口里落地（导航 / 填搜索词 / 锁定…）
   useEffect(() => {
-    const off = window.electronAPI.onOpenCommandPalette?.(() => {
-      if (!useStore.getState().isLocked) setCmdkOpen(true);
+    const off = window.electronAPI.onPaletteRun?.((item) => {
+      if (!item || !item.id) return;
+      if (useStore.getState().isLocked) return;
+      const [kind, ...rest] = item.id.split(':');
+      const arg = rest.join(':');
+      const st = useStore.getState();
+      switch (kind) {
+        case 'page': setCurrentPage(arg); break;
+        case 'toolbox': st.openToolboxTool(arg); setCurrentPage('toolbox'); break;
+        case 'entry': setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.setSearchQuery(item.title || ''); break;
+        case 'snippet': setCurrentPage('snippets'); break;
+        case 'note': setCurrentPage('notes'); break;
+        case 'account': setCurrentPage('accounts'); break;
+        case 'request': setCurrentPage('apiClient'); st.signalCmd(`api:open:${arg}`); break;
+        case 'checklist': setCurrentPage('checklists'); break;
+        case 'env': setCurrentPage('environments'); break;
+        case 'action':
+          if (arg === 'new-entry') { setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.signalNewEntry(); }
+          else if (arg === 'lock') handleLockRef.current();
+          else if (arg === 'zt-refresh') { setCurrentPage('zentao'); st.signalCmd('zentao:refresh-mine'); }
+          else if (arg === 'weekly-draft') { setCurrentPage('weeklyReport'); st.signalCmd('weekly:draft'); }
+          else if (arg === 'zentao') setCurrentPage('zentao');
+          else if (arg === 'api') setCurrentPage('apiClient');
+          else if (arg === 'theme') {
+            const next = st.settings.theme === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+            st.updateSettings({ theme: next });
+            void window.electronAPI.settingsSave({ theme: next });
+          }
+          break;
+        default: break;
+      }
     });
     return () => { try { off?.(); } catch { /* 忽略 */ } };
   }, []);

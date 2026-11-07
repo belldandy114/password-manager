@@ -574,15 +574,6 @@ const SEARCH_HOTKEY_FALLBACKS = ['CommandOrControl+Shift+Space', 'CommandOrContr
 const hotkeys = { search: '', toggle: '' };
 /** 本应用当前占用的加速键，改动前要全部注销 */
 const registeredAccels = new Set();
-/** 打开搜索时那 30ms 的「稍后显示窗口」定时器，被显隐键打断时要取消，否则刚隐藏又被弹回来 */
-let paletteShowTimer = null;
-
-function cancelPaletteShow() {
-  if (paletteShowTimer) {
-    clearTimeout(paletteShowTimer);
-    paletteShowTimer = null;
-  }
-}
 
 /** 快捷键显示名：CommandOrControl → Ctrl、Space → 空格 */
 function accelLabel(accel) {
@@ -617,6 +608,7 @@ function desiredHotkeys(override) {
 }
 
 function unregisterHotkeys() {
+  if (process.env.PM_DEBUG_HOTKEY && registeredAccels.size) console.log('[dbg] unregister ' + [...registeredAccels].join(','));
   for (const acc of registeredAccels) {
     try { globalShortcut.unregister(acc); } catch { /* 忽略 */ }
   }
@@ -628,7 +620,10 @@ function unregisterHotkeys() {
 /** 注册单个键；非法或已被占用都返回 false，不抛 */
 function tryRegister(accel, handler) {
   try {
-    if (globalShortcut.register(accel, handler)) {
+    if (globalShortcut.register(accel, () => {
+      if (process.env.PM_DEBUG_HOTKEY) console.log('[hotkey] fired ' + accel);
+      return handler();
+    })) {
       registeredAccels.add(accel);
       return true;
     }
@@ -723,47 +718,112 @@ function applyHotkeys(override, { persist = false } = {}) {
 }
 
 
-/** 只通知渲染层打开命令面板 */
-function sendPalette() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  try { mainWindow.webContents.send('app:cmd-palette'); } catch { /* 窗口已关 */ }
+/**
+ * 独立的「快速搜索」小窗：按搜索键只弹出这个面板，不把主窗口拉到前台。
+ * 窗口里跑的是同一个渲染层（?window=palette），数据通过 IPC 现取，不需要解锁状态留在主窗口。
+ */
+let searchWin = null;
+/** 主进程视角的解锁状态（给全局搜索键用：没解锁就别弹数据小窗，直接出主窗口） */
+let appUnlocked = false;
+
+function createSearchWindow() {
+  searchWin = new BrowserWindow({
+    width: 720,
+    height: 540,
+    minWidth: 560,
+    minHeight: 400,
+    frame: false,
+    transparent: true,
+    hasShadow: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    minimizable: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  searchWin.setAlwaysOnTop(true, 'screen-saver');
+  if ((loadSettings() || {}).contentProtection) searchWin.setContentProtection(true);
+  if (IS_DEV && !process.env.PM_USE_DIST) {
+    searchWin.loadURL('http://localhost:5173?window=palette');
+  } else {
+    searchWin.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { search: 'window=palette' });
+  }
+  // 点到面板外面就收起；真正的退出走 hide，窗口留着下次秒开
+  searchWin.on('blur', () => {
+    try { if (searchWin && !searchWin.isDestroyed() && searchWin.isVisible()) searchWin.hide(); } catch { /* 忽略 */ }
+  });
+  searchWin.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      try { searchWin.hide(); } catch { /* 忽略 */ }
+    }
+  });
+  searchWin.on('closed', () => { searchWin = null; });
+}
+
+/** 摆到鼠标所在屏幕的中上部，像 Spotlight */
+function placeSearchWindow() {
+  if (!searchWin || searchWin.isDestroyed()) return;
+  try {
+    const pt = screen.getCursorScreenPoint();
+    const disp = screen.getDisplayNearestPoint(pt);
+    const wa = disp.workArea;
+    const [w] = searchWin.getSize();
+    searchWin.setPosition(
+      Math.round(wa.x + (wa.width - w) / 2),
+      Math.round(wa.y + Math.max(12, wa.height * 0.16)),
+    );
+  } catch { /* 摆不好就留在原地 */ }
+}
+
+function showSearchWindow() {
+  if (!searchWin || searchWin.isDestroyed()) createSearchWindow();
+  if (!searchWin || searchWin.isDestroyed()) return;
+  placeSearchWindow();
+  if (!searchWin.isVisible()) {
+    searchWin.show();
+    searchWin.focus();
+    // 每次弹出都让窗口重取一遍数据（网址/片段/笔记可能刚在主窗口里改过）
+    try { searchWin.webContents.send('palette:refresh'); } catch { /* 忽略 */ }
+  } else {
+    searchWin.focus();
+  }
+  if (process.env.PM_DEBUG_HOTKEY) console.log('[palette] shown, url=' + (searchWin && !searchWin.isDestroyed() ? searchWin.webContents.getURL() : '?'));
+}
+
+function hideSearchWindow() {
+  try {
+    if (searchWin && !searchWin.isDestroyed() && searchWin.isVisible()) searchWin.hide();
+  } catch { /* 忽略 */ }
 }
 
 /**
- * 只打开搜索，不切换窗口显隐。
- * 顺序很关键：先把「打开命令面板」发给渲染层，等它挂到 DOM 上再把窗口显示出来 ——
- * 这样窗口出现的第一帧就带着搜索框，不会先闪一下主页面。
+ * 全局搜索键的入口：已解锁就弹独立搜索小窗；没解锁时数据取不出来，
+ * 直接把主窗口带到前台去解锁。
  */
 function openSearchPalette() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    // 窗口还没建过（冷启动/被彻底关掉）：建出来，加载完再开面板
-    createWindow();
-    if (!mainWindow) return;
-    mainWindow.webContents.once('did-finish-load', () => {
-      sendPalette();
-      showMainWindow();
-    });
-    return;
-  }
-  if (mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.once('did-finish-load', () => {
-      sendPalette();
-      showMainWindow();
-    });
-    return;
-  }
-  sendPalette();
-  // 给渲染层一帧时间把面板挂上去（隐藏窗口里 React 的 MessageChannel 不会被节流）
-  cancelPaletteShow();
-  paletteShowTimer = setTimeout(() => {
-    paletteShowTimer = null;
+  if (process.env.PM_DEBUG_HOTKEY) console.log('[palette] open, unlocked=' + appUnlocked);
+  if (!appUnlocked) {
     showMainWindow();
-  }, 30);
+    return;
+  }
+  if (searchWin && !searchWin.isDestroyed() && searchWin.isVisible()) {
+    hideSearchWindow();
+  } else {
+    showSearchWindow();
+  }
 }
 
 /** 只切换显示/隐藏，不弹搜索 */
 function toggleMainWindow() {
-  cancelPaletteShow();
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
     return;
@@ -791,7 +851,6 @@ function showMainWindow() {
 }
 
 function hideToTray() {
-  cancelPaletteShow();
   createTray();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
 }
@@ -1163,6 +1222,32 @@ ipcMain.handle('app:hotkeys-apply', async (_event, payload) => {
   }
 });
 
+// ---- 独立快速搜索小窗 ----
+ipcMain.handle('palette:hide', () => {
+  hideSearchWindow();
+  return { success: true };
+});
+
+/** 选中一条命令：收起小窗 → 把主窗口带到前台 → 让主窗口执行 */
+ipcMain.handle('palette:run', (_event, item) => {
+  hideSearchWindow();
+  if (item && item.id === 'action:lock') {
+    // 锁定不需要把窗口提前拉出来，原地锁就行
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('palette:run', item); } catch { /* 忽略 */ }
+    return { success: true };
+  }
+  showMainWindow();
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('palette:run', item || {}); } catch { /* 忽略 */ }
+  return { success: true };
+});
+
+/** 小窗里发现还没解锁：收起小窗，把主窗口叫出来解锁 */
+ipcMain.handle('palette:unlock', () => {
+  hideSearchWindow();
+  showMainWindow();
+  return { success: true };
+});
+
 ipcMain.handle('log:info', async () => ({ success: true, data: { path: logPath() || '' } }));
 ipcMain.handle('log:open', async () => {
   const f = logPath();
@@ -1412,6 +1497,7 @@ function setupIpcHandlers() {
     // Password reset always ends the session: the user must unlock with the new password.
     clearCaches();
     currentPassword = null;
+    appUnlocked = false;
     return { success: true };
   });
 
@@ -1419,12 +1505,13 @@ function setupIpcHandlers() {
   let currentPassword = null;
   let lastActivity = Date.now();
 
-  ipcMain.handle('session:unlock', (_event, { password }) => {
-    clearCaches();
-    const vault = loadVault(password);
-    if (!vault) return { success: false };
-    currentPassword = password;
-    lastActivity = Date.now();
+ipcMain.handle('session:unlock', (_event, { password }) => {
+  clearCaches();
+  const vault = loadVault(password);
+  if (!vault) return { success: false };
+  currentPassword = password;
+  appUnlocked = true;
+  lastActivity = Date.now();
     // 解锁后启动禅道新 Bug 提醒（内部会检查开关）
     setTimeout(() => { try { ztRestartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
     // 侧边栏红点：把上次没看的未读数推给界面
@@ -1436,9 +1523,11 @@ function setupIpcHandlers() {
 
   ipcMain.handle('session:lock', () => {
     currentPassword = null;
+    appUnlocked = false;
     clearCaches();
     clearClipHistory();
     try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
+    hideSearchWindow();
     return { success: true };
   });
 
@@ -4051,6 +4140,11 @@ app.whenReady().then(() => {
   //   显隐 → 只显示/隐藏窗口；搜索 → 只打开搜索（隐藏时按下去直接是搜索框，不先闪主页面）
   // 键位来自设置（可自定义），注册失败会回滚并在设置页提示。
   const boot = applyHotkeys(null, { persist: false });
+  if (process.env.PM_DEBUG_HOTKEY) {
+    setInterval(() => {
+      console.log(`[dbg] search=${hotkeys.search} reg=${globalShortcut.isRegistered(hotkeys.search)} toggle=${hotkeys.toggle} reg=${globalShortcut.isRegistered(hotkeys.toggle)}`);
+    }, 2000);
+  }
   if (boot.data.search.ok && boot.data.toggle.ok) {
     console.log(`[hotkey] 搜索 ${boot.data.search.label} / 显隐 ${boot.data.toggle.label}`);
     if (boot.data.search.fallback) console.log(`[hotkey] 默认搜索键被占用，暂用 ${boot.data.search.label}`);

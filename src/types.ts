@@ -600,10 +600,18 @@ export interface ElectronAPI {
   hotkeyInfo: () => Promise<{ success: boolean; data?: HotkeyInfo }>;
   /** 修改全局快捷键；冲突时 success:false + error（conflict / same），并回滚到原来能用的键 */
   hotkeyApply: (payload: { search?: string; toggle?: string }) => Promise<HotkeyApplyResult>;
-  /** 托盘 / 全局快捷键要求打开命令面板 */
-  onOpenCommandPalette: (cb: () => void) => () => void;
   /** 窗口隐藏时要求关闭命令面板 */
   onCloseCommandPalette: (cb: () => void) => () => void;
+  /** 独立搜索小窗每次弹出时要求重取数据 */
+  onPaletteRefresh: (cb: () => void) => () => void;
+  /** 小窗收起自己 */
+  paletteHide: () => Promise<{ success: boolean }>;
+  /** 小窗把选中的命令交给主窗口执行 */
+  paletteRun: (item: { id: string; title?: string }) => Promise<{ success: boolean }>;
+  /** 小窗里未解锁：让主窗口出来解锁 */
+  paletteUnlock: () => Promise<{ success: boolean }>;
+  /** 主窗口接收小窗转发的命令 */
+  onPaletteRun: (cb: (item: { id: string; title?: string }) => void) => () => void;
   /** 渲染层错误/警告写入主进程 app.log */
   logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;

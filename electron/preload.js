@@ -39,16 +39,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hotkeyInfo: () => ipcRenderer.invoke('app:hotkeys'),
   /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
   hotkeyApply: (payload) => ipcRenderer.invoke('app:hotkeys-apply', payload),
-  onOpenCommandPalette: (cb) => {
-    const h = () => cb();
-    ipcRenderer.on('app:cmd-palette', h);
-    return () => ipcRenderer.removeListener('app:cmd-palette', h);
-  },
   /** 窗口隐藏时主进程要求关掉命令面板 */
   onCloseCommandPalette: (cb) => {
     const h = () => cb();
     ipcRenderer.on('app:cmd-palette-close', h);
     return () => ipcRenderer.removeListener('app:cmd-palette-close', h);
+  },
+  // ---- 独立快速搜索小窗（?window=palette）----
+  /** 小窗每次弹出时主进程要求重取一遍数据 */
+  onPaletteRefresh: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('palette:refresh', h);
+    return () => ipcRenderer.removeListener('palette:refresh', h);
+  },
+  /** 小窗收起自己 */
+  paletteHide: () => ipcRenderer.invoke('palette:hide'),
+  /** 小窗把选中的命令交给主窗口执行 */
+  paletteRun: (item) => ipcRenderer.invoke('palette:run', item),
+  /** 小窗里发现未解锁：让主窗口出来解锁 */
+  paletteUnlock: () => ipcRenderer.invoke('palette:unlock'),
+  /** 主窗口接小窗转发过来的命令 */
+  onPaletteRun: (cb) => {
+    const h = (_e, item) => cb(item);
+    ipcRenderer.on('palette:run', h);
+    return () => ipcRenderer.removeListener('palette:run', h);
   },
   onClipboardCleared: (cb) => {
     ipcRenderer.on('clipboard-cleared', () => cb());

@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { Icons } from './ui';
 import { applyTheme } from '../utils/theme';
 
-type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
+export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
 
 interface Cmd {
   id: string;
@@ -13,12 +13,12 @@ interface Cmd {
   run: () => void;
 }
 
-const KIND_LABEL: Record<Kind, string> = {
+export const KIND_LABEL: Record<Kind, string> = {
   page: '页面', action: '操作', entry: '网址', snippet: '片段', note: '笔记', account: '账号',
   request: '请求', checklist: '用例', env: '环境',
 };
 
-const PAGES: { page: string; label: string }[] = [
+export const PAGES: { page: string; label: string }[] = [
   { page: 'passwordManager', label: '网址管理' },
   { page: 'accounts', label: '测试账号' },
   { page: 'weeklyReport', label: '周报' },
@@ -30,7 +30,7 @@ const PAGES: { page: string; label: string }[] = [
 ];
 
 // 工具箱里的每个工具都能被搜到（Ctrl+K → 输入 base64 / jwt / 二维码…）
-const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
+export const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
   { id: 'timestamp', label: '时间戳换算', kw: 'timestamp unix 日期' },
   { id: 'timeline', label: '时间轴 / 耗时', kw: '耗时 间隔 时间轴' },
   { id: 'timezone', label: '时区换算', kw: 'timezone utc' },
@@ -53,7 +53,7 @@ const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
   { id: 'media', label: '图片 / 二维码', kw: 'qrcode 二维码 base64 图片' },
 ];
 
-const PAGES_MORE: { page: string; label: string }[] = [
+export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
