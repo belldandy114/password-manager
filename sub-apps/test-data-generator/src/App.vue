@@ -9,13 +9,8 @@
         </h1>
       </div>
       <div class="header-right">
-        <el-switch
-          v-model="isDark"
-          active-icon="Moon"
-          inactive-icon="Sunny"
-          inline-prompt
-          style="--el-switch-on-color: #2c3e50; --el-switch-off-color: #f0f0f0"
-        />
+        <!-- 主题统一由主应用「设置」控制，子应用不再单独放一个开关：
+             两处都能切会让人以为各切各的，而且主应用一推主题就会被覆盖回来。 -->
       </div>
     </header>
 
@@ -375,52 +370,36 @@
 
         <!-- 统计栏 -->
         <div v-if="results.length > 0" class="stats-bar">
-          <el-tag type="primary">总条数：{{ results.length }}</el-tag>
-          <el-tag v-if="dedupedCount < results.length" type="success">去重后：{{ dedupedCount }}（去重 {{ results.length - dedupedCount }} 条）</el-tag>
-          <el-button size="small" text type="primary" @click="handleDeduplicate">
-            <el-icon><Select /></el-icon> 去重
-          </el-button>
-          <span v-if="selectedIds.size > 0" class="batch-actions">
-            <el-tag type="warning" size="small">已选 {{ selectedIds.size }} 条</el-tag>
-            <el-button size="small" text type="success" @click="handleCopySelected">
-              <el-icon><CopyDocument /></el-icon> 复制选中
-            </el-button>
-            <el-button size="small" text type="danger" @click="handleDeleteSelected">
-              <el-icon><Delete /></el-icon> 删除选中
-            </el-button>
-          </span>
-          <el-tag
-            class="zoom-tag"
-            size="small"
-            :type="resultZoom === 130 ? 'info' : 'warning'"
-            @click="resultZoom = 130"
-            style="cursor:pointer"
-            title="点击重置"
-          >🔍 {{ displayZoom }}%</el-tag>
+          <div class="stats-info">
+            <span class="stat"><b>{{ results.length }}</b><span class="stat-unit">条</span></span>
+            <span v-if="dedupedCount < results.length" class="stat stat-muted">去重后 <b>{{ dedupedCount }}</b></span>
+            <span v-if="selectedIds.size > 0" class="stat stat-accent">已选 <b>{{ selectedIds.size }}</b></span>
+          </div>
 
-          <div class="export-buttons">
-            <el-button size="small" @click="handleCopy">
-              <el-icon><CopyDocument /></el-icon> 复制全部
-            </el-button>
-            <el-button size="small" @click="handleCopyMarkdown">
-              <el-icon><CopyDocument /></el-icon> 复制Markdown
-            </el-button>
-            <el-button size="small" @click="handleCopyLastDigits" v-show="hasIdCardData">
-              <el-icon><CopyDocument /></el-icon> 复制后{{ idCardParams.lastDigits }}位
-            </el-button>
-            <el-button size="small" @click="handleExport('txt')">TXT</el-button>
-            <el-button size="small" @click="handleExport('csv')">CSV</el-button>
-            <el-button size="small" @click="handleExport('sql')">SQL</el-button>
-            <el-button size="small" @click="handleExport('md')">MD</el-button>
-            <el-button size="small" @click="handleExport('json')">JSON</el-button>
-            <el-button size="small" @click="handleExport('xlsx')" type="success">XLSX</el-button>
+          <div class="stats-actions">
+            <el-button size="small" text @click="handleDeduplicate" :disabled="dedupedCount === results.length">去重</el-button>
+            <el-button v-if="selectedIds.size > 0" size="small" text @click="handleCopySelected">复制选中</el-button>
+            <el-button v-if="selectedIds.size > 0" size="small" text type="danger" @click="handleDeleteSelected">删除选中</el-button>
+            <span class="zoom-chip" @click="resultZoom = 100" title="点击重置缩放">{{ displayZoom }}%</span>
+            <span class="bar-sep" />
+
+            <!-- 复制类和导出类各做成分段控件：原来 9 个各自带描边的按钮一字排开，
+                 占了 580px，视觉重心比「一键生成」还重。 -->
+            <span class="seg">
+              <el-button size="small" @click="handleCopy">复制全部</el-button>
+              <el-button size="small" @click="handleCopyMarkdown">复制MD</el-button>
+              <el-button v-if="hasIdCardData" size="small" @click="handleCopyLastDigits">后{{ idCardParams.lastDigits }}位</el-button>
+            </span>
+            <span class="seg">
+              <el-button v-for="f in exportFormats" :key="f" size="small" @click="handleExport(f)">{{ f.toUpperCase() }}</el-button>
+            </span>
           </div>
         </div>
 
         <!-- 空状态 -->
         <div v-if="results.length === 0 && !isGenerating" class="empty-state">
           <div class="empty-illustration">
-            <el-icon :size="64" color="#c0c4cc"><Coin /></el-icon>
+            <el-icon :size="64" class="empty-icon"><Coin /></el-icon>
             <div class="empty-dots">
               <span></span><span></span><span></span>
             </div>
@@ -436,7 +415,7 @@
         </div>
 
         <!-- 结果列表（支持缩放） -->
-        <div v-if="results.length > 0" class="result-list" ref="resultListRef" :style="{ zoom: resultZoom / 100 }">
+        <div v-if="results.length > 0" class="result-list" :class="{ 'has-idcard': hasIdCardData }" ref="resultListRef" :style="{ zoom: resultZoom / 100 }">
           <div class="result-header">
             <span class="col-check">
               <el-checkbox :checked="isAllSelected" :indeterminate="isIndeterminate" @change="toggleSelectAll" size="small" />
@@ -444,7 +423,7 @@
             <span class="col-id">#</span>
             <span class="col-type">类型</span>
             <span class="col-value">内容</span>
-            <span class="col-last6" v-show="hasIdCardData">后{{ idCardParams.lastDigits }}位</span>
+            <span v-if="hasIdCardData" class="col-last6">后{{ idCardParams.lastDigits }}位</span>
             <span class="col-action">操作</span>
           </div>
           <el-scrollbar height="100%" ref="scrollbarRef">
@@ -485,7 +464,7 @@
                   autofocus
                 />
               </span>
-              <span class="col-last6" v-show="hasIdCardData">{{ item.last6 || '-' }}</span>
+              <span class="col-last6" v-if="hasIdCardData">{{ item.last6 || '-' }}</span>
               <span class="col-action">
                 <el-button size="small" text type="primary" @click="copySingle(item.value)" title="复制">
                   <el-icon><CopyDocument /></el-icon>
@@ -511,7 +490,7 @@
 
         <!-- 加载动画 -->
         <div v-if="isGenerating" class="loading-overlay">
-          <el-progress type="circle" :percentage="generateProgress" :width="80" :stroke-width="6" color="#409eff" />
+          <el-progress type="circle" :percentage="generateProgress" :width="80" :stroke-width="6" :color="'var(--accent, #409eff)'" />
           <p class="loading-text">⏳ 正在生成数据...</p>
           <p class="loading-hint">生成 {{ generateCount }} 条 × {{ selectedTypes.size }} 种类型</p>
         </div>
@@ -524,9 +503,9 @@
     </footer>
 
     <!-- 首次访问免责弹窗 -->
-    <el-dialog v-model="showDisclaimerDialog" title="使用声明" width="400px" :close-on-click-modal="false" :show-close="false">
+    <el-dialog v-model="showDisclaimerDialog" class="disclaimer-dialog" title="使用声明" width="400px" :close-on-click-modal="false" :show-close="false">
       <div class="disclaimer-body">
-        <el-icon :size="48" color="#e6a23c"><WarningFilled /></el-icon>
+        <el-icon :size="48" class="disclaimer-icon"><WarningFilled /></el-icon>
         <p><strong>本工具仅供软件测试使用</strong></p>
         <p>生成的数据均为虚拟构造，随机生成，不对应任何真实个人身份信息。</p>
         <p class="disclaimer-warn">严禁将生成数据用于非法用途，包括但不限于身份冒用、欺诈、虚假注册等行为。</p>
@@ -628,7 +607,7 @@ function togglePin(id: GeneratorId, e: MouseEvent) {
 /** 生成器列表：置顶的排在前面 */
 // ── 生成器列表 ─────────────────────────────────────────
 const generators = [
-  { id: 'sqlInjection' as GeneratorId, label: 'SQL注入/XSS', icon: 'WarningFilled', description: 'SQL注入、XSS、模板注入等攻击载荷' },
+  { id: 'sqlInjection' as GeneratorId, label: 'SQL/XSS', icon: 'WarningFilled', description: 'SQL注入、XSS、模板注入等攻击载荷' },
   { id: 'idCard' as GeneratorId, label: '身份证', icon: 'CreditCard', description: '大陆18位/香港/澳门身份证' },
   { id: 'name' as GeneratorId, label: '姓名', icon: 'User', description: '中文姓名（百家姓）' },
   { id: 'email' as GeneratorId, label: '邮箱', icon: 'Message', description: '多域名邮箱地址' },
@@ -1234,6 +1213,9 @@ function makeExportFilename(extension: string): string {
   return `测试数据_${typeStr}_${dateStr}.${extension}`
 }
 
+/** 统计栏里的导出格式按钮，顺序即展示顺序 */
+const exportFormats: ExportFormat[] = ['txt', 'csv', 'sql', 'md', 'json', 'xlsx']
+
 async function handleExport(format: ExportFormat) {
   try {
     const { content, extension } = await exportData(displayResults.value, format)
@@ -1300,21 +1282,29 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.ctrlKey || e.metaKey) {
     if (e.key === '=' || e.key === '+') { e.preventDefault(); adjustZoom(10); return }
     if (e.key === '-') { e.preventDefault(); adjustZoom(-10); return }
-    if (e.key === '0') { e.preventDefault(); resultZoom.value = 130; return }
+    if (e.key === '0') { e.preventDefault(); resultZoom.value = 100; return }
   }
 }
 
 // ── 结果区缩放 ────────────────────────────────────────
-/** CSS zoom 实际值（130 = 1.3 倍，作为基准） */
-const resultZoom = ref(Number(localStorage.getItem('tdg-zoom')) || 130)
-/** 显示用百分比：以 130 为 100% 基准 */
-const displayZoom = computed(() => Math.round(resultZoom.value / 130 * 100))
+// 以前这里以 zoom:1.3 当「100%」基准，等于默认就把整张表放大 30%：
+// 12.5px 的字被渲染成 16px，行高从 38px 涨到 61px，一屏只能看 10 条。
+// 现在 zoom 值和百分比一一对应，默认 100。
+// 老版本存下来的 130/156 之类是旧基准，第一次读到时按 1.3 折算回去。
+const LEGACY_ZOOM_BASE = 1.3
+function readStoredZoom() {
+  const raw = Number(localStorage.getItem('tdg-zoom'))
+  if (!raw) return 100
+  // 旧基准最小是 78（=60%），新基准下不可能有 <78 的百分比需求，超过 100 即视为旧值
+  return Math.round(raw > 100 ? raw / LEGACY_ZOOM_BASE : raw)
+}
+const resultZoom = ref(Math.max(60, Math.min(200, readStoredZoom())))
+const displayZoom = computed(() => Math.round(resultZoom.value))
 watch(resultZoom, v => {
   localStorage.setItem('tdg-zoom', String(v))
 })
 function adjustZoom(delta: number) {
-  resultZoom.value = Math.max(78, Math.min(260, resultZoom.value + delta * 1.3))
-  // 78~260 对应显示 60%~200%
+  resultZoom.value = Math.max(60, Math.min(200, resultZoom.value + delta))
 }
 function handleWheel(e: WheelEvent) {
   if (!e.ctrlKey && !e.metaKey) return
@@ -1335,55 +1325,117 @@ onUnmounted(() => {
 </script>
 
 <style>
-/* 全局 CSS 变量 — 石墨仪器主题（与主应用 V9 一致） */
-:root {
-  --el-color-primary: #2f7a77;
-  --el-color-primary-light-3: #4f938f;
-  --el-color-primary-light-5: #7fb0ae;
-  --el-color-primary-light-7: #b3d0cf;
-  --el-color-primary-light-8: #cfe0df;
-  --el-color-primary-light-9: #eaf2f2;
-  --el-color-primary-dark-2: #276663;
-  --el-color-success: #2f7d52;
-  --el-color-danger: #b8443f;
-  --el-color-warning: #9a6f1f;
-  --el-color-info: #8a929a;
-  --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
+/* ================================================================
+   配色全部来自主应用推进来的设计令牌（见 src/pages/DataGenerator.tsx 的 TOKEN_KEYS）。
+   每个 var() 都带 fallback，所以子应用单独跑（npm run dev:tdg）时也不会掉色。
+   好处：主应用里换主题 / 换强调色 / 换密度，这里自动跟着变，不用改第二份色值。
+   ================================================================ */
+/* 选择器写成 :root:root 是为了压过 Element Plus 自带的 html.dark 块：
+   那份主题包在深色模式下会把 --el-color-primary 等重新写回默认蓝，
+   而 :root 是 (0,1,0)，比 html.dark 的 (0,1,1) 低，正常写法在深色主题下会被它盖掉
+   （表现就是「浅色是青瓷、切深色按钮变蓝」）。双写一次拿到 (0,2,0) 才稳。 */
+:root:root {
+  /* 色阶往哪边混合：浅色模式往白里调，深色模式往底色里调 */
+  --tdg-mix: #ffffff;
+  --tdg-accent: var(--accent, #2f7a77);
+
+  /* Element Plus 的 primary 是一整套色阶。只给一个强调色，其余用 color-mix 派生，
+     换强调色时整条色阶自动跟着走（以前是手写 6 个写死的青色值）。 */
+  --el-color-primary: var(--tdg-accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--tdg-accent) 72%, var(--tdg-mix));
+  --el-color-primary-light-5: color-mix(in srgb, var(--tdg-accent) 52%, var(--tdg-mix));
+  --el-color-primary-light-7: color-mix(in srgb, var(--tdg-accent) 32%, var(--tdg-mix));
+  --el-color-primary-light-8: color-mix(in srgb, var(--tdg-accent) 22%, var(--tdg-mix));
+  --el-color-primary-light-9: color-mix(in srgb, var(--tdg-accent) 12%, var(--tdg-mix));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--tdg-accent) 82%, #000);
+
+  --el-color-success: var(--ok, #2f7d52);
+  --el-color-danger: var(--bad, #b8443f);
+  --el-color-warning: var(--warn, #9a6f1f);
+  --el-color-info: var(--text-3, #8a929a);
+
+  --el-border-radius-base: var(--r-sm, 6px);
+  --el-border-radius-small: var(--r-sm, 4px);
   --el-font-family: "Inter", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --el-text-color-primary: #24292e;
-  --el-text-color-regular: #3f474e;
-  --el-text-color-secondary: #565f64;
-  --el-text-color-placeholder: #9aa1a9;
-  --el-border-color: #d9dee3;
-  --el-border-color-light: #dfe3e8;
-  --el-border-color-lighter: #e7eaee;
-  --el-fill-color-blank: #ffffff;
-  --el-fill-color-light: #f8f9fb;
-  --el-fill-color-lighter: #fafbfc;
+
+  --el-text-color-primary: var(--text-1, #24292e);
+  --el-text-color-regular: var(--text-1, #3f474e);
+  --el-text-color-secondary: var(--text-2, #565f64);
+  --el-text-color-placeholder: var(--text-3, #9aa1a9);
+  /* 禁用态也走调色板：EP 深色主题给的是 #ffffff80（50% 白），
+     在浅色底上会直接消失；统一成 text-3 两边都能看清 */
+  --el-text-color-disabled: var(--text-3, #9aa1a9);
+  --el-disabled-text-color: var(--text-3, #9aa1a9);
+
+  --el-border-color: var(--line-strong, #d9dee3);
+  --el-border-color-light: var(--line, #dfe3e8);
+  --el-border-color-lighter: var(--line-subtle, #e7eaee);
+
+  --el-bg-color: var(--surface-2, #ffffff);
+  --el-bg-color-page: var(--surface-0, #f7f8fa);
+  --el-bg-color-overlay: var(--surface-2, #ffffff);
+  --el-fill-color-blank: var(--surface-2, #ffffff);
+  --el-fill-color-light: var(--surface-3, #f8f9fb);
+  --el-fill-color-lighter: var(--surface-1, #fafbfc);
+  --el-fill-color: var(--surface-3, #f0f2f5);
 }
-html.dark {
-  --el-color-primary: #4f9d99;
-  --el-color-primary-light-3: #3d8a86;
-  --el-color-primary-light-5: #33706d;
-  --el-color-primary-light-7: #2a5b59;
-  --el-color-primary-light-8: #265150;
-  --el-color-primary-light-9: #224a48;
-  --el-color-primary-dark-2: #63b1ad;
-  --el-bg-color: #1b2126;
-  --el-bg-color-overlay: #20272d;
-  --el-bg-color-page: #14181c;
-  --el-text-color-primary: #e3e8ec;
-  --el-text-color-regular: #c3cad1;
-  --el-text-color-secondary: #97a0a8;
-  --el-text-color-placeholder: #6b757e;
-  --el-border-color: #2b323a;
-  --el-border-color-light: #272e35;
-  --el-border-color-lighter: #232a31;
-  --el-fill-color-blank: #1b2126;
-  --el-fill-color-light: #222930;
-  --el-fill-color-lighter: #1f262c;
+/* 深色的混合方向要压过上面的 :root:root（(0,2,0)），所以这里再补一个 :root → (0,2,1)，
+   否则深色下 --tdg-mix 仍是白，派生出来的色阶全往白里调，hover 会发亮。 */
+html.dark:root {
+  --tdg-mix: var(--surface-2, #1b2126);
   --el-mask-color: rgba(10, 13, 16, 0.65);
+}
+
+/* 实心主色按钮照主应用 .btn-primary 的配方：强调色往深里压 26%，配近白文字。
+   直接用 100% 强调色的话，深色主题下 #4f9d99 配白字只有 3:1；
+   压深一点既提了对比度，也和主应用的按钮是同一个观感。
+   排除 text / link / plain —— 它们的文字本身就是主色，铺在透明底上。 */
+:root:root .el-button--primary:not(.is-text):not(.is-link):not(.is-plain) {
+  --el-button-bg-color: color-mix(in srgb, var(--tdg-accent) 74%, #0a1012);
+  --el-button-border-color: color-mix(in srgb, var(--tdg-accent) 74%, #0a1012);
+  --el-button-text-color: #f2fbfa;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--tdg-accent) 86%, #0a1012);
+  --el-button-hover-border-color: color-mix(in srgb, var(--tdg-accent) 86%, #0a1012);
+  --el-button-hover-text-color: #f2fbfa;
+  --el-button-active-bg-color: color-mix(in srgb, var(--tdg-accent) 66%, #0a1012);
+  --el-button-active-border-color: color-mix(in srgb, var(--tdg-accent) 66%, #0a1012);
+  --el-button-active-text-color: #f2fbfa;
+  --el-button-disabled-bg-color: color-mix(in srgb, var(--tdg-accent) 40%, var(--tdg-mix));
+  --el-button-disabled-border-color: color-mix(in srgb, var(--tdg-accent) 40%, var(--tdg-mix));
+  --el-button-disabled-text-color: var(--text-3, #9aa1a9);
+}
+
+/* EP 深色主题里 html.dark .el-button 会把禁用文字写死成 50% 白，
+   没有走 --el-text-color-disabled，所以在按钮级别再钉一次。 */
+:root:root .el-button {
+  --el-button-disabled-text-color: var(--text-3, #9aa1a9);
+}
+
+/* 免责弹窗：标题居中跟下面的居中正文对齐，圆角按设计令牌走。
+   写在非 scoped 块里是因为 el-dialog 可能被 teleport 到 body，
+   :deep() 一旦离开组件子树就命中不了。 */
+.disclaimer-dialog {
+  border-radius: var(--r-lg, 12px);
+  padding: 22px 24px 16px;
+  background: var(--surface-2, #fff);
+}
+.disclaimer-dialog .el-dialog__header {
+  text-align: center;
+  margin-right: 0;
+  padding-bottom: 4px;
+}
+.disclaimer-dialog .el-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-1, #17191a);
+}
+.disclaimer-dialog .el-dialog__body {
+  padding: 8px 0 4px;
+  color: var(--text-2, #565f64);
+}
+.disclaimer-dialog .el-dialog__footer {
+  padding-top: 4px;
 }
 </style>
 
@@ -1392,30 +1444,30 @@ html.dark {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #f7f8fa;
-  color: #24292e;
-  transition: background 0.3s, color 0.3s;
+  background: var(--surface-0, #f7f8fa);
+  color: var(--text-1, #24292e);
+  transition: background 0.2s, color 0.2s;
   overflow-x: hidden;
   min-width: 0;
 }
 .app-container.dark {
-  background: #14181c;
-  color: #e0e0e0;
+  background: var(--surface-0, #14181c);
+  color: var(--text-1, #e0e0e0);
 }
 
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 20px;
-  background: #fff;
-  border-bottom: 1px solid #d9dee3;
+  padding: 7px 20px;
+  background: var(--surface-2, #fff);
+  border-bottom: 1px solid var(--line, #d9dee3);
   z-index: 10;
   flex-shrink: 0;
 }
 .dark .app-header {
-  background: #1b2126;
-  border-color: #2b323a;
+  background: var(--surface-2, #1b2126);
+  border-color: var(--line, #2b323a);
 }
 .header-left {
   display: flex;
@@ -1447,8 +1499,8 @@ html.dark {
 .left-panel {
   width: 280px;
   min-width: 280px;
-  background: #fff;
-  border-right: 1px solid #d9dee3;
+  background: var(--surface-2, #fff);
+  border-right: 1px solid var(--line, #d9dee3);
   overflow: hidden;
   flex-shrink: 0;
   transition: width 0.25s ease, min-width 0.25s ease;
@@ -1457,9 +1509,15 @@ html.dark {
   width: 60px;
   min-width: 60px;
 }
+/* 侧栏内容经常超出可视高度（17 个分类 + 参数区），滚动条常显一条细的，
+   否则底部的「参数配置」被裁一半、又没有滚动提示，很容易以为没内容了 */
+.left-panel :deep(.el-scrollbar__bar.is-vertical) {
+  opacity: 0.45;
+  width: 5px;
+}
 .dark .left-panel {
-  background: #1b2126;
-  border-color: #2b323a;
+  background: var(--surface-2, #1b2126);
+  border-color: var(--line, #2b323a);
 }
 
 /* 侧栏折叠按钮 */
@@ -1469,19 +1527,19 @@ html.dark {
   gap: 6px;
   padding: 8px 12px;
   cursor: pointer;
-  color: #8a929a;
-  transition: color 0.2s;
-  border-bottom: 1px solid #e7eaee;
+  color: var(--text-3, #8a929a);
+  transition: color 0.15s;
+  border-bottom: 1px solid var(--line-subtle, #e7eaee);
   user-select: none;
 }
 .sidebar-toggle:hover {
-  color: #2f7a77;
+  color: var(--accent, #2f7a77);
 }
 .dark .sidebar-toggle {
-  border-color: #2b323a;
+  border-color: var(--line, #2b323a);
 }
 .dark .sidebar-toggle:hover {
-  color: #7fc4c0;
+  color: var(--accent, #7fc4c0);
 }
 .left-panel.collapsed .sidebar-toggle {
   justify-content: center;
@@ -1492,14 +1550,13 @@ html.dark {
   white-space: nowrap;
 }
 .panel-title {
-  font-size: 11.5px;
+  font-size: var(--fs-2xs, 11.5px);
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin: 16px 16px 8px;
-  color: #8a929a;
+  margin: 12px 16px 6px;
+  color: var(--text-3, #8a929a);
 }
-.dark .panel-title { color: #9aa1a9; }
+.dark .panel-title { color: var(--text-3, #9aa1a9); }
 
 .category-grid {
   display: grid;
@@ -1517,70 +1574,79 @@ html.dark {
   padding: 6px 0;
 }
 .group-title {
-  font-size: 12px;
-  color: #8a929a;
-  margin: 16px 16px 6px;
+  font-size: 11.5px;
+  color: var(--text-3, #8a929a);
+  margin: 11px 16px 5px;
   padding: 0;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
-.dark .group-title { color: #6b757e; }
+.dark .group-title { color: var(--text-3, #6b757e); }
 .category-card {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 8px 8px;
-  border-radius: 6px;
-  border: 1px solid #e7eaee;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line-subtle, #e7eaee);
+  background: transparent;
+  color: var(--text-2, #3f474e);
   cursor: pointer;
-  font-size: 13px;
-  transition: all 0.2s;
+  font-size: var(--fs-sm, 12.5px);
+  line-height: 1.5;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
   position: relative;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* 置顶不再整块染成橙色（和整体强调色打架），只在星标上体现 */
 .category-card.pinned {
-  border-color: #e6a23c;
-  background: #fdf6ec;
-}
-.dark .category-card.pinned {
-  background: #3a2a0a;
-  border-color: #e6a23c;
-}
-.pin-icon {
-  color: #c5cbd2;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.2s, transform 0.2s;
-  margin-left: auto;
-}
-.pin-icon:hover {
-  color: #e6a23c;
-  transform: scale(1.2);
-}
-.pin-icon.pinned {
-  color: #e6a23c;
+  border-color: var(--accent-line, #b3d0cf);
+  background: var(--accent-soft, #f2f8f7);
 }
 .category-card:hover {
-  border-color: #2f7a77;
-  background: #eaf2f2;
+  border-color: var(--accent-line, #b3d0cf);
+  background: var(--accent-soft, #f2f8f7);
+  color: var(--text-1, #24292e);
 }
 .category-card.active {
-  border-color: #2f7a77;
-  background: #eaf2f2;
-  color: #2f7a77;
-  font-weight: 500;
+  border-color: var(--accent, #2f7a77);
+  background: var(--accent-soft, #eaf2f2);
+  color: var(--accent, #2f7a77);
+  font-weight: 600;
+}
+/* 星标：平时不显示，省得每张卡片右边都挂一颗灰星（截图里那排灰点很吵）。
+   鼠标悬停或已置顶时才出现。 */
+.pin-icon {
+  color: var(--text-3, #c5cbd2);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, transform 0.15s;
+}
+.category-card:hover .pin-icon,
+.category-card.pinned .pin-icon {
+  opacity: 1;
+}
+.pin-icon:hover {
+  color: var(--accent, #e6a23c);
+  transform: scale(1.15);
+}
+.pin-icon.pinned {
+  color: var(--accent, #e6a23c);
+  opacity: 1;
 }
 .dark .category-card {
-  border-color: #2b323a;
-  color: #b6bdc5;
+  border-color: var(--line, #2b323a);
+  color: var(--text-2, #b6bdc5);
 }
 .dark .category-card.active {
-  background: #23403e;
-  border-color: #2f7a77;
-  color: #7fc4c0;
+  background: var(--accent-soft, #23403e);
+  border-color: var(--accent, #2f7a77);
+  color: var(--accent, #7fc4c0);
 }
 .cat-label {
   overflow: hidden;
@@ -1591,14 +1657,13 @@ html.dark {
 }
 
 .params-section {
-  border-top: 1px solid #e7eaee;
+  border-top: 1px solid var(--line-subtle, #e7eaee);
   padding: 0 16px 16px;
 }
-.dark .params-section { border-color: #2b323a; }
 
 .range-labels {
   font-size: 11px;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
   margin-top: 4px;
   text-align: center;
 }
@@ -1611,7 +1676,7 @@ html.dark {
 }
 .range-sep {
   font-size: 14px;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
   flex-shrink: 0;
 }
 
@@ -1630,57 +1695,170 @@ html.dark {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: #fff;
-  border-bottom: 1px solid #d9dee3;
+  background: var(--surface-2, #fff);
+  border-bottom: 1px solid var(--line, #d9dee3);
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
   min-width: 0;
 }
 .dark .control-bar {
-  background: #1b2126;
-  border-color: #2b323a;
+  background: var(--surface-2, #1b2126);
+  border-color: var(--line, #2b323a);
 }
 .control-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
-.control-label { font-size: 14px; white-space: nowrap; }
-.quick-btns { display: flex; gap: 4px; }
-.control-right { display: flex; gap: 6px; flex-wrap: wrap; }
+.control-label {
+  font-size: var(--fs-sm, 13px);
+  color: var(--text-2, #565f64);
+  white-space: nowrap;
+}
+/* 数量快捷选择：连体分段控件。原来是 6 个各自带描边的按钮排一排，
+   选中的那个还是实心主色，整条工具栏的视觉重心全被它们抢走了。 */
+.quick-btns {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line, #dfe3e8);
+  border-radius: var(--r-sm, 6px);
+  overflow: hidden;
+  background: var(--surface-1, #fff);
+}
+.quick-btns :deep(.el-button) {
+  margin: 0;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2, #565f64);
+  font-size: var(--fs-xs, 12px);
+  box-shadow: none;
+}
+.quick-btns :deep(.el-button + .el-button) {
+  border-left: 1px solid var(--line, #dfe3e8);
+}
+.quick-btns :deep(.el-button:hover) {
+  background: var(--accent-soft, #f2f8f7);
+  color: var(--accent, #2f7a77);
+}
+.quick-btns :deep(.el-button.el-button--primary) {
+  /* 与全局主色按钮同一套配方（70% 左右强调色 + 近白字） */
+  background: color-mix(in srgb, var(--accent, #2f7a77) 74%, #0a1012);
+  border-color: transparent;
+  color: #f2fbfa;
+}
+.control-right { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .stats-bar {
+  /* 没有全局 border-box 重置（Element Plus 只管自己的组件），
+     所以这里显式声明，否则 min-height 会在 padding 之外再加一圈。 */
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 6px 16px;
-  background: #fafafa;
-  border-bottom: 1px solid #e7eaee;
+  background: var(--surface-1, #fafafa);
+  border-bottom: 1px solid var(--line-subtle, #e7eaee);
   flex-wrap: wrap;
   flex-shrink: 0;
+  min-height: 38px;
 }
-.dark .stats-bar {
-  background: #14181c;
-  border-color: #2b323a;
+
+/* 左侧计数：纯文本 + 数字加重，不用 el-tag。
+   原来「总条数: 10」「去重后: 8」「已选 2 条」三个彩色标签叠在一起，
+   饱和度和右侧按钮抢戏，信息反而看不清。 */
+.stats-info {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: var(--fs-xs, 12px);
+  color: var(--text-3, #656e76);
 }
-.zoom-tag {
-  cursor: pointer !important;
-  user-select: none;
+.stat b {
+  font-size: var(--fs-md, 13.5px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1, #17191a);
+  margin-right: 2px;
 }
-.zoom-tag:hover {
-  opacity: 0.8;
+.stat-unit {
+  margin-left: 1px;
 }
-.export-buttons {
+.stat-accent {
+  color: var(--accent, #2f7a77);
+}
+.stat-accent b {
+  color: var(--accent, #2f7a77);
+}
+.stat-muted {
+  padding-left: 12px;
+  border-left: 1px solid var(--line, #e2e5e9);
+}
+
+.stats-actions {
   margin-left: auto;
   display: flex;
-  gap: 4px;
-}
-.batch-actions {
-  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* 缩放比例：可点击重置，做成一个小胶囊而不是彩色 tag */
+.zoom-chip {
+  font-size: var(--fs-2xs, 11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3, #656e76);
+  background: var(--surface-3, #eef0f3);
+  border-radius: 99px;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s, background 0.15s;
+}
+.zoom-chip:hover {
+  color: var(--accent, #2f7a77);
+  background: var(--accent-soft, #eaf2f2);
+}
+.bar-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line, #e2e5e9);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+/* 分段控件：复制组 / 导出组合各自连着，比一排独立描边按钮安静得多 */
+.seg {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line, #e2e5e9);
+  border-radius: var(--r-sm, 5px);
+  overflow: hidden;
+  background: var(--surface-2, #fff);
+}
+.seg :deep(.el-button) {
+  margin: 0;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2, #565f64);
+  font-size: var(--fs-2xs, 11px);
+  letter-spacing: 0.02em;
+  box-shadow: none;
+}
+.seg :deep(.el-button + .el-button) {
+  border-left: 1px solid var(--line, #e2e5e9);
+}
+.seg :deep(.el-button:hover) {
+  background: var(--accent-soft, #eaf2f2);
+  color: var(--accent, #2f7a77);
 }
 
 .empty-state {
@@ -1689,13 +1867,16 @@ html.dark {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
   gap: 12px;
   user-select: none;
 }
 .empty-illustration {
   position: relative;
   margin-bottom: 8px;
+}
+.empty-icon {
+  color: var(--line-strong, #c0c4cc);
 }
 .empty-dots {
   display: flex;
@@ -1707,12 +1888,11 @@ html.dark {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #c9cfd6;
+  background: var(--line-strong, #c9cfd6);
   animation: dotPulse 1.5s ease-in-out infinite;
 }
 .empty-dots span:nth-child(2) { animation-delay: 0.3s; }
 .empty-dots span:nth-child(3) { animation-delay: 0.6s; }
-.dark .empty-dots span { background: #3a444d; }
 @keyframes dotPulse {
   0%, 60%, 100% { transform: scale(0.6); opacity: 0.4; }
   30% { transform: scale(1); opacity: 1; }
@@ -1720,13 +1900,12 @@ html.dark {
 .empty-title {
   font-size: 20px;
   font-weight: 600;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
   margin: 0;
 }
-.dark .empty-title { color: #6b757e; }
 .empty-desc {
   font-size: 15px;
-  color: #aab2ba;
+  color: var(--text-3, #aab2ba);
   margin: 0;
 }
 .empty-hints {
@@ -1736,17 +1915,13 @@ html.dark {
   justify-content: center;
   margin-top: 12px;
   font-size: 13px;
-  color: #a5acb4;
+  color: var(--text-3, #a5acb4);
 }
 .empty-hints span {
   padding: 4px 12px;
-  background: #f7f8fa;
+  background: var(--surface-3, #f7f8fa);
   border-radius: 12px;
   white-space: nowrap;
-}
-.dark .empty-hints span {
-  background: #2b323a;
-  color: #868e96;
 }
 
 /* 正则预设标签 */
@@ -1784,11 +1959,11 @@ html.dark {
 .template-title {
   font-size: 13px;
   font-weight: 600;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
 }
 .template-empty {
   font-size: 12px;
-  color: #b6bdc5;
+  color: var(--text-3, #b6bdc5);
   padding: 4px 0;
 }
 .template-item {
@@ -1796,27 +1971,24 @@ html.dark {
   align-items: center;
   justify-content: space-between;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-sm, 4px);
   cursor: default;
   transition: background 0.15s;
 }
 .template-item:hover {
-  background: #f7f8fa;
-}
-.dark .template-item:hover {
-  background: #2b323a;
+  background: var(--surface-3, #f7f8fa);
 }
 .template-name {
   font-size: 13px;
   cursor: pointer;
-  color: #2f7a77;
+  color: var(--accent, #2f7a77);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
 }
 .template-name:hover {
-  color: #3d8f8c;
+  color: var(--accent-hover, #3d8f8c);
 }
 
 .result-list {
@@ -1826,90 +1998,105 @@ html.dark {
   overflow: hidden;
   min-width: 0;
 }
+
+/* 表头和数据行共用一个 grid 模板：以前两边都是 flex + 各自固定 width，
+   加上行上的 3px 左边框，列总是差几像素，看起来像没对齐。
+   身份证列只在有身份证数据时出现，所以两套模板分开写。 */
+.result-header,
+.result-row {
+  display: grid;
+  grid-template-columns: 34px 40px 116px minmax(0, 1fr) 72px;
+  align-items: center;
+  column-gap: 12px;
+  padding: 0 16px;
+}
+.result-list.has-idcard .result-header,
+.result-list.has-idcard .result-row {
+  grid-template-columns: 34px 40px 116px minmax(0, 1fr) 84px 72px;
+}
+
 .result-header {
-  display: flex;
-  padding: 6px 16px;
-  background: #f7f8fa;
-  font-size: 14px;
+  box-sizing: border-box;
+  height: 30px;
+  background: var(--surface-1, #f7f8fa);
+  font-size: var(--fs-xs, 11.5px);
   font-weight: 600;
-  color: #565f64;
-  border-bottom: 1px solid #e7eaee;
+  letter-spacing: 0.04em;
+  color: var(--text-3, #656e76);
+  border-bottom: 1px solid var(--line, #e2e5e9);
   flex-shrink: 0;
 }
-.dark .result-header {
-  background: #14181c;
-  color: #9aa1a9;
-  border-color: #2b323a;
-}
+
 .result-row {
-  display: flex;
-  padding: 12px 16px;
-  font-size: 14px;
-  border-bottom: 1px solid #e9ecef;
-  align-items: center;
-  transition: background 0.15s, border-color 0.15s;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: var(--fs-sm, 12.5px);
+  /* 靠分隔线而不是斑马纹来分行：12.5px 的行距下斑马纹太淡，等于没有，
+     还会和 hover 高亮叠成两层色块 */
+  border-bottom: 1px solid var(--line, #e2e5e9);
+  /* 选中/悬停的高亮条用 inset 阴影，不用 border-left：
+     border 会挤占内容宽度，grid 列就跟着偏了 */
+  box-shadow: inset 3px 0 0 transparent;
+  transition: background 0.12s, box-shadow 0.12s;
   min-width: 0;
-  border-left: 3px solid transparent;
+}
+.result-row:last-child {
+  border-bottom: 0;
 }
 .result-row:hover {
-  background: #eaf2f2;
-  border-left-color: #2f7a77;
+  background: var(--accent-soft, #eaf2f2);
+  box-shadow: inset 3px 0 0 var(--accent, #2f7a77);
 }
-.result-row:nth-child(even) { background: #fafbfc; }
-.result-row:nth-child(even):hover { background: #eaf2f2; }
 .result-row.selected {
-  background: #eaf2f2 !important;
-  border-left-color: #2f7a77;
+  background: var(--accent-soft, #eaf2f2);
+  box-shadow: inset 3px 0 0 var(--accent, #2f7a77);
 }
-.dark .result-row.selected {
-  background: #1f272e !important;
-  border-left-color: #2f7a77;
-}
-.dark .result-row { border-color: #2b323a; }
-.dark .result-row:hover {
-  background: #212a31;
-  border-left-color: #7fc4c0;
-}
-.dark .result-row:nth-child(even) { background: #14181c; }
-.dark .result-row:nth-child(even):hover { background: #212a31; }
 
+.col-check {
+  display: flex;
+  justify-content: center;
+}
 .col-id {
-  width: 40px;
-  min-width: 40px;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
+  font-size: var(--fs-2xs, 11px);
+  font-variant-numeric: tabular-nums;
   font-family: monospace;
 }
-.col-check {
-  width: 36px;
-  min-width: 36px;
-  text-align: center;
-}
 .col-type {
-  width: 130px;
-  min-width: 130px;
+  min-width: 0;
+  overflow: hidden;
+}
+.col-type :deep(.el-tag) {
+  max-width: 100%;
+}
+.col-type :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .col-last6 {
-  width: 85px;
-  min-width: 85px;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 15px;
-  color: #e6a23c;
+  font-size: var(--fs-sm, 12.5px);
+  color: var(--warn, #e6a23c);
   font-weight: 600;
+  letter-spacing: 0.04em;
   text-align: right;
-  padding-right: 8px;
 }
 .sensitive-badge {
   margin-right: 2px;
-  font-size: 11px;
+  font-size: 10px;
+  opacity: 0.75;
 }
 .col-value {
-  flex: 1;
-  max-width: 55%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 15px;
+  font-size: var(--fs-sm, 12.5px);
+  color: var(--text-1, #17191a);
 }
 .col-value.editing {
   overflow: visible;
@@ -1918,18 +2105,29 @@ html.dark {
   width: 100%;
 }
 .col-action {
-  width: 80px;
-  min-width: 80px;
-  text-align: center;
   display: flex;
-  gap: 2px;
-  justify-content: center;
+  gap: 0;
+  justify-content: flex-end;
+  /* 平时淡一点，鼠标落在行上才实心：每行两个高饱和图标会把表格打成花屏。
+     0.5 是不用悬停也能看出「这里有操作」的下限。 */
+  opacity: 0.5;
+  transition: opacity 0.12s;
+}
+.result-row:hover .col-action,
+.result-row.selected .col-action {
+  opacity: 1;
+}
+.col-action :deep(.el-button) {
+  padding: 0 5px;
+  height: 22px;
+  min-height: 22px;
 }
 
 .loading-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(255,255,255,0.85);
+  background: color-mix(in srgb, var(--surface-0, #fff) 82%, transparent);
+  backdrop-filter: blur(1.5px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1937,29 +2135,21 @@ html.dark {
   gap: 12px;
   z-index: 20;
 }
-.dark .loading-overlay {
-  background: rgba(0,0,0,0.75);
-}
 .loading-text {
   font-weight: 500;
 }
 .loading-hint {
   font-size: 11px;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
 }
-.dark .loading-hint { color: #565f64; }
 
 .pagination-bar {
   display: flex;
   justify-content: center;
   padding: 8px;
-  border-top: 1px solid #e7eaee;
+  border-top: 1px solid var(--line, #e7eaee);
   flex-shrink: 0;
-  background: #fff;
-}
-.dark .pagination-bar {
-  border-color: #2b323a;
-  background: #1b2126;
+  background: var(--surface-2, #fff);
 }
 
 /* 底部免责声明 */
@@ -1970,19 +2160,14 @@ html.dark {
   gap: 12px;
   height: 40px;
   padding: 0 16px;
-  background: #f8f9fb;
-  border-top: 1px solid #dfe3e8;
+  background: var(--surface-1, #f8f9fb);
+  border-top: 1px solid var(--line, #dfe3e8);
   font-size: 12px;
-  color: #8a929a;
+  color: var(--text-3, #8a929a);
   flex-shrink: 0;
 }
-.dark .app-footer {
-  background: #14181c;
-  border-color: #2b323a;
-  color: #565f64;
-}
 .footer-link {
-  color: #2f7a77;
+  color: var(--accent, #2f7a77);
   text-decoration: none;
   flex-shrink: 0;
 }
@@ -1999,9 +2184,12 @@ html.dark {
   font-size: 14px;
   line-height: 1.6;
 }
+.disclaimer-icon {
+  color: var(--warn, #e6a23c);
+}
 .disclaimer-body p { margin: 0; }
 .disclaimer-warn {
-  color: #e6a23c;
+  color: var(--warn, #e6a23c);
   font-weight: 500;
 }
 </style>

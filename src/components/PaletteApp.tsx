@@ -12,15 +12,8 @@ interface Cmd {
   url?: string;
 }
 
-/** 空查询时窗口只有一个搜索框；有结果时按条数撑高（主进程会 clamp） */
-const MIN_H = 96;
-const ROW_H = 36;
-const MAX_ROWS = 10;
-
-function desiredHeight(count: number): number {
-  if (count === 0) return MIN_H;
-  return MIN_H + Math.min(count, MAX_ROWS) * ROW_H + 34; // 34 = 底部提示行
-}
+/** .palette-root 上下各 10px 的透明留白（给卡片阴影留空间） */
+const PAD_Y = 20;
 
 /**
  * 独立快速搜索窗（Ctrl+空格）：窗口里只有搜索框，输入后才出结果。
@@ -34,6 +27,7 @@ export function PaletteApp() {
   const [cmds, setCmds] = useState<Cmd[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const unwatchThemeRef = useRef<(() => void) | null>(null);
 
   // ---- 主题：以主进程的设置为准，每次弹出都重取一次 ----
@@ -128,18 +122,40 @@ export function PaletteApp() {
     }
   }, []);
 
+  /**
+   * 窗口高度直接跟随卡片的真实高度。
+   * 早期实现用「行数 × 行高 + 固定开销」估算，空态提示、新建按钮换行、
+   * 字体行高变化都会算偏，表现为底部内容被裁掉半截。测实际高度就不会错。
+   */
+  const reportHeight = useCallback(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const h = Math.ceil(el.getBoundingClientRect().height) + PAD_Y;
+    try { void window.electronAPI?.paletteResize?.(h); } catch { /* 忽略 */ }
+  }, []);
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    reportHeight();
+    const ro = new ResizeObserver(reportHeight);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [reportHeight]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const off = window.electronAPI.onPaletteRefresh?.(() => {
       setQ('');            // 每次弹出都是干净的搜索框，不带上次结果
       setIdx(0);
-      // 物理高度主动收回去：q 本来就是空时，下面的 resize effect 因依赖没变不会触发
-      void window.electronAPI.paletteResize?.(MIN_H);
       void applyPrefs();   // 主窗口里刚换的主题也要跟上
       void load();
+      // 主进程每次弹出都会先把窗口收成最小高度（避免闪一下上次的列表），
+      // 所以这里要主动再报一次真实高度；等 React 提交完再量，否则读到的是旧布局。
+      requestAnimationFrame(() => reportHeight());
     });
     return () => { try { off?.(); } catch { /* 忽略 */ } };
-  }, [applyPrefs, load]);
+  }, [applyPrefs, load, reportHeight]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -160,15 +176,21 @@ export function PaletteApp() {
 
   useEffect(() => { setIdx(0); }, [q]);
 
-  // 结果条数 / 查询内容变了就调整窗口高度：空查询时只留搜索框
-  useEffect(() => {
-    void window.electronAPI.paletteResize?.(desiredHeight(filtered.length + (locked ? 1 : 0)));
-  }, [filtered.length, locked, q]);
+  const hasQuery = q.trim() !== '';
+  const noMatch = !locked && hasQuery && filtered.length === 0;
 
   const run = useCallback((c: Cmd) => {
     void window.electronAPI.paletteRun({ id: c.id, title: c.title, url: c.url });
     setQ('');
   }, []);
+
+  /** 搜不到时按 Enter：把这个查询词当成网址，去主窗口开「新增网址」并预填 */
+  const createFromQuery = useCallback(() => {
+    const text = q.trim();
+    if (!text) return;
+    void window.electronAPI.paletteRun({ id: 'action:new-entry-url', title: text });
+    setQ('');
+  }, [q]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); void window.electronAPI.paletteHide(); return; }
@@ -179,8 +201,9 @@ export function PaletteApp() {
       const c = filtered[idx];
       if (c) run(c);
       else if (locked) void window.electronAPI.paletteUnlock();
+      else createFromQuery();
     }
-  }, [filtered, idx, run, locked]);
+  }, [filtered, idx, run, locked, createFromQuery]);
 
   // 滚动到选中项
   useEffect(() => {
@@ -188,11 +211,18 @@ export function PaletteApp() {
     el?.scrollIntoView({ block: 'nearest' });
   }, [idx, filtered]);
 
+  const hasBody = locked || hasQuery;   // 有列表/提示区时才出现分隔线与底部提示
+
   return (
     <div className="palette-root">
-      <div className="cmdk" role="dialog" aria-label="快速搜索">
+      <div
+        ref={cardRef}
+        className={`cmdk${hasBody ? ' has-results' : ' is-compact'}`}
+        role="dialog"
+        aria-label="快速搜索"
+      >
         <div className="cmdk-search">
-          <Icons.search size={15} />
+          <span className="cmdk-search-ico"><Icons.search size={16} /></span>
           <input
             ref={inputRef}
             value={q}
@@ -200,6 +230,7 @@ export function PaletteApp() {
             onKeyDown={onKeyDown}
             placeholder="搜索页面、网址、片段、笔记…"
             spellCheck={false}
+            autoComplete="off"
           />
           <kbd>Esc</kbd>
         </div>
@@ -208,18 +239,31 @@ export function PaletteApp() {
           <div className="cmdk-list" ref={listRef}>
             <div className="cmdk-empty">
               密码库还没解锁，先回主窗口解锁
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 10 }}>
                 <button className="btn btn-primary btn-sm" onClick={() => void window.electronAPI.paletteUnlock()}>
                   去解锁
                 </button>
               </div>
             </div>
           </div>
-        ) : q.trim() !== '' ? (
+        ) : hasQuery ? (
           <>
             <div className="cmdk-list" ref={listRef}>
-              {filtered.length === 0 ? (
-                <div className="cmdk-empty">没有匹配项</div>
+              {noMatch ? (
+                <div className="cmdk-empty">
+                  <div>没有匹配项</div>
+                  <button
+                    type="button"
+                    className="cmdk-create"
+                    onClick={createFromQuery}
+                    title="回车亦可"
+                  >
+                    <Icons.plus size={13} />
+                    <span className="cmdk-create-text">
+                      新建「{q.trim().length > 40 ? `${q.trim().slice(0, 40)}…` : q.trim()}」
+                    </span>
+                  </button>
+                </div>
               ) : filtered.map((c, i) => (
                 <div
                   key={c.id}
@@ -234,8 +278,8 @@ export function PaletteApp() {
               ))}
             </div>
             <div className="cmdk-foot">
-              <span>↑↓ 选择 · Enter 执行 · Esc 关闭</span>
-              <span>{filtered.length} 项</span>
+              <span>{noMatch ? 'Enter 新建网址 · Esc 关闭' : '↑↓ 选择 · Enter 执行 · Esc 关闭'}</span>
+              <span>{noMatch ? '未收录' : `${filtered.length} 项`}</span>
             </div>
           </>
         ) : null}

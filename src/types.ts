@@ -824,7 +824,7 @@ export interface ElectronAPI {
   onUpdateProgress: (cb: (p: { received: number; total: number; speed?: number; threads?: number }) => void) => () => void;
 
   // Import
-  importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+  importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string; raw?: boolean }>;
   importEncrypted: (data: { filePath: string; importPassword: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>;
   importConfirm: (data: { entries: any[]; conflictStrategy: ConflictStrategy }) => Promise<{ success: boolean; data?: VaultData; error?: string; importedCount?: number }>;
   importDownloadTemplate: () => Promise<{ success?: boolean; canceled?: boolean; error?: string }>;
@@ -838,6 +838,8 @@ export interface ElectronAPI {
   // File dialogs
   dialogOpenFile: (data?: any) => Promise<{ canceled: boolean; filePath?: string }>;
   dialogSaveFile: (data?: any) => Promise<{ canceled: boolean; filePath?: string }>;
+  /** 拖入文件的真实路径（Electron 32+ 不再提供 File.path，需经 webUtils 转换） */
+  filePathFor?: (file: File) => string;
   fileWrite: (data: { filePath: string; content: string; encoding?: string }) => Promise<{ success: boolean; error?: string }>;
 
   // App

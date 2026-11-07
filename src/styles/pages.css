@@ -3129,31 +3129,56 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--pm-line);
   color: var(--text-muted);
 }
 
-.cmdk-search input {
+.cmdk-search-ico {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* 搜索框必须看起来「没有框」：它嵌在卡片里，再套一层输入框边框就成了框里套框。
+   redesign.css 的 input:not([type]) 特异性是 (0,1,1)，与本文件同级的 .cmdk-search input
+   打平后靠加载顺序取胜（redesign 后加载），所以这里必须多挂一个 .cmdk 把特异性提到 (0,2,1)。
+   :hover / :focus / :focus-visible 也都要显式写，否则焦点样式又会把边框加回来。 */
+.cmdk .cmdk-search input,
+.cmdk .cmdk-search input:hover,
+.cmdk .cmdk-search input:focus,
+.cmdk .cmdk-search input:focus-visible {
   flex: 1;
-  border: 0;
-  background: transparent;
-  padding: 0;
+  min-width: 0;
+  height: auto;
   min-height: 0;
-  font-size: 14px;
-  color: var(--text-primary);
-  outline: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  line-height: 1.4;
+  color: var(--text-1);
+}
+
+.cmdk-search input::placeholder {
+  color: var(--text-3);
 }
 
 .cmdk-search kbd {
+  flex: none;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  padding: 2px 6px;
+  line-height: 1.6;
+  padding: 1px 6px;
   border-radius: 5px;
   border: 1px solid var(--pm-line);
   background: var(--bg-input);
-  color: var(--text-muted);
+  color: var(--text-3);
 }
 
 .cmdk-list {
@@ -3166,10 +3191,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: 7px 10px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 12.8px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .cmdk-item.is-active {
@@ -3179,8 +3205,9 @@
 .cmdk-kind {
   flex: none;
   font-size: 10.5px;
-  padding: 1px 6px;
-  border-radius: 6px;
+  line-height: 1.7;
+  padding: 0 6px;
+  border-radius: 5px;
   background: var(--bg-input);
   color: var(--text-muted);
 }
@@ -3208,19 +3235,52 @@
 }
 
 .cmdk-empty {
-  padding: 26px;
+  padding: 18px 16px;
   text-align: center;
   font-size: 12.5px;
-  color: var(--text-muted);
+  color: var(--text-3);
+}
+
+/* 搜不到时的「新建网址」入口 */
+.cmdk-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.cmdk-create-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk-create:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .cmdk-foot {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  gap: 12px;
+  padding: 7px 14px;
   border-top: 1px solid var(--pm-line);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-3);
   background: color-mix(in srgb, var(--bg-input) 35%, transparent);
 }
 
@@ -8381,37 +8441,57 @@ html.palette-root body {
   background: transparent !important;
   overflow: hidden;
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 html.palette-root #root {
   height: 100%;
 }
 
-.palette-root {
+/* 留白只加在内层容器上。
+   注意 `.palette-root` 这个类同时挂在 <html> 和 content 的 <div> 上，
+   直接写 .palette-root{padding} 会让两层各加一次（共 20px），
+   卡片整体下移、窗口底部空出一条缝 —— 就是「底边框离窗口底很远」的原因。 */
+html.palette-root .palette-root {
   height: 100%;
   padding: 10px;
   box-sizing: border-box;
 }
 
+/* 卡片高度始终由内容决定，窗口高度由 ResizeObserver 上报后跟随，
+   这样列表、空态提示、底部提示行都不会被裁。列表超过上限时自己滚动。 */
 .palette-root .cmdk {
   position: static;
   transform: none;
   width: 100%;
   max-width: none;
-  height: calc(100vh - 20px);
+  height: auto;
+  max-height: none;
   display: flex;
   flex-direction: column;
   border-radius: 12px;
+  box-shadow: var(--shadow-3);
+}
+
+/* 空态只有搜索框，不需要分隔线（贴着圆角边缘的 1px 线最难对齐） */
+.palette-root .cmdk.is-compact .cmdk-search {
+  border-bottom: 0;
+}
+
+.palette-root .cmdk-empty {
+  padding: 16px;
 }
 
 .palette-root .cmdk-list {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
-  max-height: none;
+  /* 10 行左右封顶：再多就在列表内部滚动，窗口高度不再无限增长 */
+  max-height: 336px;
   overflow-y: auto;
 }
 
 .palette-root .cmdk-foot {
-  flex-shrink: 0;
+  flex: none;
 }
 

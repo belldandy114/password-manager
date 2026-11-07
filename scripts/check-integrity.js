@@ -14,7 +14,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const RELEASE = path.join(ROOT, 'release');
+const RELEASE = path.join(ROOT, process.env.PM_RELEASE_DIR || 'release');
 const UNPACKED = path.join(RELEASE, 'win-unpacked');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));

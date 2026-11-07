@@ -729,9 +729,9 @@ let appUnlocked = false;
 function createSearchWindow() {
   searchWin = new BrowserWindow({
     width: 720,
-    height: 96,
+    height: 68,
     minWidth: 560,
-    minHeight: 96,
+    minHeight: 68,
     frame: false,
     transparent: true,
     hasShadow: true,
@@ -777,7 +777,9 @@ function setSearchWindowHeight(height) {
   if (!searchWin || searchWin.isDestroyed()) return;
   try {
     const b = searchWin.getBounds();
-    const h = Math.min(540, Math.max(96, Math.round(Number(height) || 96)));
+    // 68 = 空态卡片（搜索行 48.8）+ 上下 10px 透明留白（留给卡片阴影）。
+    // 数值要和渲染层实测结果对得上，否则窗口底部会空出一条缝。
+    const h = Math.min(540, Math.max(68, Math.round(Number(height) || 68)));
     if (Math.abs(b.height - h) <= 1) return;
     searchWin.setBounds({ x: b.x, y: b.y, width: b.width, height: h });
     if (process.env.PM_DEBUG_HOTKEY) console.log('[palette] height -> ' + h + ' now=' + JSON.stringify(searchWin.getSize()));
@@ -805,10 +807,10 @@ function showSearchWindow() {
   if (!searchWin.isVisible()) {
     // 每次弹出先收成「只有搜索框」的高度，避免闪一下上一次的结果列表。
     // 隐藏状态下改尺寸可能被系统忽略，show() 之后再收一次。
-    setSearchWindowHeight(96);
+    setSearchWindowHeight(68);
     placeSearchWindow();
     searchWin.show();
-    setSearchWindowHeight(96);
+    setSearchWindowHeight(68);
     searchWin.focus();
     // 每次弹出都让窗口重取一遍数据（网址/片段/笔记可能刚在主窗口里改过）
     try { searchWin.webContents.send('palette:refresh'); } catch { /* 忽略 */ }
@@ -3896,7 +3898,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         if (ext === '.json') {
           records = JSON.parse(content);
           if (!Array.isArray(records)) records = [records];
-        } else if (ext === '.csv') {
+        } else if (ext === '.csv' || ext === '.txt') {
           const rows = parseCsv(content);
           if (rows.length < 2) return { success: false, error: 'CSV文件格式无效' };
           const headers = rows[0].map(h => h.trim());
@@ -3920,7 +3922,13 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
           }
         }
       }
-      return { success: true, data: normalizeImportRecords(records) };
+      const normalized = normalizeImportRecords(records);
+      // 一列都没认出来（比如用户的表头是自定义中文）时，把原始记录交回去，
+      // 让界面上的手动字段映射派上用场，而不是直接报「没有可导入的数据」。
+      if (normalized.length === 0 && records.length > 0) {
+        return { success: true, data: records, raw: true };
+      }
+      return { success: true, data: normalized };
     } catch (e) {
       return { success: false, error: e.message };
     }

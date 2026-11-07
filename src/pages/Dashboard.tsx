@@ -17,6 +17,8 @@ export function Dashboard() {
   const { toasts, addToast, removeToast } = useToast();
   const [editingEntry, setEditingEntry] = useState<PasswordEntry | null>(null);
   const [showForm, setShowForm] = useState(false);
+  /** 新建时的预填（快速搜索回车新建带过来的 URL/名称）；引用保持不变，避免输入被重置 */
+  const [formSeed, setFormSeed] = useState<Partial<PasswordEntry> | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePermanent, setDeletePermanent] = useState(false);
   const [showScopeMenu, setShowScopeMenu] = useState(false);
@@ -67,6 +69,7 @@ export function Dashboard() {
   useEffect(() => {
     if (store.triggerNewEntry > 0) {
       setEditingEntry(null);
+      setFormSeed(useStore.getState().newEntrySeed || null);
       setShowForm(true);
     }
   }, [store.triggerNewEntry]);
@@ -353,7 +356,7 @@ export function Dashboard() {
             )}
           </button>
 
-          <button className="btn-add" onClick={() => { setEditingEntry(null); setShowForm(true); }}>
+          <button className="btn-add" onClick={() => { setEditingEntry(null); setFormSeed(null); setShowForm(true); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
@@ -458,7 +461,7 @@ export function Dashboard() {
                 清空筛选条件
               </button>
             ) : (
-              <button className="btn-empty-add" onClick={() => { setEditingEntry(null); setShowForm(true); }}>
+              <button className="btn-empty-add" onClick={() => { setEditingEntry(null); setFormSeed(null); setShowForm(true); }}>
                 + 新增网址
               </button>
             )}
@@ -524,9 +527,10 @@ export function Dashboard() {
       <EntryForm
         open={showForm}
         entry={editingEntry}
+        seed={formSeed}
         tags={store.tags}
         onSave={handleSave}
-        onClose={() => { setShowForm(false); setEditingEntry(null); }}
+        onClose={() => { setShowForm(false); setEditingEntry(null); setFormSeed(null); }}
       />
 
       {/* Delete Confirm */}

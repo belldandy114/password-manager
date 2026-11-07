@@ -31,12 +31,14 @@ interface AppState {
 
   // Signals (for keyboard shortcuts / cross-component triggers)
   triggerNewEntry: number;
+  /** 「新增网址」的预填数据（快速搜索里回车新建时带过来的 URL / 名称） */
+  newEntrySeed: Partial<PasswordEntry> | null;
   pmSubPage: string;
   /** 命令面板触发的跨页动作（kind + 时间戳，页面监听变化后执行） */
   cmdSignal: { kind: string; at: number } | null;
 
   // Actions
-  signalNewEntry: () => void;
+  signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
   signalCmd: (kind: string) => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
@@ -108,6 +110,7 @@ export const useStore = create<AppState>((set, get) => ({
   isSetup: null,
   masterPassword: '',
   triggerNewEntry: 0,
+  newEntrySeed: null,
   cmdSignal: null,
   toolboxIntent: null,
   navigateTo: null,
@@ -155,7 +158,12 @@ export const useStore = create<AppState>((set, get) => ({
     },
   },
 
-  signalNewEntry: () => set((s) => ({ triggerNewEntry: s.triggerNewEntry + 1 })),
+  signalNewEntry: (seed) => set((s) => ({
+    triggerNewEntry: s.triggerNewEntry + 1,
+    // 种子只在这一次触发里有效：不带参数触发（Ctrl+N）会把它清空，
+    // 否则上次从快速搜索带过来的 URL 会残留在下一次新建弹窗里。
+    newEntrySeed: seed || null,
+  })),
   signalCmd: (kind) => set({ cmdSignal: { kind, at: Date.now() } }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),

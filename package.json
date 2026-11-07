@@ -24,6 +24,8 @@
     "release": "node scripts/release.js",
     "regress": "node scripts/regress-all.js",
     "dist": "node scripts/build-installer.js",
+    "try": "node scripts/try.js",
+    "repack": "node scripts/repack.js",
     "verify:packaged-csv": "node scripts/verify-packaged-csv.js",
     "check": "node scripts/preflight.js",
     "check:pack": "node scripts/preflight.js --pack",

@@ -147,8 +147,11 @@ if (skipTests) {
 
 // ---------------- 4. 英文资产名 ----------------
 step(4, '准备发布资产（英文名，避免 GitHub 改名）');
-const installer = path.join(ROOT, 'release', `${productName} Setup ${next}.exe`);
-const asset = path.join(ROOT, 'release', `PasswordManager-Setup-${next}.exe`);
+// 与 build-installer.js 保持同一套输出目录约定：默认 release，
+// 需要绕开被系统句柄占住的旧目录时用 PM_RELEASE_DIR 指到实际产物所在处。
+const OUT_DIR = path.join(ROOT, process.env.PM_RELEASE_DIR || 'release');
+const installer = path.join(OUT_DIR, `${productName} Setup ${next}.exe`);
+const asset = path.join(OUT_DIR, `PasswordManager-Setup-${next}.exe`);
 if (dryRun) {
   console.log(`   [dry-run] copy ${path.basename(installer)} → ${path.basename(asset)}`);
 } else {

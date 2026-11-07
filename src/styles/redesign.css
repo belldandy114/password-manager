@@ -74,6 +74,88 @@ body {
   outline-offset: 1px;
 }
 
+/* ---------------- 复选框 / 单选框 ----------------
+ * 两点原因要单独接管外观：
+ * 1. 点击后不要再套一个硬描边（默认 outline 会在小方块外面再框一层，很脏）；
+ * 2. Windows 原生控件带深色描边，在暗色主题里比周围元素重，统一成设计系统里的方块。
+ * 用 :not(.switch input) 排除开关组件（它的 input 是隐藏的），其余全站统一。
+ * 注意用 background-color 而不是 background 简写：简写在部分场景下会被
+ * 原生控件的绘制逻辑盖掉，出现「边框变了、填充没变」的半成品状态。
+ */
+:where(input[type='checkbox'], input[type='radio']):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type='checkbox']:not(.switch input) {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex: none;
+  position: relative;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 4px;
+  background-color: var(--surface-inset);
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+input[type='checkbox']:not(.switch input):hover {
+  border-color: var(--text-3);
+}
+
+input[type='checkbox']:not(.switch input):checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:not(.switch input):checked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.8px 1.8px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+input[type='checkbox']:not(.switch input):disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input[type='radio']:not(.switch input) {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: none;
+  position: relative;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+  background-color: var(--surface-inset);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+
+input[type='radio']:not(.switch input):checked {
+  border-color: var(--accent);
+}
+
+input[type='radio']:not(.switch input):checked::after {
+  content: '';
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background-color: var(--accent);
+}
+
 /* 滚动条：更细、更收敛 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -1066,9 +1148,11 @@ button { font-family: inherit; }
 }
 .form-group > textarea { height: auto; min-height: 76px; padding: 8px 10px; resize: vertical; }
 .password-input-wrapper > input { padding-right: 40px; }
-.form-group > input:hover, .form-group > select:hover, .form-group > textarea:hover,
+.form-group > input:not([type='checkbox']):not([type='radio']):hover,
+.form-group > select:hover, .form-group > textarea:hover,
 .password-input-wrapper > input:hover { border-color: var(--line-strong); }
-.form-group > input:focus, .form-group > select:focus, .form-group > textarea:focus,
+.form-group > input:not([type='checkbox']):not([type='radio']):focus,
+.form-group > select:focus, .form-group > textarea:focus,
 .password-input-wrapper > input:focus {
   border-color: var(--accent-line);
   box-shadow: 0 0 0 3px var(--accent-soft);

@@ -20,6 +20,8 @@ interface Props {
   tags: string[];
   onSave: (entry: PasswordEntry) => void;
   onClose: () => void;
+  /** 新建时的预填内容（快速搜索回车新建会带上 URL / 名称） */
+  seed?: Partial<PasswordEntry> | null;
 }
 
 const emptyEntry = (): PasswordEntry => ({
@@ -35,7 +37,7 @@ const emptyEntry = (): PasswordEntry => ({
   updatedAt: new Date().toISOString(),
 });
 
-export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
+export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
   const [form, setForm] = useState<PasswordEntry>(emptyEntry());
   const [showPassword, setShowPassword] = useState(false);
   const [tagInput, setTagInput] = useState('');
@@ -55,14 +57,16 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
       if (entry) {
         setForm({ ...entry, tags: entry.tags || [] });
       } else {
-        setForm(emptyEntry());
+        // 新建：空表单 + 预填（URL/名称来自快速搜索的回车新建）
+        setForm({ ...emptyEntry(), ...(seed || {}), tags: seed?.tags || [] });
       }
       setShowPassword(false);
       setTagInput('');
       setErrors({});
       setShowTagSuggestions(false);
+      setShowGen(false);
     }
-  }, [open, entry]);
+  }, [open, entry, seed]);
 
   const update = (field: keyof PasswordEntry, value: any) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -179,8 +183,13 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
       <div className="form-group">
         <div className="field-label-row">
           <label>密码</label>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setShowGen(v => !v)}>
-            {showGen ? '收起生成器' : '🎲 生成'}
+          <button
+            type="button"
+            className={`pw-gen-trigger${showGen ? ' is-open' : ''}`}
+            onClick={() => setShowGen(v => !v)}
+            aria-expanded={showGen}
+          >
+            {showGen ? '收起' : '生成'}
           </button>
         </div>
         <div className="password-input-wrapper">
@@ -203,11 +212,11 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
         {showGen && (
           <div className="password-gen-panel">
             <div className="gen-preview">
-              <code>{genPreview || '生成中…'}</code>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={regenerate} title="重新生成">↻</button>
+              <code title={genPreview}>{genPreview || '生成中…'}</code>
+              <button type="button" className="gen-refresh" onClick={regenerate} title="换一个">换一个</button>
             </div>
             <div className="gen-row">
-              <span>长度</span>
+              <span className="gen-row-label">长度</span>
               <input
                 type="range" min={8} max={64} value={genOpts.length || 16}
                 onChange={e => setGenOpts(o => ({ ...o, length: Number(e.target.value) }))}
@@ -232,16 +241,14 @@ export function EntryForm({ open, entry, tags, onSave, onClose }: Props) {
                 </label>
               ))}
             </div>
-            <div className="gen-actions">
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                disabled={!genPreview || !(genOpts.lower !== false || genOpts.upper !== false || genOpts.digits !== false || genOpts.symbols)}
-                onClick={() => { update('password', genPreview); setShowGen(false); }}
-              >
-                使用此密码
-              </button>
-            </div>
+            <button
+              type="button"
+              className="btn btn-primary gen-apply"
+              disabled={!genPreview || !(genOpts.lower !== false || genOpts.upper !== false || genOpts.digits !== false || genOpts.symbols)}
+              onClick={() => { update('password', genPreview); setShowGen(false); }}
+            >
+              使用此密码
+            </button>
           </div>
         )}
       </div>

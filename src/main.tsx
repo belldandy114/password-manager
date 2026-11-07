@@ -12,6 +12,12 @@ import './styles/redesign.css';
 window.addEventListener('error', (e) => logError('window.error', e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => logError('unhandledrejection', e.reason));
 
+// 文件被拖到窗口空白处时，Electron 默认会导航到 file://（相当于把应用"变成"那个文件）。
+// 全局兜住 drag/drop 的默认行为，真正的接收逻辑交给各页面自己的 drop zone。
+['dragover', 'drop'].forEach(type => {
+  window.addEventListener(type, (e) => { e.preventDefault(); }, false);
+});
+
 // 独立快速搜索小窗（Ctrl+空格）：同一个产物，只渲染命令面板本身
 const isPaletteWindow = new URLSearchParams(window.location.search).get('window') === 'palette';
 

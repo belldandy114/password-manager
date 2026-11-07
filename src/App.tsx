@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
 import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
+import { guessUrlFromInput } from './utils/urlInput';
 
 /**
  * 工作台页面按需加载：首屏只装登录 + 侧边栏，
@@ -331,6 +332,15 @@ function App() {
         case 'env': setCurrentPage('environments'); break;
         case 'action':
           if (arg === 'new-entry') { setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.signalNewEntry(); }
+          else if (arg === 'new-entry-url') {
+            // 快速搜索里没搜到 → 回车把输入当成网址，直接开新增弹窗并预填
+            const guess = guessUrlFromInput(item.title || '');
+            setCurrentPage('passwordManager');
+            st.setPmSubPage('dashboard');
+            st.signalNewEntry(guess
+              ? { url: guess.url, name: guess.name }
+              : { name: String(item.title || '').trim() });
+          }
           else if (arg === 'lock') handleLockRef.current();
           else if (arg === 'zt-refresh') { setCurrentPage('zentao'); st.signalCmd('zentao:refresh-mine'); }
           else if (arg === 'weekly-draft') { setCurrentPage('weeklyReport'); st.signalCmd('weekly:draft'); }

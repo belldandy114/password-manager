@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Icons } from './ui';
 import { applyTheme } from '../utils/theme';
+import { guessUrlFromInput } from '../utils/urlInput';
 
 export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
 
@@ -271,11 +272,28 @@ export function CommandPalette({
     setTimeout(() => c.run(), 0);
   };
 
+  /** 搜不到时按 Enter：把查询词当网址，直接开「新增网址」并预填 */
+  const createFromQuery = () => {
+    const text = q.trim();
+    if (!text) return;
+    onClose();
+    setTimeout(() => {
+      onNavigate('passwordManager');
+      setPmSubPage('dashboard');
+      const guess = guessUrlFromInput(text);
+      signalNewEntry(guess ? { url: guess.url, name: guess.name } : { name: text });
+    }, 0);
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(filtered.length - 1, i + 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); return; }
-    if (e.key === 'Enter') { e.preventDefault(); runAt(idx); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filtered.length === 0 && q.trim()) createFromQuery();
+      else runAt(idx);
+    }
   };
 
   return (
@@ -296,7 +314,15 @@ export function CommandPalette({
         </div>
         <div className="cmdk-list" ref={listRef}>
           {filtered.length === 0 ? (
-            <div className="cmdk-empty">没有匹配项</div>
+            <div className="cmdk-empty">
+              <div>没有匹配项</div>
+              {q.trim() && (
+                <button type="button" className="cmdk-create" onClick={createFromQuery} title="回车亦可">
+                  <Icons.plus size={13} />
+                  用「{q.trim().length > 40 ? `${q.trim().slice(0, 40)}…` : q.trim()}」新建网址
+                </button>
+              )}
+            </div>
           ) : filtered.map((c, i) => (
             <div
               key={c.id}

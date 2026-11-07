@@ -45,21 +45,45 @@ export function DataGenerator() {
     return () => wv.removeEventListener('did-fail-load', handler);
   };
 
-  // 主题同步：子应用是独立的 Vue 应用，主题得由宿主推进去
-  // 1) webview dom-ready 后推一次；2) 主应用切换主题（html[data-theme] 变化）时再推
+  // 主题同步：子应用是独立的 Vue + Element Plus 应用，配色全靠这套变量。
+  // 主应用把当前生效的设计令牌整体推过去（强调色 / 表面 / 线条 / 文字 / 密度），
+  // 子应用不再写死颜色，换主题、换强调色、换密度都会立刻跟着变。
   useEffect(() => {
+    /** 需要同步给子应用的设计令牌 */
+    const TOKEN_KEYS = [
+      '--accent', '--accent-hover', '--accent-soft', '--accent-line',
+      '--surface-0', '--surface-1', '--surface-2', '--surface-3', '--surface-inset', '--surface-selected',
+      '--line-subtle', '--line', '--line-strong',
+      '--text-1', '--text-2', '--text-3',
+      '--ok', '--warn', '--bad', '--info',
+      '--r-sm', '--r-md', '--r-lg',
+      '--d-control-h', '--d-row-py', '--d-row-min', '--d-gap', '--d-panel-px', '--d-card-py',
+      '--fs-2xs', '--fs-xs', '--fs-sm', '--fs-md', '--fs-lg',
+    ];
+
     const pushTheme = () => {
       const wv = webviewRef.current;
       if (!wv || typeof wv.executeJavaScript !== 'function') return;
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const root = document.documentElement;
+      const dark = root.getAttribute('data-theme') === 'dark';
+      const cs = getComputedStyle(root);
+      const vars: Record<string, string> = {};
+      for (const k of TOKEN_KEYS) {
+        const v = cs.getPropertyValue(k).trim();
+        if (v) vars[k] = v;
+      }
       const js = `(() => {
         try {
-          if (typeof window.__pmSetTheme === 'function') { window.__pmSetTheme(${dark}); return true; }
-          if (typeof window.__pmApplyThemeClasses === 'function') { window.__pmApplyThemeClasses(${dark}); return true; }
-          // 老版本子应用：直接写 localStorage + class，至少视觉一致
-          try { localStorage.setItem('tdg-dark', '${dark}'); } catch (e) {}
-          document.documentElement.classList.toggle('dark', ${dark});
-          const c = document.querySelector('.app-container'); if (c) c.classList.toggle('dark', ${dark});
+          const root = document.documentElement;
+          const vars = ${JSON.stringify(vars)};
+          for (const k in vars) root.style.setProperty(k, vars[k]);
+          if (typeof window.__pmSetTheme === 'function') {
+            window.__pmSetTheme(${dark});
+          } else {
+            root.classList.toggle('dark', ${dark});
+            const c = document.querySelector('.app-container');
+            if (c) c.classList.toggle('dark', ${dark});
+          }
           return true;
         } catch (e) { return String(e); }
       })()`;
@@ -70,9 +94,12 @@ export function DataGenerator() {
     const onReady = () => setTimeout(pushTheme, 60);
     if (wv) wv.addEventListener('dom-ready', onReady);
 
-    // 主题切换：观察 html[data-theme]
+    // 主题 / 强调色 / 密度任一变化都要重推
     const mo = new MutationObserver(pushTheme);
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'data-accent', 'data-density', 'style'],
+    });
 
     return () => {
       if (wv) wv.removeEventListener('dom-ready', onReady);

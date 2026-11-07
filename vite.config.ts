@@ -31,6 +31,12 @@ export default defineConfig({
   test: {
     // 既有工具层测试仍在 node 环境；组件测试文件用 @vitest-environment jsdom 单独声明
     environment: 'node',
+    pool: 'forks',
+    // 45 个测试文件默认会同时拉起几十个 fork，在开发机/CI 负载高时个别 worker
+    // 起不来，报 "Timeout waiting for worker to respond"，整轮被判失败（测试其实全绿）。
+    // Vitest 4+ 用顶层 maxWorkers 限制并发度，换确定性：整套测试只跑一两秒，慢点无所谓。
+    minWorkers: 1,
+    maxWorkers: 4,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

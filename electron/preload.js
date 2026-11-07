@@ -1,6 +1,15 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  /**
+   * 取拖入文件的真实路径。
+   * Electron 32 起 File.path 被移除，渲染层拿到的 File 只剩 name，必须回主进程侧的
+   * webUtils 转换，否则拖放功能会静默失效（只能点按钮选文件）。
+   */
+  filePathFor: (file) => {
+    try { return (file && webUtils.getPathForFile(file)) || ''; } catch { return ''; }
+  },
+
   // Auth
   authIsSetup: () => ipcRenderer.invoke('auth:is-setup'),
   authSetup: (data) => ipcRenderer.invoke('auth:setup', data),
