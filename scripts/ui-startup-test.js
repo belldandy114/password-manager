@@ -34,10 +34,22 @@ if (!USE_PACKED) env.PM_USE_DIST = '1';
 delete env.ELECTRON_RUN_AS_NODE;
 
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-startup-'));
-const app = spawn(exe, USE_PACKED ? [`--user-data-dir=${userDataDir}`] : ['.', `--user-data-dir=${userDataDir}`], {
-  env,
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+
+// 受限环境（无 GPU 的沙箱 / 远程桌面 / CI 容器）里 Chromium 的 GPU 进程会起不来，
+// 直接 FATAL: GPU process isn't usable 然后退出（exitCode 0x80000003），
+// 看起来和「应用启动即崩」一模一样。这类环境用 PM_ELECTRON_FLAGS 追加开关，
+// 例如 PM_ELECTRON_FLAGS="--no-sandbox --disable-gpu"。默认不加，正常机器行为不变。
+const extraFlags = (process.env.PM_ELECTRON_FLAGS || '').split(/\s+/).filter(Boolean);
+if (extraFlags.length) console.log(`（附加开关：${extraFlags.join(' ')}）`);
+
+const app = spawn(
+  exe,
+  [...(USE_PACKED ? [] : ['.']), `--user-data-dir=${userDataDir}`, ...extraFlags],
+  {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }
+);
 
 let out = '';
 app.stdout.on('data', (d) => { out += d.toString(); });
