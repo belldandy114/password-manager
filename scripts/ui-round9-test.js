@@ -17,6 +17,12 @@ const DL_NAME = 'PasswordManager-Setup-9.9.9.exe';
 const DL_BUF = Buffer.alloc(5 * 1024 * 1024);
 for (let i = 0; i < DL_BUF.length; i++) DL_BUF[i] = (i * 31 + 7) & 0xff;
 const DL_SHA = crypto.createHash('sha256').update(DL_BUF).digest('hex');
+// 慢速桩包：1MB 分 8 块、每块间隔 1.2s（约 105 KB/s，且中途反复停顿）。
+// 用来锁住 1.21.6 的默认行为：单连接不能被「慢速自动切 6 分片」误杀，
+// 也不该在 update/ 下留下 parts-* 目录（1.21.4 就是这么把公司环境搞挂的）。
+const DL_SLOW_BUF = Buffer.alloc(1024 * 1024);
+for (let i = 0; i < DL_SLOW_BUF.length; i++) DL_SLOW_BUF[i] = (i * 17 + 3) & 0xff;
+const DL_SLOW_SHA = crypto.createHash('sha256').update(DL_SLOW_BUF).digest('hex');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'release', 'win-unpacked');
@@ -68,18 +74,38 @@ const echo = http.createServer((req, res) => {
     if (!String(req.url || '').includes(DL_NAME)) {
       res.writeHead(404); res.end('nope'); return;
     }
+    const slow = /[?&]slow=1(?:&|$)/.test(String(req.url || ''));
     const range = req.headers.range;
     if (range) {
+      const buf = slow ? DL_SLOW_BUF : DL_BUF;
       const m = /bytes=(\d+)-(\d+)/.exec(range);
       const start = Number(m[1]);
-      const end = Math.min(Number(m[2]), DL_BUF.length - 1);
+      const end = Math.min(Number(m[2]), buf.length - 1);
       res.writeHead(206, {
         'Content-Type': 'application/octet-stream',
-        'Content-Range': 'bytes ' + start + '-' + end + '/' + DL_BUF.length,
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + buf.length,
         'Content-Length': end - start + 1,
         'Accept-Ranges': 'bytes',
       });
-      res.end(DL_BUF.subarray(start, end + 1));
+      res.end(buf.subarray(start, end + 1));
+      return;
+    }
+    if (slow) {
+      // 故意制造「低速 + 多次停顿」，模拟公司环境里中途卡一下的正常下载
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': DL_SLOW_BUF.length,
+        'Accept-Ranges': 'bytes',
+      });
+      const size = Math.ceil(DL_SLOW_BUF.length / 8);
+      let i = 0;
+      const tick = () => {
+        if (i >= 8) { res.end(); return; }
+        res.write(DL_SLOW_BUF.subarray(i * size, Math.min((i + 1) * size, DL_SLOW_BUF.length)));
+        i++;
+        setTimeout(tick, 1200);
+      };
+      tick();
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': DL_BUF.length, 'Accept-Ranges': 'bytes' });
@@ -609,6 +635,25 @@ const echo = http.createServer((req, res) => {
     check('更新：多线程下载可用且校验通过',
       !!parRes && parRes.success === true && parRes.data && parRes.data.verified === true && parRes.data.threads === 6,
       parRes && JSON.stringify({ ok: parRes.success, th: parRes.data && parRes.data.threads, v: parRes.data && parRes.data.verified }));
+
+    // 4) 低速 + 反复停顿：默认必须仍是纯单连接（1.21.4 会在这里误杀并自动切分片）
+    const slowUrl = `${dlUrl}?slow=1`;
+    const t0 = Date.now();
+    const slowRes = await ev(`(async () => {
+      const r = await window.electronAPI.updateDownload(${JSON.stringify(slowUrl)}, false, { expectedSha256: ${JSON.stringify(DL_SLOW_SHA)} });
+      return r;
+    })()`);
+    const elapsed = Date.now() - t0;
+    const ds = slowRes && slowRes.data;
+    check('更新：慢速下载仍是单连接，不自动切分片',
+      !!slowRes && slowRes.success === true && !!ds && ds.threads === 1 && ds.verified === true,
+      slowRes && JSON.stringify({ ok: slowRes.success, th: ds && ds.threads, err: String(slowRes.error || '').slice(0, 60) }));
+    check('更新：慢速桩确实制造了低速与停顿', elapsed >= 8000, `${(elapsed / 1000).toFixed(1)}s`);
+    const updDir = path.join(ud, 'update');
+    const leftovers = fs.existsSync(updDir)
+      ? fs.readdirSync(updDir).filter(f => /^parts-/.test(f) || /\.partial$/.test(f))
+      : [];
+    check('更新：单连接不产生 parts-* 分片目录', leftovers.length === 0, leftovers.join(', ') || '(无)');
   }
   /* ================= C. 缺陷管理：多选项目作用域（V9.6 起） =================
      默认不选任何项目、不加载数据；用户在可搜索多选下拉里选完才拉一次，

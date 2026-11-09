@@ -107,8 +107,13 @@ export function Settings() {
   const [checking, setChecking] = useState(false);
   // 应用内更新：下载进度 / 已下载文件
   const [downloading, setDownloading] = useState(false);
+  const [downloadedVerified, setDownloadedVerified] = useState(true);
   // 多线程分段下载：更快，但会把 exe 拆成多个分片，部分杀软会误判（默认关闭）
   const [multiThread, setMultiThread] = useState(false);
+  // 更新下载源与周期检查：以主进程的 settings 为准（store 里可能还没带这两个新字段）
+  const [mirrorUrl, setMirrorUrl] = useState('');
+  const [mirrorDirty, setMirrorDirty] = useState(false);
+  const [updateInterval, setUpdateInterval] = useState(0);
   const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
   const [downloadedFile, setDownloadedFile] = useState('');
   // 下载失败时的提示与兜底（网络访问不了 GitHub CDN 时用）
@@ -165,7 +170,35 @@ export function Settings() {
   useEffect(() => {
     refreshNotifyStatus();
     loadAudit();
+    void (async () => {
+      try {
+        const s = await window.electronAPI.settingsGet();
+        setMirrorUrl(s.updateMirrorUrl || '');
+        setUpdateInterval(Number(s.updateCheckIntervalHours) || 0);
+      } catch { /* 拿不到就用默认值 */ }
+    })();
   }, [refreshNotifyStatus, loadAudit]);
+
+  /** 保存自定义更新源：只接受干净的 http(s) 前缀，留空恢复「只走 GitHub」 */
+  const saveMirrorUrl = async () => {
+    const v = mirrorUrl.trim();
+    if (v && !/^https?:\/\/[^\s"'<>]+$/i.test(v)) {
+      addToast('更新源要填 http(s) 开头的完整地址（不要带空格或引号）', 'error');
+      return;
+    }
+    const r = await callIpc(() => window.electronAPI.settingsSave({ updateMirrorUrl: v }));
+    if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
+    setMirrorDirty(false);
+    addToast(v ? '已保存更新源，下次下载会优先走它' : '已恢复为只走官方 GitHub', 'success');
+  };
+
+  /** 周期检查更新：0 = 只启动查一次（默认），>0 时主进程按小时重复 */
+  const saveUpdateInterval = async (hours: number) => {
+    setUpdateInterval(hours);
+    const r = await callIpc(() => window.electronAPI.settingsSave({ updateCheckIntervalHours: hours }));
+    if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
+    addToast(hours ? `已开启每 ${hours} 小时检查一次更新` : '已关闭周期检查（仅启动时检查）', 'success');
+  };
 
   const downloadUpdate = async (mirror = false) => {
     const url = updateInfo?.downloadUrl;
@@ -180,13 +213,14 @@ export function Settings() {
     setDownloading(false);
     if (res.success && res.data) {
       setDownloadedFile(res.data.file);
+      setDownloadedVerified(!!res.data.verified);
       setCanMirror(false);
       setDlError('');
       setViaMirror(!!mirror);
       const shaTip = res.data.verified
         ? ' · SHA-256 已校验'
-        : (res.data.sha256 ? ` · SHA-256 ${res.data.sha256.slice(0, 12)}…` : '');
-      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}${res.data.threads && res.data.threads > 1 ? ` · ${res.data.threads} 线程加速` : ''}${shaTip}）`, 'success');
+        : ' · ⚠️ 官方未提供摘要，未校验';
+      addToast(`下载完成，点「安装并重启」即可更新（${res.data.via || 'GitHub'}${res.data.threads && res.data.threads > 1 ? ` · ${res.data.threads} 线程加速` : ''}${shaTip}）`, res.data.verified ? 'success' : 'info');
     } else {
       setDlError(res.error || '下载失败');
       setCanMirror(!!res.canMirror);
@@ -1037,6 +1071,44 @@ export function Settings() {
             </div>
             <div className="setting-row">
               <div>
+                <div className="setting-label">周期检查更新</div>
+                <div className="setting-desc">
+                  默认只在启动后检查一次；应用长期不关时开启这里也能收到新版本提示（同一版本只提示一次）。
+                </div>
+              </div>
+              <div className="setting-control">
+                <select value={updateInterval} onChange={e => void saveUpdateInterval(Number(e.target.value))} title="检查间隔">
+                  <option value={0}>仅启动时</option>
+                  <option value={6}>每 6 小时</option>
+                  <option value={12}>每 12 小时</option>
+                  <option value={24}>每天</option>
+                  <option value={168}>每周</option>
+                </select>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">更新下载源</div>
+                <div className="setting-desc">
+                  连 GitHub 慢时可填国内可直连的镜像前缀（形如 https://mirror.example.com），
+                  官方下载地址会接在它后面；留空则只走 GitHub。下载后仍按官方摘要做 SHA-256 校验。
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="url"
+                  value={mirrorUrl}
+                  placeholder="留空 = 只走 GitHub"
+                  onChange={e => { setMirrorUrl(e.target.value); setMirrorDirty(true); }}
+                  style={{ width: 260 }}
+                />
+                <button className="btn btn-sm btn-secondary" onClick={() => void saveMirrorUrl()} disabled={!mirrorDirty}>
+                  保存
+                </button>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
                 <div className="setting-label">检查更新</div>
                 <div className="setting-desc">
                   {updateInfo
@@ -1090,6 +1162,11 @@ export function Settings() {
                 {downloadedFile && (
                   <div className="setting-desc">
                     已下载：{downloadedFile.split('\\').pop()}{viaMirror ? '（多线程加速）' : ''}
+                    {!downloadedVerified && (
+                      <div style={{ marginTop: 6, color: 'var(--danger, #e5484d)' }}>
+                        ⚠️ 官方未提供 SHA-256 摘要，这个安装包没有校验，请确认来源后再安装
+                      </div>
+                    )}
                   </div>
                 )}
                 {!downloadedFile && updateInfo?.hasUpdate && (

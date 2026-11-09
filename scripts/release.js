@@ -11,7 +11,7 @@
  *   5. 提交 + 推送
  *   6. 建 Release（--latest，用本地 notes）
  *   7. 等 tag 触发的 CI 跑完
- *   8. 删掉 CI 多传的 `Setup.x.y.z.exe`，并用本地 notes 覆盖 CI 写死的模板说明
+ *   8. 核对附件与 latest（兼容旧 CI：删掉它多传的 Setup.x.y.z.exe、用本地 notes 覆盖模板说明）
  *
  * 用法：
  *   node scripts/release.js 1.9.0            # 指定版本
@@ -220,8 +220,10 @@ if (dryRun) {
   }
 }
 
-// ---------------- 8. 清理 CI 覆盖 ----------------
-step(8, '清理 CI 多传的附件 + 回填说明');
+// ---------------- 8. 核对发布结果（兼容新旧 CI） ----------------
+// 新 workflow（scripts/ci-build.yml.recommended）不再创建 Release / 传附件 / 写说明，
+// 这两步是幂等的：旧 CI 多传的附件与模板说明会被清掉，新 CI 下则什么都不会发生。
+step(8, '核对附件与 latest');
 if (dryRun) {
   console.log(`   [dry-run] gh release delete-asset v${next} Setup.${next}.exe -y`);
   console.log(`   [dry-run] gh release edit v${next} --notes-file ${path.basename(notesFile)}`);

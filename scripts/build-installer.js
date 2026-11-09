@@ -1,6 +1,6 @@
 /**
  * build-installer.js — 全自动构建安装包
- * 1. 质量门禁（类型检查 + 单测）
+ * 1. 质量门禁（ci-gate：隐私 / 类型 / 单测 / IPC 契约 / CSS 报告）
  * 2. 清理编译产物
  * 3. 构建 renderer / 子应用
  * 4. 打包到系统临时目录，再就地覆盖回 <OUT_DIR>/win-unpacked
@@ -18,6 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { applyUnpacked } = require('./lib/apply-unpacked');
+const { runGate } = require('./ci-gate');
 
 const ROOT = path.resolve(__dirname, '..');
 // 输出目录可用 PM_RELEASE_DIR 覆盖。默认 release。
@@ -71,13 +72,13 @@ const _pkgForTitle = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'),
 console.log(`${CYAN}  ${(_pkgForTitle.build && _pkgForTitle.build.productName) || '测试中台'} - 自动化构建${RESET}`);
 
 // 0. 质量门禁（CI 也跑这个脚本，所以门禁对 CI 与本地同时生效）：
-//    typecheck 或单测挂了就不出包，避免「带病发版」。
+//    统一走 ci-gate：隐私扫描 → 类型检查 → 单测 → IPC 契约 → CSS 重复报告。
+//    以前这里只跑 tsc + vitest，隐私与 IPC 契约只有本地手动跑，容易漏。
 //    跳过：SKIP_PREFLIGHT=1（只用于排查构建本身的问题，正式发版不要跳）。
 if (process.env.SKIP_PREFLIGHT === '1') {
-  console.log(`${YELLOW}⚠ SKIP_PREFLIGHT=1，已跳过类型检查与单元测试${RESET}`);
+  console.log(`${YELLOW}⚠ SKIP_PREFLIGHT=1，已跳过全部门禁${RESET}`);
 } else {
-  step('质量门禁：类型检查', 'npx tsc --noEmit');
-  step('质量门禁：单元测试', 'npx vitest run');
+  runGate();
 }
 console.log(`${CYAN}═══════════════════════════════════════${RESET}`);
 

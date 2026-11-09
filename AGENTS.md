@@ -91,6 +91,16 @@ Key security properties:
 - Renderer should never access Node.js APIs directly — always use `window.electronAPI.*`
 - Encryption changes must be carefully reviewed; vault data loss is unrecoverable
 - CSS uses a CSS custom property theme system — always use `var(--*)` instead of hardcoded colors
+- ⚠️ 三份样式表按 `global.css → pages.css → redesign.css` 顺序加载，同名选择器重复很多
+  （2026-11-09 实测：规则 2,386 条 / 选择器 2,029 个，**重复 263 个 = 声明冲突 253 + 完全重复 10**）。
+  按钮变形那次就是后加载的密度规则覆盖了前面的样式。
+  新增/修复样式一律写在 `redesign.css` 末尾并注明原因，不要靠改前面的文件「猜」优先级。
+- `node scripts/check-css-dup.js`（已进 `npm run check`）会把重复分成两类：
+  **声明完全相同**的可以机械清理（保留最后加载的那条，删前面的不影响级联结果）；
+  **声明冲突**的必须人工确认。别再用「行首是 `.xxx {`」这种正则做统计，会漏掉约一半规则。
+- 2026-11-09 已清掉 `redesign.css` 里被整段复制两遍的「31 汇总洞察 / 32 今日待办」（-123 行），
+  验证方式不是看图：解析前后两份 CSS，按「同选择器 + 同 @media 的声明合并（后者覆盖）」求值，
+  断言 357 个选择器的最终声明**完全一致**（0 差异）。以后再删重复也先做这一步。
 
 ## Windows 打包 / 启动排错（2026-10 排查结论，务必保留）
 
@@ -161,15 +171,25 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
   不是主窗口里的面板：
   - 渲染层入口在 `main.tsx` 按 `?window=palette` 分流到 `PaletteApp`；数据由小窗自己走 IPC 现取
     （`entries:get-all` / `ws:get`，主进程持有解锁态），每次弹出 `palette:refresh` 重取。
+  - **数据按版本号复用，不是每次全量重取**：主进程 `vaultEpoch` 在 `saveVault()`（以及 unlock/lock）
+    里 +1，`palette:epoch` 只回 `{epoch, unlocked}`；小窗先问这个版本号，没变就直接复用上次拼好的
+    命令列表（页面/工具/网址/片段/笔记/账号/请求/用例/环境，上限约 1,600 条）。
+    ⚠️ 别再退回「250ms 内不重复取数」——那个时间窗会把刚保存的条目挡在外面，表现为「刚存完搜不到」。
+    命中缓存/全量/未解锁三种路径会写 `document.documentElement.dataset.paletteLoad`，
+    回归脚本靠它断言（`npm run test:palette-cache`，12 项）。
+  - ⚠️ `palette:refresh` **只在小窗「从隐藏变显示」时发**（已显示时只 focus），所以测「重新弹出」
+    必须先 `paletteHide()` 再 `paletteShow()`，否则测到的是同一个开着的小窗，缓存与刷新都不会发生。
   - **主题必须走 `settings:get`**（`applyPrefs()`），不要用 zustand `useStore(s => s.settings.theme)`：
     新窗口的 persist 是异步 rehydrate，拿到的是默认深色，会和主窗口设置不一致。
-  - **空查询只显示搜索框**：`filtered=[]`、不渲染 `.cmdk-list` / `.cmdk-foot`，`palette:resize` 把窗口收到
-    96px；有结果时按 `MIN_H + min(n,10)*36 + 34` 撑高（主进程 clamp 96–540，注意 BrowserWindow 的
-    `minHeight` 也要设成 96，否则 setSize 被拦）。
+  - **空查询只显示搜索框**：`filtered=[]`、不渲染 `.cmdk-list` / `.cmdk-foot`；高度不再靠行数估算，
+    而是 `reportHeight()` 量 `.cmdk` 的真实高度 + `PAD_Y(20)` 交给 `palette:resize`
+    （主进程 clamp 68–540；BrowserWindow 的 `minHeight` 也必须是 68，否则 setBounds 被拦）。
+    早期按「`MIN_H + 行数×行高`」估算，空态提示/换行/行高变化都会算偏（底部被裁半截）。
   - ⚠️ **Windows 透明无边框窗 `setSize()` 在「变大之后再变小」会被忽略**（放大有效、缩小无效，
     setBounds / setContentSize 有效）。所以改高度统一走 `setSearchWindowHeight()` → `setBounds({x,y,width,height})`。
-    另外隐藏状态下改尺寸也可能被忽略，`showSearchWindow()` 要在 show() 前后各收一次 96；
-    `palette:refresh` 里渲染层还要主动 `paletteResize(96)`（q 本来就是空时 resize effect 不会触发）。
+    另外隐藏状态下改尺寸也可能被忽略，`showSearchWindow()` 要在 show() 前后各收一次 68；
+    `palette:refresh` 里渲染层要等 React 提交后再量一次真实高度（`requestAnimationFrame`），
+    否则读到的是上一屏布局（表现为窗口忽高忽低或底部留缝）。
   - `palette:show` IPC 与全局快捷键等价（未解锁时只出主窗口），回归脚本用它避免本机按键被别的程序吃掉。
   - ⚠️ `CommandPalette.tsx` 模块底部有 `PAGES.push(...PAGES_MORE)`，**PAGES 已含全部菜单页**：
     小窗里只能展开 `PAGES`，再展开 `PAGES_MORE` 会重复；末尾统一按 `id` 去重，重复 key 会让 React
@@ -406,19 +426,28 @@ Node 的 `fetch`（undici）**不读系统代理**：公司/家里只配了系�
 - **公共免费镜像已废弃**：`ghfast.top` 走代理连不上、`gh-proxy.com` 只有 1.6 KB/s（直连 50~173 KB/s），
   点「换镜像」只会更慢。1.21.4 起 `UPDATE_MIRRORS` 移除，改为可选自定义源
   （`settings.updateMirrorUrl` / `PM_UPDATE_MIRROR` 环境变量），没配就只走 GitHub。
-- ⚠️ **不要再自动切并行**（1.21.4 的「6 秒慢速 / 60 秒无数据自动改 6 分片」已在 1.21.6 撤销）：
+- ⚠️ **不要再自动切并行**（1.21.4 的「6 秒慢速 / 60 秒无数据自动改 6 分片」已在 1.21.6 撤销，
+  1.21.7 又把 `netDownload` 里的慢速中止代码整段删掉）：
   公司环境里只是中途停顿的正常下载会被 60 秒规则误杀；切分片后 `update/parts-*` 目录
   又容易触发杀软隔离，写 `chunk-0.bin` 直接 `ENOENT`，结果是**完全下不了**（比慢更糟）。
-  现在 `netDownload` 默认纯单连接 + 30 分钟总超时，`slowSwitchAfterMs`/`stallMs` 默认 0。
-  只有用户显式点「太慢？多线程加速」/「加速重试」或设置页勾多线程才走 `netDownloadParallel`；
-  并行失败要 catch 住并回退单连接，分片写之前 `fs.mkdirSync(dir,{recursive:true})` 且
-  `createWriteStream` 必须监听 `error`（否则 ENOENT 变未处理异常）。
+  现在默认纯单连接 + 30 分钟总超时；`parts-*` 目录**只在用户显式启用并行时**才创建；
+  单连接与并行两条路径的 `createWriteStream` 都必须监听 `error`。
+  默认行为由 `scripts/ui-round9-test.js` 的「慢速桩（1MB/8 块/每块停 1.2s）」用例锁住：
+  断言 `threads===1`、`verified===true`、`update/` 下无 `parts-*` 残留。改这里必须同步改该用例。
+- **安装包执行白名单**：`update:install` 只执行 `update/` 目录内、或经 `update:pick-file` 对话框
+  选中的 exe（模块作用域 `allowedInstallFiles`），拒绝渲染层传来的任意路径。
+- **摘要缺失不静默**：`expectedSha256` 为空时下载仍成功但 `verified=false`；弹窗取消自动倒计时安装
+  并显示警示，设置页也显示「未校验」提示。`PM_UPDATE_API` 在打包版只放行 `127.0.0.1/localhost` 桩服务。
+- **设置项**：设置 › 通用里可填 `updateMirrorUrl`（国内直链前缀，只接受干净 http(s)）与
+  `updateCheckIntervalHours`（0 = 仅启动查一次，默认）。两者都经 `settings:get` 读回，别只在主进程加字段。
 - **链路诊断**：`session.defaultSession.resolveProxy(url)` 的结果经 `proxyLabel()` 变成
   「经代理 x.x.x.x」/「直连」推给 `update:progress`，弹窗显示「直连 · 检查 VPN 分流」。
   家里慢多半就是规则没放行 `github.com` / `*.githubusercontent.com`（302 到 `release-assets.githubusercontent.com`）。
 - 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`）→ `加速重试`（用户手动，多线程并行）。
-- 回归脚本：`_scope/test-update-download.js`（本地 Range 桩服务，验证单连接/加速/无 ENOENT）、
-  `_scope/test-real-download.js`（真实 GitHub 包走代理，实测 91.2MB / 6.1s / SHA-256 通过）。
+- 回归脚本（都在仓库内）：`scripts/ui-round9-test.js` 的 `R9_ONLY=update` 段覆盖
+  落盘位置 / SHA-256 校验 / 摘要不符拒绝 / 6 分片 / **慢速停顿仍是单连接**；
+  `scripts/ui-dl-time-test.js` 验证打包版检查更新与失败兜底文案。
+  不要再用项目外 `_scope/` 里的临时探针作为长期依据。
 - 安装**不要默认 `/S` 静默**：静默装的是默认目录，用户装到 `E:/password-manager` 会变成两份。
   默认走安装向导（`spawn(file, [])` + `app.quit()`）；静默才传 `['/S', '/D=<当前 exe 目录>']`。
 
@@ -431,10 +460,11 @@ body 是**写死的模板**，把我们 `gh release create --notes-file` 的说�
 - 本机 gh token 只有 `gist / read:org / repo`，**没有 `workflow`**，所以推不上去 workflow 的改动
   （`refusing to allow an OAuth App to create or update workflow ... without workflow scope`）。
   想根治得先 `gh auth refresh -h github.com -s workflow`（需浏览器授权）。
-- 当前流程：发布后**等 CI 跑完**（`gh run watch <id>`，约 2 分钟）再
-  `gh release edit <tag> --notes-file release-notes-<ver>.md` + `gh release delete-asset <tag> Setup.<ver>.exe`。
-- 注意 `git checkout -- .github/workflows/build.yml` 恢复的是 **HEAD 版本（含改动）**，
-  要还原成远程版本得 `git checkout origin/master -- .github/workflows/build.yml`。
+- 推荐工作流在 `scripts/ci-build.yml.recommended`：只在 `v*` tag 构建、CI 不再创建 Release /
+  传附件 / 写说明，Release 全部交给 `release.js`（去掉双写）。把它手动覆盖到 workflow 路径即可。
+  旧补丁 `ci-workflow-rename.patch.txt` 只改产品名，已不推荐。
+- `release.js` 第 8 步对新旧 CI 都幂等：删掉旧 CI 多传的 `Setup.<ver>.exe`、用本地 notes 回填说明、
+  核对附件与 latest。即使 workflow 还没更新，发布也不会坏。
 
 ### 时间显示：一律走 `src/utils/time.ts`
 
@@ -615,20 +645,21 @@ Get-Process -Name "测试工具" -ErrorAction SilentlyContinue | Stop-Process -F
 另外：脚本 `spawn` 打包后的 exe 时，必须 `delete env.ELECTRON_RUN_AS_NODE`
 （本机环境里有这个变量，否则 exe 会以「纯 Node」模式启动，窗口不出现、CDP 连不上）。
 
-### CI 门禁是怎么生效的（1.6.0）
+### CI 门禁是怎么生效的（2026-11-09 更新）
 
-CI 的「构建安装包」步骤跑的是 `node scripts/build-installer.js`，所以门禁装在**脚本**里而不是 workflow 里：
+CI 的「构建安装包」步骤跑 `node scripts/build-installer.js`，门禁装在**脚本**里而不是 workflow 里，
+这样即使 workflow 文件因 token 缺 `workflow` scope 推不上去，现有 CI 也受保护。
 
-```js
-step('质量门禁：类型检查', 'npx tsc --noEmit');
-step('质量门禁：单元测试', 'npx vitest run');
-```
+`build-installer.js` 开头调用 `require('./ci-gate').runGate()`，顺序是：
+隐私扫描 → `tsc --noEmit` → `vitest run` → IPC 契约 → CSS 重复选择器报告（只报告不阻断）。
+以前这里只有 tsc + vitest，隐私与 IPC 契约只能本地手动跑，容易漏。
 
-任一步失败 → `process.exit(1)` → CI 不出包、不发 Release。本地 `npm run dist` 同样跑这套（约多 10 秒），
-`SKIP_PREFLIGHT=1` 可临时跳过（只用于排查构建问题）。
+`npm run check`（`preflight.js`）、`npm run regress`（`regress-all.js`）、CI 构建共用同一份 `ci-gate.js`；
+`regress -- --pack` 会再跑 7 项打包版回归。任一步失败 → `process.exit(1)` → 不出包。
+`SKIP_PREFLIGHT=1` 可临时跳过全部门禁（只用于排查构建问题，正式发版不要跳）。
 
 - 为什么不直接写进 `build.yml`：本机 token 没有 `workflow` scope，推 workflow 改动会被服务端拒绝；
-  详见 `ci-quality-gate.md`（含以后授权后要加的两段 YAML）。
+  完整的新工作流模板见 `scripts/ci-build.yml.recommended`。
 - `npm run check` / `npm run check:pack` 是同一套门禁的手动入口；
   `npm run hooks:install` 会把它装成 git `pre-push` 钩子。
 
@@ -724,8 +755,8 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 |---|---|
 | 落盘位置 | `app.getPath('userData')/update/`，**不要再写 `%TEMP%`** |
 | 文件名 | 用 GitHub 资产名（`assetFileName()`），不要带时间戳/随机串 |
-| 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；分片放 `update/parts-<ts>/chunk-N.bin`，下完即删 |
-| 默认策略 | **单连接顺序下载**（像普通下载器），不做自动慢速切换；只有用户点「加速重试」/ 勾多线程才 6 分片并行，且并行失败要回退单连接（分片可能被杀软误报，UI 上要写明） |
+| 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；并行时分片放 `update/parts-<ts>/chunk-N.bin`（**仅并行才创建该目录**），下完即删。单连接与分片的写流都要监听 `error` |
+| 默认策略 | **单连接顺序下载**（像普通下载器），不做自动慢速切换；只有用户点「加速重试」/ 勾多线程才 6 分片并行，并行失败要回退单连接（分片可能被杀软误报，UI 上要写明）。默认行为由 r9 慢速用例锁住 |
 | 完整性 | 下载后算 SHA-256，与 Release asset 的 `digest` 比对，**不一致就删文件并拒绝安装**；返回 `verified` 给 UI 显示「已校验」 |
 | 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速重试 + 当前链路（代理 or 直连）+ 一句杀软排查建议 |
 
@@ -944,7 +975,10 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 
 | 命令 | 作用 | 什么时候用 |
 |---|---|---|
-| `npm run release -- 1.9.0` | 一键发布：升版本 → 构建 → 打包版全量回归 → 英文资产名 → 提交推送 → 建 Release → 等 CI → 删 CI 多传的附件、回填说明 | 正式发版 |
+| `npm run release -- 1.9.0` | 一键发布：升版本 → 构建（含 ci-gate）→ 打包版全量回归 → 英文资产名 → 提交推送 → 建 Release → 等 CI → 核对附件与 latest（兼容旧 CI 的覆盖） | 正式发版 |
+| `npm run check` | 静态门禁：隐私 / 类型 / 单测 / IPC 契约 / CSS 报告（与 CI 共用 `ci-gate.js`） | 随时可跑 |
+| `npm run regress -- --pack` | 在静态门禁之上再跑 7 项打包版回归（需先 `npm run dist`） | 本地验收 |
+| `npm run clean:release` | 列出 release/ 里可清理的历史 exe（dry-run；加 `-- --apply` 才删） | 磁盘卫生 |
 | `npm run install:local` | 把 `release/` 下最新安装包**静默覆盖安装**到当前目录 | 只是想让自己机器用上新版本（**不需要发版**） |
 | `npm run check:ipc` | IPC 契约检查：main 注册 ↔ preload 暴露 ↔ types 声明 三方对齐 | 改了任何 IPC 后 |
 
@@ -1014,7 +1048,7 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 ### release.js 的两个坑
 
 - **不要用 `cmd /c timeout` 休眠**：无终端（后台任务/CI）时它会报 `Input redirection is not supported` 并抛错，把发布卡在「等 CI」那一步。用 `Atomics.wait` 封装的 `sleepSync(ms)`。
-- **`.github/workflows/build.yml` 里还写着「测试工具」**：CI 上传产物会提示 `No files were found`（不影响 Release，但没 artifact）。本机 gh token 缺 `workflow` scope，改不了；要修先 `gh auth refresh -h github.com -s workflow`，改动清单见 `ci-workflow-rename.patch.txt`。
+- **`.github/workflows/build.yml` 里还写着「测试工具」**：CI 上传产物会提示 `No files were found`（不影响 Release，但没 artifact）。本机 gh token 缺 `workflow` scope，改不了；要修先 `gh auth refresh -h github.com -s workflow`，或直接把 `scripts/ci-build.yml.recommended` 覆盖过去（模板已统一产品名、附件 glob，并去掉 CI 双写 Release）。旧补丁 `ci-workflow-rename.patch.txt` 只改产品名，已不推荐。
 
 ## 1.10.0 起的约定（改缺陷管理 / 代码调试前先看）
 

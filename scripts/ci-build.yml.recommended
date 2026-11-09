@@ -1,0 +1,53 @@
+# 推荐的 .github/workflows/build.yml（把它复制到该路径即可生效）
+#
+# ⚠️ 本机 gh token 的 scopes 只有 gist / read:org / repo，**没有 workflow**，
+#    直接修改并推送 .github/workflows/*.yml 会被服务端拒绝。请在 GitHub 网页上
+#    把本文件内容覆盖过去，或先执行 `gh auth refresh -h github.com -s workflow`。
+#
+# 与 release.js 的分工（去掉「双写」）：
+#   - CI：只在 v* tag 触发，负责「干净 Windows 环境可构建 + 静态质量门禁 + 上传 artifact」
+#   - release.js：唯一负责创建 Release、上传英文资产名附件、写发布说明、核对 latest
+# 旧 workflow 会额外上传一个 Setup.x.y.z.exe 并用硬编码模板覆盖说明，release.js 第 8 步
+# 再删附件、回填说明；本模板去掉了这两处，发布链路变简单且不再互相覆盖。
+
+name: 构建安装包
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装主应用依赖
+        run: npm ci
+
+      - name: 安装子应用依赖
+        run: cd sub-apps/test-data-generator && npm ci
+        shell: cmd
+
+      - name: 构建安装包（内含 ci-gate 质量门禁）
+        # 门禁在 build-installer.js 开头统一跑：隐私 / 类型 / 单测 / IPC 契约 / CSS 报告。
+        # 这样即使 workflow 文件推不上去，现有 CI 也已经受门禁保护。
+        run: node scripts/build-installer.js
+        shell: cmd
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 测试中台-Setup-${{ github.ref_name }}
+          path: release/*.exe

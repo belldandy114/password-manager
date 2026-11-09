@@ -16,6 +16,17 @@ interface Cmd {
 const PAD_Y = 20;
 
 /**
+ * 上一次拼好的命令列表，连同生成它的数据版本（主进程的 vaultEpoch）。
+ * 弹出时只问一个极轻的版本号：没变就直接复用，不用再 Promise.all 取 7 类数据
+ * （entries + snippets/notes/accounts/apiRequests/checklists/environments，上限约 1,600 条）。
+ * 模块作用域：组件重挂载也不会把它清零。
+ *
+ * 早期实现是「250ms 内不重复取数」，但那个时间窗会把刚刚保存的条目也挡在缓存外
+ * ——存完立刻搜索会搜不到。改成按版本号失效就没有这个漏洞。
+ */
+let paletteCache: { epoch: number; cmds: Cmd[]; locked: boolean } | null = null;
+
+/**
  * 独立快速搜索窗（Ctrl+空格）：窗口里只有搜索框，输入后才出结果。
  * - 主题不读 zustand（新窗口里可能还没完成异步 rehydrate），直接走 settings:get 与主窗口一致。
  * - 数据每次弹出时通过 IPC 现取（entries:get-all / ws:get），选中后通过 palette:run 交给主进程。
@@ -52,6 +63,26 @@ export function PaletteApp() {
   // ---- 数据 ----
   const load = useCallback(async () => {
     try {
+      // 先问版本号（一次极轻的 IPC）。拿不到（旧 preload）就退回全量取数。
+      let meta: { epoch: number; unlocked: boolean } | null = null;
+      try { meta = (await window.electronAPI.paletteEpoch?.()) || null; } catch { meta = null; }
+
+      if (meta && paletteCache && paletteCache.epoch === meta.epoch) {
+        // 便于回归脚本断言「这次是命中缓存还是真的重取」：scripts/ui-palette-cache-test.js
+        document.documentElement.dataset.paletteLoad = 'cache';
+        setLocked(paletteCache.locked);
+        setCmds(paletteCache.cmds);
+        return;
+      }
+      // 未解锁就不用取 7 类数据了，直接显示「去解锁」
+      if (meta && meta.unlocked === false) {
+        paletteCache = { epoch: meta.epoch, cmds: [], locked: true };
+        document.documentElement.dataset.paletteLoad = 'locked';
+        setLocked(true);
+        setCmds([]);
+        return;
+      }
+
       const [er, sn, nt, ac, rq, ck, ev] = await Promise.all([
         window.electronAPI.entriesGetAll?.(),
         window.electronAPI.wsGet('snippets'),
@@ -62,6 +93,7 @@ export function PaletteApp() {
         window.electronAPI.wsGet('environments'),
       ]);
       if (!er || !er.success || !er.data) {
+        if (meta) paletteCache = { epoch: meta.epoch, cmds: [], locked: true };
         setLocked(true);
         setCmds([]);
         return;
@@ -116,6 +148,8 @@ export function PaletteApp() {
         seen.add(c.id);
         return true;
       });
+      if (meta) paletteCache = { epoch: meta.epoch, cmds: unique, locked: false };
+      document.documentElement.dataset.paletteLoad = 'full';
       setCmds(unique);
     } catch {
       setLocked(true);

@@ -140,10 +140,12 @@ export function UpdateDialog({
       if (res?.success && res.data) {
         setFile(res.data.file);
         setViaMirror(!!mirror);
-        setVerified(!!res.data.verified);
+        const ok = !!res.data.verified;
+        setVerified(ok);
         setPhase('ready');
         setCountdown(AUTO_INSTALL_SEC);
-        setAutoInstall(true);
+        // 官方没给 digest 时不自动倒计时安装：让用户先确认这个包的来源
+        setAutoInstall(ok);
       } else {
         setError(res?.error || '下载失败');
         setCanMirror(!!res?.canMirror);
@@ -339,7 +341,12 @@ export function UpdateDialog({
           <Icons.check size={13} />
           已下载 {file.split('\\').pop()}
           {viaMirror ? '（多线程加速）' : ''}
-          {verified ? ' · SHA-256 已校验' : ''}
+          {verified ? ' · SHA-256 已校验' : ' · ⚠️ 未校验'}
+        </div>
+      )}
+      {phase === 'ready' && !verified && (
+        <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: 'var(--danger, #e5484d)' }}>
+          官方未提供 SHA-256 摘要，这个安装包没有校验；已取消自动安装，请确认来源后再点「安装并重启」。
         </div>
       )}
 

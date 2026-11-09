@@ -446,6 +446,13 @@ function listBackups() {
   }
 }
 
+/**
+ * 密码库数据版本号：每次落盘 +1（解锁/锁定也 +1）。
+ * 快速搜索小窗用它判断上一次拼好的 1,600 条命令还能不能复用 ——
+ * 只多花一次极轻的 IPC，就不用每次弹出都 Promise.all 取 7 类数据。
+ */
+let vaultEpoch = 1;
+
 function saveVault(vault, password) {
   const json = JSON.stringify(vault);
   const encrypted = encrypt(json, password);
@@ -453,6 +460,7 @@ function saveVault(vault, password) {
   backupVaultOncePerDay();
   writeFileAtomic(DATA_FILE, encrypted);
   vaultCache = { password, data: vault };
+  vaultEpoch += 1;
   scheduleTrayRefresh();
 }
 
@@ -502,7 +510,8 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+  // 与密码库一样走原子写：直接覆盖时崩溃/断电会留下半截 JSON，用户设置就全丢了。
+  writeFileAtomic(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
 // Single source of truth for defaults. settings:get always returns a complete object —
@@ -525,6 +534,9 @@ const DEFAULT_SETTINGS = {
   zentaoNotify: false,
   zentaoNotifyInterval: 10,
   backupKeep: 7,
+  // 应用内更新：自定义国内直链前缀（空 = 只走 GitHub）；周期检查小时数（0 = 仅启动查一次）
+  updateMirrorUrl: '',
+  updateCheckIntervalHours: 0,
   browserPaths: { chrome: '', msedge: '', firefox: '', brave: '', opera: '', vivaldi: '', '360': '', qq: '', quark: '' },
   keybindings: {
     newEntry: 'Ctrl+N',
@@ -1191,11 +1203,22 @@ function proxyLabel(p) {
   return m ? `经代理 ${m[2]}` : s;
 }
 
+const GITHUB_RELEASE_API = 'https://api.github.com/repos/belldandy114/password-manager/releases/latest';
+
+/**
+ * 回归脚本用 PM_UPDATE_API 指向本地桩服务。它是「版本信息 + 安装包地址 + digest」的信任根，
+ * 打包版只放行 127.0.0.1 / localhost，避免任何环境变量把 Release 元数据换成外部地址。
+ */
+function localStubOverride(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  if (!app.isPackaged) return s;
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(s) ? s : '';
+}
+
 async function fetchLatestRelease() {
   try {
-    // PM_UPDATE_API 仅供本地回归脚本指向桩服务（视觉验证更新弹窗用），正常启动不会设置
-    const apiUrl = process.env.PM_UPDATE_API
-      || 'https://api.github.com/repos/belldandy114/password-manager/releases/latest';
+    const apiUrl = localStubOverride(process.env.PM_UPDATE_API) || GITHUB_RELEASE_API;
     const json = await netFetchJson(apiUrl, 10000);
     const latest = String(json.tag_name || '').replace(/^v/, '');
     const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
@@ -1434,6 +1457,27 @@ async function autoCheckUpdate() {
     if (debug) console.log('[auto-update] failed: ' + (e && e.message));
   }
 }
+/**
+ * 允许交给安装程序执行的文件：应用自己下载的（在 update/ 内）+ 用户经文件对话框选中的。
+ * ⚠️ 模块作用域：三个 IPC handler 都要访问。
+ */
+const allowedInstallFiles = new Set();
+
+/**
+ * 可选的周期检查更新定时器。默认 0 = 只在启动后 8 秒查一次（保持旧行为）。
+ * ⚠️ 放模块作用域：settings:save 的回调和 whenReady 都要访问，曾经因为写错作用域
+ * 在快捷键回调里静默抛 ReferenceError。
+ */
+let autoUpdateTimer = null;
+function restartAutoUpdateCheck() {
+  if (autoUpdateTimer) { clearInterval(autoUpdateTimer); autoUpdateTimer = null; }
+  const s = loadSettings() || {};
+  const hours = Math.min(168, Math.max(0, Number(s.updateCheckIntervalHours) || 0));
+  if (hours > 0) {
+    autoUpdateTimer = setInterval(() => { void autoCheckUpdate(); }, hours * 3600 * 1000);
+    try { autoUpdateTimer.unref?.(); } catch { /* 忽略 */ }
+  }
+}
 function setupIpcHandlers() {
 
   // Brute-force guard: 5 wrong passwords in a row → 30s cool-down (in-memory, resets on restart).
@@ -1611,6 +1655,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   if (!vault) return { success: false };
   currentPassword = password;
   appUnlocked = true;
+  vaultEpoch += 1;   // 搜索小窗的缓存必须失效，否则解锁后还显示「未解锁」
   lastActivity = Date.now();
     // 解锁后启动禅道新 Bug 提醒（内部会检查开关）
     setTimeout(() => { try { ztRestartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
@@ -1624,6 +1669,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   ipcMain.handle('session:lock', () => {
     currentPassword = null;
     appUnlocked = false;
+    vaultEpoch += 1;   // 锁屏后小窗要立刻切成「未解锁」提示
     clearCaches();
     clearClipHistory();
     try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
@@ -1634,6 +1680,12 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   ipcMain.handle('session:is-unlocked', () => {
     return { unlocked: currentPassword !== null };
   });
+
+  /**
+   * 快速搜索小窗用的「数据版本」：epoch 没变就直接复用上一次拼好的命令列表。
+   * 只回两个字段，比重新取 7 类数据（最多 1,600 条）便宜得多。
+   */
+  ipcMain.handle('palette:epoch', () => ({ epoch: vaultEpoch, unlocked: currentPassword !== null }));
 
   ipcMain.handle('session:touch', () => {
     lastActivity = Date.now();
@@ -1827,6 +1879,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       // 多套禅道配置里「当前用哪套」：主进程的定时提醒也要跟着它走
       zentaoActiveId: String(s.zentaoActiveId || 'zentao'),
       backupKeep: Math.min(60, Math.max(1, Number(s.backupKeep) || DEFAULT_SETTINGS.backupKeep)),
+      // 更新源与检查周期：设置页要能读回当前值，否则保存时会把已有值覆盖掉
+      updateMirrorUrl: String(s.updateMirrorUrl || ''),
+      updateCheckIntervalHours: Math.min(168, Math.max(0, Number(s.updateCheckIntervalHours) || 0)),
       browserPaths: s.browserPaths || { ...DEFAULT_SETTINGS.browserPaths },
       keybindings: s.keybindings || { ...DEFAULT_SETTINGS.keybindings },
     };
@@ -1841,6 +1896,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     if (prefs && (Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotify')
       || Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotifyInterval'))) {
       try { ztRestartNotify(); } catch { /* 忽略 */ }
+    }
+    if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'updateCheckIntervalHours')) {
+      try { restartAutoUpdateCheck(); } catch { /* 忽略 */ }
     }
 
     const p = getWindowPrefs();
@@ -2092,7 +2150,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     try {
       const fromEnv = String(process.env.PM_UPDATE_MIRROR || '').trim();
       const s = loadSettings() || {};
-      return (fromEnv || String(s.updateMirrorUrl || '').trim()).replace(/\/+$/, '');
+      const raw = fromEnv || String(s.updateMirrorUrl || '').trim();
+      // 只接受干净的 http(s) 前缀：拼在下载地址前面，不能带空格/引号/尖括号
+      return /^https?:\/\/[^\s"'<>]+$/i.test(raw) ? raw.replace(/\/+$/, '') : '';
     } catch { return ''; }
   }
 
@@ -2103,40 +2163,20 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
    */
   /**
    * 单连接下载（默认行为，和 1.21.3 一致）。
-   * ⚠️ 默认不做任何慢速 / 无数据中止：1.21.4 曾用「60 秒无数据自动切 6 分片」，
+   * ⚠️ 这里**永远不要**加「慢速 / 无数据就自动中止并切分片」：1.21.4 那么做过，
    * 结果把公司环境里只是中途停顿的正常下载误杀，分片目录又触发杀软导致 ENOENT。
-   * 只有调用方显式传 slowSwitchAfterMs / stallMs 时才抛 code=SLOW 供上层决定重试。
+   * 只有 30 分钟总超时；要并行必须由用户在界面上显式点「多线程加速」。
+   * 默认行为由 scripts/ui-round9-test.js 的慢速用例锁住，别只改这里不改测试。
    */
-  function netDownload(url, file, onProgress, opts = {}) {
-    const slowMs = Number(opts.slowSwitchAfterMs) || 0;
-    const slowBelow = Number(opts.slowBelow) || 150 * 1024;
-    const slowMaxBytes = Number(opts.slowMaxBytes) || 4 * 1024 * 1024;
-    // ⚠️ 默认关闭「无数据超时」：1.21.4 曾设 60 秒并自动切分片，结果把公司环境里
-    // 只是中途停顿的正常下载误杀，分片目录触发杀软后又 ENOENT，完全下不了。
-    // 现在只在调用方显式传 stallMs 时启用，且不再自动切分片。
-    const stallMs = Number(opts.stallMs) || 0;
+  function netDownload(url, file, onProgress) {
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer = null;
-      let stallTimer = null;
-      let responseRef = null;
-      let outRef = null;
-      let lastByteAt = Date.now();
-      let slowSince = 0;
       const fin = (fn, arg) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
-        if (stallTimer) clearInterval(stallTimer);
         fn(arg);
-      };
-      const failSlow = (why) => {
-        try { responseRef?.pause?.(); } catch { /* 忽略 */ }
-        try { request.abort(); } catch { /* 忽略 */ }
-        try { outRef?.destroy?.(); } catch { /* 忽略 */ }
-        const e = new Error(why);
-        e.code = 'SLOW';
-        fin(reject, e);
       };
       let request;
       try {
@@ -2149,15 +2189,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         try { request.abort(); } catch { /* 忽略 */ }
         fin(reject, new Error('下载超时（30 分钟无响应）'));
       }, 30 * 60 * 1000);
-      if (stallMs > 0) {
-        stallTimer = setInterval(() => {
-          if (!settled && Date.now() - lastByteAt > stallMs) failSlow('长时间没有收到数据');
-        }, 5000);
-      }
 
       request.setHeader('User-Agent', 'password-manager-app');
       request.on('response', (response) => {
-        responseRef = response;
         const status = response.statusCode;
         if (status >= 400) {
           try { response.resume(); } catch { /* 忽略 */ }
@@ -2166,7 +2200,12 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         }
         const total = Number(response.headers['content-length'] || 0);
         const out = fs.createWriteStream(file);
-        outRef = out;
+        // 磁盘满 / 杀软锁文件 / 目录被删都会触发这里；不监听会变成未处理的 'error' 事件，
+        // 把整次更新（甚至主进程）打挂。并行路径 netDownloadRange 早已有同样的保护。
+        out.on('error', (e) => {
+          try { request.abort(); } catch { /* 忽略 */ }
+          fin(reject, e);
+        });
         let received = 0;
         let lastEmit = 0;
         let windowBytes = 0;
@@ -2175,7 +2214,6 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         response.on('data', (chunk) => {
           received += chunk.length;
           windowBytes += chunk.length;
-          lastByteAt = Date.now();
           if (!out.write(chunk)) {
             try {
               response.pause();
@@ -2187,12 +2225,6 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
             const dt = (now - windowAt) / 1000;
             if (dt >= 0.5) { speed = windowBytes / dt; windowBytes = 0; windowAt = now; }
             lastEmit = now;
-            if (slowMs && speed > 0 && speed < slowBelow && received < slowMaxBytes) {
-              if (!slowSince) slowSince = now;
-              else if (now - slowSince >= slowMs) { failSlow('单连接过慢'); return; }
-            } else {
-              slowSince = 0;
-            }
             onProgress(received, total, speed);
           }
         });
@@ -2445,11 +2477,16 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     const finalFile = path.join(dir, name);
     // 先写到 .partial 再改名：避免"边写边被扫"时留下半成品，也让最终文件出现在磁盘上是完整的
     const partial = `${finalFile}.partial`;
-    const partsDir = path.join(dir, `parts-${Date.now()}`);
-    try { fs.mkdirSync(partsDir, { recursive: true }); } catch { /* 忽略 */ }
+    // useMirror 现在表示「加速重试」；threads 是设置页里的多线程开关。两者才启用 6 分片并行。
+    const accelerate = useMirror === true || threads === true;
+    // parts-* 目录只在用户显式启用并行时才建：一堆分片文件是杀软最敏感的「释放器」特征，
+    // 默认单连接也建空目录纯属多余的敏感行为（1.21.4 的 ENOENT 就是从这里开始的）。
+    const partsDir = accelerate ? path.join(dir, `parts-${Date.now()}`) : '';
     const cleanup = () => {
       try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
-      try { fs.rmSync(partsDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+      if (partsDir) {
+        try { fs.rmSync(partsDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+      }
     };
 
     // 先诊断链路：这个下载地址在 Chromium 里到底是走代理还是直连。
@@ -2471,8 +2508,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       : [{ label: 'GitHub', url }];
 
     const errors = [];
-    // useMirror 现在表示「加速重试」；threads 是设置页里的多线程开关。两者都直接启用 6 分片并行。
-    const accelerate = useMirror === true || threads === true;
+    // accelerate 已在上面算好（parts-* 目录是否创建依赖它）。
 
     for (const t of targets) {
       try {
@@ -2518,6 +2554,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         }
 
         cleanup();
+        allowedInstallFiles.add(path.resolve(finalFile));
         return {
           success: true,
           data: { file: finalFile, name, size: r.size, via: t.label, threads: r.threads || 1, sha256, verified },
@@ -2557,6 +2594,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       if (st.size < 10 * 1024 * 1024) {
         return { success: false, error: '这个文件不像是安装包（体积过小）' };
       }
+      allowedInstallFiles.add(path.resolve(f));
       return { success: true, data: { file: f, size: st.size } };
     } catch (e) {
       return { success: false, error: e.message };
@@ -2566,6 +2604,13 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   ipcMain.handle('update:install', async (_event, { file, silent } = {}) => {
     try {
       if (!file || !fs.existsSync(file)) return { success: false, error: '安装包不存在，请重新下载' };
+      // 只执行「本次下载的 / 用户经对话框选中的」exe，不接受渲染层传来的任意路径
+      const resolved = path.resolve(String(file));
+      const rel = path.relative(updateDir(), resolved);
+      const inUpdateDir = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+      if (!/\.exe$/i.test(resolved) || (!inUpdateDir && !allowedInstallFiles.has(resolved))) {
+        return { success: false, error: '这个安装包不是本次下载或你选择的文件，已拒绝执行' };
+      }
       // 自动化脚本用：只校验流程，不真的拉起安装程序、也不退出（否则截图跑一半应用就没了）
       if (process.env.PM_UPDATE_NO_INSTALL === '1') {
         return { success: true, data: { silent: false, skipped: true } };
@@ -2573,7 +2618,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       // 默认走安装向导：能看清进度、能选目录。
       // ⚠️ 不要默认 /S 静默安装 —— 它会装到默认目录，跟用户自定义的安装路径变成两份。
       const args = silent ? ['/S', `/D=${path.dirname(app.getPath('exe'))}`] : [];
-      spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
+      spawn(resolved, args, { detached: true, stdio: 'ignore' }).unref();
       setTimeout(() => app.quit(), 1200);
       return { success: true, data: { silent: !!silent } };
     } catch (e) {
@@ -4320,6 +4365,8 @@ app.whenReady().then(() => {
   // 启动 8 秒后静默查一次新版本（有新版弹系统通知，同版本只弹一次）。
   // 放最后 + setTimeout：网络请求绝不能影响启动速度。
   setTimeout(() => { autoCheckUpdate(); }, 8000);
+  // 设置里开启「周期检查」后按小时重复；autoCheckUpdate 自带版本去重，不会反复弹同一个版本
+  restartAutoUpdateCheck();
 
   // 全局快捷键拆成两个，别让一个键同时管两件事：
   //   显隐 → 只显示/隐藏窗口；搜索 → 只打开搜索（隐藏时按下去直接是搜索框，不先闪主页面）

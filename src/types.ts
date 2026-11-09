@@ -67,6 +67,8 @@ export interface AppSettings {
   hotkeyToggle?: string;
   /** 可选的更新下载源前缀（国内直链）；留空则只走 GitHub */
   updateMirrorUrl?: string;
+  /** 周期检查更新间隔（小时）；0 = 仅启动时查一次 */
+  updateCheckIntervalHours?: number;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
   defaultViewMode: 'card' | 'list';
@@ -614,6 +616,8 @@ export interface ElectronAPI {
   paletteRun: (item: { id: string; title?: string; url?: string }) => Promise<{ success: boolean }>;
   /** 小窗按结果条数调整自身高度 */
   paletteResize: (height: number) => Promise<{ success: boolean }>;
+  /** 密码库数据版本：epoch 未变即可复用上次拼好的命令列表 */
+  paletteEpoch: () => Promise<{ epoch: number; unlocked: boolean }>;
   /** 小窗里未解锁：让主窗口出来解锁 */
   paletteUnlock: () => Promise<{ success: boolean }>;
   /** 主窗口接收小窗转发的命令 */
