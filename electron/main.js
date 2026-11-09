@@ -2102,16 +2102,19 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
    * net 走 Chromium，能跟随系统代理设置，也能拿到更具体的错误。
    */
   /**
-   * 单连接下载。opts.slowSwitchAfterMs > 0 时启用「慢启动自动切并行」：
-   * 连续一段时间速度低于阈值且刚开头下了没多少，就中止并抛 code=SLOW，
-   * 由 update:download 换成 6 分片并行重下，而不是让用户干等 30 分钟。
-   * 另外 stallMs 内一个字节都没收到也算 SLOW（家里直连不上时 1 分钟就能给出反馈）。
+   * 单连接下载（默认行为，和 1.21.3 一致）。
+   * ⚠️ 默认不做任何慢速 / 无数据中止：1.21.4 曾用「60 秒无数据自动切 6 分片」，
+   * 结果把公司环境里只是中途停顿的正常下载误杀，分片目录又触发杀软导致 ENOENT。
+   * 只有调用方显式传 slowSwitchAfterMs / stallMs 时才抛 code=SLOW 供上层决定重试。
    */
   function netDownload(url, file, onProgress, opts = {}) {
     const slowMs = Number(opts.slowSwitchAfterMs) || 0;
     const slowBelow = Number(opts.slowBelow) || 150 * 1024;
     const slowMaxBytes = Number(opts.slowMaxBytes) || 4 * 1024 * 1024;
-    const stallMs = Number(opts.stallMs) || 60 * 1000;
+    // ⚠️ 默认关闭「无数据超时」：1.21.4 曾设 60 秒并自动切分片，结果把公司环境里
+    // 只是中途停顿的正常下载误杀，分片目录触发杀软后又 ENOENT，完全下不了。
+    // 现在只在调用方显式传 stallMs 时启用，且不再自动切分片。
+    const stallMs = Number(opts.stallMs) || 0;
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer = null;
@@ -2146,9 +2149,11 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         try { request.abort(); } catch { /* 忽略 */ }
         fin(reject, new Error('下载超时（30 分钟无响应）'));
       }, 30 * 60 * 1000);
-      stallTimer = setInterval(() => {
-        if (!settled && Date.now() - lastByteAt > stallMs) failSlow('长时间没有收到数据');
-      }, 5000);
+      if (stallMs > 0) {
+        stallTimer = setInterval(() => {
+          if (!settled && Date.now() - lastByteAt > stallMs) failSlow('长时间没有收到数据');
+        }, 5000);
+      }
 
       request.setHeader('User-Agent', 'password-manager-app');
       request.on('response', (response) => {
@@ -2230,7 +2235,14 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
           fin(reject, new Error(`HTTP ${response.statusCode}`));
           return;
         }
+        // 分片目录可能被杀软整个隔离/删除，写之前重建一次；写流错误也要接住，
+        // 否则 fs.createWriteStream 的 ENOENT 会变成未处理异常把整次下载打挂。
+        try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch { /* 忽略 */ }
         const out = fs.createWriteStream(dest);
+        out.on('error', (e) => {
+          clearTimeout(timer);
+          fin(reject, e);
+        });
         let received = 0;
         response.on('data', (chunk) => {
           received += chunk.length;
@@ -2322,6 +2334,8 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     const ranges = [];
     // 分片放独立目录、用 .bin 后缀：不要叫 xxx.exe.part0 —— 那等于在告诉杀软「这是 exe 的一段」
     const dir = partsDir || path.dirname(file);
+    // 目录可能不存在（或已被杀软删掉），先重建，避免 chunk-0.bin ENOENT
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
     for (let i = 0; i < n; i++) {
       const start = i * chunk;
       if (start >= total) break;
@@ -2463,31 +2477,21 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     for (const t of targets) {
       try {
         let r = null;
-        let triedParallel = false;
         if (accelerate) {
-          triedParallel = true;
-          const p = await netDownloadParallel(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 6), 6, partsDir);
-          if (!p.fallback) r = { size: p.total, threads: p.threads };
+          // 只有用户显式点「加速重试」/ 勾多线程才并行；失败必须能回退单连接
+          try {
+            const p = await netDownloadParallel(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 6), 6, partsDir);
+            if (!p.fallback) r = { size: p.total, threads: p.threads };
+          } catch (e) {
+            errors.push(`${t.label}：多线程失败（${e.message || '连接被中断'}），改用单连接`);
+          }
         }
         if (!r) {
           try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
-          try {
-            r = await netDownload(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 1), {
-              // 连续 6 秒低于 150 KB/s 且刚开头下了不到 4MB → 自动切 6 分片重下，不用等用户点按钮
-              slowSwitchAfterMs: triedParallel ? 0 : 6000,
-              slowBelow: 150 * 1024,
-              slowMaxBytes: 4 * 1024 * 1024,
-              stallMs: 60 * 1000, // 60 秒一个字节都没收到也按「慢」处理，避免干等 30 分钟
-            });
-          } catch (e) {
-            if (e && e.code === 'SLOW' && !triedParallel) {
-              errors.push(`${t.label}：单连接过慢（${e.message}），已自动切多线程`);
-              try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
-              const p = await netDownloadParallel(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 6), 6, partsDir);
-              if (!p.fallback) r = { size: p.total, threads: p.threads };
-            }
-            if (!r) throw e;
-          }
+          // 默认纯单连接（回到 1.21.3 的行为）：1.21.4 的「60 秒无数据自动切 6 分片」
+          // 会把公司环境里只是中途停顿的正常下载误杀，分片目录又容易触发杀软导致 ENOENT。
+          // 慢速时由用户在界面上点「太慢？多线程加速」自行决定，不自动切。
+          r = await netDownload(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 1));
         }
 
         if (!r || r.size < 1024 * 1024) {

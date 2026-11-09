@@ -406,13 +406,19 @@ Node 的 `fetch`（undici）**不读系统代理**：公司/家里只配了系�
 - **公共免费镜像已废弃**：`ghfast.top` 走代理连不上、`gh-proxy.com` 只有 1.6 KB/s（直连 50~173 KB/s），
   点「换镜像」只会更慢。1.21.4 起 `UPDATE_MIRRORS` 移除，改为可选自定义源
   （`settings.updateMirrorUrl` / `PM_UPDATE_MIRROR` 环境变量），没配就只走 GitHub。
-- **慢速自动切并行**：单连接连续 6 秒 <150 KB/s 且开头 <4MB、或 60 秒没收到一个字节，
-  `netDownload` 抛 `code=SLOW`，`update:download` 自动改 6 分片并行重下，不用等用户点按钮。
-  用户点「加速重试」/ 设置页勾多线程则是直接并行。
+- ⚠️ **不要再自动切并行**（1.21.4 的「6 秒慢速 / 60 秒无数据自动改 6 分片」已在 1.21.6 撤销）：
+  公司环境里只是中途停顿的正常下载会被 60 秒规则误杀；切分片后 `update/parts-*` 目录
+  又容易触发杀软隔离，写 `chunk-0.bin` 直接 `ENOENT`，结果是**完全下不了**（比慢更糟）。
+  现在 `netDownload` 默认纯单连接 + 30 分钟总超时，`slowSwitchAfterMs`/`stallMs` 默认 0。
+  只有用户显式点「太慢？多线程加速」/「加速重试」或设置页勾多线程才走 `netDownloadParallel`；
+  并行失败要 catch 住并回退单连接，分片写之前 `fs.mkdirSync(dir,{recursive:true})` 且
+  `createWriteStream` 必须监听 `error`（否则 ENOENT 变未处理异常）。
 - **链路诊断**：`session.defaultSession.resolveProxy(url)` 的结果经 `proxyLabel()` 变成
   「经代理 x.x.x.x」/「直连」推给 `update:progress`，弹窗显示「直连 · 检查 VPN 分流」。
   家里慢多半就是规则没放行 `github.com` / `*.githubusercontent.com`（302 到 `release-assets.githubusercontent.com`）。
-- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`）→ `加速重试`（多线程并行）。
+- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`）→ `加速重试`（用户手动，多线程并行）。
+- 回归脚本：`_scope/test-update-download.js`（本地 Range 桩服务，验证单连接/加速/无 ENOENT）、
+  `_scope/test-real-download.js`（真实 GitHub 包走代理，实测 91.2MB / 6.1s / SHA-256 通过）。
 - 安装**不要默认 `/S` 静默**：静默装的是默认目录，用户装到 `E:/password-manager` 会变成两份。
   默认走安装向导（`spawn(file, [])` + `app.quit()`）；静默才传 `['/S', '/D=<当前 exe 目录>']`。
 
@@ -719,7 +725,7 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 | 落盘位置 | `app.getPath('userData')/update/`，**不要再写 `%TEMP%`** |
 | 文件名 | 用 GitHub 资产名（`assetFileName()`），不要带时间戳/随机串 |
 | 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；分片放 `update/parts-<ts>/chunk-N.bin`，下完即删 |
-| 默认策略 | **单连接顺序下载**（像普通下载器）；慢启动自动切 6 分片，用户点「加速重试」/ 勾多线程则直接并行（分片可能被杀软误报，UI 上要写明） |
+| 默认策略 | **单连接顺序下载**（像普通下载器），不做自动慢速切换；只有用户点「加速重试」/ 勾多线程才 6 分片并行，且并行失败要回退单连接（分片可能被杀软误报，UI 上要写明） |
 | 完整性 | 下载后算 SHA-256，与 Release asset 的 `digest` 比对，**不一致就删文件并拒绝安装**；返回 `verified` 给 UI 显示「已校验」 |
 | 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速重试 + 当前链路（代理 or 直连）+ 一句杀软排查建议 |
 
