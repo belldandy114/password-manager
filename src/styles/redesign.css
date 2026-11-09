@@ -1657,42 +1657,59 @@ button { font-family: inherit; }
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------------- 33. 复制历史（设置 › 通用） ---------------- */
-.clip-history {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-width: 420px;
+/* ================================================================
+   控件对齐修复（2026-11-09）
+   密度规则 `.field input / .setting-row input { min-height: var(--d-control-h) }`
+   没有排除原生 checkbox/radio，把 14~15px 的勾选控件撑成 34px 竖条：
+   压力测试「输出类型」分段项、设置「多线程加速」、弹窗「保密」全都变形且同一行对不齐。
+   放在最后加载的样式表末尾，覆盖所有页面。
+   ================================================================ */
+.field input[type='checkbox'], .field input[type='radio'],
+.setting-row input[type='checkbox'], .setting-row input[type='radio'],
+.form-group input[type='checkbox'], .form-group input[type='radio'],
+.modal input[type='checkbox'], .modal input[type='radio'],
+.pg input[type='checkbox'], .pg input[type='radio'] {
+  min-height: 0;
+  flex: none;
 }
-.clip-history-item {
-  display: flex;
+
+.perf-mode-item,
+.dl-multi,
+.gen-check,
+.gen-check.entry-field-secret {
   align-items: center;
-  gap: 10px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-inset);
-  font-size: 11.5px;
-  color: var(--text-2);
 }
-.clip-history-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-code);
-  letter-spacing: 1px;
-  color: var(--text-3);
+
+/* 新增网址弹窗：同一行控件统一 34px 高、垂直居中 */
+.entry-mini-btn,
+.field-label-row .btn-secondary,
+.history-row .btn-secondary,
+.totp-preview .btn-secondary,
+.pw-gen-trigger,
+.gen-check.entry-field-secret,
+.entry-row-del {
+  height: 34px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
 }
-.clip-history-len {
-  margin-left: 6px;
-  letter-spacing: 0;
-  font-family: var(--font-sans);
-  color: var(--text-3);
+
+.entry-mini-btn,
+.field-label-row .btn-secondary,
+.history-row .btn-secondary,
+.totp-preview .btn-secondary,
+.pw-gen-trigger {
+  padding: 0 10px;
 }
-.clip-history-time {
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
+
+.gen-check.entry-field-secret {
+  display: inline-flex;
+  gap: 6px;
+  padding: 0 10px;
 }
+
+.gen-check.entry-field-secret svg { flex: none; }
+.entry-row-del { width: 34px; padding: 0; }
+.perf-mode-item { min-height: 34px; box-sizing: border-box; }
