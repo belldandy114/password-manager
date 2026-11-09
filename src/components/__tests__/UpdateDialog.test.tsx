@@ -106,7 +106,7 @@ describe('UpdateDialog', () => {
     await waitFor(() => expect(screen.getByText('网络连接被重置')).toBeTruthy());
     expect(screen.getByRole('button', { name: '浏览器下载' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '选择本地安装包' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /换镜像重试/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /加速重试/ })).toBeTruthy();
   });
 
   it('关掉再打开同一版本不会重复下载', async () => {

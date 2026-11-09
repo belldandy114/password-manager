@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { PasswordEntry, PasswordHistoryItem, CustomField, Attachment } from '../types';
 import { copySensitive } from '../utils/clipboard';
+import { Icons } from './ui';
 
 interface Props {
   form: PasswordEntry;
@@ -138,7 +139,7 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
       <div className="form-group">
         <div className="field-label-row">
           <label>自定义字段</label>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={addField}>+ 添加字段</button>
+          <button type="button" className="entry-mini-btn" onClick={addField}><span className="entry-mini-plus">+</span>添加字段</button>
         </div>
         {fields.length === 0 && <div className="input-hint">可添加“安全问题”“API Key”“二级密码”等任意字段</div>}
         {fields.map(f => (
@@ -151,11 +152,12 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
               type={f.secret ? 'password' : 'text'} value={f.value} placeholder="值"
               onChange={e => updateField(f.id, { value: e.target.value })}
             />
-            <label className="gen-check" title="按密码处理（默认隐藏）">
+            <label className={`gen-check entry-field-secret${f.secret ? ' is-on' : ''}`} title="按密码处理：列表里默认隐藏，需点「显示」才可见">
               <input type="checkbox" checked={!!f.secret} onChange={e => updateField(f.id, { secret: e.target.checked })} />
+              <Icons.lock size={12} />
               保密
             </label>
-            <button type="button" className="btn-icon-danger" onClick={() => removeField(f.id)} title="删除字段">×</button>
+            <button type="button" className="entry-row-del" onClick={() => removeField(f.id)} title="删除字段" aria-label="删除字段">×</button>
           </div>
         ))}
       </div>
@@ -164,18 +166,18 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
       <div className="form-group">
         <div className="field-label-row">
           <label>附件</label>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={pickAttachment}>+ 添加附件</button>
+          <button type="button" className="entry-mini-btn" onClick={pickAttachment}><span className="entry-mini-plus">+</span>添加附件</button>
         </div>
         {attachments.length === 0 && <div className="input-hint">可上传密钥文件、证书等，内容会加密存储在本地（单个 ≤ 20MB）</div>}
         {attachments.map(att => (
           <div key={att.id} className="attachment-row">
             <span className="attachment-name" title={att.name}>{att.name}</span>
             <span className="text-sm text-muted">{(att.size / 1024).toFixed(0)} KB</span>
-            <button type="button" className="btn btn-sm btn-secondary"
+            <button type="button" className="entry-mini-btn"
               onClick={() => window.electronAPI.attachmentOpen({ id: att.id, name: att.name })}>
               打开
             </button>
-            <button type="button" className="btn-icon-danger" onClick={() => removeAttachment(att)} title="删除附件">×</button>
+            <button type="button" className="entry-row-del" onClick={() => removeAttachment(att)} title="删除附件" aria-label="删除附件">×</button>
           </div>
         ))}
       </div>

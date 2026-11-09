@@ -55,7 +55,7 @@ export function UpdateDialog({
   /** 从 update:check 补全的详细信息（启动推送可能只有版本号与链接） */
   const [detail, setDetail] = useState<UpdateInfoLike | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
-  const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1 });
+  const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
   const [error, setError] = useState('');
   const [canMirror, setCanMirror] = useState(false);
   const [viaMirror, setViaMirror] = useState(false);
@@ -84,6 +84,7 @@ export function UpdateDialog({
       total: p.total || 0,
       speed: p.speed || 0,
       threads: p.threads || 1,
+      link: p.link || '',
     }));
     return () => { try { off?.(); } catch { /* 忽略 */ } };
   }, []);
@@ -111,7 +112,7 @@ export function UpdateDialog({
     startedRef.current = false;
     setPhase('idle');
     setError('');
-    setProgress({ received: 0, total: 0, speed: 0, threads: 1 });
+    setProgress({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
     setCountdown(0);
     setAutoInstall(false);
     setFile('');
@@ -130,11 +131,11 @@ export function UpdateDialog({
     setPhase('downloading');
     setError('');
     setVerified(false);
-    setProgress({ received: 0, total: 0, speed: 0, threads: 1 });
+    setProgress({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
     try {
       const res = await window.electronAPI.updateDownload(url, mirror, {
         expectedSha256: shown?.digest || '',
-        threads: false,
+        threads: mirror, // 加速重试 = 直接 6 分片并行
       });
       if (res?.success && res.data) {
         setFile(res.data.file);
@@ -244,7 +245,7 @@ export function UpdateDialog({
     if (phase === 'error') {
       return (
         <button className="btn btn-primary btn-sm" onClick={() => void startDownload(canMirror)}>
-          <Icons.refresh size={13} /> {canMirror ? '换镜像重试' : '重试'}
+          <Icons.refresh size={13} /> {canMirror ? '加速重试' : '重试'}
         </button>
       );
     }
@@ -321,9 +322,12 @@ export function UpdateDialog({
             {progress.total > progress.received && progress.speed > 0 && (
               <span>剩余 {fmtEta((progress.total - progress.received) / progress.speed)}</span>
             )}
+            <span className="dl-meta-dim" title="走代理还是直连由系统代理设置决定；直连很慢时检查 VPN 分流规则是否放行 github.com 与 *.githubusercontent.com">
+              {progress.link ? (progress.link === '直连' ? '直连 · 检查 VPN 分流' : progress.link) : '链路检测中…'}
+            </span>
             {phase === 'downloading' && progress.speed > 0 && progress.speed < 150 * 1024 && !viaMirror && (
-              <button className="btn btn-sm btn-ghost" onClick={() => void startDownload(true)}>
-                太慢？换镜像
+              <button className="btn btn-sm btn-ghost" onClick={() => void startDownload(true)} title="改用 6 分片并行下载">
+                太慢？多线程加速
               </button>
             )}
           </div>
@@ -334,7 +338,7 @@ export function UpdateDialog({
         <div className="update-dlg-done">
           <Icons.check size={13} />
           已下载 {file.split('\\').pop()}
-          {viaMirror ? '（来自加速镜像）' : ''}
+          {viaMirror ? '（多线程加速）' : ''}
           {verified ? ' · SHA-256 已校验' : ''}
         </div>
       )}

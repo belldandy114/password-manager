@@ -251,7 +251,7 @@ vault 从 `{ entries, tags }` 扩展为：
   新增字段要同时补别名，否则导出→导入会丢值。
 - **更新链路**：`update:check` 读 GitHub Releases 比对版本 → 启动时静默检查推 `update:available`
   → 顶部横幅 + `UpdateDialog` 弹窗（展示更新说明、自动下载、倒计时自动安装）。
-  点「去更新」**不再跳设置页**；设置页里的旧版内联更新 UI 保留为高级入口（多线程/镜像）。
+  点「去更新」**不再跳设置页**；设置页里的旧版内联更新 UI 保留为高级入口（多线程开关 + 链路诊断）。
   `update:available` 推送必须带 `notes/downloadUrl/assetName/digest`，否则弹窗要先补一次 `update:check`。
 - 更新弹窗的回归：`scripts/shot-update-dialog.js` 用 `PM_UPDATE_API` 指向桩服务冒充 Releases，
   `PM_UPDATE_NO_INSTALL=1` 让安装只走流程不真拉安装程序（否则截图跑一半应用就退出了）。
@@ -340,6 +340,12 @@ vault 从 `{ entries, tags }` 扩展为：
 | 按钮 | `.btn-primary/.btn-secondary` | 9px 圆角，主按钮渐变+内阴影 |
 | 表单 | 全局 input/textarea/select | 34px 高、9px 圆角、focus 3px 光环 |
 
+- **新增网址弹窗的小按钮统一走 `.entry-mini-btn` 系列**（`global.css` 尾部）：
+  `+ 添加字段 / + 添加附件 / 打开 / 生成 / 查看 / 回滚 / 复制验证码` 用同一套 accent 淡底 + 7px 圆角；
+  `保密` 是 `.gen-check.entry-field-secret`（带 `Icons.lock`，选中加 `.is-on` 高亮），
+  行内删除是 `.entry-row-del`（带边框方块、hover 变红）。别再退回灰色胶囊 `.gen-check` 或裸 `×` 文本按钮。
+  视觉回归：`node scripts/shot-entry-buttons.js [dark|light]`。
+
 - 「网址管理」页也接入了这套骨架（`PasswordManagerPage` 用 `Page/PageHead/tabs` + `.pm-shell/.pm-main`），
   这样左侧栏与工作台页面观感统一；改动该页时注意 `.pm-main > .content-area` 是它自己的滚动容器。
 - 禅道统计卡用 `repeat(auto-fit, minmax(92px, 1fr))`，保证「全部 + 5 状态 + 4 严重度」10 张卡一行放得下。
@@ -389,13 +395,24 @@ gh release create v1.2.6 "release/PasswordManager-Setup-1.2.6.exe" \
 验证脚本：`node scripts/ui-bug-image-test.js`（断言 steps 里有 `[图N]`、images 长度、`naturalWidth > 0`）。
 实测 Bug #14171：2 张图均取回（1920×953），dataURL 约 210KB / 50KB。
 
-### ⚠️ 应用内下载必须用 Electron `net`，不要用 Node `fetch`
+### ⚠️ 应用内更新（检查 + 下载）都必须用 Electron `net`，不要用 Node `fetch`
 
-Node 的 `fetch`（undici）**不读系统代理**，公司网络一拦，`update:download` 只会抛一句 `fetch failed`（信息量为零）。
-改用 `net.request({ url, redirect: 'follow' })`（Chromium 网络栈）：跟随系统代理，能拿到 `HTTP 404` 这类真实原因。
-实测本机直连 GitHub Release 附件：**9.2 秒 / 96 MB**，与附件字节数完全一致。
+Node 的 `fetch`（undici）**不读系统代理**：公司/家里只配了系统代理时 `api.github.com` 直接连不上，
+表现为「检查更新」转圈 10 秒；下载更是只会抛一句 `fetch failed`（信息量为零）。
+现在 `fetchLatestRelease()` 与 `netDownload*` 都走 `net.request`（Chromium 网络栈）：跟随系统代理，
+能拿到 `HTTP 404` 这类真实原因。实测本机直连 GitHub Release 附件 502 / 0 B/s，
+走 `127.0.0.1:7890` 代理 1.6~2.9 MB/s；本地 `http://127.0.0.1` 桩服务 `resolveProxy` 返回 `DIRECT`，回归脚本不受影响。
 
-- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`，dialog 选 exe，<10MB 拒绝）→ `加速镜像重试`（`ghfast.top` / `gh-proxy.com`，**必须用户手动点**，默认不代下 exe）。
+- **公共免费镜像已废弃**：`ghfast.top` 走代理连不上、`gh-proxy.com` 只有 1.6 KB/s（直连 50~173 KB/s），
+  点「换镜像」只会更慢。1.21.4 起 `UPDATE_MIRRORS` 移除，改为可选自定义源
+  （`settings.updateMirrorUrl` / `PM_UPDATE_MIRROR` 环境变量），没配就只走 GitHub。
+- **慢速自动切并行**：单连接连续 6 秒 <150 KB/s 且开头 <4MB、或 60 秒没收到一个字节，
+  `netDownload` 抛 `code=SLOW`，`update:download` 自动改 6 分片并行重下，不用等用户点按钮。
+  用户点「加速重试」/ 设置页勾多线程则是直接并行。
+- **链路诊断**：`session.defaultSession.resolveProxy(url)` 的结果经 `proxyLabel()` 变成
+  「经代理 x.x.x.x」/「直连」推给 `update:progress`，弹窗显示「直连 · 检查 VPN 分流」。
+  家里慢多半就是规则没放行 `github.com` / `*.githubusercontent.com`（302 到 `release-assets.githubusercontent.com`）。
+- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`）→ `加速重试`（多线程并行）。
 - 安装**不要默认 `/S` 静默**：静默装的是默认目录，用户装到 `E:/password-manager` 会变成两份。
   默认走安装向导（`spawn(file, [])` + `app.quit()`）；静默才传 `['/S', '/D=<当前 exe 目录>']`。
 
@@ -702,9 +719,9 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 | 落盘位置 | `app.getPath('userData')/update/`，**不要再写 `%TEMP%`** |
 | 文件名 | 用 GitHub 资产名（`assetFileName()`），不要带时间戳/随机串 |
 | 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；分片放 `update/parts-<ts>/chunk-N.bin`，下完即删 |
-| 默认策略 | **单连接顺序下载**（像普通下载器）。多线程必须是用户显式勾选，UI 上写明「部分杀软会误报」 |
+| 默认策略 | **单连接顺序下载**（像普通下载器）；慢启动自动切 6 分片，用户点「加速重试」/ 勾多线程则直接并行（分片可能被杀软误报，UI 上要写明） |
 | 完整性 | 下载后算 SHA-256，与 Release asset 的 `digest` 比对，**不一致就删文件并拒绝安装**；返回 `verified` 给 UI 显示「已校验」 |
-| 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速镜像 + 一句杀软排查建议 |
+| 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速重试 + 当前链路（代理 or 直连）+ 一句杀软排查建议 |
 
 **验证方式**（`R9_ONLY=update node scripts/ui-round9-test.js`，用本地 Range 服务造假安装包）：
 

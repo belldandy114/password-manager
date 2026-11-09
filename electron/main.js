@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1140,19 +1140,63 @@ function readAttachment(id, password) {
 // IPC Handlers
 // ----------------------------------------------------------------
 // 启动时的更新检查必须在模块作用域：whenReady 里的定时器访问不到 setupIpcHandlers 内部的函数。
+/**
+ * 用 Chromium 网络栈取 JSON。⚠️ 不能用 Node 的 fetch(undici)：它不读 Windows 系统代理，
+ * 家里/公司只配了系统代理（或规则分流）时 api.github.com 会直接连不上，表现为
+ * 「检查更新」转圈 10 秒。net.request 走 Chromium，跟随系统代理设置。
+ */
+function netFetchJson(url, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const fin = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn(arg);
+    };
+    let request;
+    try { request = net.request({ url, redirect: 'follow' }); }
+    catch (e) { reject(e); return; }
+    timer = setTimeout(() => {
+      try { request.abort(); } catch { /* 忽略 */ }
+      fin(reject, new Error('请求超时'));
+    }, timeoutMs);
+    request.setHeader('User-Agent', 'password-manager-app');
+    request.setHeader('Accept', 'application/vnd.github+json');
+    request.on('response', (response) => {
+      if (response.statusCode >= 400) {
+        try { response.resume(); } catch { /* 忽略 */ }
+        fin(reject, new Error(`HTTP ${response.statusCode}`));
+        return;
+      }
+      let body = '';
+      response.on('data', (c) => { body += c.toString(); });
+      response.on('end', () => {
+        try { fin(resolve, JSON.parse(body)); }
+        catch { fin(reject, new Error('更新信息解析失败')); }
+      });
+      response.on('error', (e) => fin(reject, e));
+    });
+    request.on('error', (e) => fin(reject, e));
+    request.end();
+  });
+}
+
+/** 把 resolveProxy 的结果说成人话，给更新弹窗显示「当前走没走代理」 */
+function proxyLabel(p) {
+  const s = String(p || '').trim();
+  if (!s || /^DIRECT/i.test(s)) return '直连';
+  const m = s.match(/^(PROXY|SOCKS5?|HTTPS)\s+([^\s;]+)/i);
+  return m ? `经代理 ${m[2]}` : s;
+}
+
 async function fetchLatestRelease() {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
   try {
     // PM_UPDATE_API 仅供本地回归脚本指向桩服务（视觉验证更新弹窗用），正常启动不会设置
     const apiUrl = process.env.PM_UPDATE_API
       || 'https://api.github.com/repos/belldandy114/password-manager/releases/latest';
-    const res = await fetch(apiUrl, {
-      headers: { 'User-Agent': 'password-manager-app', Accept: 'application/vnd.github+json' },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
+    const json = await netFetchJson(apiUrl, 10000);
     const latest = String(json.tag_name || '').replace(/^v/, '');
     const asset = Array.isArray(json.assets) ? json.assets.find(a => /\.exe$/i.test(a.name || '')) : null;
     return {
@@ -1164,8 +1208,9 @@ async function fetchLatestRelease() {
       digest: asset?.digest || '',
       notes: (json.body || '').slice(0, 2000),
     };
-  } finally {
-    clearTimeout(timer);
+  } catch (e) {
+    // 保留 AbortError 的语义，update:check 会把它显示成「请求超时」
+    throw e;
   }
 }
 
@@ -2036,19 +2081,60 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
 
   /** 拉取最新 Release 元数据（update:check 与启动时自动检查共用） */
 
-  // ---- 应用内更新：下载安装包并重启安装 ----
-  /** GitHub 大文件走 CDN（objects.githubusercontent.com），不少公司网络会直接重置连接 */
-  const UPDATE_MIRRORS = ['https://ghfast.top/', 'https://gh-proxy.com/'];
+  /** 应用内更新：下载安装包并重启安装 ---- */
+  /**
+   * ⚠️ 不再内置 ghfast.top / gh-proxy.com 这类公共免费代理：2026-11 实测
+   * ghfast.top 走代理直接连不上、gh-proxy.com 只有 1.6 KB/s，直连也只有 50~173 KB/s，
+   * 点「换镜像」只会更慢。改成「可选的自定义源」：用户/IT 可以在设置里填自己的
+   * 国内直链前缀（updateMirrorUrl），或用 PM_UPDATE_MIRROR 环境变量指定；没配就只走 GitHub。
+   */
+  function updateMirrorBase() {
+    try {
+      const fromEnv = String(process.env.PM_UPDATE_MIRROR || '').trim();
+      const s = loadSettings() || {};
+      return (fromEnv || String(s.updateMirrorUrl || '').trim()).replace(/\/+$/, '');
+    } catch { return ''; }
+  }
 
   /**
    * 用 Chromium 网络栈下载（Electron net）：
    * Node 的 fetch(undici) 不读系统代理，遇到代理/证书拦截就只报一句 "fetch failed"；
    * net 走 Chromium，能跟随系统代理设置，也能拿到更具体的错误。
    */
-  function netDownload(url, file, onProgress) {
+  /**
+   * 单连接下载。opts.slowSwitchAfterMs > 0 时启用「慢启动自动切并行」：
+   * 连续一段时间速度低于阈值且刚开头下了没多少，就中止并抛 code=SLOW，
+   * 由 update:download 换成 6 分片并行重下，而不是让用户干等 30 分钟。
+   * 另外 stallMs 内一个字节都没收到也算 SLOW（家里直连不上时 1 分钟就能给出反馈）。
+   */
+  function netDownload(url, file, onProgress, opts = {}) {
+    const slowMs = Number(opts.slowSwitchAfterMs) || 0;
+    const slowBelow = Number(opts.slowBelow) || 150 * 1024;
+    const slowMaxBytes = Number(opts.slowMaxBytes) || 4 * 1024 * 1024;
+    const stallMs = Number(opts.stallMs) || 60 * 1000;
     return new Promise((resolve, reject) => {
       let settled = false;
-      const fin = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+      let timer = null;
+      let stallTimer = null;
+      let responseRef = null;
+      let outRef = null;
+      let lastByteAt = Date.now();
+      let slowSince = 0;
+      const fin = (fn, arg) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (stallTimer) clearInterval(stallTimer);
+        fn(arg);
+      };
+      const failSlow = (why) => {
+        try { responseRef?.pause?.(); } catch { /* 忽略 */ }
+        try { request.abort(); } catch { /* 忽略 */ }
+        try { outRef?.destroy?.(); } catch { /* 忽略 */ }
+        const e = new Error(why);
+        e.code = 'SLOW';
+        fin(reject, e);
+      };
       let request;
       try {
         request = net.request({ url, redirect: 'follow' });
@@ -2056,22 +2142,26 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         reject(e);
         return;
       }
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         try { request.abort(); } catch { /* 忽略 */ }
         fin(reject, new Error('下载超时（30 分钟无响应）'));
       }, 30 * 60 * 1000);
+      stallTimer = setInterval(() => {
+        if (!settled && Date.now() - lastByteAt > stallMs) failSlow('长时间没有收到数据');
+      }, 5000);
 
       request.setHeader('User-Agent', 'password-manager-app');
       request.on('response', (response) => {
+        responseRef = response;
         const status = response.statusCode;
         if (status >= 400) {
-          clearTimeout(timer);
           try { response.resume(); } catch { /* 忽略 */ }
           fin(reject, new Error(`HTTP ${status}`));
           return;
         }
         const total = Number(response.headers['content-length'] || 0);
         const out = fs.createWriteStream(file);
+        outRef = out;
         let received = 0;
         let lastEmit = 0;
         let windowBytes = 0;
@@ -2080,6 +2170,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
         response.on('data', (chunk) => {
           received += chunk.length;
           windowBytes += chunk.length;
+          lastByteAt = Date.now();
           if (!out.write(chunk)) {
             try {
               response.pause();
@@ -2091,23 +2182,24 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
             const dt = (now - windowAt) / 1000;
             if (dt >= 0.5) { speed = windowBytes / dt; windowBytes = 0; windowAt = now; }
             lastEmit = now;
+            if (slowMs && speed > 0 && speed < slowBelow && received < slowMaxBytes) {
+              if (!slowSince) slowSince = now;
+              else if (now - slowSince >= slowMs) { failSlow('单连接过慢'); return; }
+            } else {
+              slowSince = 0;
+            }
             onProgress(received, total, speed);
           }
         });
         response.on('end', () => {
-          clearTimeout(timer);
           out.end(() => fin(resolve, { size: received, total, speed, threads: 1 }));
         });
         response.on('error', (e) => {
-          clearTimeout(timer);
           out.destroy();
           fin(reject, e);
         });
       });
-      request.on('error', (e) => {
-        clearTimeout(timer);
-        fin(reject, e);
-      });
+      request.on('error', (e) => fin(reject, e));
       request.end();
     });
   }
@@ -2346,29 +2438,56 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       try { fs.rmSync(partsDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
     };
 
-    // 直连优先；只有用户主动点「用加速镜像」才走第三方代理（安装包是 exe，默认不代下载）
-    const targets = useMirror
-      ? UPDATE_MIRRORS.map(m => ({ label: m.replace(/^https?:\/\//, '').replace(/\/+$/, ''), url: `${m.replace(/\/+$/, '')}/${url}` }))
+    // 先诊断链路：这个下载地址在 Chromium 里到底是走代理还是直连。
+    // 家里「开了 VPN 还是很慢」多半就是这里显示「直连」——分流规则没命中 githubusercontent。
+    let proxy = '';
+    try { proxy = String(await session.defaultSession.resolveProxy(url) || '').trim(); } catch { /* 忽略 */ }
+    const link = proxyLabel(proxy);
+    const sendProgress = (received, total, speed, th) => {
+      try { event.sender.send('update:progress', { received, total, speed, threads: th, proxy, link }); }
+      catch { /* 窗口已关 */ }
+    };
+    sendProgress(0, 0, 0, 0);
+
+    // 默认只走 GitHub；只有配置了自定义国内源（设置 updateMirrorUrl / PM_UPDATE_MIRROR）才多一个候选。
+    // ghfast.top / gh-proxy.com 已移除：实测 0 B/s 与 1.6 KB/s，点了只会更慢。
+    const mirror = updateMirrorBase();
+    const targets = mirror
+      ? [{ label: '自定义源', url: `${mirror}/${url}` }, { label: 'GitHub', url }]
       : [{ label: 'GitHub', url }];
 
     const errors = [];
-    // 多线程默认关闭：分段下载会把「可执行文件的内容」写进一堆分片文件，正是杀软最敏感的模式
-    const wantParallel = threads === true;
+    // useMirror 现在表示「加速重试」；threads 是设置页里的多线程开关。两者都直接启用 6 分片并行。
+    const accelerate = useMirror === true || threads === true;
 
     for (const t of targets) {
       try {
-        const onProgress = (received, total, speed, th) => {
-          try { event.sender.send('update:progress', { received, total, speed, threads: th }); } catch { /* 窗口已关 */ }
-        };
-
         let r = null;
-        if (wantParallel) {
-          const p = await netDownloadParallel(t.url, partial, (received, total, speed) => onProgress(received, total, speed, 6), 6, partsDir);
+        let triedParallel = false;
+        if (accelerate) {
+          triedParallel = true;
+          const p = await netDownloadParallel(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 6), 6, partsDir);
           if (!p.fallback) r = { size: p.total, threads: p.threads };
         }
         if (!r) {
           try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
-          r = await netDownload(t.url, partial, (received, total, speed) => onProgress(received, total, speed, 1));
+          try {
+            r = await netDownload(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 1), {
+              // 连续 6 秒低于 150 KB/s 且刚开头下了不到 4MB → 自动切 6 分片重下，不用等用户点按钮
+              slowSwitchAfterMs: triedParallel ? 0 : 6000,
+              slowBelow: 150 * 1024,
+              slowMaxBytes: 4 * 1024 * 1024,
+              stallMs: 60 * 1000, // 60 秒一个字节都没收到也按「慢」处理，避免干等 30 分钟
+            });
+          } catch (e) {
+            if (e && e.code === 'SLOW' && !triedParallel) {
+              errors.push(`${t.label}：单连接过慢（${e.message}），已自动切多线程`);
+              try { if (fs.existsSync(partial)) fs.unlinkSync(partial); } catch { /* 忽略 */ }
+              const p = await netDownloadParallel(t.url, partial, (received, total, speed) => sendProgress(received, total, speed, 6), 6, partsDir);
+              if (!p.fallback) r = { size: p.total, threads: p.threads };
+            }
+            if (!r) throw e;
+          }
         }
 
         if (!r || r.size < 1024 * 1024) {
@@ -2410,11 +2529,12 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       success: false,
       error: [
         '下载失败。',
-        '可以：①点「浏览器下载」到发布页手动下；②已经下好了就点「选择安装包」；' + (useMirror ? '③换个网络再试。' : '③点「加速镜像重试」。'),
+        '可以：①点「浏览器下载」到发布页手动下；②已经下好了就点「选择安装包」；' + (accelerate ? '③换个网络再试。' : '③点「加速重试」（多线程并行）。'),
+        `当前链路：${link}。若显示「直连」，请检查 VPN 分流规则是否放行 github.com 与 *.githubusercontent.com。`,
         '如果杀软弹了拦截（Trojan/Injector 之类），那是把「下载安装包」误判成释放器：添加信任或手动下载即可。',
         `（${errors.join('；')}）`,
       ].join(' '),
-      canMirror: !useMirror,
+      canMirror: !accelerate,
       detail: errors.join('；'),
     };
   });

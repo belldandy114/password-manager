@@ -109,7 +109,7 @@ export function Settings() {
   const [downloading, setDownloading] = useState(false);
   // 多线程分段下载：更快，但会把 exe 拆成多个分片，部分杀软会误判（默认关闭）
   const [multiThread, setMultiThread] = useState(false);
-  const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1 });
+  const [progress, setProgress] = useState({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
   const [downloadedFile, setDownloadedFile] = useState('');
   // 下载失败时的提示与兜底（网络访问不了 GitHub CDN 时用）
   const [dlError, setDlError] = useState('');
@@ -122,6 +122,7 @@ export function Settings() {
       total: p.total || 0,
       speed: p.speed || 0,
       threads: p.threads || 1,
+      link: p.link || '',
     }));
     return off;
   }, []);
@@ -171,10 +172,10 @@ export function Settings() {
     if (!url) { addToast('这个版本没有可用的安装包，请到发布页手动下载', 'error'); return; }
     setDownloading(true);
     setDlError('');
-    setProgress({ received: 0, total: 0, speed: 0, threads: 1 });
+    setProgress({ received: 0, total: 0, speed: 0, threads: 1, link: '' });
     const res = await window.electronAPI.updateDownload(url, mirror, {
       expectedSha256: updateInfo?.digest || '',
-      threads: multiThread,
+      threads: mirror || multiThread,
     });
     setDownloading(false);
     if (res.success && res.data) {
@@ -1059,10 +1060,13 @@ export function Settings() {
                     {progress.total > progress.received && progress.speed > 0 && (
                       <span>剩余 {fmtEta((progress.total - progress.received) / progress.speed)}</span>
                     )}
+                    <span className="dl-meta-dim" title="走代理还是直连由系统代理设置决定；直连很慢时检查 VPN 分流规则是否放行 github.com 与 *.githubusercontent.com">
+                      {progress.link ? (progress.link === '直连' ? '直连 · 检查 VPN 分流' : progress.link) : '链路检测中…'}
+                    </span>
                     <span className="dl-meta-dim">{progress.threads > 1 ? `${progress.threads} 线程` : '单连接'}</span>
                     {progress.speed > 0 && progress.speed < 150 * 1024 && !viaMirror && (
-                      <button className="btn btn-sm btn-ghost" onClick={() => downloadUpdate(true)} title="当前速度偏慢，换第三方加速节点重下">
-                        太慢？换镜像
+                      <button className="btn btn-sm btn-ghost" onClick={() => downloadUpdate(true)} title="改用 6 分片并行下载">
+                        太慢？多线程加速
                       </button>
                     )}
                   </div>
@@ -1085,7 +1089,7 @@ export function Settings() {
                 )}
                 {downloadedFile && (
                   <div className="setting-desc">
-                    已下载：{downloadedFile.split('\\').pop()}{viaMirror ? '（来自加速镜像）' : ''}
+                    已下载：{downloadedFile.split('\\').pop()}{viaMirror ? '（多线程加速）' : ''}
                   </div>
                 )}
                 {!downloadedFile && updateInfo?.hasUpdate && (
@@ -1111,8 +1115,8 @@ export function Settings() {
                   </button>
                 )}
                 {canMirror && !downloadedFile && (
-                  <button className="btn btn-sm btn-secondary" onClick={() => downloadUpdate(true)} disabled={downloading} title="走第三方 GitHub 加速节点下载安装包">
-                    加速镜像重试
+                  <button className="btn btn-sm btn-secondary" onClick={() => downloadUpdate(true)} disabled={downloading} title="改用 6 分片并行下载，速度通常有明显提升">
+                    加速重试
                   </button>
                 )}
                 {!downloadedFile && (

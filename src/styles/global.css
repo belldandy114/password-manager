@@ -3435,6 +3435,105 @@ mark {
 
 .btn-icon-danger:hover { color: var(--danger); }
 
+/* ---- 新增网址弹窗里的附加控件：统一成清晰可点的小按钮 ---- */
+/* 选择器把弹窗里所有同类小按钮拉到一套视觉：添加/查看/生成/回滚/复制/保密/删除 */
+.entry-mini-btn,
+.field-label-row .btn-secondary,
+.history-row .btn-secondary,
+.totp-preview .btn-secondary,
+.pw-gen-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-1, .15s), border-color var(--dur-1, .15s), transform .1s;
+}
+
+.entry-mini-btn:hover,
+.field-label-row .btn-secondary:hover,
+.history-row .btn-secondary:hover,
+.totp-preview .btn-secondary:hover,
+.pw-gen-trigger:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.entry-mini-btn:active,
+.field-label-row .btn-secondary:active,
+.history-row .btn-secondary:active,
+.totp-preview .btn-secondary:active,
+.pw-gen-trigger:active { transform: scale(.97); }
+.entry-mini-plus { font-size: 14px; font-weight: 500; line-height: 1; }
+
+/* 「保密」开关：原来是灰色胶囊，和旁边按钮不像一组；改成同款方块，选中态高亮 */
+.entry-field-secret {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 7px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border-color: var(--border-light);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.entry-field-secret:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.entry-field-secret.is-on,
+.entry-field-secret:has(input:checked) {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.entry-field-secret svg { flex-shrink: 0; opacity: .8; }
+
+.entry-field-secret input[type="checkbox"] {
+  margin: 0;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+}
+
+/* 行内删除：原来是个几乎看不见的 ×，给明确的按钮框与危险态 */
+.entry-row-del {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.entry-row-del:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
 /* ================================================================
    新增模块通用样式（1.2.0）
    ================================================================ */

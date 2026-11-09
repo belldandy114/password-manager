@@ -28,7 +28,7 @@ describe('guessUrlFromInput', () => {
   });
 
   it('接受带端口和路径的写法', () => {
-    expect(guessUrlFromInput('http://10.0.0.8:8080/admin')?.url).toBe('http://10.0.0.8:8080/admin');
+    expect(guessUrlFromInput('http://192.0.2.10:8080/admin')?.url).toBe('http://192.0.2.10:8080/admin');
   });
 
   it('纯中文搜索词不当网址', () => {

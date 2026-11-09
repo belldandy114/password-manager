@@ -65,6 +65,8 @@ export interface AppSettings {
   hotkeySearch?: string;
   /** 显示/隐藏窗口的全局快捷键；空 = 用默认 */
   hotkeyToggle?: string;
+  /** 可选的更新下载源前缀（国内直链）；留空则只走 GitHub */
+  updateMirrorUrl?: string;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
   defaultViewMode: 'card' | 'list';
@@ -767,8 +769,8 @@ export interface ElectronAPI {
     data?: { current: string; latest: string; hasUpdate: boolean; url: string; notes: string; downloadUrl?: string; assetName?: string; digest?: string };
     error?: string;
   }>;
-  /** 下载新版本安装包（进度通过 onUpdateProgress 推送）；useMirror=true 时走第三方加速 */
-  updateDownload: (url: string, useMirror?: boolean, opts?: { expectedSha256?: string; threads?: boolean }) => Promise<{
+  /** 下载新版本安装包（进度通过 onUpdateProgress 推送）；第 2 个参数 true = 多线程加速重试 */
+  updateDownload: (url: string, accelerate?: boolean, opts?: { expectedSha256?: string; threads?: boolean }) => Promise<{
     success: boolean;
     data?: { file: string; name?: string; size: number; via?: string; threads?: number; sha256?: string; verified?: boolean };
     error?: string;
@@ -821,7 +823,7 @@ export interface ElectronAPI {
   updatePickFile: () => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string; canceled?: boolean }>;
   /** 启动静默安装并退出应用 */
   updateInstall: (file: string) => Promise<{ success: boolean; error?: string }>;
-  onUpdateProgress: (cb: (p: { received: number; total: number; speed?: number; threads?: number }) => void) => () => void;
+  onUpdateProgress: (cb: (p: { received: number; total: number; speed?: number; threads?: number; proxy?: string; link?: string }) => void) => () => void;
 
   // Import
   importCsvJson: (data: { filePath: string }) => Promise<{ success: boolean; data?: any[]; error?: string; raw?: boolean }>;
