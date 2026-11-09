@@ -24,6 +24,7 @@
     "release": "node scripts/release.js",
     "regress": "node scripts/regress-all.js",
     "test:palette-cache": "node scripts/ui-palette-cache-test.js",
+    "test:digest": "node scripts/ui-digest-test.js",
     "clean:release": "node scripts/clean-release.js",
     "dist": "node scripts/build-installer.js",
     "try": "node scripts/try.js",

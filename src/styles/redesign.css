@@ -1590,3 +1590,317 @@ button { font-family: inherit; }
 .gen-check.entry-field-secret svg { flex: none; }
 .entry-row-del { width: 34px; padding: 0; }
 .perf-mode-item { min-height: 34px; box-sizing: border-box; }
+
+/* ---------------- 周报「从禅道生成」弹窗（2026-11-09） ----------------
+   新组件的样式一律写在这里，不往前面的文件里塞 —— 加载顺序是
+   tokens → global → pages → redesign，只有这一段能稳定盖住前面的规则。 */
+.digest-modal { width: min(760px, 94vw); }
+
+.digest-body { display: flex; flex-direction: column; gap: 18px; }
+
+.digest-section { display: flex; flex-direction: column; gap: 10px; }
+
+.digest-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.digest-date {
+  width: 148px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm, 6px);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.digest-instances { display: flex; flex-direction: column; gap: 8px; }
+
+.digest-inst {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 8px);
+  padding: 10px 12px;
+  background: var(--surface-1, transparent);
+}
+.digest-inst.is-on {
+  border-color: var(--accent-line);
+  /* 选中态只做很淡的一层底色：整块 accent-soft 会让两个区块都像高亮按钮 */
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* 公司行整行可点：点一下 = 勾上这家公司并把它下面所有项目一起选中 */
+.digest-inst-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+.digest-inst-head:hover .digest-inst-name { color: var(--accent); }
+
+/* 勾选框必须显式定尺寸：密度规则里的 min-height 会把它拉成竖条 */
+.digest-inst-head input[type="checkbox"],
+.digest-prod input[type="checkbox"],
+.digest-opt-check input[type="checkbox"],
+.digest-write input[type="radio"] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* 写入方式：两个单选项并排 */
+.digest-write {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+
+/* 公司 / 项目名都可以换行：全称经常比一行长，宁可两行也不打省略号 */
+.digest-inst-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.digest-inst-meta { margin-left: auto; font-size: var(--fs-xs); font-weight: 400; flex: none; }
+
+/* 展开 / 收起指示（点公司行只是折叠，不动勾选） */
+.digest-fold {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-muted, var(--text));
+  opacity: 0.7;
+}
+
+/* 「全选/全不选」做成链接式小字，不再占一整行 */
+.digest-all {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 10px;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  cursor: pointer;
+  min-height: 0;
+  height: auto;
+  line-height: 1;
+  flex: none;
+}
+.digest-all:hover { text-decoration: underline; }
+
+/* 项目搜索行（项目多于 6 个时才出现） */
+.digest-inst-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.digest-search {
+  /* 不撑满整行：7 个项目时一条通栏输入框太抢眼，限个宽度更接近「筛选框」的样子 */
+  flex: 0 1 260px;
+  min-width: 0;
+  min-height: 28px;
+  height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm, 6px);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+.digest-search-hint { font-size: var(--fs-xs); white-space: nowrap; flex: none; }
+.digest-people-input { flex: 1 1 320px; min-height: 30px; height: 30px; font-size: var(--fs-sm); }
+
+/* 项目列表：多列网格 + 限高滚动；行距放宽，避免勾选框贴在一起 */
+.digest-products {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 4px 18px;
+  margin-top: 8px;
+  padding-top: 10px;
+  padding-right: 4px;
+  border-top: 1px dashed var(--line-subtle);
+  max-height: 208px;
+  overflow-y: auto;
+}
+
+.digest-prod {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+}
+/* 折成两行时勾选框跟第一行文字对齐，不垂直居中 */
+.digest-prod input[type="checkbox"] { margin-top: 1px; }
+.digest-prod span {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.digest-empty { grid-column: 1 / -1; padding: 6px 0; }
+
+/* 创建人 chip：点一下加入 / 再点取消 */
+.digest-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 按公司分组：左边公司名，右边 chips，公司之间留一点间隙 */
+.digest-people-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 2px 0;
+}
+.digest-people-group + .digest-people-group { margin-top: 2px; }
+.digest-people-corp {
+  flex: none;
+  min-width: 72px;
+  max-width: 140px;
+  padding-top: 5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-muted, var(--text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.digest-people-group .digest-chips { flex: 1; min-width: 0; }
+.digest-chip {
+  height: 24px;
+  min-height: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, var(--text));
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+.digest-chip:hover { border-color: var(--accent-line); }
+.digest-chip.is-on {
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 无边框小链接（清空选择 / 清除搜索） */
+.digest-link {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 8px;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  min-height: 0;
+  height: auto;
+  line-height: 1;
+  cursor: pointer;
+}
+.digest-link:hover { text-decoration: underline; }
+
+.digest-label-note { margin-left: 8px; font-size: var(--fs-xs); font-weight: 400; }
+
+/* 两列排版：选项一行放得下，弹窗不至于撑出滚动条 */
+.digest-opts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  align-items: center;
+}
+
+.digest-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+.digest-opt select {
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm, 6px);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.digest-opt input[type="number"] {
+  width: 64px;
+  min-height: 30px;
+  padding: 3px 6px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm, 6px);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.digest-opt-check { cursor: pointer; }
+
+/* ---------------- 周报编辑器：固定高度 + 框内滚动（2026-11-09） ----------------
+   原来 textarea 只有 min-height，内容长了就一路往下长、整页跟着滚，
+   右边的高度和左边固定高度的目录列表对不上。现在给编辑器一个与目录相近的
+   固定高度，超出部分在框内滚动（滚动条也只出现在框里）。
+   高度口径沿用左栏 `.wk-list` 的 `calc(100vh - 320px)`，这里补上文件名输入框
+   与底部提示条占掉的那部分。 */
+.wk-editor {
+  height: calc(100vh - 300px);
+  min-height: 360px;
+}
+
+.wk-md-input {
+  flex: 1 1 auto;
+  /* flex 子项必须能收缩，否则 overflow-y 不会生效、框还是会撑长 */
+  min-height: 0;
+  height: auto;
+  resize: none;
+  overflow-y: auto;
+  /* 用输入框的线色，`--border`（= --line）在深色主题下几乎看不见边框 */
+  border: 1px solid var(--input-line);
+  border-radius: 9px;
+  background: var(--bg-input);
+  padding: 12px 14px;
+}
+
+/* 聚焦时把边框换成强调色，明确「正在这框里打字」 */
+.wk-md-input:focus {
+  border-color: var(--accent-line);
+  outline: none;
+}
+
+/* 预览态同样要能收住，不然切到预览又变回「整页滚」 */
+.wk-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-color: var(--input-line);
+}
+
+/* 阅读态（查看已保存的周报）跟编辑态用同一套框：固定高度、内部滚动。
+   之前只有正文没有边界，长周报（三十多个模块那个）会把整页撑开，
+   左侧目录跟着滑出视口，看着就像「目录和正文连成一长条」。 */
+.wk-read {
+  height: calc(100vh - 300px);
+  min-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--input-line);
+  border-radius: 9px;
+  background: var(--bg-input);
+  padding: 14px 16px;
+}

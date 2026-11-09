@@ -140,6 +140,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zentaoAllBugs: (cfg, force) => ipcRenderer.invoke('zentao:all-bugs', cfg, { force: !!force }),
   zentaoSummary: (cfg, productIds, force) =>
     ipcRenderer.invoke('zentao:summary', cfg, productIds, { force: !!force }),
+  /** 跨实例汇总：一次拉多家公司，返回带 instanceId/instanceName 的合并结果 */
+  zentaoSummaryMulti: (targets, force) =>
+    ipcRenderer.invoke('zentao:summary-multi', targets, { force: !!force }),
+  onZentaoDigestProgress: (cb) => {
+    const h = (_e, p) => cb(p);
+    ipcRenderer.on('zentao:digest-progress', h);
+    return () => ipcRenderer.removeListener('zentao:digest-progress', h);
+  },
   zentaoBugDetail: (cfg, bugId) => ipcRenderer.invoke('zentao:bug-detail', { cfg, bugId }),
   zentaoAttachment: (cfg, url, name, mode) => ipcRenderer.invoke('zentao:attachment', { cfg, url, name, mode }),
   zentaoNotifyNow: () => ipcRenderer.invoke('zentao:notify-now'),

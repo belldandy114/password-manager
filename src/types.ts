@@ -183,6 +183,44 @@ export interface ZentaoBug {
   module?: string;
   /** 模块路径（由 tree-ajaxGetOptionMenu 解析，汇总统计用） */
   moduleName?: string;
+  /* ---- 以下三个字段只在「跨实例汇总」时由主进程补上 ---- */
+  /** 来源禅道配置 id（vault.integrations[].id） */
+  instanceId?: string;
+  /** 来源禅道显示名（公司/环境） */
+  instanceName?: string;
+  /** `实例id::产品id`：不同禅道的产品 id 会重名，跨实例必须用它区分 */
+  key?: string;
+}
+
+/** 跨实例汇总的一个目标（一套禅道配置 + 要拉的项目） */
+export interface ZentaoDigestTarget {
+  id: string;
+  name: string;
+  cfg: ZentaoConfig;
+  /** 空数组 = 该实例下的全部项目 */
+  productIds: string[];
+}
+
+/** 跨实例汇总：单个实例的拉取结果 */
+export interface ZentaoDigestGroup {
+  instanceId: string;
+  name: string;
+  baseUrl: string;
+  ok: boolean;
+  error: string;
+  bugs: ZentaoBug[];
+  /** 产品 id → { 模块 id: 模块路径 } */
+  modules: Record<string, Record<string, string>>;
+  productIds: string[];
+  /** 部分产品失败（重试后仍失败），不影响其它产品 */
+  errors?: string[];
+}
+
+export interface ZentaoDigestProgress {
+  phase: 'fetch';
+  index: number;
+  total: number;
+  name: string;
 }
 
 /** 禅道 Bug 详情（从 bug-view 页面解析） */
@@ -727,8 +765,24 @@ export interface ElectronAPI {
       ageMs?: number;
       fetchedAt?: string;
     }>;
+  /**
+   * 跨实例汇总：一次拉多家公司的禅道，返回按实例分组的合并结果。
+   * 每条 Bug 额外带 instanceId / instanceName / key（实例id::产品id 复合键）。
+   */
+  zentaoSummaryMulti: (targets: ZentaoDigestTarget[], force?: boolean) =>
+    Promise<{
+      success: boolean;
+      groups?: ZentaoDigestGroup[];
+      failed?: { instanceId: string; name: string; error: string }[];
+      total?: number;
+      fetchedAt?: string;
+      error?: string;
+    }>;
+  /** 跨实例拉取的进度（当前正在拉第几家） */
+  onZentaoDigestProgress: (cb: (p: ZentaoDigestProgress) => void) => () => void;
   zentaoBugDetail: (cfg: ZentaoConfig, bugId: string) =>
-    Promise<{ success: boolean; data?: ZentaoBugDetail; error?: string }>;  /** 下载 Bug 附件（主进程带登录态取二进制）；mode=open 直接打开，save 另存为 */
+    Promise<{ success: boolean; data?: ZentaoBugDetail; error?: string }>;
+  /** 下载 Bug 附件（主进程带登录态取二进制）；mode=open 直接打开，save 另存为 */
   zentaoAttachment: (cfg: ZentaoConfig, url: string, name: string, mode?: 'open' | 'save') =>
     Promise<{ success: boolean; canceled?: boolean; data?: { path: string; size: number; name: string }; error?: string }>;
   /** 立即检查一次新 Bug（设置页「立即检查」） */

@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
+import { ZentaoDigestDialog } from '../components/ZentaoDigestDialog';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
-import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
-import { useZentaoStore } from '../store/zentaoStore';
 import { useStore } from '../store/useStore';
 
 let lastCmdAt = 0;
@@ -22,18 +21,6 @@ const today = () => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
-const TEMPLATE = `**一、本周工作**
-
-1. 
-
-**二、问题与风险**
-
-1. 
-
-**三、下周计划**
-
-1. 
-`;
 
 export function WeeklyReport() {
   const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
@@ -45,6 +32,8 @@ export function WeeklyReport() {
   const [loading, setLoading] = useState(false);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState('');
+  /** 中性提示（例如「已合并：更新 3 个章节」），和红色报错分开放 */
+  const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
   const [searchBody, setSearchBody] = useState(false);
   const [bodyIndex, setBodyIndex] = useState<Record<string, string>>({});
@@ -54,6 +43,9 @@ export function WeeklyReport() {
 
   // 编辑器：draft=null 表示查看模式
   const [draft, setDraft] = useState<{ name: string; text: string; isNew: boolean } | null>(null);
+  const [digestOpen, setDigestOpen] = useState(false);
+  /** 「生成并保存」撞上同名文件时先问一句，别把上周的周报悄悄覆盖掉 */
+  const [overwrite, setOverwrite] = useState<{ name: string; text: string; note: string } | null>(null);
 
   // 汇总页「生成周报」把草稿写进 localStorage 再跳过来：这里接住并填入编辑器
   useEffect(() => {
@@ -71,7 +63,6 @@ export function WeeklyReport() {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 禅道数据（周报草稿用）
-  const ztBugs = useZentaoStore(s => s.bugs);
   // 命令面板「生成周报草稿」
   const cmdSignal = useStore(s => s.cmdSignal);
 
@@ -188,30 +179,20 @@ export function WeeklyReport() {
 
   /* ---------------- 新建 / 编辑 / 删除 ---------------- */
 
-  /** 从禅道「我的 Bug」生成一周草稿 */
-  const genDraft = (offset = 0) => {
-    if (ztBugs.length === 0) {
-      setError('还没有禅道数据：请先到「禅道 → 我的 Bug」点一次「拉取我的 Bug」');
-      return;
-    }
-    const { start, end, friday } = weekRange(offset);
-    setError('');
-    setShowPreview(false);
-    setDraft({ name: `${friday}.md`, text: buildWeeklyDraft(ztBugs, start, end), isNew: true });
-  };
-
-  // 命令面板「生成周报草稿」
+  // 命令面板「生成周报草稿」：走同一套多公司流程，别再生成旧格式
   useEffect(() => {
     if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
     if (cmdSignal.kind !== 'weekly:draft') return;
     lastCmdAt = cmdSignal.at;
-    genDraft(0);
+    setError('');
+    setDigestOpen(true);
   }, [cmdSignal]);
 
   const startNew = () => {
     setError('');
     setShowPreview(false);
-    setDraft({ name: `${today()}.md`, text: TEMPLATE, isNew: true });
+    // 空白起步：模板往往和当周实际要写的内容对不上，删起来比补起来费劲
+    setDraft({ name: `${today()}.md`, text: '', isNew: true });
   };
 
   const startEdit = () => {
@@ -247,6 +228,33 @@ export function WeeklyReport() {
     await readFile(target);
   };
 
+  /**
+   * 「生成并保存」：直接把 markdown 写成周报文件。
+   * 文件名优先用编辑器里那个（用户可能已经改过），否则用弹窗给的「统计结束日期」。
+   */
+  const writeDigestFile = useCallback(async (target: string, text: string, note: string) => {
+    setSaving(true);
+    setError('');
+    const res = await window.electronAPI.weeklySave(dir, target, text);
+    setSaving(false);
+    if (!res.success) {
+      // 存不进去也别把正文丢掉：退回草稿态，让用户能手动保存或复制
+      setDraft({ name: target, text, isNew: true });
+      setError(`自动保存失败：${res.error || '未知原因'}（正文已放进编辑器，可手动保存）`);
+      return;
+    }
+    setNotice(`${note ? `${note}；` : ''}已保存 ${target}`);
+    setBodyIndex(b => { const n = { ...b }; delete n[target]; return n; });
+    // 保存后仍然停在编辑态：数据刚导出，多半还要补两句别的
+    setDraft({ name: target, text, isNew: false });
+    setCurrent(target);
+    setFiles(prev => {
+      const rest = prev.filter(f => f.name !== target);
+      return [{ name: target, size: res.data?.size || 0, mtime: res.data?.mtime || new Date().toISOString() }, ...rest]
+        .sort((a, b) => (a.name < b.name ? 1 : -1));
+    });
+  }, [dir]);
+
   const doDelete = async () => {
     if (!current) return;
     const name = current;
@@ -281,11 +289,12 @@ export function WeeklyReport() {
               </button>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={() => genDraft(0)}
-                disabled={editing}
-                title="用禅道「我的 Bug」生成所选周的草稿"
+                onClick={() => { setError(''); setNotice(''); setDigestOpen(true); }}
+                title={draft && draft.text.trim()
+                  ? '编辑器里有内容：生成时默认合并进去，只更新同名项目章节'
+                  : '按现有周报格式，从多家公司的禅道一次性汇总生成'}
               >
-                <Icons.bug size={13} /> 生成草稿
+                <Icons.bug size={13} /> 从禅道生成
               </button>
               <button className="btn btn-primary btn-sm" onClick={startNew} disabled={editing}>
                 <Icons.plus size={13} /> 新建周报
@@ -303,6 +312,19 @@ export function WeeklyReport() {
         {error && (
           <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', whiteSpace: 'pre-wrap', fontWeight: 400 }}>
             {error}
+          </div>
+        )}
+
+        {notice && !error && (
+          <div className="pill" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
+            {notice}
+            <button
+              type="button"
+              className="digest-link"
+              onClick={() => setNotice('')}
+            >
+              知道了
+            </button>
           </div>
         )}
 
@@ -448,7 +470,7 @@ export function WeeklyReport() {
             ) : reading ? (
               <div className="tbl-empty">读取中…</div>
             ) : (
-              <article className="md-body">
+              <article className="md-body wk-read">
                 {curDate && (
                   <div className="md-title">
                     {curDate} 周报
@@ -480,6 +502,73 @@ export function WeeklyReport() {
           </div>
         </div>
       </Modal>
+
+      <Modal
+        open={!!overwrite}
+        onClose={() => setOverwrite(null)}
+        title="这个文件名已经存在"
+        footer={
+          <>
+            <button className="btn btn-secondary btn-sm" onClick={() => setOverwrite(null)}>取消</button>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={saving}
+              onClick={() => {
+                const o = overwrite;
+                setOverwrite(null);
+                if (o) void writeDigestFile(o.name, o.text, o.note);
+              }}
+            >
+              {saving ? '保存中…' : '覆盖'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+          目录里已经有 <strong>{overwrite?.name}</strong>，覆盖后原内容就没有了。
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
+            想保留旧文件的话，点「取消」，然后在左侧点「新建周报」改个文件名再保存。
+          </div>
+        </div>
+      </Modal>
+
+      <ZentaoDigestDialog
+        open={digestOpen}
+        onClose={() => setDigestOpen(false)}
+        // 只有「正在编辑的草稿」才作为合并对象；只是点开看某篇历史周报不算,
+        // 否则生成后文件名会变成那篇旧文件，一保存就把历史覆盖掉
+        existing={draft ? draft.text : ''}
+        onGenerated={(text, name, note, saveNow) => {
+          setDigestOpen(false);
+          setError('');
+          setShowPreview(false);
+          setNotice(note || '');
+          const editingSaved = !!draft && !draft.isNew && !!draft.name.trim();
+          if (draft && draft.text.trim()) {
+            // 正在编辑：沿用原文件名，补出来的还是这一篇
+            setDraft({ ...draft, text });
+          } else {
+            // 其它情况一律按新文件走（文件名 = 统计区间的结束日期）
+            setDraft({ name, text, isNew: true });
+          }
+
+          if (!saveNow) return;
+          // 正在补充某一篇已保存的周报 → 存回那一篇，不动名字；
+          // 其余情况按「统计结束日期」命名（比编辑器默认的今天更准）
+          const target = editingSaved ? draft!.name.trim() : name;
+          if (!dir) {
+            setError('还没有选择周报目录：先在「周报目录」里选一个文件夹，再点「生成并保存」');
+            return;
+          }
+          // 正在补充某一篇已保存的周报 → 覆盖的就是它自己，不用问；
+          // 其余情况目标文件若已存在，先确认一次
+          if (!editingSaved && files.some(f => f.name === target)) {
+            setOverwrite({ name: target, text, note: note || '' });
+            return;
+          }
+          void writeDigestFile(target, text, note || '');
+        }}
+      />
     </div>
   );
 }

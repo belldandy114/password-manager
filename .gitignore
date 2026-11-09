@@ -45,3 +45,6 @@ scripts/shot-*.js
 # 覆盖率报告（本地生成）
 coverage/
 .asar-stage/
+
+# 周报生成回归的截图产物（每次跑 ui-digest-test.js 覆盖，仅供人工复核）
+.tmp-digest/

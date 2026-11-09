@@ -2857,10 +2857,24 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   // 注意：index.php?m=user&f=login 这种老式地址在本实例会 302 到 PATH_INFO 地址，
   // 直接请求会拿到空 body —— 这是之前误报「登录失败（HTTP 302）」的原因。
   // 禅道 20.6 的「我的地盘」里 my-bug 无权限，但 my-work-bug 可访问，优先用它。
-  let ztCookies = new Map();
-  let ztLoggedInBase = '';
+  // ⚠️ 按实例分桶：同一时刻可能有多家公司的禅道（跨实例汇总周报就是这么用的）。
+  // 以前是单个 Map + 单个 ztLoggedInBase，并发拉两套会互相覆盖 cookie，
+  // 表现为 A 公司的请求带着 B 公司的会话（401 / 读到别的项目）。
+  /** baseUrl → Map<name, value> */
+  const ztCookieJars = new Map();
+  /** 已确认登录成功的 baseUrl 集合 */
+  const ztLoggedInBases = new Set();
 
-  const ztCookieHeader = () => [...ztCookies].map(([k, v]) => `${k}=${v}`).join('; ');
+  const ztJar = (base) => ztCookieJars.get(base);
+  const ztCookieHeader = (base) => {
+    const jar = ztCookieJars.get(base);
+    return jar ? [...jar].map(([k, v]) => `${k}=${v}`).join('; ') : '';
+  };
+  /** 丢掉某个实例的会话（重新登录、登录失败清理时用） */
+  const ztForgetSession = (base) => {
+    ztCookieJars.delete(base);
+    ztLoggedInBases.delete(base);
+  };
 
   /** 允许用户只填 host:port/zentao，自动补协议、去掉尾部斜杠 */
   function ztNormalizeCfg(cfg) {
@@ -2869,23 +2883,27 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     return { ...cfg, baseUrl: base.replace(/\/+$/, '') };
   }
 
-  function ztAbsorbCookies(res) {
+  function ztAbsorbCookies(res, base) {
     const list = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    if (!list.length) return;
+    const jar = ztCookieJars.get(base) || new Map();
     for (const c of list) {
       const kv = String(c).split(';')[0];
       const i = kv.indexOf('=');
-      if (i > 0) ztCookies.set(kv.slice(0, i).trim(), kv.slice(i + 1).trim());
+      if (i > 0) jar.set(kv.slice(0, i).trim(), kv.slice(i + 1).trim());
     }
+    ztCookieJars.set(base, jar);
   }
 
   /** 请求禅道；GET 自动跟随 302，POST 不跟随（重定向即代表失败） */
   async function ztFetch(cfg, pathOrUrl, options = {}) {
+    // 桶键固定用「本次请求所属实例」的 base，跳转后仍写回同一个桶
     const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
     let url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${base}/${String(pathOrUrl).replace(/^\/+/, '')}`;
     const isPost = String(options.method || 'GET').toUpperCase() !== 'GET';
     for (let hop = 0; hop < 6; hop++) {
       const headers = { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html,application/json,*/*', ...(options.headers || {}) };
-      const cookie = ztCookieHeader();
+      const cookie = ztCookieHeader(base);
       if (cookie) headers.Cookie = cookie;
       let res;
       try {
@@ -2896,7 +2914,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
             : '无法连接禅道（网络不通或地址填错了）';
         throw new Error(`${reason}${/^https?:\/\//i.test(base) ? '' : '：地址需以 http:// 或 https:// 开头'}`);
       }
-      ztAbsorbCookies(res);
+      ztAbsorbCookies(res, base);
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) {
         if (isPost) return { status: res.status, loc, text: '', url };
@@ -2915,10 +2933,10 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     let url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${base}/${String(pathOrUrl).replace(/^\/+/, '')}`;
     for (let hop = 0; hop < 6; hop++) {
       const headers = { 'User-Agent': 'Mozilla/5.0', Accept: 'image/*,*/*' };
-      const cookie = ztCookieHeader();
+      const cookie = ztCookieHeader(base);
       if (cookie) headers.Cookie = cookie;
       const res = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) });
-      ztAbsorbCookies(res);
+      ztAbsorbCookies(res, base);
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) {
         url = /^https?:\/\//i.test(loc) ? loc : new URL(loc, url).toString();
@@ -3118,7 +3136,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
 
   /** 执行一次登录；style: 'path' = 20.x 的 user-login.html，'query' = 老版本 index.php?m= */
   async function ztLoginAttempt(cfg, style) {
-    ztCookies = new Map();
+    const ztBase = String(cfg.baseUrl).replace(/\/+$/, '');
+    // 只清这个实例的会话，别把其它公司的登录态一起丢掉
+    ztForgetSession(ztBase);
     const urls = style === 'path'
       ? { login: 'user-login.html', rand: 'user-refreshRandom.html' }
       : { login: 'index.php?m=user&f=login', rand: 'index.php?m=user&f=refreshRandom' };
@@ -3139,7 +3159,6 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     if (!rand) return { ok: false, error: '没能从禅道取到登录随机盐（user-refreshRandom），请确认地址指向禅道根目录' };
 
     const md5 = (s) => crypto.createHash('md5').update(String(s)).digest('hex');
-    const ztBase = String(cfg.baseUrl).replace(/\/+$/, '');
     const headers = {
       'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       'X-Requested-With': 'XMLHttpRequest',
@@ -3176,7 +3195,9 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   }
 
   async function ztEnsureLogin(cfg) {
-    if (ztCookies.size > 0 && ztLoggedInBase === String(cfg.baseUrl || '').replace(/\/+$/, '')) {
+    const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
+    // 每个实例独立判断：A 公司已登录不影响 B 公司
+    if (ztJar(base) && ztJar(base).size > 0 && ztLoggedInBases.has(base)) {
       return { ok: true };
     }
     let last = { ok: false, error: '登录失败' };
@@ -3184,7 +3205,7 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       try {
         const r = await ztLoginAttempt(cfg, style);
         if (r.ok) {
-          ztLoggedInBase = String(cfg.baseUrl || '').replace(/\/+$/, '');
+          ztLoggedInBases.add(base);
           return { ok: true };
         }
         last = r;
@@ -3204,14 +3225,13 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     cfg = ztNormalizeCfg(cfg);
     try {
       // 手动点「登录」时强制走一次完整校验，避免复用已建立的会话导致错误密码也显示成功
-      ztCookies = new Map();
-      ztLoggedInBase = '';
+      ztForgetSession(String(cfg.baseUrl || '').replace(/\/+$/, ''));
       const r = await ztEnsureLogin(cfg);
       if (!r.ok) return { success: false, error: r.error };
       // 用「我的地盘」探一次会话，顺便验证权限
       const probe = await ztFetch(cfg, 'my-work.html');
       if (probe.status >= 300 && probe.status < 400 && /user-login/i.test(probe.loc || '')) {
-        ztCookies = new Map();
+        ztForgetSession(String(cfg.baseUrl || '').replace(/\/+$/, ''));
         return { success: false, error: '登录成功但会话未建立，请重试' };
       }
       return { success: true, data: { cookie: true } };
@@ -3623,15 +3643,16 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
   // ---- 禅道 REST API（api.php/v1）----
   // 用来取「整个项目（产品）」的全部 Bug —— 网页版只给「我的 Bug」，REST 能按产品拉全量。
   // 认证：POST api.php/v1/tokens {account,password} → {token}，之后每个请求带 Token 头。
-  let ztApiToken = '';
-  let ztApiTokenKey = '';
+  // 每个实例（baseUrl|account）一份 token：跨公司汇总时逐家切换，
+  // 用单例的话每换一家都要重新认证一次，白白多几秒。
+  const ztApiTokens = new Map();
   const ztProductCache = new Map();   // base|account → { [productId]: name }
 
   const ztApiCacheKey = (cfg) => `${String(cfg.baseUrl || '').replace(/\/+$/, '')}|${cfg.account || ''}`;
 
   async function ztApiTokenGet(cfg, force = false) {
     const key = ztApiCacheKey(cfg);
-    if (!force && ztApiToken && ztApiTokenKey === key) return ztApiToken;
+    if (!force && ztApiTokens.has(key)) return ztApiTokens.get(key);
     const base = String(cfg.baseUrl || '').replace(/\/+$/, '');
     let res;
     try {
@@ -3654,9 +3675,8 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
       }
       throw new Error(msg || `获取禅道 API Token 失败（HTTP ${res.status}）`);
     }
-    ztApiToken = json.token;
-    ztApiTokenKey = key;
-    return ztApiToken;
+    ztApiTokens.set(key, json.token);
+    return json.token;
   }
 
   async function ztApiGet(cfg, apiPath) {
@@ -3958,7 +3978,12 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     }
   }
 
-  ipcMain.handle('zentao:summary', async (_event, cfg, productIds = [], opts = {}) => {
+  /**
+   * 拉一个实例下选中项目的全量 Bug（含已关闭）+ 模块名。
+   * 抽成普通函数，是为了让「跨实例汇总」能复用同一套分页/重试/缓存逻辑，
+   * 而不是复制一份出来两边各自演化（1.21.4 那次回归就是这么来的）。
+   */
+  async function ztSummaryOf(cfg, productIds, opts = {}) {
     if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
       return { success: false, error: '请先填写地址、账号和密码' };
     }
@@ -4047,6 +4072,71 @@ ipcMain.handle('session:unlock', (_event, { password }) => {
     } catch (e) {
       return { success: false, error: e.message };
     }
+  }
+
+  ipcMain.handle('zentao:summary', (_event, cfg, productIds = [], opts = {}) =>
+    ztSummaryOf(cfg, productIds, opts));
+
+  /**
+   * 跨实例汇总：一次拉多家公司的禅道，返回带实例标签的合并数据。
+   * 统计口径仍放渲染层（周报模板、时间窗、排除人员都要能随时改而不重拉）。
+   *
+   * @param {{id:string,name:string,cfg:object,productIds:string[]}[]} targets
+   * @param {{force?:boolean}} opts
+   */
+  ipcMain.handle('zentao:summary-multi', async (_event, targets, opts = {}) => {
+    const list = (Array.isArray(targets) ? targets : []).filter(t => t && t.cfg);
+    if (!list.length) return { success: false, error: '没有可用的禅道实例' };
+
+    const groups = [];
+    const failed = [];
+    // 实例之间串行：单个实例内部已经有 4 个并发 worker，再按实例叠加会把对端打满；
+    // 不同公司网络差异也大，串行才能给出稳定的进度。
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      const name = String(t.name || t.cfg.account || t.cfg.baseUrl || '未命名');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('zentao:digest-progress', {
+          phase: 'fetch', index: i + 1, total: list.length, name,
+        });
+      }
+      const r = await ztSummaryOf(t.cfg, t.productIds, opts);
+      if (!r || !r.success) {
+        failed.push({ instanceId: String(t.id || ''), name, error: (r && r.error) || '拉取失败' });
+        groups.push({
+          instanceId: String(t.id || ''), name,
+          baseUrl: String(t.cfg.baseUrl || ''),
+          ok: false, error: (r && r.error) || '拉取失败',
+          bugs: [], modules: {}, productIds: [],
+        });
+        continue;
+      }
+      // 每条打上来源实例，渲染层才能按公司分组。产品 id 在不同禅道里会重名
+      // （都是 1、2、3…），所以对外用 `实例id::产品id` 复合键。
+      const bugs = (Array.isArray(r.data) ? r.data : []).map(b => ({
+        ...b,
+        instanceId: String(t.id || ''),
+        instanceName: name,
+        key: `${String(t.id || '')}::${String(b.product || '')}`,
+      }));
+      groups.push({
+        instanceId: String(t.id || ''), name,
+        baseUrl: String(t.cfg.baseUrl || ''),
+        ok: true, error: '',
+        bugs,
+        modules: r.modules || {},
+        productIds: r.productIds || [],
+        errors: r.errors || [],
+      });
+    }
+
+    return {
+      success: true,
+      groups,
+      failed,
+      fetchedAt: new Date().toISOString(),
+      total: groups.reduce((n, g) => n + g.bugs.length, 0),
+    };
   });
 
   // ---- Import ----

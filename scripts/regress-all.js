@@ -17,6 +17,7 @@ if (process.argv.includes('--pack')) {
     ['CSV 打包校验', 'node scripts/verify-packaged-csv.js'],
     ['综合回归 r9', 'node scripts/ui-round9-test.js'],
     ['快速搜索缓存', 'node scripts/ui-palette-cache-test.js'],
+    ['周报跨公司生成', 'node scripts/ui-digest-test.js'],
     ['压力测试 r10', 'node scripts/ui-round10-test.js'],
     ['启动期回归', 'node scripts/ui-startup-test.js'],
     ['下载时间回归', 'node scripts/ui-dl-time-test.js'],
