@@ -30,7 +30,7 @@ function group(bugs: ZentaoBug[], patch: Partial<ZentaoDigestGroup> = {}): Zenta
   return {
     instanceId: 'inst-a',
     name: '南博',
-    baseUrl: 'http://172.16.1.90:8181/zentao',
+    baseUrl: 'http://192.0.2.10:8181/zentao',
     ok: true,
     error: '',
     bugs,
