@@ -256,8 +256,7 @@ export function RedactTool() {
               className="redact-custom"
               value={customText}
               onChange={(e) => setCustomText(e.target.value)}
-              placeholder="要打码的敏感词，逗号或空格分隔，例如：示例科技 内网域名.local"
-            />
+              placeholder="要打码的敏感词，逗号或空格分隔，例如：示例科技 内网域名.local" aria-label="要打码的敏感词，逗号或空格分隔，例如：示例科技 内网域名.local" />
           )}
 
           <div className="tb-panes redact-panes">
@@ -332,8 +331,7 @@ export function RedactTool() {
             <select
               className="json-indent"
               value={style}
-              onChange={(e) => setStyle(e.target.value as 'star' | 'token')}
-            >
+              onChange={(e) => setStyle(e.target.value as 'star' | 'token')} aria-label="脱敏样式">
               <option value="star">星号打码</option>
               <option value="token">占位符 + 映射</option>
             </select>

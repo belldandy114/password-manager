@@ -310,8 +310,7 @@ export function CommandPalette({
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="搜索页面、网址、片段、笔记…"
-            spellCheck={false}
-          />
+            spellCheck={false} aria-label="搜索页面、网址、片段、笔记" />
           <kbd>Esc</kbd>
         </div>
         <div className="cmdk-list" ref={listRef}>

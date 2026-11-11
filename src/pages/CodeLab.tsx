@@ -307,8 +307,7 @@ export function CodeLab() {
               onScroll={syncGutter}
               spellCheck={false}
               wrap="off"
-              placeholder="在这里粘贴/编写代码，Ctrl+Enter 运行"
-            />
+              placeholder="在这里粘贴/编写代码，Ctrl+Enter 运行" aria-label="在这里粘贴/编写代码，Ctrl+Enter 运行" />
           </div>
         </section>
 

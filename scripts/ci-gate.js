@@ -35,8 +35,10 @@ function runGate() {
   step('类型检查 (tsc --noEmit)', npx, ['tsc', '--noEmit']);
   step('单元测试 (vitest run)', npx, ['vitest', 'run']);
   step('IPC 契约 (check:ipc)', process.execPath, ['scripts/check-ipc-contract.js']);
-  // 只报告不阻断：三份 CSS 有历史重复规则，目的是让新增重复可见
-  step('CSS 重复选择器报告', process.execPath, ['scripts/check-css-dup.js']);
+  // 只报告不阻断：三份 CSS 有历史重复规则，目的是让新增重复可见；
+  // 但「声明完全相同」的重复已经清零，新增会失败（这是可机械清理的那一半）。
+  step('CSS 重复选择器检查', process.execPath, ['scripts/check-css-dup.js']);
+  step('静态债预算 (check:debt)', process.execPath, ['scripts/check-debt-budget.js']);
   console.log('\n静态门禁全部通过');
 }
 

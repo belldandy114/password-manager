@@ -264,8 +264,7 @@ export function PaletteApp() {
             onKeyDown={onKeyDown}
             placeholder="搜索页面、网址、片段、笔记…"
             spellCheck={false}
-            autoComplete="off"
-          />
+            autoComplete="off" aria-label="搜索页面、网址、片段、笔记" />
           <kbd>Esc</kbd>
         </div>
         {/* 空查询时只有搜索框本身，不渲染任何菜单项 */}

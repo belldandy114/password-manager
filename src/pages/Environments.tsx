@@ -623,8 +623,7 @@ export function Environments() {
                 value={editing.system}
                 onChange={e => setEditing({ ...editing, system: e.target.value })}
                 placeholder="例如：示例系统 A"
-                autoFocus
-              />
+                autoFocus aria-label="系统" />
               {systemOptions.length > 0 && (
                 <div className="suggest-row">
                   {systemOptions.slice(0, 8).map(s => (
@@ -635,7 +634,7 @@ export function Environments() {
             </div>
             <div className="form-group">
               <label>环境</label>
-              <select value={editing.envType} onChange={e => setEditing({ ...editing, envType: e.target.value })}>
+              <select value={editing.envType} onChange={e => setEditing({ ...editing, envType: e.target.value })} aria-label="环境">
                 {ENVS.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
               </select>
             </div>
@@ -644,8 +643,7 @@ export function Environments() {
               <input
                 value={editing.url}
                 onChange={e => setEditing({ ...editing, url: e.target.value })}
-                placeholder="192.0.2.10:8080 或 https://demo.example.com"
-              />
+                placeholder="192.0.2.10:8080 或 https://demo.example.com" aria-label="地址" />
               <div className="input-hint">没写协议按 http:// 处理；只支持 http / https。</div>
             </div>
             <div className="form-group">
@@ -653,8 +651,7 @@ export function Environments() {
               <input
                 value={editing.note}
                 onChange={e => setEditing({ ...editing, note: e.target.value })}
-                placeholder="例如：只在内网可访问 / 需要跳板机"
-              />
+                placeholder="例如：只在内网可访问 / 需要跳板机" aria-label="备注" />
             </div>
           </>
         )}

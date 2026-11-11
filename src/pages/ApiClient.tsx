@@ -862,7 +862,7 @@ export function ApiClient() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div className="api-env-row">
                   <span className="api-env-label">环境</span>
-                  <select value={activeEnvId} onChange={e => applyEnv(e.target.value)}>
+                  <select value={activeEnvId} onChange={e => applyEnv(e.target.value)} aria-label="请求环境">
                     <option value="">不使用环境</option>
                     {envs.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                   </select>
@@ -876,7 +876,7 @@ export function ApiClient() {
                 </div>
 
                 <div className="url-bar">
-                  <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })}>
+                  <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })} aria-label="请求方法">
                     {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                   <input
@@ -1029,8 +1029,7 @@ export function ApiClient() {
                             value={req.rawContentType || ''}
                             onChange={e => setReq({ ...req, rawContentType: e.target.value })}
                             placeholder="Content-Type，如 text/xml; charset=UTF-8（留空用 text/plain）"
-                            spellCheck={false}
-                          />
+                            spellCheck={false} aria-label="Content-Type" />
                         )}
 
                         {!bodyless && bt === 'multipart' && (
@@ -1075,8 +1074,7 @@ export function ApiClient() {
                                 onChange={e => {
                                   const op = e.target.value as AssertRule['op'];
                                   setRules(assertRules.map(x => x.id === r.id ? { ...x, op, target: '', value: '' } : x));
-                                }}
-                              >
+                                }} aria-label="断言操作符">
                                 {ASSERT_OPS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
                               </select>
                               <input
@@ -1443,8 +1441,7 @@ export function ApiClient() {
               rows={8}
               spellCheck={false}
               placeholder={`curl -X POST 'https://api.example.com/users' \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{"name":"张三"}'`}
-              autoFocus
-            />
+              autoFocus aria-label="curl 命令" />
             <div className="input-hint">
               支持 <code>-X</code> / <code>-H</code> / <code>-d</code> / <code>--data-raw</code> /
               <code>--data-urlencode</code> / <code>-F</code> / <code>-b</code> / <code>-u</code> /
@@ -1528,8 +1525,7 @@ export function ApiClient() {
                 value={envDraft.name}
                 onChange={ev => setEnvDraft({ ...envDraft, name: ev.target.value })}
                 placeholder="例如：测试环境"
-                autoFocus
-              />
+                autoFocus aria-label="环境名称" />
             </div>
             <div className="form-group">
               <label>变量（每行 key=value）</label>
@@ -1538,8 +1534,7 @@ export function ApiClient() {
                 onChange={ev => setEnvDraft({ ...envDraft, vars: ev.target.value })}
                 rows={6}
                 style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                placeholder={'baseUrl=https://test.example.com\ntoken=abc123'}
-              />
+                placeholder={'baseUrl=https://test.example.com\ntoken=abc123'} aria-label="变量（每行 key=value）" />
             </div>
           </div>
         ) : (
@@ -1607,8 +1602,7 @@ export function ApiClient() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); void confirmName(); }
                   if (e.key === 'Escape') { e.preventDefault(); setNameDlg({ open: false, mode: 'save', value: '' }); }
-                }}
-              />
+                }} aria-label="名称" />
             </div>
             <div className="api-dlg-foot">
               <button className="btn btn-ghost btn-sm" onClick={() => setNameDlg({ open: false, mode: 'save', value: '' })}>取消</button>

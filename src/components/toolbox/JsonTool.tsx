@@ -162,8 +162,7 @@ export function JsonTool() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (tab === 'repair') convert(); } }}
             spellCheck={false}
-            placeholder="粘贴 JSON（支持单引号、无引号键、注释、多余逗号、日志里夹着的片段），Ctrl+Enter 转化"
-          />
+            placeholder="粘贴 JSON（支持单引号、无引号键、注释、多余逗号、日志里夹着的片段），Ctrl+Enter 转化" aria-label="粘贴 JSON（支持单引号、无引号键、注释、多余逗号、日志里夹着的片段），Ctrl+Enter 转化" />
         </div>
 
         <div className="json-pane">

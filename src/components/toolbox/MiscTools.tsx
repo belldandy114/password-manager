@@ -182,7 +182,7 @@ function Base64ToImage() {
 
   return (
     <div className="tb-stack tb-stack-tight">
-      <textarea className="tb-textarea tb-textarea-sm" value={src} onChange={(e) => setSrc(e.target.value)} spellCheck={false} placeholder="粘贴 base64 或 data:image/png;base64,..." />
+      <textarea className="tb-textarea tb-textarea-sm" value={src} onChange={(e) => setSrc(e.target.value)} spellCheck={false} placeholder="粘贴 base64 或 data:image/png;base64,..." aria-label="粘贴 base64 或 data:image/png;base64," />
       {dataUrl ? <div className="qr-box"><img src={dataUrl} alt="还原" className="media-img" /></div> : <div className="tb-empty">粘贴后这里显示还原的图片</div>}
     </div>
   );

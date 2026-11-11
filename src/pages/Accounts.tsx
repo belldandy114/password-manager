@@ -243,8 +243,7 @@ export function Accounts() {
             onChange={e => setBulkText(e.target.value)}
             spellCheck={false}
             placeholder={'示例系统A | 管理员 | demo_admin | 示例密码\n示例系统B | 教师 | demo_t01 | 示例密码 | 只读账号'}
-            autoFocus
-          />
+            autoFocus aria-label="批量导入账号" />
           <div className="input-hint">也支持从 Excel 复制（Tab 分隔）；<code>#</code> 开头的行当注释跳过。</div>
         </div>
         {bulkBad.length > 0 && (
@@ -271,7 +270,7 @@ export function Accounts() {
             <div className="form-group">
               <label>系统 *</label>
               <input value={editing.system} onChange={e => setEditing({ ...editing, system: e.target.value })}
-                placeholder="例如：示例系统 A" autoFocus />
+                placeholder="例如：示例系统 A" autoFocus aria-label="系统" />
               {/* 不要用 <datalist>（会导致 Chromium 原生崩溃），用下拉 + 可点标签 */}
               {systemOptions.length > 0 && (
                 <select
@@ -296,25 +295,25 @@ export function Accounts() {
             </div>
             <div className="form-group">
               <label>角色 / 权限说明 *</label>
-              <input value={editing.role} onChange={e => setEditing({ ...editing, role: e.target.value })} placeholder="例如：超级管理员 / 只能查看" />
+              <input value={editing.role} onChange={e => setEditing({ ...editing, role: e.target.value })} placeholder="例如：超级管理员 / 只能查看" aria-label="角色 / 权限说明" />
             </div>
             <div className="form-group">
               <label>环境</label>
-              <select value={editing.envType} onChange={e => setEditing({ ...editing, envType: e.target.value })}>
+              <select value={editing.envType} onChange={e => setEditing({ ...editing, envType: e.target.value })} aria-label="环境">
                 {ENVS.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
               </select>
             </div>
             <div className="form-group">
               <label>账号 *</label>
-              <input value={editing.username} onChange={e => setEditing({ ...editing, username: e.target.value })} placeholder="admin" />
+              <input value={editing.username} onChange={e => setEditing({ ...editing, username: e.target.value })} placeholder="admin" aria-label="账号" />
             </div>
             <div className="form-group">
               <label>密码</label>
-              <input value={editing.password} onChange={e => setEditing({ ...editing, password: e.target.value })} placeholder="密码" />
+              <input value={editing.password} onChange={e => setEditing({ ...editing, password: e.target.value })} placeholder="密码" aria-label="密码" />
             </div>
             <div className="form-group">
               <label>备注</label>
-              <input value={editing.note} onChange={e => setEditing({ ...editing, note: e.target.value })} placeholder="例如：数据会定期重置" />
+              <input value={editing.note} onChange={e => setEditing({ ...editing, note: e.target.value })} placeholder="例如：数据会定期重置" aria-label="备注" />
             </div>
           </>
         )}

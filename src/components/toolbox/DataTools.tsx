@@ -41,7 +41,7 @@ export function YamlTool() {
 
       <div className="tb-panes">
         <ToolBlock title="输入">
-          <textarea className="tb-textarea" value={input} onChange={(e) => setInput(e.target.value)} spellCheck={false} placeholder="粘贴 JSON 或 YAML，右边实时转换" />
+          <textarea className="tb-textarea" value={input} onChange={(e) => setInput(e.target.value)} spellCheck={false} placeholder="粘贴 JSON 或 YAML，右边实时转换" aria-label="粘贴 JSON 或 YAML，右边实时转换" />
         </ToolBlock>
         <ToolBlock title="结果">
           {!input.trim() && <div className="tb-empty">左侧粘贴内容，这里自动判断方向并转换</div>}
@@ -86,10 +86,10 @@ export function JsonDiffTool() {
 
       <div className="tb-panes">
         <ToolBlock title="JSON A（旧）">
-          <textarea className="tb-textarea" value={left} onChange={(e) => setLeft(e.target.value)} spellCheck={false} placeholder='{"code":0,"data":{"name":"甲","age":18}}' />
+          <textarea className="tb-textarea" value={left} onChange={(e) => setLeft(e.target.value)} spellCheck={false} placeholder='{"code":0,"data":{"name":"甲","age":18}}' aria-label="JSON A（旧）" />
         </ToolBlock>
         <ToolBlock title="JSON B（新）">
-          <textarea className="tb-textarea" value={right} onChange={(e) => setRight(e.target.value)} spellCheck={false} placeholder='{"code":0,"data":{"name":"乙","age":18}}' />
+          <textarea className="tb-textarea" value={right} onChange={(e) => setRight(e.target.value)} spellCheck={false} placeholder='{"code":0,"data":{"name":"乙","age":18}}' aria-label="JSON B（新）" />
         </ToolBlock>
       </div>
 

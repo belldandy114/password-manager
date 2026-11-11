@@ -154,13 +154,13 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
             ★ 收藏
           </label>
         </div>
-        <input type="text" value={form.name} onChange={e => update('name', e.target.value)} placeholder="例如: 阿里云管理后台" autoFocus />
+        <input type="text" value={form.name} onChange={e => update('name', e.target.value)} placeholder="例如: 阿里云管理后台" autoFocus aria-label="名称" />
         {errors.name && <div className="input-hint" style={{ color: 'var(--danger)' }}>{errors.name}</div>}
       </div>
 
       <div className="form-group">
         <label>环境类型</label>
-        <select value={form.envType} onChange={e => update('envType', e.target.value)}>
+        <select value={form.envType} onChange={e => update('envType', e.target.value)} aria-label="环境类型">
           <option value="production">正式</option>
           <option value="testing">测试</option>
           <option value="development">开发</option>
@@ -170,13 +170,13 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
 
       <div className="form-group">
         <label>URL *</label>
-        <input type="url" value={form.url} onChange={e => update('url', e.target.value)} placeholder="https://example.com" />
+        <input type="url" value={form.url} onChange={e => update('url', e.target.value)} placeholder="https://example.com" aria-label="URL" />
         {errors.url && <div className="input-hint" style={{ color: 'var(--danger)' }}>{errors.url}</div>}
       </div>
 
       <div className="form-group">
         <label>账号</label>
-        <input type="text" value={form.username} onChange={e => update('username', e.target.value)} placeholder="admin@example.com" />
+        <input type="text" value={form.username} onChange={e => update('username', e.target.value)} placeholder="admin@example.com" aria-label="账号" />
         {errors.username && <div className="input-hint" style={{ color: 'var(--danger)' }}>{errors.username}</div>}
       </div>
 
@@ -193,7 +193,7 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
           </button>
         </div>
         <div className="password-input-wrapper">
-          <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => update('password', e.target.value)} placeholder="输入密码" />
+          <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => update('password', e.target.value)} placeholder="输入密码" aria-label="输入密码" />
           <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
             {showPassword ? '🙈' : '👁'}
           </button>
@@ -309,7 +309,7 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
 
       <div className="form-group">
         <label>备注</label>
-        <textarea value={form.notes} onChange={e => update('notes', e.target.value)} placeholder="备注信息..." />
+        <textarea value={form.notes} onChange={e => update('notes', e.target.value)} placeholder="备注信息..." aria-label="备注" />
       </div>
     </Modal>
   );

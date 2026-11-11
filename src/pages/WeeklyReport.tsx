@@ -335,8 +335,7 @@ export function WeeklyReport() {
               onChange={e => setDirDraft(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') applyDir(); }}
               placeholder="周报所在的文件夹，例如 D:\周报"
-              spellCheck={false}
-            />
+              spellCheck={false} aria-label="周报文件夹" />
             <button className="btn btn-secondary btn-sm" onClick={pickDir}>选择目录</button>
             <button className="btn btn-primary btn-sm" onClick={applyDir}>打开</button>
           </div>
@@ -440,8 +439,7 @@ export function WeeklyReport() {
                     value={draft.name}
                     onChange={e => setDraft({ ...draft, name: e.target.value })}
                     placeholder="2026-10-30.md"
-                    spellCheck={false}
-                  />
+                    spellCheck={false} aria-label="文件名" />
                 </div>
                 {showPreview ? (
                   <article className="md-body wk-preview">{renderMarkdown(draft.text)}</article>

@@ -1196,7 +1196,7 @@ button { font-family: inherit; }
 
 /* ---------------- 27. 渲染层错误兜底 ---------------- */
 .app-error {
-  position: fixed; inset: 0; z-index: 9999;
+  position: fixed; inset: 0; z-index: var(--z-alert-top);
   display: flex; align-items: center; justify-content: center;
   background: var(--surface-0); padding: 24px;
 }
@@ -1975,9 +1975,9 @@ button { font-family: inherit; }
 }
 
 .env-filter-production .env-filter-dot { background: var(--danger); }
-.env-filter-testing .env-filter-dot { background: #38bdf8; }
-.env-filter-development .env-filter-dot { background: #c084fc; }
-.env-filter-staging .env-filter-dot { background: #fb923c; }
+.env-filter-testing .env-filter-dot { background: var(--env-testing-fg); }
+.env-filter-development .env-filter-dot { background: var(--env-development-fg); }
+.env-filter-staging .env-filter-dot { background: var(--env-staging-fg); }
 
 .env-filters-spacer { flex: 1 1 auto; }
 
@@ -2151,7 +2151,7 @@ button { font-family: inherit; }
 .env-kpi.is-ok::before { background: var(--success); }
 .env-kpi.is-bad::before { background: var(--danger); }
 .env-kpi.is-warn::before { background: var(--warning); }
-.env-kpi.is-time::before { background: #38bdf8; }
+.env-kpi.is-time::before { background: var(--info); }
 .env-kpi.is-at::before { background: var(--text-muted); }
 
 .env-kpi-num {
@@ -2613,7 +2613,7 @@ button { font-family: inherit; }
 .img-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: var(--z-lightbox);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2885,4 +2885,76 @@ button.env-url {
 [data-theme='light'] .set-nav.is-active .set-nav-text b {
   color: color-mix(in srgb, var(--accent) 78%, #000);
 }
+
+/* ===== 42. 跳到主内容（skip-link） =====
+   追加在末尾而不是塞进 global.css：三份样式表按 global → pages → redesign
+   顺序加载，新规则只有在最后才能压过前面同特异性的写法。
+   平时用 translateY(-200%) 移出视口，Tab 焦点落在它身上时滑回左上角。 */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: var(--z-skip-link);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 40%, transparent);
+  transform: translateY(-200%);
+  transition: transform var(--d-fast, 0.15s) var(--ease);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* 主内容区是被跳转的目标，用程序聚焦；容器本身不需要焦点框，
+   否则整页会套一个和布局错位的大方框。 */
+.main-content:focus {
+  outline: none;
+}
+
+/* ===== 43. 减少动态效果（prefers-reduced-motion）的补丁 =====
+   第 40 节那条 `*` 一刀切把动画压到 0.01ms，对「淡入/滑入」是对的，
+   但「正在跑」的进度条会被冻在 translateX(-100%) 的起始帧——那是一格
+   空轨道，看上去像已经结束了。这里只把「持续型忙碌指示」换成不位移的
+   呼吸效果：仍然看得出在跑，又不会引起前庭不适。
+   弹窗/抽屉的位移入场同理改成纯淡入：保留「出现了」的提示，去掉横移。 */
+@media (prefers-reduced-motion: reduce) {
+  .busy-progress-bar {
+    animation: busy-breathe 1.6s ease-in-out infinite !important;
+    transform: none !important;
+    width: 100% !important;
+  }
+
+  .busy-progress-track {
+    background: transparent;
+  }
+
+  .modal {
+    animation: fadeIn 0.14s ease !important;
+  }
+
+  .drawer {
+    animation: fadeIn 0.14s ease !important;
+  }
+}
+
+@keyframes busy-breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+
 

@@ -101,7 +101,7 @@ export function TrashPage() {
             </div>
             {items.map(item => (
               <div key={item.id} className="trash-item" style={{ opacity: selectedIds.has(item.id) ? 1 : 0.8 }}>
-                <input type="checkbox" className="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} style={{ marginRight: 12 }} />
+                <input type="checkbox" className="checkbox" checked={selectedIds.has(item.id)} onChange={() => toggleSelect(item.id)} style={{ marginRight: 12 }} aria-label="选择此项" />
                 <div className="trash-info">
                   <div className="trash-name">
                     {item.name}

@@ -79,6 +79,65 @@
   --dur-2: 180ms;
   --dur-3: 240ms;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ---------- 3. Layers（叠放层级） ----------
+     只给「跨组件争抢同一片屏幕」的图层定了名字；组件内部那些 z-index:1/2/5
+     （表格里的展开块、输入框旁边的浮标）不在这里，它们只在局部叠放上下文里
+     比较，抽成令牌只会把数字换成另一批数字。
+
+     现状阶梯（数字来自历次叠加，不连续是历史原因，别再往里插新值）：
+       10   表头吸顶
+       20   行内浮起（徽标/角标）
+       40   内容区下拉（api-more-menu、进度条）
+       50   工具栏下拉（搜索范围、标签浮层、行操作）
+       60   页面级菜单 / 接口调试弹窗遮罩
+       90   抽屉遮罩   91 抽屉本体
+       100  浮层（颜色选择器、标签建议、浏览器下拉）
+       120  页内轻提示
+       130  命令面板遮罩  131 命令面板本体
+       140  截图查看器
+       200  全局 toast / 悬浮面板
+       999  右键菜单遮罩 1000 右键菜单本体
+       3000 图片灯箱
+       4000 跳到主内容（必须压在所有浮层之上，否则焦点环被遮住）
+       9999 浏览器下拉的 portal 容器
+       10000 致命错误横幅（必须压住一切，包括上面那个 portal）
+
+     新增浮层请挑一层，不要发明新数字。 */
+  --z-table-head: 10;
+  --z-row-raise: 20;
+  --z-menu-overlay: 999;
+  --z-menu: 1000;
+  --z-lightbox: 3000;
+  --z-skip-link: 4000;
+  --z-portal-top: 9999;
+  --z-alert-top: 10000;
+
+  /* ---------- 4. Environment badges（环境徽标） ----------
+     同一套徽标在卡片和表格里是两种形态：卡片是「深底+浅字」，表格是
+     「深底+白字」，预发布在表格里用黄底黑字以示区分。以前这些颜色在
+     global.css 里抄了三遍（其中一份被后面覆盖，属于死代码），改一个颜色
+     要同步三处、还容易改漏一半。现在只在这里定义两套主题的取值。 */
+  --env-production-bg: #0f2d1f;
+  --env-production-fg: #34d399;
+  --env-testing-bg: #0f1f2d;
+  --env-testing-fg: #7dd3fc;
+  --env-development-bg: #1f0f2d;
+  --env-development-fg: #c084fc;
+  --env-staging-bg: #2d1f0f;
+  --env-staging-fg: #fb923c;
+
+  --env-cell-production-bg: #0f2d1f;
+  --env-cell-production-fg: #ffffff;
+  --env-cell-testing-bg: #0f1f2d;
+  --env-cell-testing-fg: #ffffff;
+  --env-cell-development-bg: #1f0f2d;
+  --env-cell-development-fg: #ffffff;
+  --env-cell-staging-bg: #d4a017;
+  --env-cell-staging-fg: #1a1a1a;
+  --env-cell-emphasis-bg: #2d0f0f;
+  --env-cell-emphasis-fg: #ffffff;
+  --env-cell-emphasis-line: #ff4d4f;
 }
 
 /* ---------- Semantic — Light ---------- */
@@ -115,6 +174,29 @@
   --shadow-1: 0 1px 2px rgba(23, 25, 26, 0.06);
   --shadow-2: 0 8px 24px rgba(23, 25, 26, 0.08);
   --shadow-3: 0 24px 56px rgba(23, 25, 26, 0.12);
+
+  /* 浅色下徽标改成「浅底+深字」，对比度都过 AA；表格形态用实色底+白字，
+     因为浅底深字放在斑马纹表格里会看不出边界。 */
+  --env-production-bg: #d1fae5;
+  --env-production-fg: #065f46;
+  --env-testing-bg: #dbeafe;
+  --env-testing-fg: #1e40af;
+  --env-development-bg: #ede9fe;
+  --env-development-fg: #6b21a8;
+  --env-staging-bg: #ffedd5;
+  --env-staging-fg: #9a3412;
+
+  --env-cell-production-bg: #065f46;
+  --env-cell-production-fg: #ffffff;
+  --env-cell-testing-bg: #1e40af;
+  --env-cell-testing-fg: #ffffff;
+  --env-cell-development-bg: #6b21a8;
+  --env-cell-development-fg: #ffffff;
+  --env-cell-staging-bg: #eab308;
+  --env-cell-staging-fg: #1a1a1a;
+  --env-cell-emphasis-bg: #7f1d1d;
+  --env-cell-emphasis-fg: #ffffff;
+  --env-cell-emphasis-line: #ef4444;
 }
 
 /* ---------- 3. Density ---------- */

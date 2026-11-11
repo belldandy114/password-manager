@@ -791,17 +791,17 @@ export function ZentaoPage() {
           <div className="grid4" style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr 1fr 1fr', gap: 12 }}>
             <Field label="名称">
               <input value={form.company || ''} onChange={e => setForm({ ...form, company: e.target.value })}
-                placeholder="例如 示例科技 · 测试环境" title="给这套配置起个名字，列表和标题都显示它" />
+                placeholder="例如 示例科技 · 测试环境" title="给这套配置起个名字，列表和标题都显示它" aria-label="配置名称" />
             </Field>
             <Field label="禅道地址">
               <input value={form.baseUrl} onChange={e => setForm({ ...form, baseUrl: e.target.value })}
                 placeholder="http://<禅道域名或IP>:<端口>/zentao" />
             </Field>
             <Field label="账号">
-              <input value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} placeholder="用户名" />
+              <input value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} placeholder="用户名" aria-label="用户名" />
             </Field>
             <Field label="密码">
-              <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="密码" />
+              <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="密码" aria-label="密码" />
             </Field>
           </div>
           <div className="pg-sub" style={{ marginTop: 12 }}>
@@ -985,15 +985,15 @@ export function ZentaoPage() {
                 flush
               >
                 <div className="zt-filterbar">
-                  <select value={project} onChange={e => setFilter({ project: e.target.value })}>
+                  <select value={project} onChange={e => setFilter({ project: e.target.value })} aria-label="按项目筛选">
                     <option value="">全部项目</option>
                     {myProjects.map(([p, n]) => <option key={p} value={p}>{p}（{n}）</option>)}
                   </select>
-                  <select value={status} onChange={e => setFilter({ status: e.target.value })}>
+                  <select value={status} onChange={e => setFilter({ status: e.target.value })} aria-label="按状态筛选">
                     <option value="">全部状态</option>
                     {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
                   </select>
-                  <select value={severity} onChange={e => setFilter({ severity: e.target.value })}>
+                  <select value={severity} onChange={e => setFilter({ severity: e.target.value })} aria-label="按严重程度筛选">
                     <option value="">全部严重程度</option>
                     {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select>
@@ -1134,11 +1134,11 @@ export function ZentaoPage() {
                     flush
                   >
                     <div className="zt-filterbar">
-                      <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })}>
+                      <select value={pStatus} onChange={e => setPFilter({ pStatus: e.target.value })} aria-label="按状态筛选">
                         <option value="">全部状态</option>
                         {DIMS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
                       </select>
-                      <select value={pSeverity} onChange={e => setPFilter({ pSeverity: e.target.value })}>
+                      <select value={pSeverity} onChange={e => setPFilter({ pSeverity: e.target.value })} aria-label="按严重程度筛选">
                         <option value="">全部严重程度</option>
                         {Object.entries(SEVERITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                       </select>

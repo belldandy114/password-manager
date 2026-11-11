@@ -146,8 +146,7 @@ export function QuickNoteApp() {
         onChange={e => setTitle(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); textRef.current?.focus(); } }}
         placeholder="标题（可留空，自动按时间命名）"
-        maxLength={120}
-      />
+        maxLength={120} aria-label="标题" />
       <textarea
         ref={textRef}
         className="qn-text"

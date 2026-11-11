@@ -163,7 +163,7 @@ export function Snippets() {
           <>
             <div className="form-group">
               <label>标题 *</label>
-              <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：查询某学生全部成绩" autoFocus />
+              <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：查询某学生全部成绩" autoFocus aria-label="标题" />
             </div>
             <div className="form-group">
               <label>SQL</label>
@@ -172,8 +172,7 @@ export function Snippets() {
                 onChange={e => setEditing({ ...editing, sql: e.target.value })}
                 rows={10}
                 className="code-input"
-                placeholder="SELECT * FROM ..."
-              />
+                placeholder="SELECT * FROM ..." aria-label="SQL" />
             </div>
             <div className="form-group">
               <label>标签</label>
@@ -182,8 +181,7 @@ export function Snippets() {
                   value={tagInput}
                   onChange={e => setTagInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
-                  placeholder="回车添加标签"
-                />
+                  placeholder="回车添加标签" aria-label="回车添加标签" />
                 <button className="btn btn-sm btn-secondary" onClick={addTag}>添加</button>
               </div>
               {editing.tags.length > 0 && (

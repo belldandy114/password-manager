@@ -336,7 +336,7 @@ export function TagSidebar() {
               </svg>
               <input type="text" className="tag-sidebar-search-input" placeholder="搜索标签..."
                 value={sidebarSearch} onChange={e => setSidebarSearch(e.target.value)}
-                onClick={e => e.stopPropagation()} />
+                onClick={e => e.stopPropagation()} aria-label="搜索标签" />
             </div>
             <div className="tag-sidebar-list" onContextMenu={e => {
               e.preventDefault(); e.stopPropagation();
@@ -387,7 +387,7 @@ export function TagSidebar() {
                         }}
                         onBlur={() => handleInlineRenameConfirm(tag)}
                         onClick={e => e.stopPropagation()}
-                        autoFocus />
+                        autoFocus aria-label="重命名标签" />
                     ) : (
                       <span className="tag-sidebar-name">{tag}</span>
                     )}
@@ -525,7 +525,7 @@ export function TagSidebar() {
             <label>标签名称</label>
             <input type="text" value={newTagName} onChange={e => setNewTagName(e.target.value)}
               placeholder="输入标签名称" autoFocus
-              onKeyDown={e => { if (e.key === 'Enter') doCreateTag(); }} />
+              onKeyDown={e => { if (e.key === 'Enter') doCreateTag(); }} aria-label="标签名称" />
           </div>
           <div className="form-group">
             <label>标签颜色</label>
@@ -554,9 +554,9 @@ export function TagSidebar() {
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               </svg>
               <input type="text" className="manage-tag-search-input" placeholder="搜索标签名称..."
-                value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+                value={searchQuery} onChange={e => setSearchQuery(e.target.value)} aria-label="搜索标签名称" />
             </div>
-            <select className="manage-tag-sort-select" value={sortBy} onChange={e => setSortBy(e.target.value as any)}>
+            <select className="manage-tag-sort-select" value={sortBy} onChange={e => setSortBy(e.target.value as any)} aria-label="标签排序方式">
               <option value="name-asc">名称 A-Z</option>
               <option value="name-desc">名称 Z-A</option>
               <option value="count-desc">数量 ↓</option>
@@ -601,7 +601,7 @@ export function TagSidebar() {
                   }
                   if (e.key === 'Escape') setInlineNewTag(false);
                 }}
-                onBlur={() => setInlineNewTag(false)} />
+                onBlur={() => setInlineNewTag(false)} aria-label="输入标签名称" />
               <button className="btn btn-sm btn-secondary" onClick={() => setInlineNewTag(false)}>取消</button>
             </div>
           )}
@@ -652,7 +652,7 @@ export function TagSidebar() {
                         const next = new Set(selectedTags);
                         if (next.has(tag)) next.delete(tag); else next.add(tag);
                         setSelectedTags(next);
-                      }} />
+                      }} aria-label="选中该标签" />
 
                     {/* Color dot */}
                     <div className="manage-tag-color-wrap">
@@ -677,7 +677,7 @@ export function TagSidebar() {
                             if (e.key === 'Enter') handleRenameTag(tag, editingName);
                             if (e.key === 'Escape') setEditingTag(null);
                           }}
-                          autoFocus className="manage-tag-edit-input" />
+                          autoFocus className="manage-tag-edit-input" aria-label="标签名称" />
                         <button className="btn btn-sm btn-primary" onClick={() => handleRenameTag(tag, editingName)}>保存</button>
                         <button className="btn btn-sm btn-secondary" onClick={() => setEditingTag(null)}>取消</button>
                       </div>

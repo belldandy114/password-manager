@@ -66,17 +66,6 @@
   --tag-border: hsla(var(--tag-hue, 240), 50%, 60%, 0.25);
 }
 
-[data-theme="light"] .env-production { background: #065f46; color: #fff; }
-[data-theme="light"] .env-testing { background: #1e40af; color: #fff; }
-[data-theme="light"] .env-development { background: #6b21a8; color: #fff; }
-[data-theme="light"] .env-staging { background: #9a3412; color: #fff; }
-
-/* Light mode overrides for table env badges */
-[data-theme="light"] .entry-table .env-badge-table.env-production { background: #d1fae5; color: #065f46; }
-[data-theme="light"] .entry-table .env-badge-table.env-testing { background: #dbeafe; color: #1e40af; }
-[data-theme="light"] .entry-table .env-badge-table.env-development { background: #ede9fe; color: #6b21a8; }
-[data-theme="light"] .entry-table .env-badge-table.env-staging { background: #ffedd5; color: #9a3412; }
-
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* Global select style — unify all dropdowns with custom arrow */
@@ -392,9 +381,6 @@ body {
   color: var(--text-muted);
   cursor: pointer;
   transition: color 0.15s;
-}
-.tag-sidebar-manage:hover {
-  color: var(--accent);
 }
 
 /* Manage tags modal */
@@ -1186,15 +1172,10 @@ body {
   /* inherits from .env-badge above */
 }
 
-.env-production { background: #0f2d1f; color: #34d399; }
-.env-testing { background: #0f1f2d; color: #7dd3fc; }
-.env-development { background: #1f0f2d; color: #c084fc; }
-.env-staging { background: #2d1f0f; color: #fb923c; }
-
-[data-theme="light"] .env-production { background: #d1fae5; color: #065f46; }
-[data-theme="light"] .env-testing { background: #dbeafe; color: #1e40af; }
-[data-theme="light"] .env-development { background: #ede9fe; color: #6b21a8; }
-[data-theme="light"] .env-staging { background: #ffedd5; color: #9a3412; }
+.env-production { background: var(--env-production-bg); color: var(--env-production-fg); }
+.env-testing { background: var(--env-testing-bg); color: var(--env-testing-fg); }
+.env-development { background: var(--env-development-bg); color: var(--env-development-fg); }
+.env-staging { background: var(--env-staging-bg); color: var(--env-staging-fg); }
 
 .entry-card .card-url {
   font-size: 12px;
@@ -1519,18 +1500,15 @@ body {
   line-height: 1.5;
 }
 
-.entry-table .env-badge-table.env-production { background: #0f2d1f; color: #fff; }
-.entry-table .env-badge-table.env-testing { background: #0f1f2d; color: #fff; }
-.entry-table .env-badge-table.env-development { background: #1f0f2d; color: #fff; }
-.entry-table .env-badge-table.env-staging { background: #d4a017; color: #1a1a1a; }
-.entry-table .env-badge-table.env-production.emphasis { background: #2d0f0f; color: #fff; border: 1px solid #ff4d4f; }
-
-/* Light mode table env badges — match card mode env-badge exactly */
-[data-theme="light"] .entry-table .env-badge-table.env-production { background: #065f46; color: #fff; }
-[data-theme="light"] .entry-table .env-badge-table.env-testing { background: #1e40af; color: #fff; }
-[data-theme="light"] .entry-table .env-badge-table.env-development { background: #6b21a8; color: #fff; }
-[data-theme="light"] .entry-table .env-badge-table.env-staging { background: #eab308; color: #1a1a1a; }
-[data-theme="light"] .entry-table .env-badge-table.env-production.emphasis { background: #7f1d1d; color: #fff; border: 1px solid #ef4444; }
+.entry-table .env-badge-table.env-production { background: var(--env-cell-production-bg); color: var(--env-cell-production-fg); }
+.entry-table .env-badge-table.env-testing { background: var(--env-cell-testing-bg); color: var(--env-cell-testing-fg); }
+.entry-table .env-badge-table.env-development { background: var(--env-cell-development-bg); color: var(--env-cell-development-fg); }
+.entry-table .env-badge-table.env-staging { background: var(--env-cell-staging-bg); color: var(--env-cell-staging-fg); }
+.entry-table .env-badge-table.env-production.emphasis {
+  background: var(--env-cell-emphasis-bg);
+  color: var(--env-cell-emphasis-fg);
+  border: 1px solid var(--env-cell-emphasis-line);
+}
 
 /* Column: URL */
 .entry-table .col-url {
@@ -1945,12 +1923,12 @@ mark {
 .context-menu-overlay {
   position: fixed;
   inset: 0;
-  z-index: 999;
+  z-index: var(--z-menu-overlay);
 }
 
 .context-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-menu);
   min-width: 180px;
   background: var(--bg-card, #ffffff);
   border: 1px solid var(--border, #d4d4e0);
@@ -2668,7 +2646,7 @@ mark {
 }
 .browser-dropdown.portal {
   position: fixed;
-  z-index: 9999;
+  z-index: var(--z-portal-top);
   margin-top: 0;
 }
 .browser-option {

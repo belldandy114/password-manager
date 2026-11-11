@@ -5,6 +5,7 @@ import { PaletteApp } from './components/PaletteApp';
 import { QuickNoteApp } from './QuickNoteApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logError } from './utils/log';
+import { preloadPinyin } from './utils/search';
 import './styles/tokens.css';
 import './styles/global.css';
 import './styles/pages.css';
@@ -32,3 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+// 拼音字典（约 41 KB）单独成 chunk，首屏渲染之后再拉：搜索先只做原文匹配，
+// 字典到手后 search.ts 会清缓存并广播，搜索框重渲染一次就能用拼音了。
+void preloadPinyin();

@@ -412,6 +412,18 @@ function App() {
 
   return (
     <div className="app-layout">
+      {/* 键盘用户从侧栏 13 个导航项跳到主内容不必逐个 Tab 过去；
+          用 preventDefault 手动聚焦，纯锚点跳转在 SPA 里不会移走焦点 */}
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById('main-content')?.focus();
+        }}
+      >
+        跳到主内容
+      </a>
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} />
       <CommandPalette
         open={cmdkOpen}
@@ -424,7 +436,7 @@ function App() {
         info={updateInfo}
         onClose={() => setUpdateDialogOpen(false)}
       />
-      <div className="main-content">
+      <div className="main-content" id="main-content" tabIndex={-1}>
         {/* 弹窗打开时收起横幅，避免和弹窗内容重复 */}
         {updateInfo && !updateDialogOpen && (
           <div className="update-banner" role="status">

@@ -241,14 +241,14 @@ export function PerfTest() {
         <div className="perf-form">
           <Field label="JMX 脚本" hint="从本机任意位置选，应用只记路径">
             <div className="perf-pick">
-              <input value={jmxPath} readOnly placeholder="未选择 .jmx" title={jmxPath} />
+              <input value={jmxPath} readOnly placeholder="未选择 .jmx" title={jmxPath} aria-label="JMX 文件路径" />
               <button className="btn btn-secondary btn-sm" onClick={pickScript}>选择脚本</button>
             </div>
           </Field>
 
           <Field label="输出目录" hint="结果文件与报告都写到这里">
             <div className="perf-pick">
-              <input value={outDir} readOnly placeholder="未选择输出目录" title={outDir} />
+              <input value={outDir} readOnly placeholder="未选择输出目录" title={outDir} aria-label="输出目录" />
               <button className="btn btn-secondary btn-sm" onClick={pickOutDir}>选择目录</button>
             </div>
           </Field>
@@ -298,7 +298,7 @@ export function PerfTest() {
           </div>
 
           <Field label="额外参数" hint="空格分隔，例如 -Jenv=test -Xmx1g">
-            <input value={extraArgs} onChange={e => setExtraArgs(e.target.value)} placeholder="可选" />
+            <input value={extraArgs} onChange={e => setExtraArgs(e.target.value)} placeholder="可选" aria-label="额外参数" />
           </Field>
 
           <div className="perf-actions">

@@ -64,11 +64,11 @@ export function JwtTool() {
             {JWT_PRESETS.map((p) => <button key={p.label} className="chip" onClick={() => { setPayload(p.payload); setToken(''); }}>{p.label}</button>)}
           </div>
         }>
-          <textarea className="tb-textarea" value={payload} onChange={(e) => setPayload(e.target.value)} spellCheck={false} />
+          <textarea className="tb-textarea" value={payload} onChange={(e) => setPayload(e.target.value)} spellCheck={false} aria-label="JWT Payload" />
         </ToolBlock>
 
         <ToolBlock title="Secret（HS256）">
-          <input className="tb-input" value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} placeholder="your-256-bit-secret" />
+          <input className="tb-input" value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} placeholder="your-256-bit-secret" aria-label="your-256-bit-secret" />
           <div className="tb-divider" />
           <div className="tb-label">Token</div>
           <pre className="tb-pre tb-pre-wrap">{token || '（点「生成 token」）'}</pre>
@@ -132,10 +132,10 @@ export function SignTool() {
 
       <div className="tb-panes">
         <ToolBlock title="参数（每行 key=value，或直接粘 JSON 对象）">
-          <textarea className="tb-textarea" value={params} onChange={(e) => setParams(e.target.value)} spellCheck={false} />
+          <textarea className="tb-textarea" value={params} onChange={(e) => setParams(e.target.value)} spellCheck={false} aria-label="签名参数" />
           <div className="tb-divider" />
           <div className="tb-label">Secret</div>
-          <input className="tb-input" value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} />
+          <input className="tb-input" value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} aria-label="Secret" />
         </ToolBlock>
 
         <ToolBlock title="结果">

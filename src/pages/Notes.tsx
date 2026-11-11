@@ -470,7 +470,7 @@ export function Notes() {
           <>
             <div className="form-group">
               <label>标题 *</label>
-              <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：资产系统登录偶发 500 的排查" autoFocus />
+              <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：资产系统登录偶发 500 的排查" autoFocus aria-label="标题" />
             </div>
             <div className="form-group">
               <label>内容（支持 Markdown）</label>
@@ -480,8 +480,7 @@ export function Notes() {
                 onPaste={e => void pasteImages(e, v => setEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
-                placeholder={'## 现象\n\n## 原因\n\n## 结论'}
-              />
+                placeholder={'## 现象\n\n## 原因\n\n## 结论'} aria-label="内容（支持 Markdown）" />
               <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
               {attachHint && <div className="inline-hint">{attachHint}</div>}
               <EditAttStrip content={editing.content} />
@@ -527,8 +526,7 @@ export function Notes() {
                 value={dirEditing.title}
                 onChange={e => setDirEditing({ ...dirEditing, title: e.target.value })}
                 placeholder="例如：资产系统登录偶发 500 的排查"
-                autoFocus
-              />
+                autoFocus aria-label="标题" />
             </div>
             <div className="form-group">
               <label>内容（Markdown）</label>
@@ -538,8 +536,7 @@ export function Notes() {
                 onPaste={e => void pasteImages(e, v => setDirEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
-                placeholder={'## 现象\n\n## 原因\n\n## 结论'}
-              />
+                placeholder={'## 现象\n\n## 原因\n\n## 结论'} aria-label="内容（Markdown）" />
               <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
               {attachHint && <div className="inline-hint">{attachHint}</div>}
               <EditAttStrip content={dirEditing.content} />

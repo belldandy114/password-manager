@@ -130,7 +130,7 @@ function TimestampTool() {
       <div className="tool-field">
         <label>时间戳 / 日期字符串（10 位=秒、13 位=毫秒、16 位=微秒、19 位=纳秒，自动识别）</label>
         <div className="tool-inline">
-          <input value={ts} onChange={e => setTs(e.target.value)} placeholder="1700000000 或 2026-10-27 12:00:00" />
+          <input value={ts} onChange={e => setTs(e.target.value)} placeholder="1700000000 或 2026-10-27 12:00:00" aria-label="时间戳或时间" />
           <select className="json-indent" value={unit} onChange={e => setUnit(e.target.value as 'auto' | 's' | 'ms' | 'us' | 'ns')} title="单位" aria-label="单位">
             <option value="auto">自动</option>
             <option value="s">秒</option>
@@ -173,7 +173,7 @@ function TimestampTool() {
       <div className="tool-field">
         <label>日期 → 时间戳</label>
         <div className="tool-inline">
-          <input value={dateStr} onChange={e => setDateStr(e.target.value)} placeholder="2026-10-27T16:00" type="datetime-local" />
+          <input value={dateStr} onChange={e => setDateStr(e.target.value)} placeholder="2026-10-27T16:00" type="datetime-local" aria-label="日期时间" />
           <button className="btn btn-sm btn-secondary" onClick={() => {
             if (!dateStr) return;
             const d = new Date(dateStr);
@@ -256,7 +256,7 @@ function EncodeTool() {
   return (
     <div className="tool-panel">
       <div className="tool-inline">
-        <select value={kind} onChange={e => setKind(e.target.value as Encoding)}>
+        <select value={kind} onChange={e => setKind(e.target.value as Encoding)} aria-label="编码方式">
           {ENCODINGS.map(k => <option key={k} value={k}>{k}</option>)}
         </select>
         <button className={`btn btn-sm ${mode === 'encode' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('encode')}>编码</button>
@@ -265,11 +265,11 @@ function EncodeTool() {
       </div>
       <div className="tool-field">
         <label>输入</label>
-        <textarea value={input} onChange={e => setInput(e.target.value)} rows={6} placeholder={mode === 'encode' ? '要编码的文本' : '要解码的内容'} />
+        <textarea value={input} onChange={e => setInput(e.target.value)} rows={6} placeholder={mode === 'encode' ? '要编码的文本' : '要解码的内容'} aria-label="输入" />
       </div>
       <div className="tool-field">
         <label>输出</label>
-        <textarea value={output} readOnly rows={6} placeholder="结果" />
+        <textarea value={output} readOnly rows={6} placeholder="结果" aria-label="输出" />
         {error && <div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div>}
       </div>
     </div>
@@ -380,7 +380,7 @@ function HashTool() {
     <div className="tool-panel">
       <div className="tool-field">
         <label>文本哈希</label>
-        <textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="输入要计算摘要的文本" />
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="输入要计算摘要的文本" aria-label="文本哈希" />
       </div>
       <HashExtras text={text} />
       {Object.keys(hashes).length > 0 && (
@@ -399,7 +399,7 @@ function HashTool() {
 
       <div className="tool-field" style={{ marginTop: 20 }}>
         <label>JWT 解析</label>
-        <textarea value={jwt} onChange={e => setJwt(e.target.value)} rows={4} placeholder="粘贴 JWT（eyJhbGciOi...）" />
+        <textarea value={jwt} onChange={e => setJwt(e.target.value)} rows={4} placeholder="粘贴 JWT（eyJhbGciOi...）" aria-label="JWT 解析" />
       </div>
       {jwtInfo && ('error' in jwtInfo ? (
         <div className="input-hint" style={{ color: 'var(--danger)' }}>{jwtInfo.error}</div>
@@ -528,9 +528,9 @@ function RegexTool() {
         <label>正则表达式</label>
         <div className="tool-inline">
           <span className="regex-slash">/</span>
-          <input value={pattern} onChange={e => setPattern(e.target.value)} placeholder="例如 \\d{4}-\\d{2}-\\d{2}" />
+          <input value={pattern} onChange={e => setPattern(e.target.value)} placeholder="例如 \\d{4}-\\d{2}-\\d{2}" aria-label="正则表达式" />
           <span className="regex-slash">/</span>
-          <input className="regex-flags" value={flags} onChange={e => setFlags(e.target.value)} placeholder="gi" />
+          <input className="regex-flags" value={flags} onChange={e => setFlags(e.target.value)} placeholder="gi" aria-label="正则修饰符" />
         </div>
         <div className="regex-presets">
           {PRESET_REGEX.map(p => (
@@ -540,7 +540,7 @@ function RegexTool() {
       </div>
       <div className="tool-field">
         <label>测试文本</label>
-        <textarea value={text} onChange={e => setText(e.target.value)} rows={6} placeholder="粘贴要匹配的文本" />
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={6} placeholder="粘贴要匹配的文本" aria-label="测试文本" />
       </div>
       <div className="tool-result">
         {result.error
@@ -626,7 +626,7 @@ function RegexExtractTool() {
           <span className="regex-slash">/</span>
           <input value={pattern} onChange={e => setPattern(e.target.value)} placeholder={'例如 "id"\\s*:\\s*"?(\\d+)"?'} />
           <span className="regex-slash">/</span>
-          <input className="regex-flags" value={flags} onChange={e => setFlags(e.target.value)} placeholder="gi" />
+          <input className="regex-flags" value={flags} onChange={e => setFlags(e.target.value)} placeholder="gi" aria-label="正则修饰符" />
           <select value={group} onChange={e => setGroup(Number(e.target.value))} title="只取第几个分组">
             <option value={0}>整个匹配</option>
             {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>第 {n} 个分组</option>)}
@@ -643,14 +643,14 @@ function RegexExtractTool() {
 
       <div className="tool-field">
         <label>源文本</label>
-        <textarea value={text} onChange={e => setText(e.target.value)} rows={7} placeholder="粘贴接口响应 / 日志 / 表格内容" />
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={7} placeholder="粘贴接口响应 / 日志 / 表格内容" aria-label="源文本" />
       </div>
 
       <div className="tool-inline">
         <label className="wk-check">
           <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} /> 去重
         </label>
-        <select value={format} onChange={e => setFormat(e.target.value as 'lines' | 'comma' | 'json')}>
+        <select value={format} onChange={e => setFormat(e.target.value as 'lines' | 'comma' | 'json')} aria-label="输出格式">
           <option value="lines">每行一条</option>
           <option value="comma">逗号分隔</option>
           <option value="json">JSON 数组</option>
@@ -747,7 +747,7 @@ function JsonExtractTool() {
     <div className="tool-panel">
       <div className="tool-field">
         <label>原始 JSON</label>
-        <textarea value={json} onChange={e => setJson(e.target.value)} rows={7} placeholder='{"code":0,"data":{"list":[{"id":1,"name":"a"}]}}' />
+        <textarea value={json} onChange={e => setJson(e.target.value)} rows={7} placeholder='{"code":0,"data":{"list":[{"id":1,"name":"a"}]}}' aria-label="原始 JSON" />
         <div className="tool-inline">
           <button className="btn btn-sm btn-secondary" onClick={formatJson} disabled={!!parsed.error}>格式化</button>
           <button className="btn btn-sm btn-secondary" onClick={() => { setJson(''); setPath(''); }}>清空</button>
@@ -757,7 +757,7 @@ function JsonExtractTool() {
       <div className="tool-field">
         <label>{mode === 'path' ? '取值路径（空 = 全部）' : '要提取的字段名'}</label>
         <div className="tool-inline">
-          <select value={mode} onChange={e => setMode(e.target.value as 'path' | 'key')}>
+          <select value={mode} onChange={e => setMode(e.target.value as 'path' | 'key')} aria-label="取值模式">
             <option value="path">按路径取</option>
             <option value="key">按字段名递归提取</option>
           </select>
@@ -865,8 +865,7 @@ function AesTool() {
           value={pass}
           onChange={e => setPass(e.target.value)}
           placeholder="口令（不保存、不上传）"
-          style={{ maxWidth: 260 }}
-        />
+          style={{ maxWidth: 260 }} aria-label="口令" />
         <button className="btn btn-sm btn-primary aes-run" onClick={run} disabled={busy || !text.trim()}>
           {busy ? '处理中…' : mode === 'enc' ? '加密' : '解密'}
         </button>
@@ -886,7 +885,7 @@ function AesTool() {
 
       <div className="tool-field">
         <label>结果</label>
-        <textarea value={out} readOnly rows={6} placeholder="结果会显示在这里" />
+        <textarea value={out} readOnly rows={6} placeholder="结果会显示在这里" aria-label="结果" />
         {out && (
           <button className="btn btn-sm btn-secondary" style={{ alignSelf: 'flex-start' }} onClick={() => navigator.clipboard.writeText(out)}>
             复制结果
@@ -999,7 +998,7 @@ function CronTool() {
       <div className="tool-field">
         <label>Cron 表达式（分 时 日 月 周）</label>
         <div className="tool-inline">
-          <input value={expr} onChange={e => setExpr(e.target.value)} placeholder="0 9 * * 1-5" spellCheck={false} />
+          <input value={expr} onChange={e => setExpr(e.target.value)} placeholder="0 9 * * 1-5" spellCheck={false} aria-label="cron 表达式" />
         </div>
         <div className="tool-inline" style={{ marginBottom: 6 }}>
           <input value={plain} onChange={e => setPlain(e.target.value)} placeholder="反向生成：输入「工作日 9 点」这类说法" aria-label="反向生成" />
@@ -1095,8 +1094,8 @@ function TimezoneTool() {
   return (
     <div className="tool-panel">
       <div className="tool-inline">
-        <input type="datetime-local" value={local} onChange={e => setLocal(e.target.value)} />
-        <select value={tz} onChange={e => setTz(e.target.value)}>
+        <input type="datetime-local" value={local} onChange={e => setLocal(e.target.value)} aria-label="时间" />
+        <select value={tz} onChange={e => setTz(e.target.value)} aria-label="时区">
           {ZONES.map(([zone, name]) => <option key={zone} value={zone}>{name}（{zone}）</option>)}
         </select>
         <span className="text-sm text-muted">上面这个时间按所选时区理解</span>
@@ -1147,8 +1146,7 @@ function UrlParamsTool() {
           value={input}
           onChange={e => setInput(e.target.value)}
           rows={4}
-          placeholder="https://api.example.com/users?page=1&size=20&keyword=%E6%B5%8B%E8%AF%95"
-        />
+          placeholder="https://api.example.com/users?page=1&size=20&keyword=%E6%B5%8B%E8%AF%95" aria-label="URL" />
       </div>
 
       {!parsed && <div className="text-sm text-muted">粘贴一个完整 URL，自动拆出协议、主机、路径与查询参数</div>}
@@ -1257,11 +1255,11 @@ function DiffTool() {
       <div className="diff-inputs">
         <div className="tool-field">
           <label>原始文本</label>
-          <textarea value={left} onChange={e => setLeft(e.target.value)} rows={8} placeholder="旧内容" />
+          <textarea value={left} onChange={e => setLeft(e.target.value)} rows={8} placeholder="旧内容" aria-label="原始文本" />
         </div>
         <div className="tool-field">
           <label>对比文本</label>
-          <textarea value={right} onChange={e => setRight(e.target.value)} rows={8} placeholder="新内容" />
+          <textarea value={right} onChange={e => setRight(e.target.value)} rows={8} placeholder="新内容" aria-label="对比文本" />
         </div>
       </div>
       <div className="tool-result">
@@ -1350,7 +1348,7 @@ function ValidateTool() {
   return (
     <div className="tool-panel">
       <div className="tool-inline">
-        <select value={type} onChange={e => { setType(e.target.value); setValue(''); }}>
+        <select value={type} onChange={e => { setType(e.target.value); setValue(''); }} aria-label="数据类型">
           {VALIDATORS.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
       </div>

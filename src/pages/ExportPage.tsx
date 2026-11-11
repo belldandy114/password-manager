@@ -104,7 +104,7 @@ export function ExportPage() {
               <div className="setting-desc">加密备份或明文导出</div>
             </div>
             <div className="setting-control">
-              <select value={exportType} onChange={e => setExportType(e.target.value as any)}>
+              <select value={exportType} onChange={e => setExportType(e.target.value as any)} aria-label="导出类型">
                 <option value="encrypted">🔒 加密备份 (AES-256)</option>
                 <option value="plain">📄 明文导出</option>
               </select>
@@ -120,7 +120,7 @@ export function ExportPage() {
               <div className="setting-desc">选择要导出的网址范围</div>
             </div>
             <div className="setting-control">
-              <select value={exportFilter} onChange={e => setExportFilter(e.target.value)}>
+              <select value={exportFilter} onChange={e => setExportFilter(e.target.value)} aria-label="导出筛选">
                 <option value="all">全部网址</option>
                 <option value="production">仅正式环境</option>
                 <option value="testing">仅测试环境</option>
@@ -142,7 +142,7 @@ export function ExportPage() {
               <label>导出密码</label>
               <input type="password" value={exportPassword}
                 onChange={e => setExportPassword(e.target.value)}
-                placeholder="设置加密导出密码" />
+                placeholder="设置加密导出密码" aria-label="导出密码" />
               <div className="input-hint">导入时需要提供此密码解密</div>
             </div>
             <button className="btn btn-primary" onClick={handleEncryptedExport}>
@@ -158,7 +158,7 @@ export function ExportPage() {
                 <div className="setting-desc">选择文件格式</div>
               </div>
               <div className="setting-control">
-                <select value={format} onChange={e => setFormat(e.target.value as any)}>
+                <select value={format} onChange={e => setFormat(e.target.value as any)} aria-label="导出格式">
                   <option value="json">JSON</option>
                   <option value="csv">CSV</option>
                   <option value="xlsx">Excel (XLSX)</option>
@@ -172,7 +172,7 @@ export function ExportPage() {
               </div>
               <div className="setting-control">
                 <input type="checkbox" checked={includePasswords}
-                  onChange={e => setIncludePasswords(e.target.checked)} />
+                  onChange={e => setIncludePasswords(e.target.checked)} aria-label="导出时包含密码" />
               </div>
             </div>
             <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--warning)' }}>

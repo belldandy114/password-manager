@@ -373,7 +373,7 @@ export function ImportPage() {
               <input type="password" value={importPassword}
                 onChange={e => setImportPassword(e.target.value)}
                 placeholder="输入加密备份的密码"
-                onKeyDown={e => { if (e.key === 'Enter') doImportEncrypted(); }} />
+                onKeyDown={e => { if (e.key === 'Enter') doImportEncrypted(); }} aria-label="解密密码" />
             </div>
             <div className="flex gap-8 mt-16">
               <button className="btn btn-secondary" onClick={resetToSelect}>返回</button>
@@ -423,7 +423,7 @@ export function ImportPage() {
 
             <div className="form-group">
               <label>环境类型（未匹配时默认）</label>
-              <select value={envType} onChange={e => setEnvType(e.target.value)}>
+              <select value={envType} onChange={e => setEnvType(e.target.value)} aria-label="环境类型（未匹配时默认）">
                 <option value="production">正式</option>
                 <option value="testing">测试</option>
                 <option value="development">开发</option>
@@ -446,7 +446,7 @@ export function ImportPage() {
           <>
             <div className="form-group">
               <label>冲突处理策略</label>
-              <select value={conflictStrategy} onChange={e => setConflictStrategy(e.target.value as ConflictStrategy)}>
+              <select value={conflictStrategy} onChange={e => setConflictStrategy(e.target.value as ConflictStrategy)} aria-label="冲突处理策略">
                 <option value="skip">跳过重复（网址 + 账号相同）</option>
                 <option value="overwrite">覆盖更新（用导入内容覆盖已有条目）</option>
                 <option value="duplicate">全部新增（保留重复）</option>

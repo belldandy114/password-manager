@@ -204,8 +204,10 @@ export function Login({ onLogin }: Props) {
               <div className="password-input-wrapper">
                 <input type={showPassword ? 'text' : 'password'} value={password}
                   onChange={e => setPassword(e.target.value)}
+                  aria-label="主密码"
                   placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
-                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}>
                   {showPassword ? '🙈' : '👁'}
                 </button>
               </div>
@@ -223,12 +225,14 @@ export function Login({ onLogin }: Props) {
               <label>确认密码</label>
               <div className="password-input-wrapper">
                 <input type={showPassword ? 'text' : 'password'} value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)} placeholder="再次输入密码" />
+                  onChange={e => setConfirmPassword(e.target.value)} aria-label="确认密码"
+                  placeholder="再次输入密码" />
               </div>
             </div>
             <div className="form-group">
               <label>密码提示词（可选）</label>
               <input type="text" value={hint} onChange={e => setHint(e.target.value)}
+                aria-label="密码提示词（可选）"
                 placeholder="帮助你记忆密码的提示" />
               <div className="input-hint">忘记主密码后将无法访问数据，请务必牢记</div>
             </div>
@@ -245,6 +249,7 @@ export function Login({ onLogin }: Props) {
                   <input type="text" value={forgotSecurityWord}
                     onChange={e => setForgotSecurityWord(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') handleForgotSecurity(); }}
+                    aria-label="安全词"
                     placeholder="输入设置的安全词" autoFocus />
                   <div className="input-hint">输入设置安全词时填写的词语</div>
                 </div>
@@ -258,8 +263,10 @@ export function Login({ onLogin }: Props) {
                   <div className="password-input-wrapper">
                     <input type={showPassword ? 'text' : 'password'} value={forgotNewPassword}
                       onChange={e => setForgotNewPassword(e.target.value)}
+                      aria-label="新主密码"
                       placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
-                    <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                    <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
+                      aria-label={showPassword ? '隐藏密码' : '显示密码'}>
                       {showPassword ? '🙈' : '👁'}
                     </button>
                   </div>
@@ -268,7 +275,8 @@ export function Login({ onLogin }: Props) {
                 <div className="form-group">
                   <label>确认新密码</label>
                   <input type={showPassword ? 'text' : 'password'} value={forgotNewPassword2}
-                    onChange={e => setForgotNewPassword2(e.target.value)} placeholder="再次输入新密码" />
+                    onChange={e => setForgotNewPassword2(e.target.value)} aria-label="确认新密码"
+                    placeholder="再次输入新密码" />
                 </div>
                 {error && <div className="form-group"><div className="input-hint" style={{ color: 'var(--danger)' }}>{error}</div></div>}
                 <button className="btn btn-primary btn-block btn-lg" onClick={handleForgotReset}>重置密码</button>
@@ -312,8 +320,10 @@ export function Login({ onLogin }: Props) {
                 <input type={showPassword ? 'text' : 'password'} value={password}
                   onChange={e => setPassword(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleLogin(); }}
+                  aria-label="主密码"
                   placeholder="输入主密码解锁" autoFocus />
-                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
+                <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}>
                   {showPassword ? '🙈' : '👁'}
                 </button>
               </div>

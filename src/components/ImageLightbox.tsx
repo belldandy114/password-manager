@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { createOverlayToken, isTopOverlay, pushOverlay, removeOverlay } from './overlayStack';
 
 /**
  * 图片灯箱：只显示照片本身（背景透明，不套白卡片），支持放大 / 缩小 / 拖动。
@@ -21,6 +22,24 @@ export function ImageLightbox({
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const stackId = useRef<symbol>(createOverlayToken());
+  const restoreRef = useRef<HTMLElement | null>(null);
+
+  // 入栈：灯箱从弹窗里点开时它才是「最上层」，Esc 只关它、不关下面的弹窗
+  useEffect(() => {
+    pushOverlay(stackId.current);
+    restoreRef.current = (document.activeElement as HTMLElement) || null;
+    const raf = requestAnimationFrame(() => closeBtnRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(raf);
+      removeOverlay(stackId.current);
+      const back = restoreRef.current;
+      if (back && document.contains(back)) {
+        try { back.focus(); } catch { /* 原元素可能已卸载 */ }
+      }
+    };
+  }, []);
 
   const reset = useCallback(() => {
     setScale(1);
@@ -38,6 +57,7 @@ export function ImageLightbox({
   // 键盘：Esc 关闭、+/- 缩放、0 复位
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!isTopOverlay(stackId.current)) return;
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomBy(0.25); return; }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(-0.25); return; }
@@ -80,6 +100,7 @@ export function ImageLightbox({
       aria-modal="true"
       aria-label={alt || '图片预览'}
       onClick={onClose}
+      tabIndex={-1}
     >
       <div className="img-lightbox-bar" onClick={(e) => e.stopPropagation()}>
         <span className="img-lightbox-title" title={alt}>{alt || '图片'}</span>
@@ -87,7 +108,7 @@ export function ImageLightbox({
         <button type="button" className="img-lightbox-btn" onClick={() => zoomBy(-0.25)} title="缩小（-）">−</button>
         <button type="button" className="img-lightbox-btn" onClick={() => zoomBy(0.25)} title="放大（+）">+</button>
         <button type="button" className="img-lightbox-btn" onClick={reset} title="原始大小（0）">1:1</button>
-        <button type="button" className="img-lightbox-btn is-close" onClick={onClose} title="关闭（Esc）">×</button>
+        <button type="button" className="img-lightbox-btn is-close" ref={closeBtnRef} onClick={onClose} title="关闭（Esc）" aria-label="关闭预览">×</button>
       </div>
 
       <div

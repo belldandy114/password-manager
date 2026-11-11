@@ -128,8 +128,7 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
           type="text"
           value={form.totpSecret || ''}
           onChange={e => onChange({ totpSecret: e.target.value.trim() })}
-          placeholder="可选：粘贴 Base32 密钥，如 JBSWY3DPEHPK3PXP"
-        />
+          placeholder="可选：粘贴 Base32 密钥，如 JBSWY3DPEHPK3PXP" aria-label="Base32 密钥" />
         {form.totpSecret ? <TotpPreview secret={form.totpSecret} /> : (
           <div className="input-hint">配置后可在列表里直接查看 6 位动态验证码</div>
         )}
@@ -146,12 +145,10 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
           <div key={f.id} className="custom-field-row">
             <input
               type="text" value={f.name} placeholder="字段名"
-              onChange={e => updateField(f.id, { name: e.target.value })}
-            />
+              onChange={e => updateField(f.id, { name: e.target.value })} aria-label="字段名" />
             <input
               type={f.secret ? 'password' : 'text'} value={f.value} placeholder="值"
-              onChange={e => updateField(f.id, { value: e.target.value })}
-            />
+              onChange={e => updateField(f.id, { value: e.target.value })} aria-label="值" />
             <label className={`gen-check entry-field-secret${f.secret ? ' is-on' : ''}`} title="按密码处理：列表里默认隐藏，需点「显示」才可见">
               <input type="checkbox" checked={!!f.secret} onChange={e => updateField(f.id, { secret: e.target.checked })} />
               <Icons.lock size={12} />

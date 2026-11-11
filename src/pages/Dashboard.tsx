@@ -12,6 +12,7 @@ import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
 import { callIpc } from '../utils/ipc';
 import { isSensitiveLabel } from '../utils/clipboard';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
+import { isPinyinReady, onPinyinReady } from '../utils/search';
 
 export function Dashboard() {
   const store = useStore();
@@ -76,6 +77,13 @@ export function Dashboard() {
   }, [store.triggerNewEntry]);
 
   const filteredEntries = store.getFilteredEntries();
+  // 拼音字典是异步 chunk：到手后触发一次重渲染，让已经敲进去的关键词
+  // 立刻能按拼音命中（在此之前只有原文匹配）
+  const [, setPinyinTick] = useState(0);
+  useEffect(() => {
+    if (isPinyinReady()) return;
+    return onPinyinReady(() => setPinyinTick((v) => v + 1));
+  }, []);
 
   // Group entries by env type for card view
   const groupedEntries = filteredEntries.reduce<Record<string, PasswordEntry[]>>((acc, e) => {
@@ -285,19 +293,42 @@ export function Dashboard() {
       <div className="toolbar">
         {/* Zone 1: Search */}
         <div className="toolbar-search">
-          <div className="search-scope-btn" onClick={() => setShowScopeMenu(!showScopeMenu)} title="搜索范围">
+          <div
+            className="search-scope-btn"
+            role="button"
+            tabIndex={0}
+            aria-haspopup="listbox"
+            aria-expanded={showScopeMenu}
+            aria-label={`搜索范围：${searchFieldLabels[store.searchField]}，点击切换`}
+            onClick={() => setShowScopeMenu(!showScopeMenu)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowScopeMenu(!showScopeMenu); }
+            }}
+            title="搜索范围"
+          >
             {searchFieldLabels[store.searchField]}
             <svg width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M0 0l5 6 5-6z"/>
             </svg>
           </div>
           {showScopeMenu && (
-            <div className="search-scope-menu">
+            <div className="search-scope-menu" role="listbox" aria-label="搜索范围">
               {(Object.keys(searchFieldLabels) as SearchField[]).map(key => (
                 <div
                   key={key}
+                  role="option"
+                  aria-selected={store.searchField === key}
+                  tabIndex={0}
                   className={`search-scope-item ${store.searchField === key ? 'active' : ''}`}
                   onClick={() => { store.setSearchField(key); setShowScopeMenu(false); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      store.setSearchField(key);
+                      setShowScopeMenu(false);
+                    }
+                    if (e.key === 'Escape') { e.stopPropagation(); setShowScopeMenu(false); }
+                  }}
                 >
                   {searchFieldLabels[key]}
                 </div>
@@ -306,6 +337,7 @@ export function Dashboard() {
           )}
           <input
             type="text"
+            aria-label={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL、账号、标签' : searchFieldLabels[store.searchField]}`}
             placeholder={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL、账号、标签' : searchFieldLabels[store.searchField]}...`}
             value={store.searchQuery}
             onChange={e => store.setSearchQuery(e.target.value)}
@@ -321,7 +353,7 @@ export function Dashboard() {
 
         {/* Zone 2: Filters & Sort */}
         <div className="toolbar-filters">
-          <select value={store.filterEnv} onChange={e => store.setFilterEnv(e.target.value)}>
+          <select value={store.filterEnv} onChange={e => store.setFilterEnv(e.target.value)} aria-label="按环境筛选">
             <option value="all">全部环境</option>
             <option value="production">正式</option>
             <option value="testing">测试</option>
@@ -331,12 +363,12 @@ export function Dashboard() {
 
 
 
-          <select className="sort-select" value={store.sortField} onChange={e => store.setSortField(e.target.value as any)}>
+          <select className="sort-select" value={store.sortField} onChange={e => store.setSortField(e.target.value as any)} aria-label="排序字段">
             {(Object.keys(sortFieldLabels) as Array<keyof typeof sortFieldLabels>).map(key => (
               <option key={key} value={key}>{sortFieldLabels[key]}</option>
             ))}
           </select>
-          <select className="sort-order-select" value={store.sortOrder} onChange={e => store.setSortOrder(e.target.value as any)} style={{ minWidth: 80 }}>
+          <select className="sort-order-select" value={store.sortOrder} onChange={e => store.setSortOrder(e.target.value as any)} style={{ minWidth: 80 }} aria-label="排序方向">
             {(Object.keys(sortOrderLabels) as Array<keyof typeof sortOrderLabels>).map(key => (
               <option key={key} value={key}>{sortOrderLabels[key]}</option>
             ))}
@@ -668,7 +700,7 @@ export function Dashboard() {
                 <div className="setting-desc">加密备份或明文导出</div>
               </div>
               <div className="setting-control">
-                <select value={exportType} onChange={e => setExportType(e.target.value as any)}>
+                <select value={exportType} onChange={e => setExportType(e.target.value as any)} aria-label="导出类型">
                   <option value="encrypted">🔒 加密备份 (AES-256)</option>
                   <option value="plain">📄 明文导出</option>
                 </select>
@@ -682,7 +714,7 @@ export function Dashboard() {
                 <label>导出密码</label>
                 <input type="password" value={exportPassword}
                   onChange={e => setExportPassword(e.target.value)}
-                  placeholder="设置加密导出密码（至少6位）" />
+                  placeholder="设置加密导出密码（至少6位）" aria-label="导出密码" />
                 <div className="input-hint">导入时需要提供此密码解密</div>
               </div>
             </div>
@@ -694,7 +726,7 @@ export function Dashboard() {
                   <div className="setting-desc">选择文件格式</div>
                 </div>
                 <div className="setting-control">
-                  <select value={exportFormat} onChange={e => setExportFormat(e.target.value as any)}>
+                  <select value={exportFormat} onChange={e => setExportFormat(e.target.value as any)} aria-label="导出格式">
                     <option value="json">JSON</option>
                     <option value="csv">CSV</option>
                     <option value="xlsx">Excel (XLSX)</option>
@@ -708,7 +740,7 @@ export function Dashboard() {
                 </div>
                 <div className="setting-control">
                   <input type="checkbox" checked={includePasswords}
-                    onChange={e => setIncludePasswords(e.target.checked)} />
+                    onChange={e => setIncludePasswords(e.target.checked)} aria-label="导出时包含密码" />
                 </div>
               </div>
             </div>
@@ -732,7 +764,7 @@ export function Dashboard() {
             将 <strong>{store.selectedIds.size}</strong> 个选中网址的环境修改为：
           </p>
           <div className="form-group">
-            <select value={batchEnvType} onChange={e => setBatchEnvType(e.target.value)}>
+            <select value={batchEnvType} onChange={e => setBatchEnvType(e.target.value)} aria-label="批量修改环境">
               <option value="production">正式</option>
               <option value="testing">测试</option>
               <option value="development">开发</option>
@@ -754,7 +786,7 @@ export function Dashboard() {
           </p>
           <div className="form-group">
             <label>选择标签</label>
-            <select value={batchTag} onChange={e => setBatchTag(e.target.value)}>
+            <select value={batchTag} onChange={e => setBatchTag(e.target.value)} aria-label="选择标签">
               <option value="">- 选择或输入新标签 -</option>
               {store.tags.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
@@ -762,7 +794,7 @@ export function Dashboard() {
               或输入新标签名称（自动创建）
             </div>
             <input type="text" value={batchTag} onChange={e => setBatchTag(e.target.value)}
-              placeholder="输入新标签名称" style={{ marginTop: 4 }} />
+              placeholder="输入新标签名称" style={{ marginTop: 4 }} aria-label="输入新标签名称" />
           </div>
           <div className="flex gap-8" style={{ justifyContent: 'flex-end' }}>
             <button className="btn btn-secondary" onClick={() => setShowBatchTagModal(false)}>取消</button>

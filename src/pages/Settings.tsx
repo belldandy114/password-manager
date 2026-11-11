@@ -545,7 +545,7 @@ export function Settings() {
                 <div className="setting-desc">无操作后自动锁定应用</div>
               </div>
               <div className="setting-control">
-                <input type="number" value={autoLockDelay} onChange={e => setAutoLockDelay(Number(e.target.value))} min={1} max={60} />
+                <input type="number" value={autoLockDelay} onChange={e => setAutoLockDelay(Number(e.target.value))} min={1} max={60} aria-label="自动锁定分钟数" />
                 <span className="text-sm text-muted">分钟</span>
               </div>
             </div>
@@ -566,8 +566,7 @@ export function Settings() {
                   min={1}
                   max={60}
                   onChange={e => setBackupKeep(Number(e.target.value))}
-                  style={{ width: 70 }}
-                />
+                  style={{ width: 70 }} aria-label="备份保留份数" />
                 <span className="text-sm text-muted">份</span>
                 <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.backupOpenFolder()}>
                   打开备份目录
@@ -719,7 +718,7 @@ export function Settings() {
                   updateSettings({ theme: val });
                   applyTheme(val);
                   window.electronAPI.settingsSave({ theme: val });
-                }}>
+                }} aria-label="主题">
                   <option value="dark">深色主题</option>
                   <option value="light">浅色主题</option>
                   <option value="system">跟随系统</option>
@@ -738,7 +737,7 @@ export function Settings() {
                   updateSettings({ density: val });
                   applyDensity(val);
                   window.electronAPI.settingsSave({ density: val });
-                }}>
+                }} aria-label="界面密度">
                   <option value="compact">紧凑</option>
                   <option value="standard">标准</option>
                   <option value="cozy">宽松</option>
@@ -773,7 +772,7 @@ export function Settings() {
                 <div className="setting-desc">网址的默认显示模式</div>
               </div>
               <div className="setting-control">
-                <select value={defaultViewMode} onChange={e => setDefaultViewMode(e.target.value as any)}>
+                <select value={defaultViewMode} onChange={e => setDefaultViewMode(e.target.value as any)} aria-label="默认视图">
                   <option value="card">卡片视图</option>
                   <option value="list">列表视图</option>
                 </select>
@@ -787,7 +786,7 @@ export function Settings() {
                 <div className="setting-desc">复制密码后，剪贴板自动清空的时间 (5-300秒)</div>
               </div>
               <div className="setting-control">
-                <input type="number" value={clipboardClearDelay} onChange={e => setClipboardClearDelay(Number(e.target.value))} min={5} max={300} />
+                <input type="number" value={clipboardClearDelay} onChange={e => setClipboardClearDelay(Number(e.target.value))} min={5} max={300} aria-label="剪贴板清空延迟秒数" />
                 <span className="text-sm text-muted">秒</span>
               </div>
             </div>
@@ -861,7 +860,7 @@ export function Settings() {
                 <div className="setting-desc">明文密码显示后自动恢复掩码的时间 (3-120秒)</div>
               </div>
               <div className="setting-control">
-                <input type="number" value={passwordAutoHideDelay} onChange={e => setPasswordAutoHideDelay(Number(e.target.value))} min={3} max={120} />
+                <input type="number" value={passwordAutoHideDelay} onChange={e => setPasswordAutoHideDelay(Number(e.target.value))} min={3} max={120} aria-label="密码自动隐藏秒数" />
                 <span className="text-sm text-muted">秒</span>
               </div>
             </div>
@@ -902,8 +901,7 @@ export function Settings() {
                   value={zentaoNotifyInterval}
                   onChange={e => setZentaoNotifyInterval(Number(e.target.value))}
                   min={2}
-                  max={120}
-                />
+                  max={120} aria-label="禅道检查间隔分钟数" />
                 <span className="text-sm text-muted">分钟</span>
               </div>
             </div>
@@ -1112,8 +1110,7 @@ export function Settings() {
                   value={mirrorUrl}
                   placeholder="留空 = 只走 GitHub"
                   onChange={e => { setMirrorUrl(e.target.value); setMirrorDirty(true); }}
-                  style={{ width: 260 }}
-                />
+                  style={{ width: 260 }} aria-label="留空 = 只走 GitHub" />
                 <button className="btn btn-sm btn-secondary" onClick={() => void saveMirrorUrl()} disabled={!mirrorDirty}>
                   保存
                 </button>
@@ -1426,16 +1423,16 @@ export function Settings() {
       >
         <div className="form-group">
           <label>主密码（验证身份）</label>
-          <input type="password" value={swPassword} onChange={e => setSwPassword(e.target.value)} placeholder="输入当前主密码" autoFocus />
+          <input type="password" value={swPassword} onChange={e => setSwPassword(e.target.value)} placeholder="输入当前主密码" autoFocus aria-label="主密码（验证身份）" />
         </div>
         <div className="form-group">
           <label>安全词</label>
-          <input type="text" value={securityWord} onChange={e => setSecurityWord(e.target.value)} placeholder="设置安全词，用于重置主密码" />
+          <input type="text" value={securityWord} onChange={e => setSecurityWord(e.target.value)} placeholder="设置安全词，用于重置主密码" aria-label="安全词" />
           <div className="input-hint">忘记主密码时，可通过安全词重置。请牢记此安全词</div>
         </div>
         <div className="form-group">
           <label>确认安全词</label>
-          <input type="text" value={securityWord2} onChange={e => setSecurityWord2(e.target.value)} placeholder="再次输入安全词" />
+          <input type="text" value={securityWord2} onChange={e => setSecurityWord2(e.target.value)} placeholder="再次输入安全词" aria-label="确认安全词" />
         </div>
       </Modal>
 
@@ -1450,15 +1447,15 @@ export function Settings() {
       >
         <div className="form-group">
           <label>当前密码</label>
-          <input type="password" value={oldPwd} onChange={e => setOldPwd(e.target.value)} placeholder="输入当前主密码" />
+          <input type="password" value={oldPwd} onChange={e => setOldPwd(e.target.value)} placeholder="输入当前主密码" aria-label="当前密码" />
         </div>
         <div className="form-group">
           <label>新密码</label>
-          <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="至少8位，含大小写字母、数字和符号" />
+          <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="至少8位，含大小写字母、数字和符号" aria-label="新密码" />
         </div>
         <div className="form-group">
           <label>确认新密码</label>
-          <input type="password" value={newPwd2} onChange={e => setNewPwd2(e.target.value)} placeholder="再次输入新密码" />
+          <input type="password" value={newPwd2} onChange={e => setNewPwd2(e.target.value)} placeholder="再次输入新密码" aria-label="确认新密码" />
         </div>
       </Modal>
 

@@ -161,4 +161,16 @@ if (dupGroups.length > 200) {
   console.log('\n  ⚠ 历史重复较多。新样式请写在最后加载的 redesign.css 末尾，')
   console.log('    需要动老规则时优先删「完全重复」那批（上面的清单），冲突类要逐个人工确认。');
 }
-// 只报告：历史债不该阻断发版
+
+// 「声明完全相同」是可机械清理的历史债，已经清零：以后谁再写出这种重复就拦住。
+// 「声明冲突」不拦 —— global → pages → redesign 的顺序覆盖本就是本项目的换肤手段。
+if (identical.length > 0) {
+  console.error(`\n\u2717 出现 ${identical.length} 个「声明完全相同」的重复规则：`);
+  for (const [sel, list] of identical) {
+    console.error(`    ${sel}  →  ${list.map(r => `${r.file}:${r.line}`).join(', ')}`);
+  }
+  console.error('  删掉靠前那份（保留最后加载的），别用加载顺序去表达同一条声明。');
+  process.exitCode = 1;
+} else {
+  console.log('\n\u2713 没有「声明完全相同」的重复规则');
+}

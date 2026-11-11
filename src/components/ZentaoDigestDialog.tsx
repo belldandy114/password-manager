@@ -469,13 +469,11 @@ export function ZentaoDigestDialog({ open, onClose, existing, onGenerated }: Pro
           <div className="digest-row">
             <input
               type="date" value={from} onChange={e => changeDate('from', e.target.value)}
-              disabled={busy} className="digest-date"
-            />
+              disabled={busy} className="digest-date" aria-label="开始日期" />
             <span className="text-muted">至</span>
             <input
               type="date" value={to} onChange={e => changeDate('to', e.target.value)}
-              disabled={busy} className="digest-date"
-            />
+              disabled={busy} className="digest-date" aria-label="结束日期" />
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset('thisWeek')} disabled={busy}>本周</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset('lastWeek')} disabled={busy}>上周</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => applyPreset('thisWeekToFriday')} disabled={busy}>本周一至周五</button>
@@ -612,8 +610,7 @@ export function ZentaoDigestDialog({ open, onClose, existing, onGenerated }: Pro
               onKeyDown={e => {
                 if (e.key === 'Enter') { e.preventDefault(); addPerson(); }
               }}
-              onBlur={() => { if (peopleInput.trim()) addPerson(); }}
-            />
+              onBlur={() => { if (peopleInput.trim()) addPerson(); }} aria-label="输入禅道账号或姓名，回车添加" />
             <button
               type="button"
               className="btn btn-ghost btn-sm"
