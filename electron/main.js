@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net, session } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -111,6 +111,7 @@ const BIN_FILE = path.join(DATA_DIR, 'trash.enc');
 // 文件格式常量与结构自检都在 electron/vault-file.js（带单测）：常量只留这一份定义，
 // 否则「恢复前校验」和「解密」会各算各的长度。
 const { ALGO, SALT_LENGTH, IV_LENGTH, TAG_LENGTH } = require('./vault-file');
+const { createClipHistory } = require('./clip-history');
 const KEY_ITERATIONS = 600000;
 const KEY_LENGTH = 32;
 const BIN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -139,6 +140,20 @@ const APP_DIST_DIR = path.join(__dirname, '..', 'dist');
 const { openHttpUrl } = require('./url-open');
 const { spawn: spawnForUrlOpen } = require('child_process');
 const { installNavigationGuards, guardWebviews } = require('./nav-guard');
+const { createPinManager } = require('./pin-window');
+
+// 「钉」小窗：一条记录一个窗口，锁屏/退出时统一销毁
+const pinManager = createPinManager({
+  BrowserWindow,
+  ipcMain,
+  path,
+  screen,
+  isDev: USE_DEV_SERVER,
+  preloadPath: path.join(__dirname, 'preload.js'),
+  distDir: APP_DIST_DIR,
+  isContentProtection: () => !!(loadSettings() || {}).contentProtection,
+  onLog: (m) => console.log(m)
+});
 
 const navGuardOptions = () => ({
   dev: USE_DEV_SERVER,
@@ -263,6 +278,31 @@ function readEncryptedWithBak(file, password) {
   return { raw, recovered: false };
 }
 
+/**
+ * 读库后的统一升级关口：先按 schemaVersion 迁移，再归一化结构。
+ *
+ * - 迁移过的库立即落盘（顺带留一条审计），否则每次解锁都要重算一遍；
+ * - 落盘失败只影响下次再迁，不影响本次可用性 —— 内存里已经是新结构；
+ * - 库版本比应用新（用户降级过）时不动它，只记一条审计，
+ *   normalizeVault 会把不认识的字段原样带回去，避免一保存就把新字段洗掉。
+ */
+function migrateAndNormalize(parsed, password) {
+  const { vault, from, to, applied, future } = migrateVault(parsed);
+  const result = normalizeVault(vault);
+  if (future) {
+    appendAudit({ action: 'vault-newer-version', from });
+    console.warn(`[vault] 库版本 v${from} 高于当前应用支持的 v${VAULT_SCHEMA_VERSION}，已保留未知字段`);
+    return result;
+  }
+  if (applied.length) {
+    try {
+      saveVault(result, password);
+      appendAudit({ action: 'vault-migrate', from, to });
+    } catch { /* 下次解锁再迁 */ }
+  }
+  return result;
+}
+
 function loadVault(password) {
   if (vaultCache.password === password && vaultCache.data) return vaultCache.data;
   let result;
@@ -276,7 +316,7 @@ function loadVault(password) {
       const json = decrypt(raw, password);
       if (!json) return null;
       try {
-        result = normalizeVault(JSON.parse(json));
+        result = migrateAndNormalize(JSON.parse(json), password);
       } catch {
         return null;
       }
@@ -503,6 +543,9 @@ const DEFAULT_SETTINGS = {
   lastPage: 'passwordManager',
   zentaoNotify: false,
   zentaoNotifyInterval: 10,
+  // 环境巡检定时执行（分钟，0 = 关）；只在状态翻转时弹通知
+  envProbeInterval: 0,
+  envProbeNotifyOnFlip: true,
   backupKeep: 7,
   // 应用内更新：自定义国内直链前缀（空 = 只走 GitHub）；周期检查小时数（0 = 仅启动查一次）
   updateMirrorUrl: '',
@@ -749,6 +792,11 @@ function applyHotkeys(override, { persist = false } = {}) {
 let searchWin = null;
 /** 主进程视角的解锁状态（给全局搜索键用：没解锁就别弹数据小窗，直接出主窗口） */
 let appUnlocked = false;
+/**
+ * 当前会话主密码。提到模块级是因为剪贴板历史（electron/clip-history.js）在
+ * setupIpcHandlers() 之外创建，需要用它加解密落盘文件。
+ */
+let currentPassword = null;
 
 function createSearchWindow() {
   searchWin = new BrowserWindow({
@@ -1179,25 +1227,29 @@ function createWindow() {
 let clipboardTimers = {};
 
 /**
- * 敏感复制历史（内存级，最多 10 条）。
- * 只在设置里显式开启才记录；锁屏、退出、点「清空」都会清掉，不落盘。
+ * 敏感复制历史（本地加密落盘，滚动 30 条）。
+ * 只在设置里显式开启才记录；锁屏只清内存、文件留着，下次解锁用同一主密码读回来；
+ * 点「清空」才真正删文件。实现见 electron/clip-history.js。
  */
-const CLIP_HISTORY_MAX = 10;
-const clipHistory = [];
+const clipHistory = createClipHistory({
+  dir: DATA_DIR,
+  encrypt,
+  decrypt,
+  writeFileAtomic,
+  getPassword: () => currentPassword,
+  isEnabled: () => !!(loadSettings() || {}).clipboardHistory,
+});
 
 function rememberClipboard(text) {
-  try {
-    if (!(loadSettings() || {}).clipboardHistory) return;
-    const t = String(text || '');
-    if (!t) return;
-    if (clipHistory[0] && clipHistory[0].text === t) return;
-    clipHistory.unshift({ text: t, at: new Date().toISOString() });
-    while (clipHistory.length > CLIP_HISTORY_MAX) clipHistory.pop();
-  } catch { /* 记录失败不影响复制 */ }
+  clipHistory.remember(text);
 }
 
 function clearClipHistory() {
-  clipHistory.length = 0;
+  clipHistory.forget();
+}
+
+function wipeClipHistory() {
+  clipHistory.wipe();
 }
 
 function clearClipboardAfter(delayMs) {
@@ -1239,7 +1291,10 @@ const { registerApiIpc, clearApiJar } = require('./ipc-api');
 // 新增模块（SQL 片段 / 笔记 / 检查清单 / 账号池 / 环境总览 / 接口调试）都放在同一个
 // 加密文件里，随密码库一起加密，不额外增加新的密码。旧数据缺少这些字段时补空数组。
 // 结构归一化抽到 electron/vault-schema.js（带单测）：它是旧库升级的唯一关口，不能靠肉眼保证
-const { VAULT_COLLECTIONS, normalizeVault } = require('./vault-schema');
+// 结构归一化与版本迁移抽到 electron/vault-schema.js（带单测）：它是旧库升级的唯一关口，不能靠肉眼保证
+const {
+  VAULT_COLLECTIONS, VAULT_SCHEMA_VERSION, migrateVault, normalizeVault,
+} = require('./vault-schema');
 
 // TOTP 辅助函数与 password:generate 已拆到 electron/ipc-tools.js（带 RFC 6238 向量单测）
 
@@ -1432,8 +1487,10 @@ function restartAutoUpdateCheck() {
 function setupIpcHandlers() {
 
   // ---- 会话状态（auth / entries / zentao 等模块都通过 getter 读写它）----
-  let currentPassword = null;
   let lastActivity = Date.now();
+
+  // ---- 「钉」小窗（实现见 electron/pin-window.js）----
+  pinManager.register();
 
   // ---- 主密码 / 安全词 / 找回密码（实现见 electron/ipc-auth.js）----
   registerAuthIpc({
@@ -1452,6 +1509,8 @@ function setupIpcHandlers() {
     getPassword: () => currentPassword,
     setPassword: (v) => { currentPassword = v; },
     setUnlocked: (v) => { appUnlocked = v; },
+    repersistClipHistory: (pw) => clipHistory.repersist(pw),
+    wipeClipHistory: () => clipHistory.wipe(),
   });
 
   // ---- 搜索小窗的会话纪元（palette:epoch）----
@@ -1478,6 +1537,10 @@ function setupIpcHandlers() {
     writeFileAtomic,
     clearCaches,
     getMainWindow: () => mainWindow,
+    loadVault,
+    getPassword: () => currentPassword,
+    attachmentFile,
+    decrypt,
   });
 
   // ---- 应用内更新（实现见 electron/ipc-update.js）----
@@ -1534,9 +1597,12 @@ function setupIpcHandlers() {
     getMainWindow: () => mainWindow,
     sortByDateDesc, retentionMs: BIN_RETENTION_MS, defaultSettings: DEFAULT_SETTINGS,
     rememberClipboard, clearClipboardAfter, clearClipHistory,
-    getClipHistory: () => clipHistory,
+    wipeClipHistory,
+    loadClipHistory: () => clipHistory.load(),
+    getClipHistory: () => clipHistory.list(),
     getClipboardTimers: () => clipboardTimers,
     resetClipboardTimers: () => { clipboardTimers = {}; },
+    closePinWindows: () => pinManager.closeAll(),
   });
 
   // 系统类 IPC（对话框 / 文件读写 / 应用路径）已拆到 electron/ipc-system.js

@@ -6,6 +6,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
 import { guessUrlFromInput } from './utils/urlInput';
+import { recordPageUse } from './utils/recent';
+import { useEnvAutoProbe } from './utils/envSchedule';
 
 /**
  * 工作台页面按需加载：首屏只装登录 + 侧边栏，
@@ -86,6 +88,16 @@ function App() {
   // Ref to always call the latest handleLock from intervals
   const handleLockRef = useRef(handleLock);
   handleLockRef.current = handleLock;
+
+  // 环境矩阵定时巡检：间隔与「只在翻转时通知」都在设置页「定时任务」里改
+  const autoProbeInterval = useStore(s => s.settings.envProbeInterval || 0);
+  const autoProbeNotify = useStore(s => s.settings.envProbeNotifyOnFlip !== false);
+  useEnvAutoProbe(autoProbeInterval, autoProbeNotify, !isLocked);
+
+  // 点系统通知时主进程要求跳页
+  useEffect(() => window.electronAPI.onAppNavigate?.((p) => {
+    if (p && p.page) setCurrentPage(p.page);
+  }), []);
 
   // Auto-lock timer
   useEffect(() => {
@@ -298,6 +310,8 @@ function App() {
   useEffect(() => {
     if (isLocked) return;
     if (skipLastPageSaveRef.current) { skipLastPageSaveRef.current = false; return; }
+    // 顺带记一次页面使用次数：命令面板按常用度排序要靠它
+    recordPageUse(currentPage);
     const t = setTimeout(() => {
       window.electronAPI.settingsSave({ lastPage: currentPage });
     }, 600);

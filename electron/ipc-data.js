@@ -13,6 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const { app, ipcMain, dialog, shell } = require('electron');
 const { inspectVaultFile } = require('./vault-file');
+const { auditVault } = require('./vault-audit');
+const { logPath, tail: logTail } = require('./app-log');
 
 function registerDataIpc(deps) {
   const {
@@ -32,6 +34,10 @@ function registerDataIpc(deps) {
     writeFileAtomic,
     clearCaches,
     getMainWindow,
+    loadVault,
+    getPassword,
+    attachmentFile,
+    decrypt,
   } = deps;
 
   // ---- 旧版本数据恢复（改名后「新库已建、旧库还在」时手动搬）----
@@ -196,6 +202,151 @@ function registerDataIpc(deps) {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
       await shell.openPath(BACKUP_DIR);
       return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  // ---- 库自检（只读体检）----
+  /**
+   * 体检当前库：结构、悬空标签、丢失的附件、孤儿历史。
+   * 只读 —— 报告里的问题一律由用户自己决定怎么处理，这里绝不自动改数据。
+   */
+  ipcMain.handle('vault:audit', () => {
+    const pw = getPassword();
+    if (!pw) return { success: false, error: '未解锁' };
+    const vault = loadVault(pw);
+    if (!vault) return { success: false, error: '数据损坏，无法读取' };
+    try {
+      const report = auditVault(vault, {
+        attachmentExists: (id) => {
+          try { return fs.existsSync(attachmentFile(id)); } catch { return false; }
+        },
+      });
+      return { success: true, data: report };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /**
+   * 恢复演练：拿一份备份，用当前主密码解开、体检，**不碰正式库**。
+   *
+   * 为什么需要：备份文件存在 ≠ 备份能用。主密码改过之后，旧备份是用旧密码加密的，
+   * 平时完全看不出来，真出事要恢复时才发现解不开。演练就是提前把这件事试一遍。
+   */
+  ipcMain.handle('vault:restore-drill', (_event, { name } = {}) => {
+    const pw = getPassword();
+    if (!pw) return { success: false, error: '未解锁' };
+    try {
+      const safe = path.basename(String(name || ''));
+      if (!/^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(safe)) {
+        return { success: false, error: '备份文件名不合法' };
+      }
+      const src = path.join(BACKUP_DIR, safe);
+      if (!fs.existsSync(src)) return { success: false, error: '备份文件不存在' };
+
+      const text = fs.readFileSync(src, 'utf8');
+      const inspection = inspectVaultFile(text);
+      if (!inspection.ok) {
+        return { success: true, data: { name: safe, ok: false, stage: 'format', error: inspection.error } };
+      }
+      const json = decrypt(text, pw);
+      if (!json) {
+        return {
+          success: true,
+          data: {
+            name: safe,
+            ok: false,
+            stage: 'decrypt',
+            error: '用当前主密码解不开（多半是改密码之前的备份，需要用当时的密码恢复）',
+          },
+        };
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(json);
+      } catch {
+        return { success: true, data: { name: safe, ok: false, stage: 'parse', error: '解密成功但内容不是合法 JSON' } };
+      }
+      const report = auditVault(parsed, {
+        attachmentExists: (id) => {
+          try { return fs.existsSync(attachmentFile(id)); } catch { return false; }
+        },
+      });
+      return {
+        success: true,
+        data: {
+          name: safe,
+          ok: report.ok,
+          stage: 'done',
+          bytes: inspection.bytes,
+          report,
+        },
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /**
+   * 导出诊断包：把日志、环境信息、库自检结果打成一个文本文件。
+   * 不含密码、不含条目内容 —— 只放「排障需要的最小集合」。
+   */
+  ipcMain.handle('log:export-diagnostic', async () => {
+    try {
+      const r = await dialog.showSaveDialog(getMainWindow(), {
+        title: '导出诊断包',
+        defaultPath: `诊断包-${new Date().toISOString().slice(0, 10)}.txt`,
+        filters: [{ name: '文本文件', extensions: ['txt'] }],
+      });
+      if (r.canceled || !r.filePath) return { success: false, canceled: true };
+
+      const pw = getPassword();
+      let auditText = '（未解锁，跳过库自检）';
+      if (pw) {
+        const vault = loadVault(pw);
+        if (vault) {
+          try {
+            const rep = auditVault(vault, {
+              attachmentExists: (id) => {
+                try { return fs.existsSync(attachmentFile(id)); } catch { return false; }
+              },
+            });
+            auditText = [
+              `结构版本: v${rep.schemaVersion}`,
+              `统计: ${JSON.stringify(rep.stats)}`,
+              `问题: error ${rep.counts.error} / warn ${rep.counts.warn} / info ${rep.counts.info}`,
+              ...rep.issues.map(i => `  [${i.level}] ${i.code} ×${i.count} — ${i.message}`),
+            ].join('\n');
+          } catch (e) {
+            auditText = `（自检失败：${e.message}）`;
+          }
+        }
+      }
+
+      const backups = listBackups();
+      const lines = [
+        '===== 测试中台 诊断包 =====',
+        `导出时间: ${new Date().toISOString()}`,
+        `应用版本: ${process.env.PM_APP_VERSION || app.getVersion()}`,
+        `Electron: ${process.versions.electron}  Chrome: ${process.versions.chrome}  Node: ${process.versions.node}`,
+        `平台: ${process.platform} ${process.arch}  ${process.getSystemVersion ? process.getSystemVersion() : ''}`,
+        `数据目录: ${DATA_DIR}`,
+        `默认目录: ${USER_DATA_DIR}`,
+        `库文件: ${fs.existsSync(DATA_FILE) ? `${fs.statSync(DATA_FILE).size} 字节` : '不存在'}`,
+        `备份: ${backups.length} 份${backups[0] ? `，最近 ${backups[0].name}` : ''}`,
+        `异地备份: ${backupMirrorDir() || '未配置'}`,
+        '',
+        '===== 库自检 =====',
+        auditText,
+        '',
+        '===== 运行日志（最近 400 行）=====',
+        logTail(400) || '（没有日志）',
+      ];
+      fs.writeFileSync(r.filePath, lines.join('\n'), 'utf8');
+      appendAudit({ action: 'diagnostic-export', entry: path.basename(r.filePath) });
+      return { success: true, data: { file: r.filePath } };
     } catch (e) {
       return { success: false, error: e.message };
     }

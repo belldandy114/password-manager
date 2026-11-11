@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeVault, VAULT_COLLECTIONS } from '../../../electron/vault-schema.js';
+import {
+  declaredVersion, migrateVault, normalizeVault, VAULT_COLLECTIONS, VAULT_SCHEMA_VERSION,
+} from '../../../electron/vault-schema.js';
 
 /**
  * normalizeVault 是「旧密码库 → 当前结构」的唯一关口：改错就是丢数据。
@@ -64,5 +66,97 @@ describe('vault-schema.normalizeVault 结构归一化', () => {
     const input: Record<string, unknown> = { entries: [{ id: 'a' }] };
     normalizeVault(input);
     expect(Object.keys(input)).toEqual(['entries']);
+  });
+
+  it('归一化后一定带上当前结构版本号', () => {
+    expect(normalizeVault(null).schemaVersion).toBe(VAULT_SCHEMA_VERSION);
+    expect(normalizeVault({ entries: [] }).schemaVersion).toBe(VAULT_SCHEMA_VERSION);
+  });
+});
+
+/**
+ * 版本迁移：库文件里存 schemaVersion，读库时按 from → to 依次升级。
+ * 这组用例钉住「不丢数据」与「不越界降级」两条底线。
+ */
+describe('vault-schema.migrateVault 版本迁移', () => {
+  it('没有 schemaVersion 的库视为 v1', () => {
+    expect(declaredVersion({})).toBe(1);
+    expect(declaredVersion({ schemaVersion: 0 })).toBe(1);
+    expect(declaredVersion({ schemaVersion: 'abc' })).toBe(1);
+    expect(declaredVersion(null)).toBe(1);
+    expect(declaredVersion({ schemaVersion: 2 })).toBe(2);
+  });
+
+  it('v1 库被升到当前版本，并记录执行过的步骤', () => {
+    const { vault, from, to, applied, future } = migrateVault({ entries: [{ id: 'a' }] });
+    expect(from).toBe(1);
+    expect(to).toBe(VAULT_SCHEMA_VERSION);
+    expect(applied).toEqual([1]);
+    expect(future).toBe(false);
+    expect(vault.schemaVersion).toBe(VAULT_SCHEMA_VERSION);
+    expect(vault.entries).toEqual([{ id: 'a' }]);
+  });
+
+  it('v1 的 history 数组按 entryId 归组成对象，孤儿记录落 __orphan', () => {
+    const { vault } = migrateVault({
+      entries: [],
+      history: [
+        { entryId: 'a', password: 'p1' },
+        { entryId: 'a', password: 'p2' },
+        { entryId: 'b', password: 'p3' },
+        { password: 'no-owner' },
+        null,
+        'junk',
+      ],
+    });
+    expect(Object.keys(vault.history as Record<string, unknown>).sort()).toEqual(['__orphan', 'a', 'b']);
+    expect((vault.history as Record<string, unknown[]>).a).toHaveLength(2);
+    expect((vault.history as Record<string, unknown[]>).b).toHaveLength(1);
+    expect((vault.history as Record<string, unknown[]>).__orphan).toHaveLength(1);
+  });
+
+  it('已经是当前版本的库不再迁移', () => {
+    const { from, to, applied } = migrateVault({ schemaVersion: VAULT_SCHEMA_VERSION, entries: [] });
+    expect(from).toBe(VAULT_SCHEMA_VERSION);
+    expect(to).toBe(VAULT_SCHEMA_VERSION);
+    expect(applied).toEqual([]);
+  });
+
+  it('更高版本的库不降级，标记 future', () => {
+    const newer = { schemaVersion: VAULT_SCHEMA_VERSION + 1, entries: [], somethingNew: { x: 1 } };
+    const { vault, from, to, applied, future } = migrateVault(newer);
+    expect(future).toBe(true);
+    expect(applied).toEqual([]);
+    expect(from).toBe(VAULT_SCHEMA_VERSION + 1);
+    expect(to).toBe(VAULT_SCHEMA_VERSION + 1);
+    expect(vault.somethingNew).toEqual({ x: 1 });
+  });
+
+  it('更高版本的库归一化时保留未知字段（降级打开不至于洗掉新字段）', () => {
+    const v = normalizeVault({
+      schemaVersion: VAULT_SCHEMA_VERSION + 1,
+      entries: [],
+      somethingNew: { x: 1 },
+    });
+    expect(v.schemaVersion).toBe(VAULT_SCHEMA_VERSION + 1);
+    expect(v.somethingNew).toEqual({ x: 1 });
+  });
+
+  it('当前及更旧版本的未知字段仍然丢弃', () => {
+    expect('somethingNew' in normalizeVault({ entries: [], somethingNew: 1 })).toBe(false);
+  });
+
+  it('迁移不修改传入对象', () => {
+    const input: Record<string, unknown> = { entries: [], history: [{ entryId: 'a' }] };
+    migrateVault(input);
+    expect(Array.isArray(input.history)).toBe(true);
+    expect('schemaVersion' in input).toBe(false);
+  });
+
+  it('迁移可以重复执行且结果稳定（幂等）', () => {
+    const first = migrateVault({ entries: [], history: [{ entryId: 'a', password: 'p' }] });
+    const second = migrateVault(first.vault);
+    expect(second.applied).toEqual([]);
+    expect(second.vault.history).toEqual(first.vault.history);
   });
 });

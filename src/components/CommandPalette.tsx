@@ -3,6 +3,8 @@ import { useStore } from '../store/useStore';
 import { Icons } from './ui';
 import { applyTheme } from '../utils/theme';
 import { guessUrlFromInput } from '../utils/urlInput';
+import { entryUseScore, pageUseScore } from '../utils/recent';
+import { parseQuery, scoreTarget } from '../utils/query';
 
 export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
 
@@ -12,6 +14,15 @@ interface Cmd {
   sub?: string;
   kind: Kind;
   run: () => void;
+  /** 页面类命令的目标页（用于按常用度排序） */
+  page?: string;
+  /** 条目类命令的目标条目 id（同上） */
+  entryId?: string;
+  /** 语法过滤用的附加字段 */
+  tags?: string[];
+  env?: string;
+  url?: string;
+  user?: string;
 }
 
 export const KIND_LABEL: Record<Kind, string> = {
@@ -127,6 +138,7 @@ export function CommandPalette({
         title: p.label,
         sub: '打开页面',
         kind: 'page' as Kind,
+        page: p.page,
         run: () => onNavigate(p.page),
       })),
       // 工具箱里的具体工具：搜「base64 / jwt / 二维码」直接落到那个工具
@@ -180,6 +192,11 @@ export function CommandPalette({
       title: e.name,
       sub: [e.username, e.url].filter(Boolean).join(' · '),
       kind: 'entry' as Kind,
+      entryId: e.id,
+      tags: e.tags,
+      env: e.envType,
+      url: e.url,
+      user: e.username,
       run: () => {
         onNavigate('passwordManager');
         setPmSubPage('dashboard');
@@ -192,6 +209,7 @@ export function CommandPalette({
       title: s.title || '（无标题片段）',
       sub: (s.tags || []).join(' '),
       kind: 'snippet' as Kind,
+      tags: s.tags,
       run: () => onNavigate('snippets'),
     }));
 
@@ -208,6 +226,7 @@ export function CommandPalette({
       title: `${a.system || '未分组'} · ${a.username || ''}`,
       sub: a.role || '',
       kind: 'account' as Kind,
+      user: a.username,
       run: () => onNavigate('accounts'),
     }));
 
@@ -216,6 +235,7 @@ export function CommandPalette({
       title: (r.name && r.name !== '未命名') ? r.name : `${r.method || 'GET'} ${String(r.url || '').replace(/^https?:\/\//, '')}`.slice(0, 70),
       sub: `${r.method || 'GET'} ${String(r.url || '').replace(/^https?:\/\//, '').slice(0, 60)}`,
       kind: 'request' as Kind,
+      url: r.url,
       // 深链：跳接口调试并把这条请求填进编辑器
       run: () => { onNavigate('apiClient'); signalCmd(`api:open:${r.id}`); },
     }));
@@ -233,6 +253,8 @@ export function CommandPalette({
       title: `${e.system || '未命名'} · ${e.env || ''}`.trim(),
       sub: String(e.url || '').slice(0, 70),
       kind: 'env' as Kind,
+      env: e.env,
+      url: e.url,
       run: () => onNavigate('environments'),
     }));
 
@@ -242,16 +264,32 @@ export function CommandPalette({
     ];
   }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, settings.theme, updateSettings]);
 
+  const parsed = useMemo(() => parseQuery(q), [q]);
+
   const filtered = useMemo(() => {
     const key = q.trim().toLowerCase();
     if (!key) {
-      // 没输入时只列页面与操作，保持清爽
-      return cmds.filter(c => c.kind === 'page' || c.kind === 'action').slice(0, 40);
+      // 没输入时只列页面与操作，按「用得多 + 用得近」排序：
+      // 12 个页面 + 一堆操作平铺时，最上面那几条永远看不到常用的那个。
+      return cmds
+        .filter(c => c.kind === 'page' || c.kind === 'action')
+        .map(c => ({ c, s: c.kind === 'page' ? pageUseScore(c.page || '') : 0 }))
+        .sort((a, b) => b.s - a.s)
+        .map(x => x.c)
+        .slice(0, 40);
     }
+    // 有关键词：先过语法（tag:/env:/name:/url:/user:/@kind），再按
+    // 「命中字段 + 常用度」排序 —— 同一个词命中多条时先给最近用过的
     return cmds
-      .filter(c => `${c.title} ${c.sub || ''}`.toLowerCase().includes(key))
+      .map(c => {
+        const s = scoreTarget(c, parsed);
+        return { c, s: s < 0 ? -1 : s + (c.kind === 'entry' ? entryUseScore(c.entryId || '') : 0) };
+      })
+      .filter(x => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
+      .map(x => x.c)
       .slice(0, 60);
-  }, [cmds, q]);
+  }, [cmds, q, parsed]);
 
   useEffect(() => { setIdx(0); }, [q]);
 
@@ -309,10 +347,22 @@ export function CommandPalette({
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="搜索页面、网址、片段、笔记…"
-            spellCheck={false} aria-label="搜索页面、网址、片段、笔记" />
+            placeholder="搜索全部数据… 试试 tag:内网 env:prod @note"
+            spellCheck={false} aria-label="全局搜索：页面、网址、账号、笔记、用例与环境" />
           <kbd>Esc</kbd>
         </div>
+        {/* 语法生效时给一条「当前在看什么」，否则容易以为搜坏了 */}
+        {parsed.syntax && (
+          <div className="cmdk-syntax">
+            <span>语法生效</span>
+            {parsed.kinds.map(k => <b key={k}>@{k}</b>)}
+            {parsed.tags.map(t => <b key={`t${t}`}>tag:{t}</b>)}
+            {parsed.envs.map(t => <b key={`e${t}`}>env:{t}</b>)}
+            {parsed.name && <b>name:{parsed.name}</b>}
+            {parsed.url && <b>url:{parsed.url}</b>}
+            {parsed.user && <b>user:{parsed.user}</b>}
+          </div>
+        )}
         <div className="cmdk-list" ref={listRef}>
           {filtered.length === 0 ? (
             <div className="cmdk-empty">

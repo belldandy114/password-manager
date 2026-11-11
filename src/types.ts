@@ -106,6 +106,10 @@ export interface AppSettings {
   zentaoNotify: boolean;
   /** 提醒检查间隔（分钟） */
   zentaoNotifyInterval: number;
+  /** 环境巡检：定时执行（分钟，0 = 关） */
+  envProbeInterval: number;
+  /** 环境巡检：只在可达性/耗时发生翻转时弹系统通知 */
+  envProbeNotifyOnFlip: boolean;
   /** 多套禅道配置里当前使用哪一套（id；老数据默认 'zentao'） */
   zentaoActiveId?: string;
   /** 自动备份保留份数（1~60） */
@@ -120,6 +124,35 @@ export interface BackupFile {
   name: string;
   size: number;
   mtime: string;
+}
+
+/** 库自检里的一条问题（electron/vault-audit.js 的返回结构） */
+export interface VaultAuditIssue {
+  level: 'error' | 'warn' | 'info';
+  code: string;
+  message: string;
+  count: number;
+  samples: string[];
+}
+
+/** 库自检报告：只读体检结果，不含任何条目内容 */
+export interface VaultAuditReport {
+  ok: boolean;
+  checkedAt: string;
+  schemaVersion: number;
+  stats: Record<string, number>;
+  counts: { error: number; warn: number; info: number };
+  issues: VaultAuditIssue[];
+}
+
+/** 恢复演练结果：stage 说明卡在哪一步 */
+export interface RestoreDrillResult {
+  name: string;
+  ok: boolean;
+  stage: 'format' | 'decrypt' | 'parse' | 'done';
+  error?: string;
+  bytes?: number;
+  report?: VaultAuditReport;
 }
 
 /** 数据目录信息（设置页展示用） */
@@ -145,7 +178,7 @@ export interface PasswordGenOptions {
 }
 
 /** 与主进程 VAULT_COLLECTIONS 对应 */
-export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations'
+export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations' | 'codeSnippets'
   | 'ztPresets' | 'apiEnvs' | 'apiHistory';
 
 export interface ZentaoConfig {
@@ -231,6 +264,12 @@ export interface AuditEntry {
   at: string;
   action: string;
   detail?: string;
+}
+
+/** 剪贴板历史的一条（内容只在内存与加密文件里，界面默认只显示长度） */
+export interface ClipHistoryItem {
+  text: string;
+  at: string;
 }
 
 export interface NotifyStatus {
@@ -436,6 +475,13 @@ export interface AssertRule {
   negate?: boolean;
 }
 
+/** 提取变量的规则：从响应里按路径取值，存进批量运行的变量池 */
+export interface ApiExtractRule {
+  name: string;
+  /** 响应 JSON 路径，如 data.token / data.list[0].id */
+  path: string;
+}
+
 /** 断言配置：规则列表 + 1.5.x 旧字段（只读兼容，保存时统一写 rules） */
 export interface ApiAssertions {
   rules?: AssertRule[];
@@ -468,6 +514,11 @@ export interface ApiRequest {
   rawContentType?: string;
   /** 断言配置 */
   assertions?: ApiAssertions;
+  /**
+   * 变量提取：从这次响应里取一个值，存进批量运行的变量池，
+   * 后面的请求用 {{name}} 就能拿到（登录拿 token 再调业务接口）。
+   */
+  extract?: ApiExtractRule[];
   /** 响应结构快照（存一次，以后每次发送都跟它比结构有没有变） */
   snapshot?: ApiSnapshot;
   updatedAt: string;
@@ -551,6 +602,16 @@ export interface CodelabDone {
   ms: number;
   dir: string;
   phase?: string;
+}
+
+/** 代码调试的片段库条目（存在 vault 的 codeSnippets 集合里，跟着加密库走） */
+export interface CodelabSnippet {
+  id: string;
+  name: string;
+  lang: string;
+  code: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** JMeter 运行参数 */
@@ -663,12 +724,20 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;  /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
-  clipboardHistory: () => Promise<{ success: boolean; data?: { enabled: boolean; items: { text: string; at: string }[] } }>;
+  clipboardHistory: () => Promise<{ success: boolean; data?: { enabled: boolean; items: ClipHistoryItem[] } }>;
   clipboardHistoryClear: () => Promise<{ success: boolean }>;
   /** 实际生效的全局快捷键（搜索键被占用时主进程会回退，显示用） */
   hotkeyInfo: () => Promise<{ success: boolean; data?: HotkeyInfo }>;
   /** 修改全局快捷键；冲突时 success:false + error（conflict / same），并回滚到原来能用的键 */
   hotkeyApply: (payload: { search?: string; toggle?: string; quicknote?: string }) => Promise<HotkeyApplyResult>;
+  /** 「钉」成独立小窗（一条记录一个置顶窗口） */
+  pinOpen: (id: string) => Promise<{ success: boolean; error?: string }>;
+  /** 小窗关闭自己 */
+  pinClose: () => Promise<{ success: boolean; error?: string }>;
+  /** 系统通知（点击可跳转到某个页面） */
+  appNotify: (payload: { title: string; body?: string; page?: string; silent?: boolean }) => Promise<{ success: boolean; error?: string }>;
+  /** 主进程要求跳页（点系统通知时） */
+  onAppNavigate: (cb: (payload: { page?: string }) => void) => () => void;
   /** 窗口隐藏时要求关闭命令面板 */
   onCloseCommandPalette: (cb: () => void) => () => void;
   /** 独立搜索小窗每次弹出时要求重取数据 */
@@ -719,6 +788,14 @@ export interface ElectronAPI {
   backupOpenFolder: () => Promise<{ success: boolean; error?: string }>;
   /** 用指定备份覆盖当前库；恢复前会自动留一份 pre-restore 快照 */
   backupRestore: (name: string) => Promise<{ success: boolean; preRestore?: string; error?: string }>;
+
+  // 库自检 / 恢复演练 / 诊断包
+  /** 只读体检当前库：结构、悬空标签、丢失附件、孤儿历史 */
+  vaultAudit: () => Promise<{ success: boolean; data?: VaultAuditReport; error?: string }>;
+  /** 拿一份备份试解 + 体检，不碰正式库 */
+  vaultRestoreDrill: (name: string) => Promise<{ success: boolean; data?: RestoreDrillResult; error?: string }>;
+  /** 导出诊断包（日志 + 环境 + 自检结果，不含密码与条目内容） */
+  logExportDiagnostic: () => Promise<{ success: boolean; canceled?: boolean; data?: { file: string }; error?: string }>;
 
   // 数据目录
   dataInfo: () => Promise<{ success: boolean; data?: DataLocationInfo; error?: string }>;

@@ -145,6 +145,8 @@ export const useStore = create<AppState>((set, get) => ({
     lastPage: 'passwordManager',
     zentaoNotify: false,
     zentaoNotifyInterval: 10,
+    envProbeInterval: 0,
+    envProbeNotifyOnFlip: true,
     backupKeep: 7,
     browserPaths: {},
     keybindings: {

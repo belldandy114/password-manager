@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { TotpBadge } from './EntryExtras';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
+import { recordEntryUse } from '../utils/recent';
 /** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
 const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
@@ -51,7 +52,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
   return (
     <div
       className={`entry-card ${selected ? 'selected' : ''}`}
-      onClick={() => toggleSelected(entry.id)}
+      onClick={() => { recordEntryUse(entry.id); toggleSelected(entry.id); }}
       tabIndex={0}
       aria-selected={selected}
       onKeyDown={onKeyClickStrict}
@@ -144,6 +145,11 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
         <button onClick={e => { e.stopPropagation(); onCopy(entry.username, '\u8D26\u53F7'); }} title="复制账号">{'\u{1F464}'}</button>
         <button className="copy-password" onClick={e => { e.stopPropagation(); onCopy(entry.password, '\u5BC6\u7801'); }} title="复制密码">{'\u{1F511}'}</button>
         <button onClick={e => { e.stopPropagation(); onEdit(entry); }} title="编辑">{'\u270F\uFE0F'}</button>
+        <button
+          onClick={e => { e.stopPropagation(); void window.electronAPI.pinOpen(entry.id); }}
+          title="钉成小窗（浮在桌面上看）"
+          aria-label="钉成小窗"
+        >{'\u{1F4CC}'}</button>
       </div>
     </div>
   );

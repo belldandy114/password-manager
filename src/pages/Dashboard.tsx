@@ -13,6 +13,7 @@ import { callIpc } from '../utils/ipc';
 import { isSensitiveLabel } from '../utils/clipboard';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { isPinyinReady, onPinyinReady } from '../utils/search';
+import { getRecentEntries } from '../utils/recent';
 
 export function Dashboard() {
   const store = useStore();
@@ -94,6 +95,17 @@ export function Dashboard() {
 
   const envOrder = ['production', 'testing', 'development', 'staging'];
   const envLabel: Record<string, string> = { production: '正式', testing: '测试', development: '开发', staging: '预发布' };
+
+  // 「最近用过」的 8 条：只在没有任何筛选时露出来。
+  // 有搜索词时它只是噪音，还会和下面的结果重复。
+  const hasFilter = !!store.searchQuery || store.filterEnv !== 'all' || store.filterTag !== 'all' || store.filterTags.size > 0;
+  const recentEntries = (() => {
+    if (hasFilter) return [] as PasswordEntry[];
+    const ids = getRecentEntries().slice(0, 8).map((r) => r.id);
+    if (ids.length === 0) return [] as PasswordEntry[];
+    const byId = new Map(store.entries.map((e) => [e.id, e]));
+    return ids.map((id) => byId.get(id)).filter((e): e is PasswordEntry => !!e);
+  })();
 
   // Refresh entries from main process
   const refreshEntries = useCallback(async () => {
@@ -479,6 +491,24 @@ export function Dashboard() {
 
       {/* Content */}
       <div className="content-area" onScroll={handleContentScroll}>
+        {/* 最近用过：点一下等价于按名称搜它，省得在几百条里翻 */}
+        {recentEntries.length > 0 && (
+          <div className="recent-strip">
+            <span className="recent-strip-label">最近</span>
+            {recentEntries.map((e) => (
+              <button
+                key={e.id}
+                type="button"
+                className="recent-chip"
+                title={`${e.name}${e.url ? ' · ' + e.url : ''}`}
+                onClick={() => store.setSearchQuery(e.name)}
+              >
+                <span className={`recent-chip-dot env-${e.envType}`} aria-hidden="true" />
+                <span className="recent-chip-name">{e.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {filteredEntries.length === 0 ? (
           <div className="empty-state">
             {store.filterTags && store.filterTags.size > 0 ? (

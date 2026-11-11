@@ -6,7 +6,7 @@
  * 与 setupIpcHandlers() 里（palette:epoch）。搬出来只为让 main.js 少背一层脚手架，
  * 行为与返回结构一字未改。
  */
-const { app, ipcMain, shell } = require('electron');
+const { app, ipcMain, shell, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -202,6 +202,30 @@ function registerShellIpc(deps) {
 function registerShellSessionIpc(deps) {
   const { isUnlocked, getEpoch } = deps;
   ipcMain.handle('palette:epoch', () => ({ epoch: getEpoch(), unlocked: isUnlocked() }));
+
+  /**
+   * 系统通知（环境巡检状态翻转等）。点一下把主窗口拉出来。
+   * 与禅道新 Bug 提醒用同一套 Electron Notification，不额外引依赖。
+   */
+  ipcMain.handle('app:notify', async (_e, payload = {}) => {
+    const title = String(payload.title || '').slice(0, 120);
+    const body = String(payload.body || '').slice(0, 400);
+    if (!title) return { success: false, error: '缺少标题' };
+    try {
+      const n = new Notification({ title, body, silent: !!payload.silent });
+      n.on('click', () => {
+        const win = getMainWindow();
+        try {
+          if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+        } catch { /* 忽略 */ }
+        if (payload.page) sendToMain('app:navigate', { page: payload.page });
+      });
+      n.show();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err && err.message ? err.message : err) };
+    }
+  });
 }
 
 module.exports = { registerShellIpc, registerShellSessionIpc, openEntryInBrowser };

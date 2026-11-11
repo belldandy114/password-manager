@@ -35,6 +35,8 @@ function registerAuthIpc(deps) {
     getPassword,
     setPassword,
     setUnlocked,
+    repersistClipHistory,
+    wipeClipHistory,
   } = deps;
 
   // Brute-force guard: 5 wrong passwords in a row → 30s cool-down (in-memory, resets on restart).
@@ -126,6 +128,8 @@ function registerAuthIpc(deps) {
     // one, so drop them and continue the session under the new password.
     clearCaches();
     setPassword(newPassword);
+    // 剪贴板历史是加密落盘的，主密码换了必须用新密码重写一次，否则下次解不开
+    try { repersistClipHistory?.(newPassword); } catch { /* 重写失败不影响改密 */ }
     return { success: true };
   });
 
@@ -197,6 +201,8 @@ function registerAuthIpc(deps) {
     clearCaches();
     setPassword(null);
     setUnlocked(false);
+    // 旧主密码已作废，剪贴板历史文件再也解不开，直接删掉免得留一堆死数据
+    try { wipeClipHistory?.(); } catch { /* 忽略 */ }
     return { success: true };
   });
 

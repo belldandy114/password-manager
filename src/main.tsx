@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { PaletteApp } from './components/PaletteApp';
 import { QuickNoteApp } from './QuickNoteApp';
+import { PinApp } from './PinApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logError } from './utils/log';
 import { preloadPinyin } from './utils/search';
@@ -25,11 +26,16 @@ const params = new URLSearchParams(window.location.search);
 const isPaletteWindow = params.get('window') === 'palette';
 // 随手记小窗（Ctrl+Shift+N）：同一个产物，只渲染小记事本
 const isQuickNoteWindow = params.get('window') === 'quicknote';
+// 「钉」小窗（点条目上的钉）：一条记录一个置顶窗口
+const isPinWindow = params.get('window') === 'pin';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      {isPaletteWindow ? <PaletteApp /> : isQuickNoteWindow ? <QuickNoteApp /> : <App />}
+      {isPaletteWindow ? <PaletteApp />
+        : isQuickNoteWindow ? <QuickNoteApp />
+        : isPinWindow ? <PinApp />
+        : <App />}
     </ErrorBoundary>
   </React.StrictMode>
 );

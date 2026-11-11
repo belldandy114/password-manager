@@ -39,6 +39,9 @@
   --warn: #c9963f;
   --bad: #d15a54;
   --bad-hover: #bb4b46;
+  /* 压在危险色上的文字 / 悬浮阴影的墨色（两套主题相同） */
+  --text-on-bad: #ffffff;
+  --shadow-ink: #000000;
   --info: #5b8fb0;
 
   /* ---------- 2. Scale ---------- */
@@ -169,6 +172,8 @@
   --warn: #9a6f1f;
   --bad: #b8443f;
   --bad-hover: #a13a36;
+  --text-on-bad: #ffffff;
+  --shadow-ink: #000000;
   --info: #3f6f8e;
 
   --shadow-1: 0 1px 2px rgba(23, 25, 26, 0.06);

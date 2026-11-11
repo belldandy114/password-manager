@@ -46,7 +46,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardHistoryClear: () => ipcRenderer.invoke('clipboard:history-clear'),
   /** 实际生效的全局快捷键（Ctrl+空格被占用时主进程会自动回退） */
   hotkeyInfo: () => ipcRenderer.invoke('app:hotkeys'),
-  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
+
+  /** 「钉」成独立小窗：把一条记录摆到桌面上，锁屏时主进程会统一关掉 */
+  pinOpen: (id) => ipcRenderer.invoke('pin:open', id),
+  /** 小窗自己关自己 */
+  pinClose: () => ipcRenderer.invoke('pin:close'),  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
   hotkeyApply: (payload) => ipcRenderer.invoke('app:hotkeys-apply', payload),
   /** 窗口隐藏时主进程要求关掉命令面板 */
   onCloseCommandPalette: (cb) => {
@@ -119,6 +123,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backupOpenFolder: () => ipcRenderer.invoke('backup:open-folder'),
   backupRestore: (name) => ipcRenderer.invoke('backup:restore', { name }),
 
+  // 库自检 / 恢复演练 / 诊断包
+  vaultAudit: () => ipcRenderer.invoke('vault:audit'),
+  vaultRestoreDrill: (name) => ipcRenderer.invoke('vault:restore-drill', { name }),
+  logExportDiagnostic: () => ipcRenderer.invoke('log:export-diagnostic'),
+
   // 数据目录（可见 / 打开 / 迁移）
   dataInfo: () => ipcRenderer.invoke('data:info'),
   dataOpenFolder: (which) => ipcRenderer.invoke('data:open-folder', { which }),
@@ -182,6 +191,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('zentao:open', h);
     return () => ipcRenderer.removeListener('zentao:open', h);
   },
+  /** 主进程要求跳到某个页面（点系统通知时用） */
+  onAppNavigate: (cb) => {
+    const h = (_e, payload) => cb(payload || {});
+    ipcRenderer.on('app:navigate', h);
+    return () => ipcRenderer.removeListener('app:navigate', h);
+  },
+  /** 系统通知：环境巡检状态翻转等 */
+  appNotify: (payload) => ipcRenderer.invoke('app:notify', payload),
 
   // 周报（本地 Markdown 目录）
   weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),

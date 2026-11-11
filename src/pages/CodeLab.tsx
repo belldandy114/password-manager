@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Page, PageHead, Pill, Icons } from '../components/ui';
-import type { CodelabDetect, CodelabDone } from '../types';
+import type { CodelabDetect, CodelabDone, CodelabSnippet } from '../types';
 import { useToast } from '../hooks/useToast';
 
 /**
@@ -113,6 +113,11 @@ export function CodeLab() {
   // 预览里的内联脚本会被静默拦掉（页面能看、交互和 console 全失效）。
   const [previewUrl, setPreviewUrl] = useState('');
   const [outTab, setOutTab] = useState<'preview' | 'console'>('console');
+  // 片段库：存在 vault 里（跟着加密库走，换机器导库就带走）
+  const [snips, setSnips] = useState<CodelabSnippet[]>([]);
+  const [snipOpen, setSnipOpen] = useState(false);
+  const [snipName, setSnipName] = useState('');
+  const [savingSnip, setSavingSnip] = useState(false);
   const outRef = useRef<HTMLDivElement | null>(null);
   const codeRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
@@ -129,6 +134,41 @@ export function CodeLab() {
     })();
     return () => { alive = false; };
   }, []);
+
+  // 片段库：进页面读一次；保存成功后用返回值覆盖本地状态，避免再拉一次
+  const loadSnips = useCallback(async () => {
+    const r = await window.electronAPI.wsGet('codeSnippets');
+    if (r.success && Array.isArray(r.data)) setSnips(r.data as CodelabSnippet[]);
+  }, []);
+
+  useEffect(() => { void loadSnips(); }, [loadSnips]);
+
+  const saveSnip = useCallback(async () => {
+    const name = snipName.trim() || `${LANGS.find(l => l.id === lang)?.label || lang} 片段 ${snips.length + 1}`;
+    if (!code.trim()) { addToast('代码是空的', 'error'); return; }
+    setSavingSnip(true);
+    const now = new Date().toISOString();
+    const same = snips.find(s => s.name === name && s.lang === lang);
+    const next: CodelabSnippet[] = same
+      ? snips.map(s => (s.id === same.id ? { ...s, code, updatedAt: now } : s))
+      : [
+        { id: `cs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, lang, code, createdAt: now, updatedAt: now },
+        ...snips,
+      ];
+    const r = await window.electronAPI.wsSet('codeSnippets', next);
+    setSavingSnip(false);
+    if (!r.success) { addToast(r.error || '保存片段失败', 'error'); return; }
+    setSnips(next);
+    setSnipName('');
+    addToast(same ? '片段已更新' : '片段已保存到加密库', 'success');
+  }, [addToast, code, lang, snipName, snips]);
+
+  const deleteSnip = useCallback(async (id: string) => {
+    const next = snips.filter(s => s.id !== id);
+    const r = await window.electronAPI.wsSet('codeSnippets', next);
+    if (!r.success) { addToast(r.error || '删除失败', 'error'); return; }
+    setSnips(next);
+  }, [addToast, snips]);
 
   useEffect(() => {
     const offOut = window.electronAPI.onCodelabOutput(({ stream, line }) => {
@@ -291,6 +331,13 @@ export function CodeLab() {
             <span className="codelab-pane-spacer" />
             <button className="btn btn-ghost btn-sm" onClick={() => setCode(SAMPLES[lang] || '')}>示例</button>
             <button className="btn btn-ghost btn-sm" onClick={() => setCode('')}>清空</button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setSnipOpen(v => !v)}
+              aria-expanded={snipOpen}
+            >
+              片段库{snips.length > 0 ? `（${snips.length}）` : ''}
+            </button>
           </header>
           <div className="codelab-editor">
             <div className="codelab-gutter" ref={gutterRef}>
@@ -309,6 +356,52 @@ export function CodeLab() {
               wrap="off"
               placeholder="在这里粘贴/编写代码，Ctrl+Enter 运行" aria-label="在这里粘贴/编写代码，Ctrl+Enter 运行" />
           </div>
+
+          {snipOpen && (
+            <div className="snip-drawer">
+              <div className="snip-save">
+                <input
+                  className="snip-name"
+                  value={snipName}
+                  onChange={e => setSnipName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') void saveSnip(); }}
+                  placeholder="给这段代码起个名字（留空自动命名）"
+                  aria-label="片段名称"
+                />
+                <button className="btn btn-sm btn-secondary" onClick={() => void saveSnip()} disabled={savingSnip}>
+                  {savingSnip ? '保存中…' : '存为片段'}
+                </button>
+              </div>
+              {snips.length === 0 ? (
+                <div className="snip-empty">还没有片段。调试时常用的 curl 转代码、时间格式化、正则片段可以存在这里。</div>
+              ) : (
+                <ul className="snip-list">
+                  {snips.map(s => (
+                    <li key={s.id} className={`snip-item${s.lang === lang ? ' is-current' : ''}`}>
+                      <button
+                        className="snip-load"
+                        title="载入到编辑器"
+                        onClick={() => { setLang(s.lang); setCode(s.code); setOutTab(s.lang === 'html' ? 'preview' : 'console'); }}
+                      >
+                        <span className="snip-item-name">{s.name}</span>
+                        <span className="snip-item-meta">
+                          {LANGS.find(l => l.id === s.lang)?.label || s.lang} · {s.code.split('\n').length} 行
+                        </span>
+                      </button>
+                      <button
+                        className="snip-del"
+                        title="删除这个片段"
+                        aria-label={`删除片段 ${s.name}`}
+                        onClick={() => void deleteSnip(s.id)}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </section>
 
         {/* 输出区（下）：HTML 时有「预览 / 控制台」两个页签 */}

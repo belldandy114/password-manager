@@ -39,9 +39,12 @@ const { app, ipcMain, clipboard } = require('electron');
  * @param {(text: string) => void} deps.rememberClipboard
  * @param {(ms: number) => void} deps.clearClipboardAfter
  * @param {() => void} deps.clearClipHistory
+ * @param {() => void} deps.wipeClipHistory
+ * @param {() => any[]} deps.loadClipHistory
  * @param {() => any[]} deps.getClipHistory
  * @param {() => object} deps.getClipboardTimers
  * @param {() => void} deps.resetClipboardTimers
+ * @param {() => void} deps.closePinWindows
  */
 function registerEntriesIpc(deps) {
   const {
@@ -53,7 +56,9 @@ function registerEntriesIpc(deps) {
     restartAutoUpdateCheck, getMainWindow,
     sortByDateDesc, retentionMs, defaultSettings,
     rememberClipboard, clearClipboardAfter, clearClipHistory,
+    wipeClipHistory, loadClipHistory,
     getClipHistory, getClipboardTimers, resetClipboardTimers,
+    closePinWindows,
   } = deps;
 
   /** 统一取当前会话密码；未解锁时返回 null（各 handler 据此回「未解锁」） */
@@ -74,6 +79,8 @@ function registerEntriesIpc(deps) {
     setTimeout(() => { try { ztLoadSeen(); ztPushUnread(); } catch { /* 忽略 */ } }, 0);
     // 解锁即补一次当日备份：只改密码不改数据的日子也能有快照
     setTimeout(() => { try { backupVaultOncePerDay(); } catch { /* 忽略 */ } }, 400);
+    // 剪贴板历史是加密落盘的，解锁后才有主密码可解，这里补读一次
+    setTimeout(() => { try { loadClipHistory(); } catch { /* 解不开就当空历史 */ } }, 0);
     return { success: true, data: vault };
   });
 
@@ -85,6 +92,8 @@ function registerEntriesIpc(deps) {
     clearClipHistory();
     try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
     hideSearchWindow();
+    // 「钉」出来的小窗里是明文密码，锁屏必须连它们一起关掉
+    try { closePinWindows?.(); } catch { /* 忽略 */ }
     return { success: true };
   });
 
@@ -249,7 +258,7 @@ function registerEntriesIpc(deps) {
   }));
 
   ipcMain.handle('clipboard:history-clear', () => {
-    clearClipHistory();
+    wipeClipHistory();
     return { success: true };
   });
 

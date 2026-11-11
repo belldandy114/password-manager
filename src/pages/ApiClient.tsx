@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot } from '../types';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot, ApiExtractRule } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill , SearchBox } from '../components/ui';
@@ -14,6 +14,7 @@ import { filterHistory, groupByDay, matchesQuery } from '../utils/apiHistory';
 import { callIpc } from '../utils/ipc';
 import { responseSaveTarget } from '../utils/apiResponse';
 import { flattenJsonPaths, upsertVariable } from '../../electron/json-paths';
+import { applyVars, readJsonPath, mergeVarPool } from '../utils/apiVars';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -48,15 +49,7 @@ function withCookies(headers: string, cookies?: string): string {
   return `${base ? `${base}\n` : ''}Cookie: ${ck}`;
 }
 
-/** 把 {{var}} 替换成变量表里的值 */
-function applyVars(text: string, vars: string): string {
-  const map: Record<string, string> = {};
-  (vars || '').split('\n').forEach(line => {
-    const idx = line.indexOf('=');
-    if (idx > 0) map[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-  });
-  return (text || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) => map[k] !== undefined ? map[k] : m);
-}
+/** 把 {{var}} 替换成变量表里的值（实现见 utils/apiVars，批量运行共用同一份规则） */
 
 /* ---------------- 每行一个的 key/value 编辑器 ---------------- */
 
@@ -228,7 +221,13 @@ export function ApiClient() {
   const [batchRows, setBatchRows] = useState<{
     id: string; name: string; method: string; url: string; ok: boolean;
     status: number; timeMs: number; error?: string; asserts: AssertResult[];
+    /** 这一步从响应里提取出来的变量（跑完只用于报告展示） */
+    extracted?: Record<string, string>;
+    /** 配了提取规则但没取到值的变量名 */
+    extractMissing?: string[];
   }[]>([]);
+  const [batchStartedAt, setBatchStartedAt] = useState(0);
+  const [batchFinishedAt, setBatchFinishedAt] = useState(0);
 
   const prettyBody = useMemo(() => {
     if (!response) return '';
@@ -406,6 +405,13 @@ export function ApiClient() {
   // 断言统一走「规则列表」：旧数据（5 个固定槽位）在这里被迁移成行，随后编辑都写回 rules
   const assertRules = useMemo(() => migrateAssertions(req.assertions), [req.assertions]);
   const setRules = (next: AssertRule[]) => setReq({ ...req, assertions: toAssertions(next) });
+  // 变量提取（批量运行时的上游传下游）
+  const [showExtract, setShowExtract] = useState(false);
+  const extractRules = useMemo<ApiExtractRule[]>(
+    () => (Array.isArray(req.extract) ? req.extract : []),
+    [req.extract],
+  );
+  const setExtractRules = (next: ApiExtractRule[]) => setReq({ ...req, extract: next });
 
   useEffect(() => { refreshJar(); }, []);
 
@@ -437,16 +443,26 @@ export function ApiClient() {
     }
   };
 
-  /** 批量跑一组已保存请求（顺序执行，避免把对方服务打满） */
+  /**
+   * 批量跑一组已保存请求（顺序执行，避免把对方服务打满）。
+   *
+   * 变量传递：每个请求配了「提取变量」的话，成功响应里的值会进变量池，
+   * 后面的请求用 {{name}} 就能拿到 —— 登录拿 token 再调业务接口这种链路，
+   * 不用再手动复制粘贴。变量池不落盘，跑完就丢（下次跑重新登录，避免拿过期 token）。
+   */
   const runBatch = async (list: ApiRequest[]) => {
     if (list.length === 0) return;
     setBatchRunning(true);
     setBatchRows([]);
+    setBatchStartedAt(Date.now());
     const rows: typeof batchRows = [];
+    /** 上游提取出来的变量，覆盖请求自身变量里的同名键 */
+    const pool: Record<string, string> = {};
     for (const r of list) {
-      const url = applyVars(r.url, r.variables || '');
-      const headers = withCookies(applyVars(r.headers, r.variables || ''), r.cookies);
-      const body = applyVars(r.body, r.variables || '');
+      const vars = mergeVarPool(r.variables || '', pool);
+      const url = applyVars(r.url, vars);
+      const headers = withCookies(applyVars(r.headers, vars), r.cookies);
+      const body = applyVars(r.body, vars);
       const res = await window.electronAPI.apiSend({
         method: r.method, url, headers, body,
         bodyType: r.bodyType || 'json', rawContentType: r.rawContentType || '',
@@ -454,14 +470,63 @@ export function ApiClient() {
       });
       const asserts = res.success && res.data ? runAssertions(r.assertions, res.data) : [];
       const ok = !!(res.success && res.data) && (asserts.length === 0 || asserts.every(a => a.ok));
+
+      // 提取变量：只在请求成功且响应是 JSON 时尝试，取不到就记一条提示
+      let extracted: Record<string, string> | undefined;
+      const extractMissing: string[] = [];
+      if (ok && res.data && Array.isArray(r.extract) && r.extract.length > 0) {
+        let parsed: unknown = null;
+        try { parsed = JSON.parse(res.data.body || 'null'); } catch { parsed = null; }
+        const got: Record<string, string> = {};
+        for (const rule of r.extract) {
+          const name = String(rule.name || '').trim();
+          if (!name) continue;
+          const v = readJsonPath(parsed, rule.path || '');
+          if (v === undefined) { extractMissing.push(name); continue; }
+          got[name] = v;
+          pool[name] = v;
+        }
+        if (Object.keys(got).length > 0) extracted = got;
+      }
+
       rows.push({
         id: r.id, name: r.name, method: r.method, url,
         ok, status: res.data?.status || 0, timeMs: res.data?.timeMs || 0,
         error: res.success ? undefined : res.error, asserts,
+        extracted, extractMissing: extractMissing.length ? extractMissing : undefined,
       });
       setBatchRows([...rows]);
     }
     setBatchRunning(false);
+    setBatchFinishedAt(Date.now());
+  };
+
+  /** 批量结果 → Markdown（能直接贴到群/周报里） */
+  const batchMarkdown = (): string => {
+    const pass = batchRows.filter(r => r.ok).length;
+    const head = `| 结果 | 方法 | 请求 | 状态 | 耗时 | 断言 | 提取 |\n| --- | --- | --- | --- | --- | --- | --- |`;
+    const lines = batchRows.map(r => {
+      const asserts = r.asserts.length ? `${r.asserts.filter(a => a.ok).length}/${r.asserts.length}` : '—';
+      const got = r.extracted ? Object.entries(r.extracted).map(([k, v]) => `${k}=${v}`).join('; ') : '—';
+      return `| ${r.ok ? 'PASS' : 'FAIL'} | ${r.method} | ${r.name || r.url} | ${r.error ? r.error : r.status} | ${r.timeMs}ms | ${asserts} | ${got} |`;
+    });
+    return `### 接口回归报告\n\n通过 ${pass} / ${batchRows.length}${batchFinishedAt && batchStartedAt ? `，总耗时 ${((batchFinishedAt - batchStartedAt) / 1000).toFixed(1)}s` : ''}\n\n${head}\n${lines.join('\n')}\n`;
+  };
+
+  const copyBatchReport = async () => {
+    await navigator.clipboard.writeText(batchMarkdown());
+    setNotice('报告已复制到剪贴板');
+  };
+
+  const saveBatchReport = async () => {
+    const pick = await window.electronAPI.dialogSaveFile({
+      defaultName: `接口回归-${new Date().toISOString().slice(0, 10)}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (pick.canceled || !pick.filePath) return;
+    const r = await window.electronAPI.fileWrite({ filePath: pick.filePath, content: batchMarkdown() });
+    if (r.success) setNotice('报告已保存');
+    else setError(r.error || '保存失败');
   };
 
   /** 把响应体另存为文件（大响应/取证留档用；命名规则见 utils/apiResponse） */
@@ -1119,6 +1184,63 @@ export function ApiClient() {
                       发送后自动校验，通过看「响应」上方的断言条；批量运行时也会按断言判断成败。
                     </div>
                   </div>
+
+                  {/* 变量提取：把这次响应里的值存进批量运行的变量池，后面的请求用 {{名字}} 取 */}
+                  <div className={`field api-sec`}>
+                    <button
+                      type="button"
+                      className="assert-toggle"
+                      onClick={() => setShowExtract(v => !v)}
+                    >
+                      <span>变量提取</span>
+                      <span className={`assert-badge${extractRules.length > 0 ? ' is-on' : ''}`}>
+                        {extractRules.length > 0 ? `${extractRules.length} 项` : '未配置'}
+                      </span>
+                      <span className="assert-caret">{showExtract ? '收起' : '展开'}</span>
+                    </button>
+                    {showExtract && (
+                      <div className="assert-rules">
+                        {extractRules.length === 0 && (
+                          <div className="assert-hint" style={{ marginTop: 0 }}>
+                            例：名字填 <code>token</code>、路径填 <code>data.token</code>，批量运行后
+                            下一个请求的 URL/Header 里就能写 <code>{'{{token}}'}</code>。
+                          </div>
+                        )}
+                        {extractRules.map((r, i) => (
+                          <div className="assert-rule" key={`ex-${i}`}>
+                            <input
+                              value={r.name}
+                              placeholder="变量名，如 token"
+                              onChange={e => setExtractRules(extractRules.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                              aria-label="提取的变量名"
+                            />
+                            <input
+                              value={r.path}
+                              placeholder="响应路径，如 data.token"
+                              onChange={e => setExtractRules(extractRules.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
+                              aria-label="响应里的取值路径"
+                            />
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setExtractRules(extractRules.filter((_, j) => j !== i))}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          style={{ alignSelf: 'flex-start' }}
+                          onClick={() => setExtractRules([...extractRules, { name: '', path: '' }])}
+                        >
+                          ＋ 添加提取
+                        </button>
+                      </div>
+                    )}
+                    <div className="assert-hint">
+                      只在批量运行时生效：值从成功响应里取，后面的请求可以用它，跑完即丢。
+                    </div>
+                  </div>
                 </div>
 
                 {error && (
@@ -1548,7 +1670,17 @@ export function ApiClient() {
         open={batchOpen}
         onClose={() => setBatchOpen(false)}
         title="批量运行结果"
-        footer={<button className="btn btn-secondary" onClick={() => setBatchOpen(false)}>关闭</button>}
+        footer={(
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={() => void copyBatchReport()} disabled={batchRows.length === 0}>
+              复制 Markdown
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => void saveBatchReport()} disabled={batchRows.length === 0}>
+              保存 .md
+            </button>
+            <button className="btn btn-secondary" onClick={() => setBatchOpen(false)}>关闭</button>
+          </>
+        )}
       >
         {batchRows.length === 0 ? (
           <div className="pg-sub">正在运行…</div>
@@ -1560,6 +1692,7 @@ export function ApiClient() {
               </span>
               <span className="pg-sub" style={{ marginTop: 0 }}>
                 失败 {batchRows.filter(r => !r.ok).length} 条
+                {batchStartedAt && batchFinishedAt ? ` · 总耗时 ${((batchFinishedAt - batchStartedAt) / 1000).toFixed(1)}s` : ''}
               </span>
             </div>
             <div className="batch-list">
@@ -1574,6 +1707,16 @@ export function ApiClient() {
                   {r.asserts.length > 0 && (
                     <span className="batch-asserts">
                       断言 {r.asserts.filter(a => a.ok).length}/{r.asserts.length}
+                    </span>
+                  )}
+                  {r.extracted && (
+                    <span className="batch-extract" title={Object.entries(r.extracted).map(([k, v]) => `${k}=${v}`).join('\n')}>
+                      ↓ {Object.keys(r.extracted).join(', ')}
+                    </span>
+                  )}
+                  {r.extractMissing && (
+                    <span className="batch-extract is-miss" title={`没取到：${r.extractMissing.join(', ')}`}>
+                      ⚠ {r.extractMissing.join(', ')}
                     </span>
                   )}
                 </div>
