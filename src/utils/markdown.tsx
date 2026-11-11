@@ -1,4 +1,5 @@
 import React from 'react';
+import { matchAttImage } from './attachRefs';
 
 /**
  * 极简 Markdown 渲染器
@@ -11,6 +12,7 @@ import React from 'react';
  *   - *                 无序列表
  *   （1） （2）         中文子编号（缩进一级）
  *   > 引用              引用块
+ *   ![说明](pm-att:id)  图片附件（本身是加密的，渲染成占位图，src 由 MarkdownView 补）
  *   空行                分段
  */
 
@@ -18,7 +20,8 @@ type Block =
   | { kind: 'h'; level: number; text: string }
   | { kind: 'li'; ordered: boolean; depth: number; text: string }
   | { kind: 'p'; text: string }
-  | { kind: 'quote'; text: string };
+  | { kind: 'quote'; text: string }
+  | { kind: 'img'; id: string; alt: string };
 
 const INLINE_RE = /(\*\*[^*]+\*\*|`[^`]+`)/g;
 
@@ -52,6 +55,11 @@ function parse(src: string): Block[] {
     const line = raw.replace(/\s+$/, '');
     if (!line.trim()) continue;
 
+    const img = matchAttImage(line);
+    if (img) {
+      blocks.push({ kind: 'img', id: img.id, alt: img.alt });
+      continue;
+    }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
       blocks.push({ kind: 'h', level: Math.min(h[1].length, 4), text: h[2] });
@@ -92,7 +100,7 @@ function parse(src: string): Block[] {
 export function renderMarkdown(src: string): React.ReactNode {
   const blocks = parse(src);
   const nodes: React.ReactNode[] = [];
-  let listBuf: Block[] = [];
+  let listBuf: Array<Extract<Block, { kind: 'li' }>> = [];
   let listKey = 0;
 
   const flushList = () => {
@@ -118,6 +126,11 @@ export function renderMarkdown(src: string): React.ReactNode {
     if (b.kind === 'h') {
       const Tag = (b.level <= 2 ? 'h3' : 'h4') as 'h3' | 'h4';
       nodes.push(<Tag className="md-h" key={`h${i}`}>{inline(b.text, `h${i}`)}</Tag>);
+    } else if (b.kind === 'img') {
+      // 不给 src：图片是加密附件，挂载后由 MarkdownView 解成 dataURL
+      nodes.push(
+        <img key={`img${i}`} className="md-img" data-att={b.id} alt={b.alt} />,
+      );
     } else if (b.kind === 'quote') {
       nodes.push(<blockquote className="md-quote" key={`q${i}`}>{inline(b.text, `q${i}`)}</blockquote>);
     } else {

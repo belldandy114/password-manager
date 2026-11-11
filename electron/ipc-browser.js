@@ -11,6 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { ipcMain, shell } = require('electron');
+const { openHttpUrl } = require('./url-open');
+const { focusBrowser } = require('./browser-focus');
 
 const KNOWN_BROWSERS = [
   { id: 'chrome', name: 'Chrome', paths: [
@@ -66,6 +68,8 @@ function findBrowser(id, configuredPath) {
 }
 
 function registerBrowserIpc({ loadSettings }) {
+    // 启动时留一行「哪版打开链在跑」——排查「到底点了哪个 exe」时这行最有用
+    console.log('[open] 打开链 v3：rundll32 → 浏览器 exe → openExternal → explorer');
     ipcMain.handle('browser:detect', async () => {
       const settings = loadSettings();
       const paths = (settings && settings.browserPaths) || {};
@@ -89,8 +93,15 @@ function registerBrowserIpc({ loadSettings }) {
           trimmedUrl = 'https://' + trimmedUrl;
         }
 
-        if (browser === 'default') {
-          await shell.openExternal(trimmedUrl);
+        // 空串 / 'default' 都按系统默认浏览器处理（以前空串会掉进「找具体浏览器」分支）
+        if (!browser || browser === 'default') {
+          console.log(`[open] browser:open -> 默认浏览器链`);
+          const r = await openHttpUrl(trimmedUrl, { shell, spawn });
+          if (r && r.success) {
+            console.log('[open] 打开成功 via=' + r.via + '，尝试把浏览器叫到前台');
+            focusBrowser();
+          }
+          return r;
         } else {
           const settings = loadSettings();
           const paths = (settings && settings.browserPaths) || {};
@@ -101,7 +112,7 @@ function registerBrowserIpc({ loadSettings }) {
               const child = spawn(exePath, [trimmedUrl], { shell: false, detached: true, stdio: 'ignore' });
               child.on('error', () => {
                 // If spawn fails (e.g. exe not found), fall back to default browser
-                shell.openExternal(trimmedUrl).then(resolve).catch(reject);
+                Promise.resolve(openHttpUrl(trimmedUrl, { shell, spawn })).then(resolve).catch(reject);
               });
               child.on('close', (code) => {
                 if (code === 0) resolve();
@@ -109,8 +120,11 @@ function registerBrowserIpc({ loadSettings }) {
               });
               child.unref();
             });
+            focusBrowser();
           } else {
-            await shell.openExternal(trimmedUrl);
+            const r = await openHttpUrl(trimmedUrl, { shell, spawn });
+            if (r && r.success) focusBrowser();
+            return r;
           }
         }
         return { success: true };
@@ -121,3 +135,5 @@ function registerBrowserIpc({ loadSettings }) {
 }
 
 module.exports = { registerBrowserIpc, findBrowser, KNOWN_BROWSERS };
+
+

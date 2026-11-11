@@ -109,7 +109,9 @@ export function CodeLab() {
   const [timeoutSec, setTimeoutSec] = useState(15);
   const [runFile, setRunFile] = useState('');
   // HTML 模式：iframe 预览 + 「预览 / 控制台」两个页签
-  const [previewHtml, setPreviewHtml] = useState('');
+  // 预览地址由主进程的 codelab:// 协议提供——不能用 srcDoc，srcdoc 会继承主窗口 CSP，
+  // 预览里的内联脚本会被静默拦掉（页面能看、交互和 console 全失效）。
+  const [previewUrl, setPreviewUrl] = useState('');
   const [outTab, setOutTab] = useState<'preview' | 'console'>('console');
   const outRef = useRef<HTMLDivElement | null>(null);
   const codeRef = useRef<HTMLTextAreaElement | null>(null);
@@ -175,11 +177,16 @@ export function CodeLab() {
 
     if (isHtml) {
       // 纯前端渲染：不起进程，也没有超时限制
-      setPreviewHtml('');
+      setPreviewUrl('');
       setRunFile('index.html');
       setOutTab('preview');
       setLines([{ stream: 'system', text: '渲染 HTML 预览中…（console 输出见「控制台」页签）' }]);
-      setPreviewHtml(injectBridge(code));
+      const r = await window.electronAPI.codelabPreview(injectBridge(code));
+      if (!r.success || !r.data) {
+        setLines([{ stream: 'error', text: r.error || '预览失败' }]);
+        return;
+      }
+      setPreviewUrl(r.data.url);
       setLastDone({ runId: String(Date.now()), ok: true, code: 0, timedOut: false, ms: 0, dir: '' });
       return;
     }
@@ -322,16 +329,16 @@ export function CodeLab() {
             <span className="codelab-pane-sub">{runFile || langMeta?.label}</span>
             <span className="codelab-pane-spacer" />
             <span className="codelab-term-status">{status.text}</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setLines([]); if (isHtml) setPreviewHtml(''); }} disabled={running}>清空</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setLines([]); if (isHtml) setPreviewUrl(''); }} disabled={running}>清空</button>
           </header>
 
           {isHtml && outTab === 'preview' ? (
-            previewHtml ? (
+            previewUrl ? (
               <iframe
                 className="codelab-preview"
                 title="HTML 预览"
                 sandbox="allow-scripts allow-forms allow-modals allow-popups"
-                srcDoc={previewHtml}
+                src={previewUrl}
               />
             ) : (
               <div className="codelab-out">

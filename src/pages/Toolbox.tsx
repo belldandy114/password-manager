@@ -22,9 +22,10 @@ const JwtTool = lazy(() => import('../components/toolbox/SecTools').then(m => ({
 const SignTool = lazy(() => import('../components/toolbox/SecTools').then(m => ({ default: m.SignTool })));
 const TimelineTool = lazy(() => import('../components/toolbox/MiscTools').then(m => ({ default: m.TimelineTool })));
 const MediaTool = lazy(() => import('../components/toolbox/MiscTools').then(m => ({ default: m.MediaTool })));
+const RedactTool = lazy(() => import('../components/toolbox/RedactTool').then(m => ({ default: m.RedactTool })));
 
 type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonRepair' | 'jsonExtract' | 'aes' | 'cron' | 'timezone' | 'urlParams' | 'diff' | 'validate'
-  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media';
+  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media' | 'redact';
 
 interface ToolDef { id: ToolId; label: string; icon: React.ReactNode; desc: string }
 
@@ -73,6 +74,7 @@ const TOOL_GROUPS: Array<{ title: string; tools: ToolDef[] }> = [
     tools: [
       { id: 'validate', label: '数据校验', icon: <Icons.check size={13} />, desc: '身份证（含校验位）/ 手机号 / 银行卡 / 统一社会信用代码' },
       { id: 'media', label: '图片/二维码', icon: <Icons.db size={13} />, desc: '生成二维码、图片与 base64 互转' },
+      { id: 'redact', label: '脱敏 / 还原', icon: <Icons.lock size={13} />, desc: '手机号 / 身份证 / 银行卡 / 邮箱 / IP 一键打码，可生成映射还原' },
     ],
   },
 ];
@@ -1499,6 +1501,7 @@ export function Toolbox() {
       case 'sign': return <SignTool />;
       case 'timeline': return <TimelineTool />;
       case 'media': return <MediaTool />;
+    case 'redact': return <RedactTool />;
       default: return null;
     }
   };

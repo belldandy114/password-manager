@@ -5,41 +5,15 @@ import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 import { formatRecent } from '../utils/time';
+import { attImageMarkdown, extractAttIds } from '../utils/attachRefs';
+import { clipboardImageFiles, saveImageFiles, insertAtCaret } from '../components/pasteImage';
+import { MarkdownView, AttImage } from '../components/MarkdownView';
 
 const LS_DIR = 'pm.notes.dir';
 
 const emptyNote = (): Note => ({
   id: '', title: '', content: '', tags: [], updatedAt: new Date().toISOString(),
 });
-
-function escapeHtml(s: string) {
-  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
-}
-
-/** 极简 Markdown 渲染（标题/列表/粗体/行内代码/代码块），内容全部先转义 */
-function mdToHtml(md: string): string {
-  const lines = escapeHtml(md || '').split('\n');
-  let html = '';
-  let inCode = false;
-  for (const line of lines) {
-    if (line.trim().startsWith('```')) {
-      html += inCode ? '</code></pre>' : '<pre><code>';
-      inCode = !inCode;
-      continue;
-    }
-    if (inCode) { html += line + '\n'; continue; }
-    if (/^### /.test(line)) html += `<h4>${line.slice(4)}</h4>`;
-    else if (/^## /.test(line)) html += `<h3>${line.slice(3)}</h3>`;
-    else if (/^# /.test(line)) html += `<h2>${line.slice(2)}</h2>`;
-    else if (/^\s*[-*] /.test(line)) html += `<li>${line.replace(/^\s*[-*] /, '')}</li>`;
-    else if (line.trim() === '') html += '<div style="height:8px"></div>';
-    else html += `<p>${line}</p>`;
-  }
-  if (inCode) html += '</code></pre>';
-  return html
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>');
-}
 
 const fmtDate = (iso: string) => {
   const d = new Date(iso);
@@ -50,12 +24,20 @@ const fmtDate = (iso: string) => {
 /** 文件名 → 显示标题（去掉扩展名） */
 const titleOf = (name: string) => String(name || '').replace(/\.(md|markdown|txt)$/i, '');
 
+/** 列表卡片的纯文本摘要：去掉 Markdown 记号与图片附件引用（图片单独用缩略图展示） */
+const plainPreview = (md: string) =>
+  String(md || '')
+    .replace(/!\[[^\]]*\]\(pm-att:[a-zA-Z0-9-]+\)/g, '')
+    .replace(/[#*`>]/g, '')
+    .replace(/\n+/g, ' ')
+    .trim();
+
 /** 标题 → 合法文件名 */
 const fileOf = (title: string) =>
   `${String(title || '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').slice(0, 80) || '未命名笔记'}.md`;
 
 export function Notes() {
-  const { items, save, loading } = useCollection<Note>('notes');
+  const { items, save, loading, reload } = useCollection<Note>('notes');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Note | null>(null);
   const { ask, confirmNode } = useConfirm();
@@ -71,6 +53,15 @@ export function Notes() {
   const [dirEditing, setDirEditing] = useState<{ name: string; title: string; content: string } | null>(null);
   const [dirPreview, setDirPreview] = useState<{ name: string; title: string; content: string; mtime: string } | null>(null);
   const [dirSaving, setDirSaving] = useState(false);
+  /** 粘贴截图的提示（成功 / 失败 / 保存中） */
+  const [attachHint, setAttachHint] = useState('');
+
+  // 随手记小窗另开一个窗口写同一个集合：主窗口回到前台时重新读一次，避免列表还是旧的
+  useEffect(() => {
+    const onFocus = () => { void reload(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reload]);
 
   const dirMode = !!dir;
 
@@ -206,6 +197,29 @@ export function Notes() {
     await save(items.filter(i => i.id !== id));
   };
 
+  /**
+   * 粘贴截图 → 加密附件。
+   * 正文里只留 `![说明](pm-att:<id>)`，图片本体按会话密钥加密存在 attachments 目录。
+   */
+  const pasteImages = async (
+    e: React.ClipboardEvent<HTMLTextAreaElement>,
+    put: (v: string) => void,
+  ) => {
+    const files = clipboardImageFiles(e);
+    if (!files.length) return; // 普通文本粘贴交给浏览器
+    e.preventDefault();
+    const el = e.currentTarget;
+    setAttachHint('正在加密保存截图…');
+    const { saved, errors } = await saveImageFiles(files);
+    if (!saved.length) { setAttachHint(errors[0] || '截图保存失败'); return; }
+    const md = saved.map(a => attImageMarkdown(a.id, a.name.replace(/\.\w+$/, ''))).join('\n');
+    put(insertAtCaret(el, `${md}\n`));
+    setAttachHint(errors.length
+      ? `已保存 ${saved.length} 张，${errors.length} 张失败`
+      : `已加密保存 ${saved.length} 张截图`);
+    setTimeout(() => setAttachHint(''), 2500);
+  };
+
   /* ---------- 目录模式下的搜索结果 ---------- */
   const dirVisible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -322,10 +336,7 @@ export function Notes() {
                     display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
                     overflow: 'hidden',
                   }}>
-                    {(bodies[f.name] !== undefined
-                      ? bodies[f.name]
-                      : ''
-                    ).replace(/[#*`>]/g, '').replace(/\n+/g, ' ').trim() || '（点开查看正文）'}
+                    {plainPreview(bodies[f.name] !== undefined ? bodies[f.name] : '') || '（点开查看正文）'}
                   </div>
                 </div>
               ))}
@@ -379,8 +390,20 @@ export function Notes() {
                   display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
                   overflow: 'hidden',
                 }}>
-                  {(n.content || '').replace(/[#*`>]/g, '').replace(/\n+/g, ' ').trim() || '（空笔记）'}
+                  {plainPreview(n.content) || (extractAttIds(n.content || '').length ? '' : '（空笔记）')}
                 </div>
+
+                {/* 正文里有截图就在卡片上给缩略图，不用点开才知道记了什么 */}
+                {extractAttIds(n.content || '').length > 0 && (
+                  <div className="card2-thumbs">
+                    {extractAttIds(n.content || '').slice(0, 3).map(id => (
+                      <AttImage key={id} id={id} />
+                    ))}
+                    {extractAttIds(n.content || '').length > 3 && (
+                      <span className="card2-thumb-more">+{extractAttIds(n.content || '').length - 3}</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -410,10 +433,13 @@ export function Notes() {
               <textarea
                 value={editing.content}
                 onChange={e => setEditing({ ...editing, content: e.target.value })}
+                onPaste={e => void pasteImages(e, v => setEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
                 placeholder={'## 现象\n\n## 原因\n\n## 结论'}
               />
+              <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
+              {attachHint && <div className="inline-hint">{attachHint}</div>}
             </div>
           </>
         )}
@@ -431,7 +457,7 @@ export function Notes() {
           </>
         }
       >
-        <div className="markdown-body" dangerouslySetInnerHTML={{ __html: mdToHtml(preview?.content || '') }} />
+        <MarkdownView md={preview?.content || ''} />
       </Modal>
 
       {/* 目录模式：编辑 */}
@@ -464,10 +490,13 @@ export function Notes() {
               <textarea
                 value={dirEditing.content}
                 onChange={e => setDirEditing({ ...dirEditing, content: e.target.value })}
+                onPaste={e => void pasteImages(e, v => setDirEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
                 placeholder={'## 现象\n\n## 原因\n\n## 结论'}
               />
+              <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
+              {attachHint && <div className="inline-hint">{attachHint}</div>}
             </div>
             <div className="assert-hint">
               保存为 <code>{dir ? `${dir}\\${fileOf(dirEditing.title || '未命名笔记')}` : fileOf(dirEditing.title)}</code>
@@ -507,7 +536,7 @@ export function Notes() {
           {dirPreview?.name}
           <span className="text-sm text-muted" style={{ marginLeft: 'auto' }}>{formatRecent(dirPreview?.mtime || '')}</span>
         </div>
-        <div className="markdown-body" dangerouslySetInnerHTML={{ __html: mdToHtml(dirPreview?.content || '') }} />
+        <MarkdownView md={dirPreview?.content || ''} />
       </Modal>
 
       {confirmNode}

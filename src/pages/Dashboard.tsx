@@ -11,6 +11,7 @@ import { Modal } from '../components/Modal';
 import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
 import { callIpc } from '../utils/ipc';
 import { isSensitiveLabel } from '../utils/clipboard';
+import { openUrlInDefaultBrowser } from '../utils/openUrl';
 
 export function Dashboard() {
   const store = useStore();
@@ -108,6 +109,20 @@ export function Dashboard() {
       addToast(`剪贴板将在 ${store.settings.clipboardClearDelay} 秒后自动清空`, 'info', 2000);
     }
   }, [store.settings.clipboardClearDelay]);
+
+  /**
+   * 打开网址：统一走 utils/openUrl。
+   * 失败不再「点了没反应」——主进程给原因、这里再把地址塞进剪贴板并明确提示；
+   * 复制时只写 entry.url（不是条目名），避免「以为复制了网址，粘出来却是名字」。
+   */
+  const handleOpenUrl = useCallback(async (url: string) => {
+    const target = String(url || '').trim();
+    if (!target) { addToast('这条没有填网址', 'error'); return; }
+    const r = await openUrlInDefaultBrowser(target);
+    if (r.ok) { addToast('已交给系统浏览器打开', 'success'); return; }
+    try { await window.electronAPI.clipboardCopy({ text: target, delay: 0 }); } catch { /* 剪贴板不可用 */ }
+    addToast(`没能打开浏览器（${r.error || '系统未响应'}），网址已复制`, 'error', 4000);
+  }, []);
 
   // Save entry (add or update)
   const handleSave = async (entry: PasswordEntry) => {
@@ -497,7 +512,8 @@ export function Dashboard() {
                           security={securityFlags[entry.id]}
                           onToggleFavorite={handleToggleFavorite}
                           onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
-                          onCopy={handleCopy} />
+                          onCopy={handleCopy}
+                          onOpen={handleOpenUrl} />
                       ))}
                     </div>
                   )}
@@ -515,7 +531,8 @@ export function Dashboard() {
             <EntryList entries={filteredEntries.slice(0, visibleLimit)}
               securityFlags={securityFlags}
               onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
-              onCopy={handleCopy} />
+              onCopy={handleCopy}
+              onOpen={handleOpenUrl} />
             {filteredEntries.length > visibleLimit && (
               <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
             )}
@@ -756,3 +773,4 @@ export function Dashboard() {
     </>
   );
 }
+

@@ -136,11 +136,13 @@ const echoServer = http.createServer((req, res) => {
     weekOptions: document.querySelectorAll('.wk-draft-week option').length,
     cmpPanel: [...document.querySelectorAll('.pnl-title')].some(t => /vs\s*上周|上周\s*vs/.test(t.textContent)),
     cmpRows: document.querySelectorAll('.wk-cmp-row').length,
-    copyBtn: [...document.querySelectorAll('button')].some(b => /复制群消息/.test(b.textContent)),
+    // 1.21.9：页头「复制群消息」已随「从禅道生成」对话框改版移除（提交 46da061），
+    // 改为断言新的生成入口存在，避免把产品改版误判成回退。
+    digestBtn: [...document.querySelectorAll('button')].some(b => /从禅道生成/.test(b.textContent)),
   }))()`);
   check('周报：周次下拉已去掉', !!weekUi && weekUi.selects === 0 && weekUi.weekOptions === 0, JSON.stringify(weekUi));
   check('周报：「本周 vs 上周」对比面板已去掉', !!weekUi && weekUi.cmpPanel === false && weekUi.cmpRows === 0, JSON.stringify(weekUi));
-  check('周报：保留「复制群消息」入口', !!weekUi && weekUi.copyBtn === true);
+  check('周报：保留「从禅道生成」入口', !!weekUi && weekUi.digestBtn === true, JSON.stringify(weekUi));
 
   // 目录默认值不再内置本机路径：没选目录时应给引导提示，而不是抛「未指定周报目录」错误
   const noDir = await ev(`(() => {

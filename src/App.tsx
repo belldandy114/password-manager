@@ -17,6 +17,7 @@ const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.S
 const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ default: m.DataGenerator })));
 const Toolbox = lazy(() => import('./pages/Toolbox').then(m => ({ default: m.Toolbox })));
 const Accounts = lazy(() => import('./pages/Accounts').then(m => ({ default: m.Accounts })));
+const Environments = lazy(() => import('./pages/Environments').then(m => ({ default: m.Environments })));
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
 const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.Snippets })));
 const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
@@ -397,6 +398,7 @@ function App() {
       case 'jsonConverter': return <Toolbox />;
       case 'toolbox': return <Toolbox />;
       case 'accounts': return <Accounts />;
+    case 'environments': return <Environments />;
       case 'weeklyReport': return <WeeklyReport />;
       case 'snippets': return <Snippets />;
       case 'notes': return <Notes />;

@@ -124,7 +124,7 @@ const SETVAL = `(el, v) => {
   const groups = await ev(`(() => [...document.querySelectorAll('.tool-group-label')].map(x => x.textContent.trim()))()`);
   check('工具箱：分成 5 个组', Array.isArray(groups) && groups.length === 5, JSON.stringify(groups));
   const tabs = await ev(`(() => [...document.querySelectorAll('.tb-rail-item')].map(x => x.textContent.trim()))()`);
-  check('工具箱：20 个工具页签', Array.isArray(tabs) && tabs.length === 20, `${tabs && tabs.length} 个`);
+  check('工具箱：21 个工具页签', Array.isArray(tabs) && tabs.length === 21, `${tabs && tabs.length} 个`);
   check('工具箱：页签条不横向溢出', await ev(`(() => { const el = document.querySelector('.tb-rail-scroll'); return el ? el.scrollWidth <= el.clientWidth + 2 : false; })()`));
   check('工具箱：页签具备 tablist 语义', await ev(`(() => document.querySelector('.tb-rail-scroll')?.getAttribute('role') === 'tablist')()`));
 

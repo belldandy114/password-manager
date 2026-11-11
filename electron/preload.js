@@ -79,6 +79,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('palette:run', h);
     return () => ipcRenderer.removeListener('palette:run', h);
   },
+  // ---- 随手记小窗（?window=quicknote）----
+  /** 收起随手记小窗（Esc / 保存后自动收） */
+  quicknoteHide: () => ipcRenderer.invoke('quicknote:hide'),
+  /** 弹出随手记小窗（与全局快捷键等价，托盘与回归脚本用） */
+  quicknoteShow: () => ipcRenderer.invoke('quicknote:show'),
+  /** 小窗每次弹出时复位「已保存」之类的临时提示 */
+  onQuickNoteFocus: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('quicknote:focus', h);
+    return () => ipcRenderer.removeListener('quicknote:focus', h);
+  },
   onClipboardCleared: (cb) => {
     ipcRenderer.on('clipboard-cleared', () => cb());
     return () => ipcRenderer.removeAllListeners('clipboard-cleared');
@@ -128,6 +139,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   attachmentPick: () => ipcRenderer.invoke('attachment:pick'),
   attachmentOpen: (data) => ipcRenderer.invoke('attachment:open', data),
   attachmentDelete: (data) => ipcRenderer.invoke('attachment:delete', data),
+  // 粘贴截图（#5）：dataURL 进、加密落盘；读回 dataURL 用于显示
+  attachmentSaveImage: (data) => ipcRenderer.invoke('attachment:save-image', data),
+  attachmentReadImage: (data) => ipcRenderer.invoke('attachment:read-image', data),
+
+  // 环境巡检（#3）
+  envProbe: (data) => ipcRenderer.invoke('env:probe', data),
+  envOpen: (data) => ipcRenderer.invoke('env:open', data),
 
   // API debugger / Zentao
   apiSend: (data) => ipcRenderer.invoke('api:send', data),
@@ -189,6 +207,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
   saveText: (content, defaultName, filters) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters }),
   pickFile: (title, filters) => ipcRenderer.invoke('file:pick', { title, filters }),
+  readTextFile: (file, maxBytes) => ipcRenderer.invoke('file:read-text', { file, maxBytes }),
   updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),
   onUpdateProgress: (cb) => {
     const h = (_e, p) => cb(p);
@@ -230,6 +249,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterInspectScript: (p) => ipcRenderer.invoke('jmeter:inspect-script', p),
   codelabDetect: () => ipcRenderer.invoke('codelab:detect'),
   codelabRun: (payload) => ipcRenderer.invoke('codelab:run', payload),
+  codelabPreview: (html) => ipcRenderer.invoke('codelab:preview', html),
   codelabStop: () => ipcRenderer.invoke('codelab:stop'),
   onCodelabOutput: (cb) => { const h = (_e, d) => cb(d); ipcRenderer.on('codelab:output', h); return () => ipcRenderer.removeListener('codelab:output', h); },
   onCodelabMeta: (cb) => { const h = (_e, d) => cb(d); ipcRenderer.on('codelab:meta', h); return () => ipcRenderer.removeListener('codelab:meta', h); },

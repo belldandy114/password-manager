@@ -1904,3 +1904,228 @@ button { font-family: inherit; }
   background: var(--bg-input);
   padding: 14px 16px;
 }
+
+
+/* ============================================================
+   33. 环境矩阵 v3（样式优化）—— 2026-11-10
+   为什么追加在这里：三份样式表按 global → pages → redesign 顺序加载，
+   pages.css 第 19.29 节已有同名选择器，直接改那里容易被后面的密度规则盖掉。
+   这一段只做「视觉与信息层级」的收敛，不动类名（回归脚本按类名断言）：
+   - 环境类型快筛胶囊（.env-filters/.env-filter）
+   - 巡检报告的比例条（.env-bar）
+   - 行内动作常显 + 一档分隔（.env-row-acts/.env-acts-sep）
+   - 网址管理卡片里 URL 变成真按钮 + 独立「复制网址」（.card-url/.card-url-copy）
+   ============================================================ */
+
+/* ---- 环境类型快筛 ---- */
+.env-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 0 6px;
+}
+
+.env-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+
+.env-filter:hover { border-color: var(--accent); color: var(--text-primary); }
+
+.env-filter.is-on {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.env-filter.is-empty { opacity: .55; }
+
+.env-filter-n {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.env-filter.is-on .env-filter-n { background: var(--bg-card); color: var(--accent); }
+
+.env-filter-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.env-filter-production .env-filter-dot { background: var(--danger); }
+.env-filter-testing .env-filter-dot { background: #38bdf8; }
+.env-filter-development .env-filter-dot { background: #c084fc; }
+.env-filter-staging .env-filter-dot { background: #fb923c; }
+
+.env-filters-spacer { flex: 1 1 auto; }
+
+.env-filters-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 巡检报告：比例条 ---- */
+.env-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.env-bar-seg { display: block; min-width: 0; }
+.env-bar-seg.is-ok { background: var(--success); }
+.env-bar-seg.is-bad { background: var(--danger); }
+.env-bar-seg.is-rest { background: transparent; }
+
+/* 报告块：给一条左侧强调线，和下面的卡片列表分开 */
+.env-report {
+  border-left: 3px solid var(--accent);
+}
+
+.env-report-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+}
+
+/* ---- 行：动作常显、地址与备注的层级 ---- */
+.env-row {
+  grid-template-columns: 56px minmax(0, 1fr) minmax(112px, auto) auto;
+  padding: 8px 12px;
+  transition: background .12s ease;
+}
+
+.env-row-state { min-width: 112px; }
+
+.env-row-acts {
+  opacity: .72;
+  gap: 1px;
+}
+
+.env-row:hover .env-row-acts,
+.env-row:focus-within .env-row-acts { opacity: 1; }
+
+.env-acts-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 3px;
+  background: var(--border);
+}
+
+.env-row-main .env-url {
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+
+.env-row-main .env-url:hover { color: var(--accent); }
+
+.env-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 100%;
+}
+
+/* ---- 分组卡片：表头做粘性，长组滚动时不丢系统名 ---- */
+.env-card-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 12px;
+  backdrop-filter: saturate(140%) blur(2px);
+}
+
+.env-card-stat { font-variant-numeric: tabular-nums; }
+
+.env-card-stat.is-ok { color: var(--success); }
+
+/* ---- 网址管理卡片：URL 是真按钮 + 独立复制网址 ---- */
+.entry-card .card-url {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.entry-card .card-url:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.entry-card .card-url:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.entry-card .card-url-copy {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: .75;
+  transition: opacity .12s ease, border-color .12s ease, background .12s ease;
+}
+
+.entry-card .card-url-copy:hover {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 卡片最小宽度抬到 520：两列并排时地址不会被截得太碎（460 时 B 组那行只剩半截） */
+.env-cards { grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); }
+
+/* 失败明细：地址让位给原因，避免原因被挤成省略号 */
+.env-fail-url { max-width: 46%; }
+.env-fail-why { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 窄屏：隐掉计数提示，行内列宽收紧（仍是 4 列，别改成 3 列——子元素有 4 个会换行） */
+@media (max-width: 1180px) {
+  .env-filters-hint { display: none; }
+  .env-row { grid-template-columns: 52px minmax(0, 1fr) 96px auto; }
+  .env-row-state { min-width: 96px; }
+  .env-err { max-width: 120px; }
+}
+
+
+

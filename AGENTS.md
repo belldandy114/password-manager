@@ -25,6 +25,25 @@ This project uses Git. See .gitignore for excluded files.
 - **Never edit:** `release/` (build output), `package-lock.json` (lockfile), `dist/` (renderer build output), `*.pak` / `*.bin` / `*.dll` files
 - **Always test with:** `npm run build && npm start` — build the renderer then launch the electron app to verify UI + IPC integration
 
+## 详细文档索引（AGENTS.md 只留摘要）
+
+AGENTS.md 有 65,536 B 的工作区指令预算，超出部分会被**静默截断**（后半段等于不存在）。
+所以历史细节按主题拆到 `docs/agents/`，这里只留当前必须遵守的约束：
+
+| 文件 | 内容 |
+|---|---|
+| `docs/agents/history-1.x.md` | 1.1.0–1.7.2 的能力清单、构建排错、禅道登录细节、崩溃排查 |
+| `docs/agents/weekly-report.md` | 周报 + 从禅道自动成稿的全部规则（含 69 项回归） |
+| `docs/agents/update-and-release.md` | 发布流程、应用内更新（`net`）、CI 覆盖 Release、禅道截图 |
+| `docs/agents/testing.md` | 页面拆包与回归脚本、单测、CI 门禁、几何量断言 |
+| `docs/agents/ipc-split.md` | `setupIpcHandlers` 拆分全过程与踩坑 |
+| `docs/agents/perf-test.md` | JMeter 非 GUI 压测 |
+| `docs/agents/visual-system.md` | 视觉体系 v2 的 token 与组件类名 |
+| `docs/agents/window-tray.md` | 单实例锁、托盘、`showMainWindow()` 顺序、全局快捷键与 `applyHotkeys()` 回滚、搜索小窗缓存/高度/主题/未解锁 |
+| `docs/agents/url-open.md` | 网址打开/复制入口、环境矩阵 v3 |
+
+**新增内容优先写进对应主题文件**；只有「每次改代码都必须遵守」的约束才写进 AGENTS.md。
+
 ## Architecture
 
 Electron desktop app (测试工具) integrating a password manager using AES-256-GCM encryption and a test data generator via webview. Three layers: Electron main process, preload bridge, and React renderer.
@@ -38,7 +57,8 @@ Electron desktop app (测试工具) integrating a password manager using AES-256
 
 ### Key Modules
 
-- **`electron/main.js`** (~955 lines) — The core: encryption (PBKDF2 + AES-256-GCM), vault data storage (encrypted JSON), trash bin with 30-day retention, session management (in-memory decrypted vault), clipboard auto-clear, browser detection/launching, import (CSV/JSON/encrypted) and export (encrypted/plain) with xlsx support, settings persistence
+- **`electron/main.js`** (~1622 lines) — 应用生命周期、窗口/托盘/全局快捷键、加密（PBKDF2 + AES-256-GCM）、vault/trash 落盘、备份与审计、剪贴板自动清空。**IPC handler 已全部按域搬到 `electron/ipc-*.js`，main.js 里不再有 `ipcMain.handle`**：
+  `ipc-shell`（app:/log:/update:check/palette:/quicknote:）、`ipc-auth`（auth: 9 个）、`ipc-entries`（session:/entries:/trash:/clipboard:/settings:）、`ipc-data`（backup:/data:/audit:）、`ipc-update`（update:download/pick-file/install）、`ipc-api`（file:pick/save-text、ws:、history:、attachment:、api:send/cookies）、`ipc-zentao`（zentao: 13 个）、`ipc-vault-io`（import:/export:）、`ipc-files`、`ipc-system`、`ipc-tools`、`ipc-browser`、`ipc-jmeter`、`ipc-codelab`、`ipc-env`、`ipc-attach`、`codelab-preview`（`codelab://` 特权协议，绕开主窗口 CSP）。
 - **`src/store/useStore.ts`** — Zustand store holding all renderer state: auth status, entries/tags/trash, UI state (view mode, search, filter, sort, selection), settings with keybindings, and a `getFilteredEntries()` computed selector
 - **`src/pages/`** — Five page components:
   - `Login.tsx` — setup (password strength validation), login with hint, forgot-password flow via security word
@@ -148,155 +168,35 @@ icacls "<目录>" /setintegritylevel (OI)(CI)Medium   # 修目录；已有文件
 
 ## 窗口 / 托盘 / 单实例（1.0.4）
 
-- **单实例锁**：`app.requestSingleInstanceLock()`，第二个实例会直接退出并把已有窗口唤到前台。
-  **不要移除**——两个实例各自持有解密后的 vault 副本，会互相覆盖导致数据丢失。
-- **托盘**（`electron/main.js` 的 `createTray/hideToTray/showMainWindow`）：
-  - 设置项 `minimizeToTray`（最小化时隐藏）、`closeToTray`（点 × 时隐藏）。
-  - 任一开启时 `settings:save` 会立即创建托盘图标，全关则销毁（窗口可见时才销毁）。
-  - 托盘菜单：显示主窗口 / 锁定（`webContents.send('lock-request')`）/ 退出（置 `isQuitting` 后 `app.quit()`）。
-- ⚠️ **Windows 上 `minimize` 事件的 `preventDefault()` 拦不住系统最小化**，窗口会先进入
-  iconic 状态再被 `hide()`。所以 `showMainWindow()` 必须 **先 `show()` 再 `restore()`**：
-  窗口隐藏状态下 `isMinimized()` 会返回 false，先 restore 会被跳过，
-  从托盘唤醒后会得到一个「任务栏最小化」的窗口。
-- 全局快捷键拆成两个，别合并回一个键：
-  - `Ctrl+Shift+P` → `toggleMainWindow()`，**只**显示/隐藏窗口。
-  - `Ctrl+空格` → `openSearchPalette()`，**只**开搜索。
-  - 两个键都可在「设置 › 快捷键」里自定义（存 `settings.hotkeySearch` / `hotkeyToggle`，值为 Electron 加速键）。
-- 键位统一走 `applyHotkeys()`：
-  - 注册失败**整体回滚**到上一次能用的组合（不能把用户原本可用的键弄丢），失败原因 `conflict` / `same` 回给渲染层显示。
-  - 默认搜索键被占用时才走 `SEARCH_HOTKEY_FALLBACKS`；**用户自定义的键冲突就如实报错，不静默替换**。
-  - 等于默认值的键不写盘（`delete s.hotkeyX`），`PM_HOTKEY_*` 环境变量覆盖也不写盘。
-  - 改完要 `buildTrayMenu()`，托盘菜单里显示的是实际键位。
-- `openSearchPalette()` 弹的是**独立快速搜索小窗**（`searchWin`，加载 `dist/index.html?window=palette`），
-  不是主窗口里的面板：
-  - 渲染层入口在 `main.tsx` 按 `?window=palette` 分流到 `PaletteApp`；数据由小窗自己走 IPC 现取
-    （`entries:get-all` / `ws:get`，主进程持有解锁态），每次弹出 `palette:refresh` 重取。
-  - **数据按版本号复用，不是每次全量重取**：主进程 `vaultEpoch` 在 `saveVault()`（以及 unlock/lock）
-    里 +1，`palette:epoch` 只回 `{epoch, unlocked}`；小窗先问这个版本号，没变就直接复用上次拼好的
-    命令列表（页面/工具/网址/片段/笔记/账号/请求/用例/环境，上限约 1,600 条）。
-    ⚠️ 别再退回「250ms 内不重复取数」——那个时间窗会把刚保存的条目挡在外面，表现为「刚存完搜不到」。
-    命中缓存/全量/未解锁三种路径会写 `document.documentElement.dataset.paletteLoad`，
-    回归脚本靠它断言（`npm run test:palette-cache`，12 项）。
-  - ⚠️ `palette:refresh` **只在小窗「从隐藏变显示」时发**（已显示时只 focus），所以测「重新弹出」
-    必须先 `paletteHide()` 再 `paletteShow()`，否则测到的是同一个开着的小窗，缓存与刷新都不会发生。
-  - **主题必须走 `settings:get`**（`applyPrefs()`），不要用 zustand `useStore(s => s.settings.theme)`：
-    新窗口的 persist 是异步 rehydrate，拿到的是默认深色，会和主窗口设置不一致。
-  - **空查询只显示搜索框**：`filtered=[]`、不渲染 `.cmdk-list` / `.cmdk-foot`；高度不再靠行数估算，
-    而是 `reportHeight()` 量 `.cmdk` 的真实高度 + `PAD_Y(20)` 交给 `palette:resize`
-    （主进程 clamp 68–540；BrowserWindow 的 `minHeight` 也必须是 68，否则 setBounds 被拦）。
-    早期按「`MIN_H + 行数×行高`」估算，空态提示/换行/行高变化都会算偏（底部被裁半截）。
-  - ⚠️ **Windows 透明无边框窗 `setSize()` 在「变大之后再变小」会被忽略**（放大有效、缩小无效，
-    setBounds / setContentSize 有效）。所以改高度统一走 `setSearchWindowHeight()` → `setBounds({x,y,width,height})`。
-    另外隐藏状态下改尺寸也可能被忽略，`showSearchWindow()` 要在 show() 前后各收一次 68；
-    `palette:refresh` 里渲染层要等 React 提交后再量一次真实高度（`requestAnimationFrame`），
-    否则读到的是上一屏布局（表现为窗口忽高忽低或底部留缝）。
-  - `palette:show` IPC 与全局快捷键等价（未解锁时只出主窗口），回归脚本用它避免本机按键被别的程序吃掉。
-  - ⚠️ `CommandPalette.tsx` 模块底部有 `PAGES.push(...PAGES_MORE)`，**PAGES 已含全部菜单页**：
-    小窗里只能展开 `PAGES`，再展开 `PAGES_MORE` 会重复；末尾统一按 `id` 去重，重复 key 会让 React
-    在结果变化时留下上一屏的残留行（表现为「回显一堆重复内容」）。
-  - 选中**网址**条目：`palette:run` 带 `url` → 主进程 `shell.openExternal()` 直接用默认浏览器打开，
-    **不要 `showMainWindow()`**（只补 `https://`、只允许 http/https；url 为空/invalid 才回退到应用内跳转）。
-    选中**菜单页**：正常 `hideSearchWindow() + showMainWindow()` 转发给主窗口落地。
-  - 未解锁时按搜索键**不出小窗**，直接 `showMainWindow()`（模块级 `appUnlocked` 标志，session:unlock/lock 维护）。
-    ⚠️ 这类标志必须放**模块作用域**——放进 `setupIpcHandlers()` 的话模块级函数读不到，
-    ReferenceError 会被快捷键回调静默吞掉；排查要在回调第一行加日志。
-  - 小窗 `blur` 即隐藏、`close` 被 `!isQuitting` 拦截转隐藏；`session:lock` 时也要 `hideSearchWindow()`。
+单实例锁、托盘菜单、`showMainWindow()` 必须先 `show()` 再 `restore()`、两个全局快捷键的分工与
+`applyHotkeys()` 回滚规则、搜索小窗（`?window=palette`）的缓存/高度/主题/未解锁行为 —— 全部细节见
+`docs/agents/window-tray.md`。**改窗口、托盘、快捷键、搜索小窗前必读**。
 
 ## 1.1.0 新增能力（改动时注意联动）
 
-| 能力 | 实现位置 | 注意 |
-|---|---|---|
-| CSV/Excel/JSON 导入 | `main.js` `parseCsv` + `normalizeImportRecords` | 支持中英文表头（`IMPORT_FIELD_ALIASES`）；**新增字段必须同时加进别名表**，否则导出→导入会丢字段 |
-| 密码生成器 | `password:generate`（crypto）+ `EntryForm` | 每类字符至少 1 个，Fisher–Yates 洗牌；不要换成 `Math.random` |
-| 安全体检 | `src/utils/security.ts`（渲染层纯计算） | 弱密码规则见 `COMMON_WEAK` / `passwordStrength`，重复密码按明文分组 |
-| 自动备份 | `main.js` `backupVaultOncePerDay` | 每天 1 份，保留 7 份，存 `userData/backups/vault-YYYY-MM-DD.enc`（本身仍是加密文件） |
-| 登录限速 | `auth:verify` | 连续错 5 次 → 30s 冷却，返回 `retryAfterMs` 给 `Login.tsx` 倒计时 |
-| 防截屏 | `settings:save` → `setContentProtection` | 创建窗口时也读一次设置 |
-| 开机自启 | `settings:save` / `whenReady` → `setLoginItemSettings` | 仅 `app.isPackaged` 时生效 |
-| 窗口状态 | `window-state.json` | 关闭显示器后坐标会被校验丢弃，避免窗口跑到屏幕外 |
-| 主题跟随系统 | `src/utils/theme.ts` + `watchSystemTheme` | 保存的是 `dark/light/system`，`data-theme` 只写解析后的值 |
-| 记住上次页面 | `settings.lastPage` | 锁定时会切回主页，用 `skipLastPageSaveRef` 避免把「主页」写回 |
-| 列表增量渲染 | `Dashboard.tsx` `visibleLimit` | 每屏 120 条，滚动接近底部再追加；别改回一次性全量渲染 |
-
-### 工程脚本
-
-```bash
-npm run typecheck       # tsc --noEmit（必须 0 错误）
-npm run check:integrity # 校验产物没有被标成 Low IL（可加 -- --fix 自动修复）
-npm run smoke           # 对 release/win-unpacked 跑端到端冒烟测试（临时 userData）
-npm run dist            # 全量构建：renderer → 子应用 → --dir → NSIS → 完整性自检
-```
-
-`scripts/smoke-test.js` 用 `--remote-debugging-port` 连渲染进程，覆盖初始化/解锁/增删改查/回收站/设置/密码生成/锁定拒绝访问，
-改动 IPC 契约时要同步更新它。
+CSV/Excel/JSON 导入（`parseCsv` + `normalizeImportRecords`，**新增字段必须同步 `IMPORT_FIELD_ALIASES`**）、
+密码生成器（crypto + Fisher–Yates，别用 `Math.random`）、安全体检、自动备份（每天 1 份保留 7 份）、
+登录限速（5 次错 → 30s）、防截屏、开机自启、窗口状态、主题跟随系统、记住上次页面、列表增量渲染（每屏 120 条）。
+逐项实现位置见 `docs/agents/history-1.x.md`。
 
 ## 1.2.0：多模块扩展（改动前必读）
 
-### 数据层
-vault 从 `{ entries, tags }` 扩展为：
+### 数据层（1.2.0 起）
 
-```js
-{ entries, tags, history,
-  snippets, notes, checklists, accounts, environments, apiRequests, integrations }
-```
+vault = `{ entries, tags, history, snippets, notes, checklists, accounts, environments, apiRequests, integrations }`。
+`normalizeVault()` 在 `loadVault` 里补齐缺失字段，旧库可直接打开；新增集合只加进 `VAULT_COLLECTIONS`，
+渲染层用 `ws:get` / `ws:set`（`src/hooks/useCollection.tsx`）。**不要**给这些模块另建密码库或明文文件。
+`history` 由 `entries:update` 自动维护（密码变更留最近 10 条），不要手写。页面清单见 `docs/agents/history-1.x.md`。
 
-- `normalizeVault()` 在 `loadVault` 里补齐缺失字段，**旧密码库可直接打开**。
-- 新增集合只加进 `VAULT_COLLECTIONS` 即可，渲染层用 `ws:get` / `ws:set` 读写（`src/hooks/useCollection.tsx`）。
-- **不要**给这些模块新建第二个密码库或明文文件——所有数据都在这一个加密 vault 里。
-- `history` 由 `entries:update` 自动维护（密码变更时留最近 10 条），不要手动写。
+### 禅道登录三步（20.6 实测，改这块必须按此回归）
 
-### 页面
+1. `GET user-login.html` 建会话，并从表单取隐藏域 `referer`；
+2. `GET user-refreshRandom.html` 返回**纯文本**数字盐（不是 JSON，`JSON.parse` 会失败）；
+3. `POST user-login.html`：`account`、`password=md5(md5(明文)+rand)`、`verifyRand=rand`、`referer`、`keepLogin`。
 
-| 页面 | 文件 | 说明 |
-|---|---|---|
-| 环境地址 | `pages/Environments.tsx` | 系统 × 环境矩阵，单元格点击编辑，空内容即删除 |
-| 测试账号 | `pages/Accounts.tsx` | 按系统分组，可显示/复制密码 |
-| 用例清单 | `pages/Checklists.tsx` | 勾选状态逐次落盘 |
-| SQL 片段 | `pages/Snippets.tsx` | 等宽显示 + 一键复制 |
-| 测试笔记 | `pages/Notes.tsx` | 极简 Markdown（先转义再渲染） |
-| 禅道 | `pages/ZentaoPage.tsx` | 登录（PATH_INFO + md5(md5+rand) + verifyRand）→ 拉我的 Bug / 快捷入口 |
-| 工具箱 | `pages/Toolbox.tsx` | 时间戳 / 编码 / 哈希&JWT / 正则 / Diff / 校验 |
-| 接口调试 | `pages/ApiClient.tsx` | 主进程发请求（无 CORS），`{{变量}}` 替换 |
-
-### 关键约束
-
-- **hooks 必须在 `if (isLocked) return` 之前**：`App.tsx` 里锁定/解锁是同一个组件，
-  提前 return 之后再写 `useState` 会导致 hooks 数量变化，触发 React error #310（整页白屏）。
-  已踩过，新增 hook 请放在所有条件返回之前。
-- **TOTP 算法**（`base32Decode` + `totpAt`）已用 RFC 6238 官方向量校验（94287082 / 287082），
-  改动后请重新跑向量。
-- **附件**用当前会话密钥加密存 `userData/attachments/<id>.enc`，单文件上限 20MB；
-  vault 里只存元数据，删除附件要同时删文件。
-- **导入别名表**（`IMPORT_FIELD_ALIASES`）已覆盖本应用导出、Chrome/Edge、Bitwarden、1Password；
-  新增字段要同时补别名，否则导出→导入会丢值。
-- **更新链路**：`update:check` 读 GitHub Releases 比对版本 → 启动时静默检查推 `update:available`
-  → 顶部横幅 + `UpdateDialog` 弹窗（展示更新说明、自动下载、倒计时自动安装）。
-  点「去更新」**不再跳设置页**；设置页里的旧版内联更新 UI 保留为高级入口（多线程开关 + 链路诊断）。
-  `update:available` 推送必须带 `notes/downloadUrl/assetName/digest`，否则弹窗要先补一次 `update:check`。
-- 更新弹窗的回归：`scripts/shot-update-dialog.js` 用 `PM_UPDATE_API` 指向桩服务冒充 Releases，
-  `PM_UPDATE_NO_INSTALL=1` 让安装只走流程不真拉安装程序（否则截图跑一半应用就退出了）。
-- 测试数据子应用（webview）**保活**：`App.tsx` 用 `tdgMounted` + `display:none` 隐藏，绝不卸载；
-  登录后空闲 3 秒预热。实测首次 ~1s、再次进入 ~2ms（不重新加载）。
-
-### 禅道接入（20.6 实测，改动务必按此流程回归）
-
-| 步骤 | 地址 | 要点 |
-|---|---|---|
-| 1 | `user-login.html` | 建会话，并从表单里取隐藏域 `referer`（如 `/zentao/`） |
-| 2 | `user-refreshRandom.html` | 返回**纯文本**数字随机盐，不是 JSON（`JSON.parse` 会失败→rand 为空） |
-| 3 | `POST user-login.html` | 字段：`account`、`password=md5(md5(明文)+rand)`、`verifyRand=rand`、`passwordStrength`、`referer`、`keepLogin`、`captcha` |
-
-- **必须带 `X-Requested-With: XMLHttpRequest` 和 `Referer`**，否则服务端返回整页 HTML 而不是 JSON。
-- **不要用 `index.php?m=user&f=login`**：本实例 `requestType=PATH_INFO`，该地址一律 302 到
-  `user-login-L3plbnRhby8=.html`，body 为空 —— 这就是「登录失败（HTTP 302）」的根因。
-- 响应：`{"result":"success","locate":"/zentao/#app=my"}` 或 `{"result":"fail","message":"..."}`。
-- **Bug 列表**：`my-bug.html` 无权限（302 到 `user-deny-my-bug.html`），改用
-  `my-work-bug.html`；分页复用页面里的模板
-  `my-work-bug-assignedTo-0-id_desc-{recTotal}-{recPerPage}-{page}.html`（每页可设 100）。
-- 表格数据在 `zui-create-dtable="..."` 属性里，**整体不是合法 JSON**（混了 JS 函数体），
-  只能按括号配平截取 `"data":[...]` 再解析（`ztTableRows`）。
-- 快捷入口用 `my-work-{bug,task,story,testtask,testcase,todo}.html`，`index.php?m=my&f=` 会 302。
-- 我的账号实测：166 条 assignedTo Bug，18 个产品；字段 `productName` 直接可用。
+必须带 `X-Requested-With: XMLHttpRequest` 与 `Referer`；**不要用 `index.php?m=user&f=login`**（PATH_INFO 实例会 302）。
+Bug 列表用 `my-work-bug.html`（`my-bug.html` 无权限），表格数据在 `zui-create-dtable` 属性里、不是合法 JSON，
+只能按括号配平截取 `"data":[...]`（`ztTableRows`）。完整表格与快捷入口清单见 `docs/agents/history-1.x.md`。
 
 ### ⚠️ 绝对不要用 `<datalist>`（会导致程序原生崩溃）
 
@@ -310,20 +210,12 @@ vault 从 `{ entries, tags }` 扩展为：
 - **替代方案**：用可点的快捷标签（`.suggest-row .chip`），功能等价、无崩溃风险。
   已在 `Environments.tsx` / `Accounts.tsx` 里改掉，别再改回 datalist。
 
-### 排查 Electron 原生崩溃（无 JS 报错）的方法
+### 排查 Electron 原生崩溃（无 JS 报错）
 
-1. `spawn(exe, ['--no-sandbox', '--remote-debugging-port=9xxx', '--user-data-dir=<临时>'])`
-2. CDP 连上后 `Runtime.enable`，监听 `Runtime.exceptionThrown` / `Inspector.targetCrashed`，
-   并监听子进程 `exit` 拿退出码（`3221225477 = 0xC0000005`）。
-3. 用「变量替换法」逐步排除：把可疑 API 用桩替换（如 `window.electronAPI.wsSet = async () => ({success:true})`），
-   或直接删掉可疑 DOM 节点再触发同样操作 —— 崩溃是否消失就是结论。
-参考脚本：`scripts/ui-features-test.js`（CDP 驱动真实界面的回归测试）。
-
-### 工作台页面状态：跨页面保留用 store，不要用 useState
-
-侧边栏切页是 `switch` 直接换组件，旧组件会卸载 —— 页面里的 `useState` 全丢。
-禅道这类「拉取一次、多处查看」的数据必须放 store：`src/store/zentaoStore.ts`
-（数据 + 筛选条件都在里面，切页/切回来都还在）。
+`spawn(exe, ['--no-sandbox', '--remote-debugging-port=9xxx', '--user-data-dir=<临时>'])` → CDP 监听
+`Runtime.exceptionThrown` / `Inspector.targetCrashed` + 子进程 `exit`（`3221225477 = 0xC0000005`）；
+再用「变量替换法」把可疑 API 换成桩或删掉可疑 DOM 节点，崩溃是否消失即结论。
+参考 `scripts/ui-features-test.js`。**跨页状态必须放 store**（`src/store/zentaoStore.ts`），页面 `useState` 切页即丢。
 
 ### 禅道 REST API（api.php/v1）—— 取「整个项目」的 Bug
 
@@ -340,69 +232,18 @@ vault 从 `{ entries, tags }` 扩展为：
 
 ### 周报（本地 Markdown）约定
 
-- 主进程只暴露 `weekly:list / read / save / rename / delete / pick-dir / reveal`，
-  **所有路径都过 `weeklyResolve()` 做目录穿越校验**，只允许操作指定目录内的 .md/.markdown/.txt。
-- 删除用 `shell.trashItem()`（进回收站可恢复），不要用 `fs.unlink`。
-- 渲染用自写的 `utils/markdown.tsx`（周报语法固定：`**一、xxx**` / `1.` / `（1）` / 空行分段）。
-- 页面回归脚本：`scripts/ui-round2-test.js`（用临时目录测新建/修改/删除，不动真实周报）。
+主进程只暴露 `weekly:list / read / save / rename / delete / pick-dir / reveal`，**所有路径过 `weeklyResolve()` 做目录穿越校验**；
+删除走 `shell.trashItem()`（可恢复），不要 `fs.unlink`；渲染用 `utils/markdown.tsx`。
 
-#### 从禅道自动成稿（2026-11-09）
+**从禅道自动成稿**（`utils/weeklyDigest.ts`，29 条单测）的格式照着使用者真实周报来：
+`**一、项目名**` → 「累计缺陷 N 个，已关闭 A…修复率 E%」→ `（1）模块：共 N 个…` → 总结 → 「下周工作计划」。
+口径与 `utils/bugSummary.ts` 一致（已修复 = `resolution==='fixed'`）。
 
-- 格式**照着使用者真实的周报**来（`09_工作记录/日常工作/周报/*.md`），不是通用模板：
-  `**一、项目名**` → 「累计缺陷 N 个，已关闭 A 个、已修复 B 个、待修复 C 个，另有 D 个已解决待验证，修复率 E%。模块分布如下：」
-  → `（1）模块：共 N 个，待修复 x 个、待验证 y 个、已关闭 z 个` → 结尾总结段 → 「下周工作计划」。
-  改格式前先看一眼真实周报，别凭印象改。
-- 口径和 `utils/bugSummary.ts` 完全一致（已修复 = `resolution==='fixed'`，修复率 = 已修复/总数），
-  生成逻辑在 `utils/weeklyDigest.ts`（纯函数，29 个单测）。
-- **主体数字是累计口径**（跟使用者习惯一致），`includeWeekly` 才额外补一句本周新增/解决/关闭。
-- 模块名只取路径第一段（周报里写的是顶层模块）；模块数超过阈值时尾部合并成「其他（A、B、C等）」。
-- **按创建人统计，且按实例分桶**：`DigestOptions.openedBy: Record<instanceId, string[]>`，
-  空对象 = 不筛。**不能用全局数组** —— A 公司的「张三」和 B 公司的「张三」是两个人，
-  全局筛选会串。匹配时真名和账号都认（`openedBy` 真名 / `openedByAccount` 账号）。
-  弹窗里候选也按公司分组列出（`people: Record<instanceId, {name,account,count}[]>`），
-  手输的账号会加给当前所有选中公司。有筛选时正文最前面写「统计范围：创建人 甲公司：张三；乙公司：王五（起 至 止）」，
-  不筛选就不加，保证和你现有周报逐字一致。
-- **公司的状态完全由「它下面勾了几个项目」决定，没有独立开关**：`Sel` 里只有 `productIds`，
-  没勾项目 = 这家公司不参与统计。勾中任意项目公司自动变选中，取消到 0 个自动变未选。
-  （同一个交互被反馈四次：① 点公司名触发 label 的 checkbox；② 点公司自动全选；③ 整行可点；
-  ④ 默认全选。现在 `toggleInstance` 只做「全选这家 / 清空这家」，`click` 绑在折叠上。）
-- **点公司行 = 只折叠/展开项目列表**，不改变任何勾选；项目列表始终可见，不依赖公司是否选中。
-- **项目默认一个都不勾、公司也不勾**。禅道动辄 30+ 个项目，默认全选等于每次都把无关项目算进去
-  （使用者反馈过「一点开就是全选、点生成全出来了」）。要自己勾项目或点「全选」。
-- **空选择不许兜底成「全部」**：`buildTargets` 里 `productIds` 原样传，之前写成
-  `picked.length ? picked : all`，导致点了「全不选」生成出来还是全部项目。现在没勾就报错拦住。
-- **项目搜索**：项目多于 6 个才出现搜索框；「全选/全不选」只作用于**当前可见（过滤后）**的项。
-- 项目显示成 **「项目集 / 项目名」**（`programName` 来自 `api.php/v1/programs`，旧版禅道没有就降级只显示项目名）。
-  名字一律完整显示（`white-space: normal` + `overflow-wrap: anywhere`，**不要加 ellipsis**），
-  使用者明确要求能看到「资产管理系统-管理后台V2.0.0」这类长名字；列表限高 208px 自己滚。
-- **生成一次之后还能继续补**：只有**正在编辑的草稿**（`draft.text` 非空）才算合并对象。
-  ⚠️ 别把「正在查看的已保存文件」（`content`）也算进去 —— 那样生成后文件名会变成那篇旧文件，
-  一保存就把历史周报覆盖了（已被反馈）。弹窗默认选「合并到现有草稿」，走 `mergeDigest(existing, generated)`：
-  同名项目章节整段换新数字、新项目追加、结尾总结 / 下周计划 / 你手写的段落原样保留、序号重排。
-  「从禅道生成」按钮**不再因编辑态禁用**（以前必须先点取消，等于没法在原稿上补）。
-  合并结果会弹一句「已合并到原草稿：更新 N 个章节、新增 M 个」。
-  ⚠️ `mergeDigest` 靠 `**一、标题**` 认章节、靠「本周完成 / 下周工作计划 / 统计范围：」认结尾段落，
-  改生成格式必须同步改这三个正则，否则合并会把手写内容当成项目正文吃掉。
-- **一次拉取两处复用**：弹窗里的「读取候选」和「生成草稿」共用 `cacheRef`（同一批项目 5 分钟内不重复请求），
-  重新打开弹窗会清缓存。回归里有「读候选后生成不再发请求」的用例，改这块必须让它继续过。
-- 生成的是**草稿**：报表测试、会议这类只有人知道的事写不进去，弹窗里也这么提示。
-- **「新建周报」是空白起步**（`text: ''`），没有预填模板 —— 使用者说模板和当周内容对不上，删比补费劲。
-- **记住上次的选择**（`utils/digestPrefs.ts`，localStorage `pm.weekly.digest`）：
-  存「时间口径的预设名 + 勾过的项目 id + 按谁统计 + 排版选项」，打开弹窗自动带出来，
-  改完不生成也会在关闭时存一次。三条不可省的约束：
-  1. **时间存口径名，不存死日期**（`range: 'thisWeek' | 'lastWeek' | 'thisWeekToFriday' | 'custom'`）。
-     存死 `2026-11-02~11-06` 会让下周打开时算出上周的数据，属于不报错的错。只有手改过日期才存 `from/to`。
-  2. **项目只存 id，加载后按当前项目列表过滤**（`keepKnownProductIds`）。项目被删/改名后旧 id
-     会一直留着，勾一堆不存在的项目会让「生成」看起来没反应。
-  3. 读写都包了 try/catch：存储被手改成垃圾时当「没存过」，配额满时静默失败 —— 记不住选择不该拦住生成。
-- **「生成并保存」**：弹窗底部第二个按钮，直接把结果写成周报文件并落在周报目录。
-  - 文件名：正在补充某篇已保存的 → 存回那篇；其余一律用「统计结束日期」（比编辑器默认的今天更准）。
-  - 目标文件已存在且**不是**正在编辑的那篇 → 先弹「这个文件名已经存在」确认，绝不悄悄覆盖。
-    （判断用 `!editingSaved`，不能用 `target !== current` —— 新建草稿时 `current` 还停在上一篇文章上。）
-  - 保存成功后**仍停在编辑态**（`isNew: false`），因为刚导出数据多半还要补两句；写盘失败时把正文留在编辑器里。
-- 回归：`scripts/ui-digest-test.js`（`npm run test:digest`），起两个桩模拟两家公司，
-  覆盖「点公司全选」「项目搜索 + 长名字不截断」「创建人筛选 + 缓存复用」「记住上次选择」
-  「生成并保存 + 同名确认」共 69 项。周报目录用 `mkdtempSync` 临时目录，**绝不能写使用者的周报**。
+几条被反复反馈过的硬约束：**项目默认一个都不勾**（空选择不许兜底成「全部」）；公司状态只由「勾了几个项目」决定；
+项目名完整显示不截断；「生成一次还能继续补」只认**正在编辑的草稿**（别把已保存文件算进去，否则会覆盖历史周报）；
+`mergeDigest` 靠 `**一、标题**` 与「本周完成 / 下周工作计划 / 统计范围：」认边界，改格式必须同步改这三个正则；
+记住上次选择存**口径名不存死日期**、项目只存 id 且加载后过滤。
+完整规则（含弹窗交互、缓存复用、生成并保存、69 项回归）见 `docs/agents/weekly-report.md`。
 
 ### ⚠️ 禅道会话必须按实例分桶（做跨公司功能前必读）
 
@@ -414,30 +255,13 @@ vault 从 `{ entries, tags }` 扩展为：
 
 `scripts/ui-digest-test.js` 的桩会**校验各自的 Token 和 Cookie**，串号会直接 401 —— 改这块必须跑它。
 
-### 视觉体系 v2（2026-10-28，pages.css 第 19 节）
+### 视觉体系 v2（pages.css 第 19 节）
 
-所有工作台页面共用一套 token 与组件样式，**新增页面请直接用 `components/ui.tsx` + 这些类名**，不要再手写样式：
-
-| 层级 | 元素 | 说明 |
-|---|---|---|
-| 页面 | `.content-area > .pg` | 最大宽 1440 居中，padding 26/32，子块间距 22 |
-| 头部 | `PageHead` | 23px 标题 + 32px 渐变图标块 + 12.5px 灰描述 |
-| 卡片 | `Panel` | 16px 圆角、1px 淡边、双层阴影；`collapsible` 可折叠（配置类面板默认折叠） |
-| 表格 | `.tbl` | 表头 11px 粘性 + 毛玻璃，行 11/16 padding，hover 淡紫 |
-| 标签页 | `.tabs > .tab2` | **下划线式**（不是胶囊），激活为 2px 强调条 |
-| 按钮 | `.btn-primary/.btn-secondary` | 9px 圆角，主按钮渐变+内阴影 |
-| 表单 | 全局 input/textarea/select | 34px 高、9px 圆角、focus 3px 光环 |
-
-- **新增网址弹窗的小按钮统一走 `.entry-mini-btn` 系列**（`global.css` 尾部）：
-  `+ 添加字段 / + 添加附件 / 打开 / 生成 / 查看 / 回滚 / 复制验证码` 用同一套 accent 淡底 + 7px 圆角；
-  `保密` 是 `.gen-check.entry-field-secret`（带 `Icons.lock`，选中加 `.is-on` 高亮），
-  行内删除是 `.entry-row-del`（带边框方块、hover 变红）。别再退回灰色胶囊 `.gen-check` 或裸 `×` 文本按钮。
-  视觉回归：`node scripts/shot-entry-buttons.js [dark|light]`。
-
-- 「网址管理」页也接入了这套骨架（`PasswordManagerPage` 用 `Page/PageHead/tabs` + `.pm-shell/.pm-main`），
-  这样左侧栏与工作台页面观感统一；改动该页时注意 `.pm-main > .content-area` 是它自己的滚动容器。
-- 禅道统计卡用 `repeat(auto-fit, minmax(92px, 1fr))`，保证「全部 + 5 状态 + 4 严重度」10 张卡一行放得下。
-- 视觉走查脚本：`node scripts/shots.js <输出目录> [dark|light]`（CDP 截图 7 个页面，1440×900）。
+新增页面直接用 `components/ui.tsx` + 这套类名，不要手写样式：`.content-area > .pg`（1440 居中）、`PageHead`、
+`Panel`（16px 圆角 + 双层阴影，`collapsible` 可折叠）、`.tbl`（11px 粘性表头）、`.tabs > .tab2`（下划线式）、
+`.btn-primary/.btn-secondary`（9px 圆角）、全局 input/textarea/select（34px 高 + focus 3px 光环）。
+网址弹窗小按钮统一 `.entry-mini-btn` 系列；**不要用 `<datalist>`**（见上）。
+完整 token 表与截图脚本见 `docs/agents/visual-system.md`。
 
 ### ⚠️ 禅道 REST 查 Bug 必须带 `status=all`
 
@@ -452,104 +276,29 @@ product=58&status=all        → total 680（active 190 + resolved 29 + closed 4
 
 ### 发布新版本（远程更新完全依赖 GitHub Releases）
 
-应用内「检查更新」读的是 `https://api.github.com/repos/belldandy114/password-manager/releases/latest`，
-**只提交 git 是不够的**，必须发 Release 并挂上安装包，否则所有人的「检查更新」永远停在旧版本（之前停在 v1.0.2）。
+**只提交 git 不够**，必须发 Release 并挂安装包，否则所有人的「检查更新」停在旧版本。
+用 `npm run release -- <ver>`（升版本 → 构建 → 打包版回归 → 英文资产名 → 推送 → 建 Release → 等 CI → 核对附件与 latest）。
+⚠️ 上传前必须改成英文文件名（中文名会被 GitHub 改写）；`release/` 在 `.gitignore` 里。
 
-```bash
-npm run dist                                     # → release/测试工具 Setup 1.2.6.exe
-cp "release/测试工具 Setup 1.2.6.exe" "release/PasswordManager-Setup-1.2.6.exe"
-gh release create v1.2.6 "release/PasswordManager-Setup-1.2.6.exe" \
-  --title "测试工具 v1.2.6" --notes-file notes.md --latest --target master
-```
+⚠️ **CI 会覆盖 Release 说明**（`.github/workflows/build.yml` 用写死的模板建 Release），
+所以 `release.js` 第 8 步会删掉 CI 多传的 `Setup.<ver>.exe` 并用本地 notes 回填说明 —— 对新旧 CI 都幂等。
+本机 gh token 没有 `workflow` scope，推不了 workflow 改动；推荐模板在 `scripts/ci-build.yml.recommended`。
 
-- ⚠️ **上传前必须改成英文文件名**：中文名会被 GitHub 改写（`测试工具 Setup 1.2.6.exe` → `Setup.1.2.6.exe`）。
-- `release/` 在 `.gitignore` 里，exe 不进 git，只能通过 Release 附件分发。
-- 发布后自检：`gh release view v1.2.6 --json assets`（state=uploaded、size 对得上）；
-  `curl -s .../releases/latest | grep tag_name` 应为 `v1.2.6`。
-- 应用端 `updateCheck()` 会返回 `{current, latest, hasUpdate, url, notes}`，`url` 指向 Release 页；
-  安装包是 NSIS，`/S /currentuser` 可静默覆盖安装，密码库数据不受影响。
-
-### 禅道 Bug 重现步骤里的截图（file-read-*.png 需要登录态）
-
-页面里的 `<img src="/zentao/file-read-29218.png">` **不能在渲染层直接当 src 用** ——
-渲染进程的 `<img>` 不会带禅道的 Cookie，只会显示裂图/空白，所以之前只能显示 `[图片]` 占位。
-
-正确做法（已实现，`zentao:bug-detail` 内）：
-1. 解析时把 `img src` 转绝对地址，按出现顺序去重，正文里用 `[图1] [图2]` 占位对应；
-2. 主进程 `ztFetchBinary(cfg, url)` 带上 `ztCookieHeader()` 取二进制（跟随 302，单张上限 8MB）；
-3. 转 `data:image/png;base64,...` 返回给渲染层，抽屉里直接 `<img src={dataUrl}>` 显示；
-4. 最多取 12 张，失败数放进 `imageFailed` 提示用户去浏览器看原图。
-
-验证脚本：`node scripts/ui-bug-image-test.js`（断言 steps 里有 `[图N]`、images 长度、`naturalWidth > 0`）。
-实测 Bug #14171：2 张图均取回（1920×953），dataURL 约 210KB / 50KB。
-
-### ⚠️ 应用内更新（检查 + 下载）都必须用 Electron `net`，不要用 Node `fetch`
-
-Node 的 `fetch`（undici）**不读系统代理**：公司/家里只配了系统代理时 `api.github.com` 直接连不上，
-表现为「检查更新」转圈 10 秒；下载更是只会抛一句 `fetch failed`（信息量为零）。
-现在 `fetchLatestRelease()` 与 `netDownload*` 都走 `net.request`（Chromium 网络栈）：跟随系统代理，
-能拿到 `HTTP 404` 这类真实原因。实测本机直连 GitHub Release 附件 502 / 0 B/s，
-走 `127.0.0.1:7890` 代理 1.6~2.9 MB/s；本地 `http://127.0.0.1` 桩服务 `resolveProxy` 返回 `DIRECT`，回归脚本不受影响。
-
-- **公共免费镜像已废弃**：`ghfast.top` 走代理连不上、`gh-proxy.com` 只有 1.6 KB/s（直连 50~173 KB/s），
-  点「换镜像」只会更慢。1.21.4 起 `UPDATE_MIRRORS` 移除，改为可选自定义源
-  （`settings.updateMirrorUrl` / `PM_UPDATE_MIRROR` 环境变量），没配就只走 GitHub。
-- ⚠️ **不要再自动切并行**（1.21.4 的「6 秒慢速 / 60 秒无数据自动改 6 分片」已在 1.21.6 撤销，
-  1.21.7 又把 `netDownload` 里的慢速中止代码整段删掉）：
-  公司环境里只是中途停顿的正常下载会被 60 秒规则误杀；切分片后 `update/parts-*` 目录
-  又容易触发杀软隔离，写 `chunk-0.bin` 直接 `ENOENT`，结果是**完全下不了**（比慢更糟）。
-  现在默认纯单连接 + 30 分钟总超时；`parts-*` 目录**只在用户显式启用并行时**才创建；
-  单连接与并行两条路径的 `createWriteStream` 都必须监听 `error`。
-  默认行为由 `scripts/ui-round9-test.js` 的「慢速桩（1MB/8 块/每块停 1.2s）」用例锁住：
-  断言 `threads===1`、`verified===true`、`update/` 下无 `parts-*` 残留。改这里必须同步改该用例。
-- **安装包执行白名单**：`update:install` 只执行 `update/` 目录内、或经 `update:pick-file` 对话框
-  选中的 exe（模块作用域 `allowedInstallFiles`），拒绝渲染层传来的任意路径。
-- **摘要缺失不静默**：`expectedSha256` 为空时下载仍成功但 `verified=false`；弹窗取消自动倒计时安装
-  并显示警示，设置页也显示「未校验」提示。`PM_UPDATE_API` 在打包版只放行 `127.0.0.1/localhost` 桩服务。
-- **设置项**：设置 › 通用里可填 `updateMirrorUrl`（国内直链前缀，只接受干净 http(s)）与
-  `updateCheckIntervalHours`（0 = 仅启动查一次，默认）。两者都经 `settings:get` 读回，别只在主进程加字段。
-- **链路诊断**：`session.defaultSession.resolveProxy(url)` 的结果经 `proxyLabel()` 变成
-  「经代理 x.x.x.x」/「直连」推给 `update:progress`，弹窗显示「直连 · 检查 VPN 分流」。
-  家里慢多半就是规则没放行 `github.com` / `*.githubusercontent.com`（302 到 `release-assets.githubusercontent.com`）。
-- 失败时的兜底顺序：`浏览器下载`（发布页）→ `选择本地安装包`（`update:pick-file`）→ `加速重试`（用户手动，多线程并行）。
-- 回归脚本（都在仓库内）：`scripts/ui-round9-test.js` 的 `R9_ONLY=update` 段覆盖
-  落盘位置 / SHA-256 校验 / 摘要不符拒绝 / 6 分片 / **慢速停顿仍是单连接**；
-  `scripts/ui-dl-time-test.js` 验证打包版检查更新与失败兜底文案。
-  不要再用项目外 `_scope/` 里的临时探针作为长期依据。
-- 安装**不要默认 `/S` 静默**：静默装的是默认目录，用户装到 `E:/password-manager` 会变成两份。
-  默认走安装向导（`spawn(file, [])` + `app.quit()`）；静默才传 `['/S', '/D=<当前 exe 目录>']`。
-
-### ⚠️ 发布时 CI 会覆盖 Release 说明（token 没有 workflow scope）
-
-`.github/workflows/build.yml` 在打 tag 时会用 `softprops/action-gh-release` 建 Release，
-body 是**写死的模板**，把我们 `gh release create --notes-file` 的说明覆盖掉（v1.2.6~v1.3.2 都中过），
-还会额外上传一个中文名附件（被 GitHub 改名为 `Setup.1.3.2.exe`）。
-
-- 本机 gh token 只有 `gist / read:org / repo`，**没有 `workflow`**，所以推不上去 workflow 的改动
-  （`refusing to allow an OAuth App to create or update workflow ... without workflow scope`）。
-  想根治得先 `gh auth refresh -h github.com -s workflow`（需浏览器授权）。
-- 推荐工作流在 `scripts/ci-build.yml.recommended`：只在 `v*` tag 构建、CI 不再创建 Release /
-  传附件 / 写说明，Release 全部交给 `release.js`（去掉双写）。把它手动覆盖到 workflow 路径即可。
-  旧补丁 `ci-workflow-rename.patch.txt` 只改产品名，已不推荐。
-- `release.js` 第 8 步对新旧 CI 都幂等：删掉旧 CI 多传的 `Setup.<ver>.exe`、用本地 notes 回填说明、
-  核对附件与 latest。即使 workflow 还没更新，发布也不会坏。
+应用内更新（检查 + 下载）**必须用 Electron `net`，不要用 Node `fetch`**（undici 不读系统代理）；
+默认纯单连接 + 30 分钟总超时，**不要再自动切并行**（停顿会被误杀、`parts-*` 易被杀软隔离）；
+安装包执行有白名单（`allowedInstallFiles`）；摘要缺失时 `verified=false` 且取消自动安装。
+禅道 Bug 截图需带登录态由主进程取（`ztFetchBinary` → dataURL）。细节见 `docs/agents/update-and-release.md`。
 
 ### 时间显示：一律走 `src/utils/time.ts`
 
 `iso.slice(11, 16)` 取的是 **UTC 小时**，北京时间会少 8 小时（禅道「· 03:20 拉取」其实是 11:20）。
 用 `formatHm` / `formatDateTime` / `formatRecent`。
 
-### 1.4.0 起的几个约定（改代码前先看）
+### 1.4.0 起的几个约定
 
-| 能力 | 位置 | 约定 |
-|---|---|---|
-| 列表分页 | `components/Pager.tsx` | 数据量大就分页，**不要再用「只渲染前 N 行 + 提示缩小范围」**；筛选变化要把页码重置到 1 |
-| 导出文件 | `file:save-text`（主进程） | 渲染层生成文本，主进程负责选路径 + 写 **UTF-8 BOM**（Excel 打开不乱码） |
-| 断言 | `utils/apiAssert.ts` | 只断言填了的项；状态码支持 `2xx` 通配；`jsonPath` 留空值 = 只要求路径存在 |
-| 全量 Bug 缓存 | `zentao:all-bugs` | 10 分钟 TTL，按 `baseUrl|account` 分键，`force=true` 绕过；返回带 `cached/ageMs` |
-| 安全体检 | `components/SecurityAudit.tsx` | 纯前端统计，不改数据；点条目 → 回列表并设置搜索词 |
-| 审计日志 | `DATA_DIR/audit.log`（JSONL） | **只记动作 + 条目名，绝不写密码内容**；超 512KB 自动截到最近 2000 条 |
-| 自动备份 | `backupVaultOncePerDay()` | 解锁时也调一次；保留份数读 `settings.backupKeep`（1~60） |
+列表分页走 `components/Pager.tsx`（筛选变化重置到第 1 页）；导出文本由主进程 `file:save-text` 写 **UTF-8 BOM**；
+断言在 `utils/apiAssert.ts`（只断言填了的项，状态码支持 `2xx`）；全量 Bug 缓存 `zentao:all-bugs` 10 分钟 TTL；
+审计日志 `DATA_DIR/audit.log` **只记动作 + 条目名，绝不写密码**；自动备份保留份数读 `settings.backupKeep`。
 
 ### Esc 必须能关掉一切浮层
 
@@ -583,14 +332,11 @@ useEffect(() => {
 }, [cmdSignal]);
 ```
 
-### 1.5.0 起的几个约定（改代码前先看）
+### 1.5.0 起的几个约定
 
-| 能力 | 位置 | 约定 |
-|---|---|---|
-| 请求体类型 | `ApiRequest.bodyType` | `json / form / multipart / raw / none`；`form`/`multipart` 正文按**每行 key=value** 写，`multipart` 的值以 `@` 开头=本地文件路径；`raw` 的 Content-Type 填在 `rawContentType`；**用户自己写了 Content-Type 头就不覆盖** |
-| Cookie | `ApiRequest.headers` | 已取消独立 `cookies` 字段，统一写在请求头里（`Cookie: a=1; b=2`）；读取旧数据走 `migrateReq()` 自动合并 |
-| 笔记目录 | `notes:*` IPC | 目录存 `localStorage['pm.notes.dir']`，为空=用加密库；文件名由标题生成（非法字符转 `_`、重名加 `-2`），删除走 `shell.trashItem`（可找回） |
-| 目录类 IPC 安全 | `notesResolve` / `weeklyResolve` | **必须做目录穿越校验**：拼出的绝对路径必须仍在根目录内，否则报错 |
+`ApiRequest.bodyType` = `json / form / multipart / raw / none`（`multipart` 的值以 `@` 开头=本地路径；
+用户自己写了 Content-Type 就不覆盖）；Cookie 统一写在请求头里（旧数据走 `migrateReq()`）；
+笔记目录存 `localStorage['pm.notes.dir']`；`notesResolve` / `weeklyResolve` **必须做目录穿越校验**。
 
 ### ⚠️ 跑 UI 回归时的两个坑
 
@@ -601,105 +347,38 @@ useEffect(() => {
    （页面变成 `chrome-error://chromewebdata/`，curl 却是 200）。
    现在主进程支持 `PM_USE_DIST=1`：开发目录下也直接加载已构建的 `dist`，回归脚本不用先打包。
 
-### ⚠️ electron-builder 下载超时时的应急办法
+### ⚠️ electron-builder 下载超时 / 构建卡死
 
-`npm run pack` 会去 GitHub 下 electron / winCodeSign，**公司网络下经常 `Timeout awaiting 'request'`**（10 分钟白等）。
-winCodeSign、nsis 一般在 `~/AppData/Local/electron-builder/Cache` 里是齐的，缺的多半只是 electron。
-此时可以**只重打 asar**，让已有的 `release/win-unpacked` 直接跑上新代码（exe 本体不需要变）：
-
-```bash
-npx asar extract release/win-unpacked/resources/app.asar _asar-tmp
-cp -r dist/. _asar-tmp/dist/
-cp electron/main.js electron/preload.js electron/preload-tdg.cjs _asar-tmp/electron/
-# 记得同步 _asar-tmp/package.json 的 version
-npx asar pack _asar-tmp release/win-unpacked/resources/app.asar
-```
-
-（要出安装包仍然必须让 electron-builder 完整跑通，asar 手工打包只能用于验证。）
-
-## 1.5.0 构建卡死根因与三个坑（2026-10-28）
-
-**现象**：`npm run dist` 跑到「构建子应用」就长时间无输出，exe 一直出不来（日志里像是「卡在下载」）。
-
-**根因**：`package.json` 和 `scripts/build-installer.js` 里的子应用步骤写的是 bash 语法
-
-```bash
-cd sub-apps/test-data-generator && (test -d node_modules || npm install) && npx vite build
-```
-
-Windows 的 npm 用 `cmd.exe` 执行脚本，**cmd 里没有 `test` 命令**，于是每次都进 `|| npm install` 分支：
-在公司网络下这一步会长时间卡住 → 整个构建停在子应用阶段。
-
-已改为 `node scripts/build-subapp.js`：用 `fs.existsSync` 判断依赖、直接调用本地 `vite/bin/vite.js`，
-不联网、跨平台；`package.json` 的 `build:sub-apps` 也指向它。
-
-**另外两条必须记住**：
-
-- `scripts/build-installer.js` 现在会**自动探测** `ELECTRON_BUILDER_CACHE`
-  （`%LOCALAPPDATA%\electron-builder\Cache`），有就直接用，避免 NSIS 阶段去 GitHub 拉资源超时；
-  已经设了环境变量则不覆盖。electron 仍走 `-c.electronDist=node_modules/electron/dist`。
-- **`multipart` 请求体不能带用户自己的 Content-Type**：`api:send` 里会先删掉该头，
-  由 `fetch(FormData)` 生成带 boundary 的值。用户从别处粘来的 `multipart/form-data`（无 boundary）
-  会让服务端解析失败。
-
-**笔记新建的约定（容易写错）**：
-
-- 新建笔记必须给 `notes:save` 传**空文件名**，让主进程 `notesFileName()` 生成名字（重名自动加 `-2`）；
-  一旦传了文件名就走「沿用」分支，会覆盖同名笔记 —— 1.5.0 初版就是踩了这个，同名新建会吃掉原文件。
-- 改标题走 `notes:rename`，目标已存在时主进程返回错误（不会覆盖），内容仍写回原文件。
-
-**本次全链路验证**：`npm run typecheck` 0 错 → `npx vite build` → `npm run dist` 一把过
-（96.1 MB / 100,750,785 B）→ `check:integrity` 7 项全 Medium → `npm run smoke` 13/13 →
-`ui-round6-test` 28/28（新增「同名新建不覆盖」断言）→ round2/3/4/5 全绿。
+`npm run pack` 会去 GitHub 下 electron / winCodeSign，公司网络常超时。先设
+`$env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"`。
+实在不行只重打 asar（`npx asar extract` → 覆盖 `dist`/`electron` → `npx asar pack`），exe 本体不用变；
+**要出安装包仍必须让 electron-builder 完整跑通**。子应用构建曾因 bash 语法 `test -d` 在 cmd 下卡死，
+已改 `node scripts/build-subapp.js`。完整排错记录见 `docs/agents/history-1.x.md`。
 
 ## 1.6.0 起的约定（改代码前先看）
 
-| 能力 | 位置 | 约定 |
-|---|---|---|
-| 原子写盘 | `main.js` `writeFileAtomic` | 临时文件 → `fsync` → `rename`，再加一份 `.bak`；**所有 vault/trash 落盘都必须走它**，不要直接 `writeFileSync(DATA_FILE)` |
-| 损坏自愈 | `readEncryptedWithBak` | 主文件解不开就回退 `.bak` 并写回，审计记 `vault-recover-bak`；`auth:verify` 遇损坏返回 `code:'vault-corrupt'`，登录页据此给「从备份恢复」入口 |
-| 备份恢复 | `backup:restore` | 恢复前先做 `pre-restore` 快照（保留 5 份）；保留份数读 `settings.backupKeep`（1~60） |
-| 数据目录迁移 | `data:migrate` / `data:reset-location` | 只复制不删除；`resolveDataDir()` 是唯一入口，别在别处拼 `DATA_DIR` |
-| 结构快照 | `utils/apiSchema.ts` | 只比**类型**不比值（值变化不误报）；`schemaFromBody` 非 JSON 返回 `null`；快照存在 `req.snapshot` |
-| 响应转代码 | `utils/apiCodegen.ts` | `jsonToTsTypes` / `jsonToMarkdownTable` 纯函数；表格单元格里的 `|` 与换行必须转义，否则表格被拆坏 |
-| 断言规则行 | `ApiRequest.assertions[]` | 1.6.0 起是**可增删的规则行**（`{op,target,value,negate}`），旧的 5 槽位走 `migrateReq()` 自动迁移；断言行里状态码行的 target 输入是 disabled，测试要取 `input:not([disabled])` |
-| 会话 Cookie 罐 | `main.js` `apiJar` | `api:send` 的 `autoSession=true` 时自动接收 Set-Cookie 并回带；**用户手写的 Cookie 头优先**；`api:cookies-clear` 清空 |
-| 禅道多套配置 | `AppSettings.zentaoActiveId` | `ztCfgFromVault()` 取「当前选中 → 旧的 `zentao` → 任一完整配置」，定时提醒也跟这套走；切换时 `settings:save { zentaoActiveId }` |
-| 禅道附件 | `zentao:attachment` | 主进程带登录态取二进制（上限 100MB），`mode=open` 落临时目录再 `shell.openPath`，`mode=save` 走 `showSaveDialog`；文件名要过滤 `[\\/:*?"<>|]` 并去重 `-2` |
-| 未读红点 | `zentao:unread` / `zentaoUnreadClear` | 状态存 `DATA_DIR/zentao-notify-state.json`（**不是** userData，随数据目录迁移）；进禅道页清零，重启后仍能显示未读数 |
-| 周报对比 | `utils/weeklyDraft.ts` `compareWeeks` | 「多」不一定是「好」：`lowerBetter` 决定箭头颜色（新提变多=坏，关闭变多=好） |
-| 安装包下载 | `main.js` `netDownloadParallel` | 先 `netProbe`（Range `0-0` 拿 `Content-Range`）→ 6 段并发 `netDownloadRange` → `concatFiles` 拼回；不支持 Range 或文件 < 4MB 回退单连接；进度推送带 `speed`/`threads` |
+| 能力 | 约定 |
+|---|---|
+| 原子写盘 | `writeFileAtomic`（临时文件 → fsync → rename + `.bak`），**所有 vault/trash 落盘都必须走它** |
+| 损坏自愈 | `readEncryptedWithBak` 回退 `.bak`；`auth:verify` 返回 `code:'vault-corrupt'` |
+| 备份恢复 | `backup:restore` 先做 `pre-restore` 快照（保留 5 份） |
+| 数据目录迁移 | `data:migrate` / `data:reset-location` 只复制不删除；`resolveDataDir()` 是唯一入口 |
+| 结构快照 | `utils/apiSchema.ts` 只比类型不比值；快照存 `req.snapshot` |
+| 断言规则行 | `ApiRequest.assertions[]` = `{op,target,value,negate}`，旧 5 槽位走 `migrateReq()` |
+| 会话 Cookie 罐 | `apiJar`（已随 `ipc-api.js` 搬走），用户手写 Cookie 头优先 |
+| 禅道多套配置 | `AppSettings.zentaoActiveId` + `ztCfgFromVault()` |
+| 未读红点 | `DATA_DIR/zentao-notify-state.json`（**不是** userData） |
+
+其余（禅道附件、周报对比、安装包并行下载等）见 `docs/agents/history-1.x.md`。
 
 ### 页面拆包与回归脚本的配合（注意，改这里很容易踩）
 
-- 工作台页面全部 `React.lazy` + `Suspense`（`src/App.tsx`），**首次进页面是异步的**。
-- 回归脚本里 `navTo` 必须「等占位消失 + 真页面出现」再断言：
+工作台页面全部 `React.lazy` + `Suspense`，**首次进页面是异步的**：`navTo` 必须「等 `.page-loading` 消失 + `.pg` 出现」
+再断言，不要定长 `sleep(800)`（慢机器会抓到上一页 DOM，表现为随机几条失败、重跑又过）。
+数据生成器 webview 走 `tdgMounted` 保活，**别改成随页面卸载**。
 
-```js
-await ev(`...click nav...`);
-for (let i = 0; i < 40; i++) {
-  const ready = await ev(`(() => !document.querySelector('.page-loading') && !!document.querySelector('.pg'))()`);
-  if (ready) break;
-  await sleep(100);
-}
-```
-
-  以前是定长 `sleep(800)`，在慢机器上会抓到上一页的 DOM（表现为随机几条失败，重跑又过）。
-- 数据生成器（webview 子应用）仍走 `tdgMounted` 保活 + 独立 `Suspense`，**别改成随页面卸载**。
-- `manualChunks`（`vite.config.ts`）把 react/scheduler 拆 `vendor-react`、zustand 拆 `vendor-state`；
-  主包曾 793 KB（有体积告警），现在 331 KB。
-
-### 单元测试（vitest）
-
-```bash
-npm run test:unit        # vitest run，约 0.5s
-npx vitest run src/utils/__tests__/csv.test.ts   # 单跑一个
-```
-
-- 测试放 `src/utils/__tests__/`，用 `.test.ts`；`tsconfig.json` 只 include `src`，所以测试也会被 `typecheck` 检查（**不要引入 node 类型**）。
-- 主进程的纯函数想测就抽成 CJS 模块：`electron/csv.js` + `electron/csv.d.ts`（类型声明让渲染层单测能直接 `import`）。
-  已经抽出去的是 `parseCsv` / `normalizeImportRecords` / `extractTotpSecret` / `IMPORT_FIELD_ALIASES`。
-- 打包后还要确认「抽出去的模块真的进了 asar」：`npm run verify:packaged-csv`（4 项：导入可用 / 引号逗号 / 中文表头 / 标签与环境归一化）。
+单测：`npm run test:unit`（vitest），测试放 `src/utils/__tests__/*.test.ts`，`tsconfig` 只 include `src`（**不要引入 node 类型**）；
+主进程纯函数抽成 `electron/<mod>.js` + `.d.ts` 才能被渲染层单测 import；打包后跑 `npm run verify:packaged-csv` 确认模块真进了 asar。
 
 ### ⚠️ 跑 UI 回归前先清干净残留进程
 
@@ -715,45 +394,27 @@ Get-Process -Name "测试工具" -ErrorAction SilentlyContinue | Stop-Process -F
 
 ### CI 门禁是怎么生效的（2026-11-09 更新）
 
-CI 的「构建安装包」步骤跑 `node scripts/build-installer.js`，门禁装在**脚本**里而不是 workflow 里，
-这样即使 workflow 文件因 token 缺 `workflow` scope 推不上去，现有 CI 也受保护。
-
-`build-installer.js` 开头调用 `require('./ci-gate').runGate()`，顺序是：
-隐私扫描 → `tsc --noEmit` → `vitest run` → IPC 契约 → CSS 重复选择器报告（只报告不阻断）。
-以前这里只有 tsc + vitest，隐私与 IPC 契约只能本地手动跑，容易漏。
-
-`npm run check`（`preflight.js`）、`npm run regress`（`regress-all.js`）、CI 构建共用同一份 `ci-gate.js`；
-`regress -- --pack` 会再跑 7 项打包版回归。任一步失败 → `process.exit(1)` → 不出包。
-`SKIP_PREFLIGHT=1` 可临时跳过全部门禁（只用于排查构建问题，正式发版不要跳）。
-
-- 为什么不直接写进 `build.yml`：本机 token 没有 `workflow` scope，推 workflow 改动会被服务端拒绝；
-  完整的新工作流模板见 `scripts/ci-build.yml.recommended`。
-- `npm run check` / `npm run check:pack` 是同一套门禁的手动入口；
-  `npm run hooks:install` 会把它装成 git `pre-push` 钩子。
+门禁装在**脚本**里而不是 workflow 里（token 缺 `workflow` scope 推不了 workflow）：
+`build-installer.js` 开头 `require('./ci-gate').runGate()`，顺序 = 隐私扫描 → `tsc --noEmit` → `vitest run` → IPC 契约 → CSS 重复报告（只报告）。
+`npm run check` / `npm run regress` / CI 构建共用同一份 `ci-gate.js`；任一步失败即 `exit 1` 不出包。
+`SKIP_PREFLIGHT=1` 只用于排查构建问题，正式发版不要跳。
 
 ## 1.6.1 起的约定（改代码前先看）
 
-| 能力 | 位置 | 约定 |
-|---|---|---|
-| 周次下拉 | `utils/weeklyDraft.ts` `weekOptions()` | **offset = 几周前**（0=本周、1=上周）。`weekRange(offset)` 内部是「减去 offset*7 天」，所以下拉**不能**再写成 `-i`——1.6.0 就是符号反了，把「上周」算成下一周（10-19~10-25 显示成 11-02~11-08），草稿与对比全错。改动请跑 `src/utils/__tests__/weeklyRange.test.ts` |
-| 老数据兼容 | `WeeklyReport.tsx` `draftOffset` 初始化 | `localStorage['pm.weekly.draftOffset']` 里可能存在旧版的 `-1`，**负数一律归 0**，不要原样信任 |
-| 对比表对齐 | `pages.css` `.wk-cmp*` | 三个数字列**定宽 + 右对齐 + `align-items: baseline`**。不要退回 `1fr` 自适应：位数一变整列就跳，字号不同还会错位（就是「变化和数字没对齐」那个观感问题） |
-| 对比面板 | `WeeklyReport.tsx` | 用 `<Panel collapsible>`（折叠是 Panel 自带能力，标题跟着 `draftOffset` 变）。`Panel` 的 `tools` 已经 `stopPropagation`，按钮不会误触发折叠 |
-| 设置页骨架 | `pages.css` `.set-shell / .set-rail / .set-nav / .set-foot` | 左侧竖排菜单 + 右侧内容卡片。**不要再回到顶部横排 `.settings-tabs` + `600px` 居中窄栏**，也别用内联 `padding`/`marginLeft` 去对位置 |
-| 接口调试视觉 | `pages.css` 第 19.21 节 | 只改样式、**不动类名**（round5/6/7 回归脚本依赖 `.url-bar`/`.api-io`/`.assert-toggle`/`.resp-tabs`/`.code2`）。`.api-io` 是**上下单列**（半宽时 KV 行太挤），不要改回两栏 |
-| 周报正文框 | `redesign.css` 末尾 `.wk-editor / .wk-md-input / .wk-preview / .wk-read` | **编辑态和阅读态是同一个框**：固定高度 `calc(100vh - 300px)`（与左栏 `.wk-list` 的 `calc(100vh - 320px)` 同一口径），框内滚动。四个必须一起满足：① 父级 `.wk-editor` 有确定高度；② 子项 `min-height: 0`（否则 flex 子项不肯收缩，`overflow-y` 失效、框还是会被内容撑长）；③ 边框用 `--input-line` 而不是 `--border`（`--border` = `--line`，深色主题下几乎看不见）；④ 阅读态的 `<article>` 必须带 `wk-read` 类 —— 只改编辑态时使用者会说「好像没变化」，因为他看的是已保存的周报。回归里有「注入 200 行后高度不变且 `scrollHeight > clientHeight`」和「长周报在阅读态框内滚动」两条断言 |
+| 项 | 约定 |
+|---|---|
+| 周次下拉 | `weekOptions()` 的 **offset = 几周前**（0=本周），`weekRange` 内部减 `offset*7` 天，别写成 `-i` |
+| 老数据兼容 | `localStorage['pm.weekly.draftOffset']` 里的负数一律归 0 |
+| 对比表对齐 | `.wk-cmp*` 三列**定宽 + 右对齐 + baseline**，不要退回 `1fr` |
+| 设置页骨架 | `.set-shell / .set-rail / .set-nav`，不要回到顶部横排 + 600px 窄栏 |
+| 接口调试视觉 | 只改样式、**不动类名**（`.url-bar`/`.api-io`/`.assert-toggle`/`.resp-tabs`/`.code2`） |
+| 周报正文框 | `.wk-editor` 定高 + 子项 `min-height:0` + 边框用 `--input-line` + 阅读态带 `wk-read` |
 
-### 本轮回归脚本：`scripts/ui-round8-test.js`
+### 样式类改动怎么验：`scripts/ui-round8-test.js`
 
-模型看不到截图，所以样式类改动全部用**几何量**断言，不要只截图「看起来还行」：
-
-- 周报下拉：`option` 顺序 + 「上周结束日 ≤ 今天」+ 本周区间包含今天；
-- 设置页：`.set-rail` 竖排、左栏在左内容在右、内容宽度 > 640px、保存按钮在内容区右下、四个分组都能点开；
-- 接口调试：地址栏圆角/边框、输入框融入（无独立底色）、断言行贴满内容宽、页签胶囊、`.code2` 圆角+行距、状态码药丸；
-- 对比表：把同样结构注入真实页面，量**每列数字的右边界与对应表头是否吻合**（跨行还要一致）；
-- 折叠：点 `.pnl-head.is-clickable` 能收起再展开。
-
-这些断言都靠 computed style / `getBoundingClientRect`，跟主题无关，暗色亮色都成立。
+模型看不到截图，样式改动全部用**几何量**断言（computed style / `getBoundingClientRect`），不要只截图说「看起来还行」：
+周报下拉顺序与区间、设置页 `.set-rail` 竖排与内容宽度、接口调试地址栏边框/断言行贴满/`.code2` 圆角、
+对比表每列数字右边界与表头吻合、`.pnl-head.is-clickable` 能收起再展开。
 
 ### 设置页改版后要顺手自查的点
 
@@ -786,72 +447,27 @@ git diff --cached -U0 | Select-String -Pattern 'password\s*[:=]\s*[''"]|http://\
 
 ## 1.7.0 起的约定（改代码前先看）
 
-| 能力 | 位置 | 约定 |
-|---|---|---|
-| cURL 互转 | `utils/curl.ts` | `parseCurl` / `buildCurl` 是**纯函数**，单测在 `src/utils/__tests__/curl.test.ts`（32 条）。分词器按「一个参数可由单引号段/双引号段/`\`转义/裸字拼接」实现，别写成「遇引号就 push」——`'it'\''s'` 与含空格的 body 会被切坏（踩过）。生成端用单引号包裹并 `'\''` 转义，输出单行，Git Bash/PowerShell 都能跑 |
-| cURL 复制兜底 | `ApiClient.tsx` `copyCurlCmd` | `navigator.clipboard` 在窗口未聚焦时会抛错，必须回退 `textarea + execCommand`，否则用户点了没反应 |
-| 我的 Bug 三视图 | `main.js` `ztLoadMyBugsScoped` | `opened` → REST `openedBy + status=all`；`verify` → `assignedTo + status=resolved`；`assigned` 仍走页面抓取（有现成分页模板）。视图存 `zentaoStore.mineScope`，切页面不丢 |
-| 异地备份 | `main.js` `backupMirrorDir` / `mirrorBackupFile` | 每天备份时同时写一份到 `settings.backupMirrorDir`（可为 OneDrive/坚果云 目录），保留份数与本地一致；**写失败只记录不抛**，绝不能让备份阻断保存。`backup:now` 可手动补一份，返回 `{file, mirror}` |
-| 备份测试 | `scripts/zt-stub.js` | 没配 `ZT_*` 时提供的假禅道（`tokens` / `products` / `bugs` 过滤 + `user-login.html`），回归脚本用它替代内网实例，并能断言「应用实际带了哪些查询参数」 |
+cURL 互转 `utils/curl.ts`（`parseCurl`/`buildCurl` 纯函数，32 条单测；分词器要支持引号段拼接，别写成「遇引号就 push」）；
+`copyCurlCmd` 必须回退 `textarea + execCommand`（窗口未聚焦时 `navigator.clipboard` 会抛错）；
+我的 Bug 三视图 `ztLoadMyBugsScoped`（opened/verify 走 REST，assigned 走页面抓取）；
+异地备份 `backupMirrorDir` / `mirrorBackupFile`（**写失败只记录不抛**）；回归桩 `scripts/zt-stub.js`。
 
 ### 回归脚本现在的跑法（不再依赖内网与账号）
 
-`ui-round2/3/4/5/9` 都会自动调用 `ensureZt()`：
-
-- 配了 `ZT_BASEURL` / `ZT_ACCOUNT` / `ZT_PASSWORD` → 打真实禅道（分页、趋势图、缓存这些断言都会跑）；
-- 没配 → 起本地桩，**与真实数据强相关的断言自动跳过并打印跳过原因**，其余照常跑。
-
-所以本地/CI 上看到「12/12 通过 + 5 跳过」是正常的，不是漏测；要全量验证时先设环境变量。
-
-`scripts/ui-round9-test.js` 覆盖本轮三项：cURL 导入/复制（含中文与错误输入）、异地备份（真的在第二目录落文件）、禅道三视图（断言 `openedBy=...&status=all` 与 `assignedTo=...&status=resolved`）。可用 `R9_ONLY=curl|backup|zentao` 单跑一段。
+`ui-round2/3/4/5/9` 都会自动 `ensureZt()`：配了 `ZT_BASEURL` / `ZT_ACCOUNT` / `ZT_PASSWORD` 就打真实禅道，
+没配就起本地桩（`scripts/zt-stub.js`），**与真实数据强相关的断言自动跳过并打印原因**。
+所以「12/12 通过 + 5 跳过」是正常的，不是漏测；要全量验证先设环境变量。
 
 ## ⚠️ 应用内下载：不要把安装包拼到 %TEMP%（2026-10-29 杀软误报）
 
-**现象**：应用内「下载并安装」下到一半被 360 删除，报 `Trojan/Injector.avv`：
-
-```
-%TEMP%\pm-update\PasswordManager-Setup-<ts>.exe.part0
-操作进程：测试工具.exe
-```
-
-**根因**：旧实现把安装包拆成 `xxx.exe.part0 … part5` 并发写到 `%TEMP%\pm-update`，再拼成 exe。
-`.part0` 的内容就是 NSIS 安装包的 PE 头，「非浏览器进程在临时目录写可执行内容并拼装」
-正是释放器/注入器的行为模式，启发式必中——**不是误报到我们头上，是这种写法本来就像**。
-
-**现在的约定（改这块前务必遵守）**：
-
-| 项 | 做法 |
-|---|---|
-| 落盘位置 | `app.getPath('userData')/update/`，**不要再写 `%TEMP%`** |
-| 文件名 | 用 GitHub 资产名（`assetFileName()`），不要带时间戳/随机串 |
-| 写盘方式 | 先写 `<name>.partial` → `fs.renameSync` 成正式名；并行时分片放 `update/parts-<ts>/chunk-N.bin`（**仅并行才创建该目录**），下完即删。单连接与分片的写流都要监听 `error` |
-| 默认策略 | **单连接顺序下载**（像普通下载器），不做自动慢速切换；只有用户点「加速重试」/ 勾多线程才 6 分片并行，并行失败要回退单连接（分片可能被杀软误报，UI 上要写明）。默认行为由 r9 慢速用例锁住 |
-| 完整性 | 下载后算 SHA-256，与 Release asset 的 `digest` 比对，**不一致就删文件并拒绝安装**；返回 `verified` 给 UI 显示「已校验」 |
-| 失败提示 | 必须包含：浏览器下载 / 选择本地安装包 / 加速重试 + 当前链路（代理 or 直连）+ 一句杀软排查建议 |
-
-**验证方式**（`R9_ONLY=update node scripts/ui-round9-test.js`，用本地 Range 服务造假安装包）：
-
-- 摘要正确 → `success && verified`，文件名等于官方资产名，路径不含 `pm-update`；
-- 摘要错误 → `success:false` 且错误里带 `SHA-256`，文件被删除；
-- `threads:true` → 走 6 段且校验仍然通过。
-
-GitHub 侧的 `digest` 字段确认可用：v1.7.0 附件的 digest 与本地 exe 的 SHA-256 完全一致。
-
-## 1.7.2 修的两个坑（别改回去）
-
-| 症状 | 根因 | 正确做法 |
-|---|---|---|
-| 禅道「我提交的 / 待我验证」报 `Need product id.` | 禅道 20.x 的 `GET api.php/v1/bugs` **强制要 product**，只带 openedBy/assignedTo + status 一律失败 | `ztLoadMyBugsScoped` 先 `ztApiProducts()` 取项目，再**按项目逐个查**（4 并发、按 id 去重合并）。`scripts/zt-stub.js` 也实现了「不带 product → 400 Need product id」，回归会拦住 |
-| 粘贴 curl 后值首尾多出 `^` | Chrome「Copy as cURL (cmd)」用 `^"…"^` 包裹参数，`^` 是 cmd 转义符；分词器只处理了 bash `\` 与裸 `^` 续行 | `unwrap()` 先把 `^"` → `"`、去掉贴尾/贴空白的孤立 `^`，再走正常引号分词。单测覆盖了 cmd 写法 |
-
-⚠️ 写禅道 REST 相关代码时记住：`products` 与 `bugs` 这两个接口都有硬性参数要求，
-不要凭直觉省参数——先在假禅道（`zt-stub.js`）里把响应造对，再让回归跑绿。
+安装包必须落在 `update/` 目录（`updateDir()`），**不要拼到 `%TEMP%`** —— 杀软会把「临时目录里的 exe」
+当可疑文件隔离，表现为下载完成但安装失败。1.7.2 另修了两处（见 `docs/agents/history-1.x.md`）。
 
 ## 1.7.3 起的约定（工程债清理，改代码前先看）
 
 ### 纯函数下沉模式（main.js 不要再无脑变大）
 
-main.js 已经 3.6k 行。**新增/修改纯逻辑时，先抽成 `electron/<module>.js` + `electron/<module>.d.ts`，
+main.js 现在 1622 行（IPC 已全部拆走，见「IPC 域拆分进度」）。**新增/修改纯逻辑时，先抽成 `electron/<module>.js` + `electron/<module>.d.ts`，
 再在 `src/utils/__tests__/<module>.test.ts` 写单测**（tsconfig 只 include `src`，d.ts 让测试能直接 import）。
 已下沉的模块：
 
@@ -902,8 +518,8 @@ if (!r.ok) { addToast(`导出失败：${r.error}`, 'error'); return; }
 
 ## ⚠️ 启动阶段新增逻辑：必须放在模块作用域，并且要有「跑过 8 秒」的回归
 
-`electron/main.js` 里 `setupIpcHandlers()` 是一个 3000 行的大函数，绝大多数 handler 与工具函数都写在**它内部**。
-如果在里面顺手定义了「启动后要用的函数」，`app.whenReady()` 里的代码是**看不到**它的。
+`electron/main.js` 里 `setupIpcHandlers()` 曾经是一个 3000 行的大函数（2026-11-10 起只剩注册调用，见「IPC 域拆分进度」），
+历史教训是：在里面顺手定义了「启动后要用的函数」，`app.whenReady()` 里的代码是**看不到**它的。
 
 2026-10-29 就踩了这个：`autoCheckUpdate` 写在 `setupIpcHandlers` 内部，而调用点在 `whenReady` 的
 `setTimeout(..., 8000)` 里 —— 应用启动 8 秒后抛 `ReferenceError: autoCheckUpdate is not defined`，
@@ -927,116 +543,26 @@ USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pac
 
 它验证三件事：进程 16 秒后仍存活 / 定时器执行到 / 主进程无未捕获异常。
 
-## 拆分 `setupIpcHandlers`（2026-10-29 起，进行中）
+## 拆分 `setupIpcHandlers`（2026-10-29 起，2026-11-10 完成）
 
-`setupIpcHandlers()` 原本近 3000 行、98 个 handler 全在里面。拆分**不要一次性大改**，
-按「两步走」推进，每步都要跑回归：
+**已完成**：`main.js` 4652 → 1622 行，`ipcMain.handle` 计数 0，全部 handler 按域搬进 17 个 `electron/ipc-*.js`（清单见「IPC 域拆分进度」）。
 
-### 第一步（已完成）：先摸清边界，别急着挪
+搬迁模式：`registerXxxIpc(deps)` + 对象注入（`loadVault` / `getPassword` / `getMainWindow` …），模块内不 require main.js；
+会话密码与窗口一律用 **getter**（传值会拿到搬迁那一刻的 `null`）。
+边界判定按「下一个域的起始注释」倒推，**不要用 `^\s*\}\);$` 找第一个 `});`**（那是 handler 内部的 try/catch 收尾，会把函数提前闭合，
+`node --check` 查不出来，运行时才报 `xxxResolve is not defined`）。
+搬完必须扫一遍漏 require 的 Node 核心模块（`ipc-zentao.js` 漏 `crypto` 曾伪装成「登录页返回 HTTP 404」）。
+完整踩坑记录与「后续候选」表见 `docs/agents/ipc-split.md`。
 
-- 域之间通常有 `const xxxResolve = ...` 这类**仅本域使用**的辅助函数，它们夹在 handler 之间。
-  挪动前必须确认：这段区间里声明的 const/let，没有被区间外的代码引用。
-- 用脚本机械化处理时，**边界判定要按「下一个域的起始注释」倒推**，不要用
-  `^\s*\}\);$` 去找「第一个 `});`」——那是 handler 内部的 try/catch 收尾，
-  会导致函数被提前闭合，后面的 handler 引用不到辅助函数（**已踩过**：`weekly:read` 等会在运行时报
-  `weeklyResolve is not defined`，而 `node --check` 完全不会报错）。
-- 重排缩进前先检查区间内**每行反引号是否成对**；有跨行模板字符串就不能统一缩进，否则会改到字符串内容。
+## 压力测试（JMeter 非 GUI）
 
-### 第二步（进行中）：整域搬到 `electron/ipc-<domain>.js`
+只跑 `-n` 模式：`electron/jmeter-args.js`（纯函数，16 条单测）+ `electron/ipc-jmeter.js` + `src/pages/PerfTest.tsx`。
+四个必须记住的坑：① Windows 上 `.bat` 不能直接 spawn（要 `cmd.exe /c`）；② 停止要 `taskkill /PID <pid> /T /F` 杀进程树；
+③ 报告模式 `-o` 要求目录为空，所以每次建 `report-<时间戳>/`、jtl 放它旁边；④ 输出流式 + 界面只留最近 4000 行。
+线程/循环覆盖靠 `-Jthreads=N -Jloops=N`，脚本里必须用 `${__P(threads,默认值)}` 才生效。
+回归用假 JMeter（`scripts/ui-round10-test.js`，14 条断言），**不要拿真实 JMeter 打内网做回归**。细节见 `docs/agents/perf-test.md`。
 
-模式（已用于周报/笔记）：
-
-```js
-// electron/ipc-files.js
-'use strict';
-const { ipcMain, shell, dialog } = require('electron');
-// ... 本域私有的常量与辅助函数 ...
-function registerFileIpc() { /* 所有 ipcMain.handle('weekly:*' / 'notes:*') */ }
-module.exports = { registerFileIpc };
-```
-
-```js
-// electron/main.js —— 顶部 require，setupIpcHandlers() 末尾调用
-const { registerFileIpc } = require('./ipc-files');
-...
-registerFileIpc();
-```
-
-**只有满足这两条才能整域搬走**：
-
-1. 本域没有依赖 main.js 的模块级状态（`loadVault` / `saveVault` / `currentPassword` / `DATA_DIR` / `appendAudit` 等）；
-2. 本域不与其他域共享「内存里的可变状态」（如 `apiJar`、`ztTokenCache`）。
-
-当前状态：`electron/ipc-files.js` = 周报 + 笔记（274 行）、`electron/ipc-tools.js` = 密码生成 + TOTP（含 RFC 6238 向量单测）、`electron/ipc-browser.js` = 浏览器检测/启动（`loadSettings` 通过参数注入）；main.js 3894 → 3466 行，`setupIpcHandlers` 2963 → 2600 行左右。
-
-### 后续候选（按耦合从低到高）
-
-| 域 | handler | 依赖情况 | 风险 |
-|---|---|---|---|
-| 工具类 | `password:generate` / `totp:code` / `history:get` | 只用 crypto + 纯函数 | 低 |
-| 浏览器 | `browser:detect` / `browser:get-known` / `browser:open` | fs/path/exec/shell，需传浏览器路径设置 | 低 |
-| 系统 | `app:get-path` / `dialog:*` / `file:write` / `tdg:get-path` | 需传 `TDG_DIST_PATH` / `TDG_PRELOAD` | 中 |
-| 导入导出 | `import:*` / `export:*` | 依赖 `loadVault`/`saveVault`/`currentPassword`/xlsx | 高（必须传 ctx） |
-| 禅道 | `zentao:*`（约 600 行） | 依赖会话 Cookie、token 缓存、`ztCfgFromVault` | 高 |
-| 接口调试 | `api:send` / `api:cookies*` | 依赖 `apiJar` 内存状态 | 高 |
-
-⚠️ 每搬一个域，**必须**跑：
-- `node scripts/ui-round2-test.js`（周报）、`ui-round6-test.js`（笔记）、`ui-round9-test.js`（综合）
-- `node scripts/ui-startup-test.js`（启动期不受影响，但成本低）
-- `npm run pack && npm run smoke`（确认新模块进了 asar —— 打包白名单是 `electron/**/*`）
-## 压力测试（JMeter 非 GUI）—— 2026-10-29 新增
-
-侧边栏「工具 → 压力测试」。只跑 **非 GUI（`-n`）** 模式：选本机 `.jmx`、定输出目录、可选 HTML 报告，
-运行过程按 cmd 的样子**逐行流式显示**，结束后给统计（样本/平均/最大/P90/错误率/TPS）。
-
-### 实现拆解（改这块前先看）
-
-| 文件 | 职责 |
-|---|---|
-| `electron/jmeter-args.js` | **纯函数**：`pickPaths`（输出路径规划）、`buildJmeterArgs`（拼参数）、`parseSummary`（控制台汇总行）、`parseJtl`（CSV 结果统计）、三个 `validate*`。配 16 条单测 |
-| `electron/ipc-jmeter.js` | `jmeter:detect / pick-exe / pick-script / pick-out-dir / run / stop / status / open-path / defaults / remember`；spawn、按行转发、退出后解析 |
-| `src/pages/PerfTest.tsx` | 环境区（JMeter/Java/候选）、运行配置、日志窗、结果统计 |
-| `preload` / `types.ts` | `jmeter*` 方法 + `onJmeterOutput` / `onJmeterDone`（返回取消订阅函数） |
-| 设置字段 | `jmeterPath` / `jmeterOutDir` / `jmeterLastJmx`（只记路径，**脚本不会复制进应用**） |
-
-### 四个必须记住的坑
-
-1. **Windows 上 `.bat` 不能直接 spawn**（`EINVAL`）。必须 `cmd.exe /c <bat> <args>`；代码里按扩展名判断。
-2. **停止要杀进程树**：`taskkill /PID <pid> /T /F`。只 kill 父进程会留下 `java.exe` 继续跑，CPU 一直占着。
-3. **报告模式 `-o` 要求目录为空或不存在**。所以每次运行都建 `report-<时间戳>/` 新目录，jtl 放在它**旁边**
-   （jtl 若放进报告目录，第二次运行就会撞「目录非空」）。
-4. **输出必须流式 + 限量**：按行推 `jmeter:output`，界面只保留最近 4000 行；完整日志另外落
-   `<输出目录>/jmeter-<runId>.log`，出问题可以回看。
-
-### 线程数 / 循环次数覆盖
-
-通过 `-Jthreads=N -Jloops=N` 传属性覆盖，**脚本里必须用 `${__P(threads,默认值)}` / `${__P(loops,默认值)}` 才生效**——
-这是 JMeter 的约定，不是我们实现的限制，界面上已经写在字段提示里。
-
-### 回归方式：假 JMeter（不需要本机装 JMeter）
-
-`scripts/ui-round10-test.js` 会在临时目录造一个 `fake-jmeter.cmd`（内容 `node fake-jmeter.js %*`），
-假脚本按真实约定：解析 `-l`/`-o`、写 CSV jtl、建 `index.html`、打印 `summary = ...`、退出 0。
-覆盖 14 条断言：页面结构 / 命令回显 / 流式日志 / 统计解析 / jtl 与报告落盘 / 连续运行不撞非空目录 /
-stop 杀掉长任务 / 停止后状态清空。
-
-```bash
-node scripts/ui-round10-test.js                 # 开发目录（先 npx vite build）
-USE_PACKED=1 node scripts/ui-round10-test.js    # 打包版（先 npm run pack）
-```
-
-⚠️ **不要**用真实 JMeter 对本机/内网环境跑压测做回归——会真的打对方服务。
-需要人工验证时，用 `-Jthreads=1 -Jloops=1` 对测试环境的最小接口跑一次即可。
-
-### 打包时的额外注意
-
-`npm run pack` 会去下载 electron/winCodeSign，公司网络下会 `ETIMEDOUT`。先设：
-
-```powershell
-$env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
-```
-
-`scripts/build-installer.js`（`npm run dist`）会自动探测这个目录，但 **`npm run pack` 不会**，要手动设。## 1.9.0 起：发布与排障基础设施（改代码前先看）
+## 1.9.0 起：发布与排障基础设施（改代码前先看）
 
 这一批不是功能，而是**减少返工**的东西——都来自 1.7.4~1.7.8 这五个版本里实际踩的坑。
 
@@ -1097,11 +623,32 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 - 格式不对的行会跳过并在弹窗里标出行号（不会静默丢数据）。
 - 密码超过 90 天未变更，列表里显示「已 N 天未改密码」（`passwordUpdatedAt` 只在密码真的变了时更新）。
 
-### IPC 域拆分进度（D2）
+### IPC 域拆分进度（D2，2026-11-10 全部完成）
 
-已拆出：`ipc-files`（周报/笔记）、`ipc-tools`、`ipc-browser`、`ipc-jmeter`、`ipc-system`（对话框/文件读写/路径，1.9.0 新增）。
-`main.js` 3482 行；剩余三个高耦合域（**导入导出 / 禅道 / 接口调试**）依赖 `loadVault`、`currentPassword`、`apiJar` 等模块级状态，
-搬迁前必须先补对应链路的回归（见 AGENTS 前面的「后续候选」表）。
+`main.js` 从 4652 行降到 **1622 行，`ipcMain.handle` 计数为 0**。全部 handler 已按域搬进 17 个模块：
+
+| 模块 | 负责前缀 | 备注 |
+|---|---|---|
+| `ipc-shell` | `app:` / `log:` / `update:check` / `palette:` / `quicknote:` | 另导出 `registerShellSessionIpc`（`palette:epoch`）与 `openEntryInBrowser` |
+| `ipc-auth` | `auth:` 9 个 | 登录失败计数随块进模块 |
+| `ipc-entries` | `session:` / `entries:` / `trash:` / `clipboard:` / `settings:` | 状态仍留 main.js，全部 getter 注入 |
+| `ipc-data` | `backup:` / `data:` / `audit:` | 含 `legacyInfo()` |
+| `ipc-update` | `update:download` / `pick-file` / `install` | 含 `netDownload*` 全套与 `allowedInstallFiles` |
+| `ipc-api` | `file:pick` / `file:save-text` / `ws:` / `history:` / `attachment:` / `api:send` / `api:cookies*` | `apiJar` 随块搬走，导出 `clearApiJar()` 给 `clearCaches()` |
+| `ipc-zentao` | `zentao:` 13 个 | 1289 行，最大一块；返回 `{loadSeen,pushUnread,restartNotify,getUnread}` 供 `ipc-entries` 用 |
+| `ipc-vault-io` | `import:` / `export:` | 抽出 `buildPlainExport()` 消除两处重复拼装 |
+| `ipc-files` / `ipc-system` / `ipc-tools` / `ipc-browser` / `ipc-jmeter` / `ipc-codelab` / `ipc-env` / `ipc-attach` | 各自域 | 1.9.0–1.13.0 陆续拆出 |
+| `codelab-preview` | `codelab:preview` + `codelab://` 协议 | 绕开主窗口 CSP，见下 |
+
+**搬迁铁律（踩过的坑）**：
+
+- 依赖一律**对象注入**（`registerXxxIpc({ loadVault, getPassword, getMainWindow, ... })`），模块内不 require main.js。
+- 会话密码与窗口用 **getter**（`getPassword()` / `getMainWindow()`），不要传值——传值会拿到搬迁那一刻的 `null`。
+- **搬完必须扫一遍漏 require 的 Node 核心模块**：`ipc-zentao.js` 漏了 `crypto`，`ztLoginAttempt` 抛
+  `ReferenceError: crypto is not defined`，被 `ztEnsureLogin` 的 catch 吞掉后伪装成「登录页返回 HTTP 404」，
+  r9 挂了 7 条。`node --check` 查不出这种错，只能靠跑回归。
+- 注册顺序有依赖：`ipc-entries` 要用 `ipc-zentao` 返回的 `loadSeen/pushUnread/restartNotify`，
+  所以 `registerZentaoIpc` 必须在 `registerEntriesIpc` 之前调用。
 
 > 拆 `ipc-system` 时注意：`dialog:save-file` 与 `dialog:saveFile`、`file:write` 与 `fs:writeFile`
 > 是两套**必须并存**的别名（页面用前者，测试数据子应用用后者），合并会导致子应用静默失败。
@@ -1129,7 +676,6 @@ $env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"
 | 禅道配置 | `ZentaoConfig.company` 可选；胶囊显示 `公司 · 主机`。**回归脚本按字段标签填表单**，不要按 input 顺序（加字段就会错位，1.10.0 踩过 r9 的 11 条失败） |
 | 代码调试 | `electron/codelab-args.js`（纯逻辑 + 9 条单测）+ `electron/ipc-codelab.js`（spawn/流式/超时/杀进程树）。**停止必须杀子进程**（`taskkill /PID <child> /T /F`），杀主进程会把应用自己干掉 |
 | 代码调试安全 | 页面必须保留「本机真实执行、不是沙箱」的提示；Java 需要 `javac`（JRE 不够） |
-
 
 ## 1.11.0：工具箱重构（改这里前先看）
 

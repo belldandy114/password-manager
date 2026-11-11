@@ -52,9 +52,11 @@ export const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
   { id: 'idGen', label: 'ID / 流水号', kw: 'uuid 订单号 雪花 traceid' },
   { id: 'validate', label: '数据校验', kw: '身份证 银行卡 手机号 校验' },
   { id: 'media', label: '图片 / 二维码', kw: 'qrcode 二维码 base64 图片' },
+  { id: 'redact', label: '脱敏 / 还原', kw: '脱敏 打码 隐私 手机号 身份证 银行卡 邮箱 ip' },
 ];
 
 export const PAGES_MORE: { page: string; label: string }[] = [
+  { page: 'environments', label: '环境矩阵' },
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },

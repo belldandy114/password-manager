@@ -3,6 +3,7 @@ import type { PasswordEntry } from '../types';
 import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { TotpBadge } from './EntryExtras';
+import { openUrlInDefaultBrowser } from '../utils/openUrl';
 /** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
 const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
@@ -18,6 +19,8 @@ interface Props {
   entry: PasswordEntry;
   onEdit: (entry: PasswordEntry) => void;
   onCopy: (text: string, label: string, entryName?: string) => void;
+  /** 用默认浏览器打开网址；不传就直接走 IPC（失败时由 utils/openUrl 兜底复制） */
+  onOpen?: (url: string) => void;
   /** 安全体检标记：弱密码 / 重复密码 */
   security?: { weak: boolean; duplicate: boolean };
   onToggleFavorite?: (entry: PasswordEntry) => void;
@@ -30,7 +33,7 @@ const envLabel: Record<string, string> = {
   staging: '\u9884\u53D1\u5E03', // 预发布
 };
 
-export function EntryCard({ entry, onEdit, onCopy, security, onToggleFavorite }: Props) {
+export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFavorite }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const selected = useStore(s => s.selectedIds.has(entry.id));
   const toggleSelected = useStore(s => s.toggleSelected);
@@ -72,9 +75,30 @@ export function EntryCard({ entry, onEdit, onCopy, security, onToggleFavorite }:
         </span>
       </div>
 
-      {/* Row 2: URL */}
+      {/* Row 2: URL —— 地址本身可点（打开默认浏览器），旁边单独给「复制网址」，别再让人猜图标 */}
       <div className="card-url-row">
-        <span className="card-url" title={entry.url}>{entry.url}</span>
+        <button
+          type="button"
+          className="card-url"
+          title={`${entry.url}\n点击用默认浏览器打开`}
+          onClick={e => {
+            e.stopPropagation();
+            if (!entry.url) return;
+            if (onOpen) onOpen(entry.url);
+            else void openUrlInDefaultBrowser(entry.url);
+          }}
+        >
+          {entry.url}
+        </button>
+        <button
+          type="button"
+          className="card-url-copy"
+          title="复制网址（复制的是 URL，不是名称）"
+          aria-label="复制网址"
+          onClick={e => { e.stopPropagation(); onCopy(entry.url, 'URL', entry.name); }}
+        >
+          {'\u{1F4CB}'}
+        </button>
         <BrowserMenu url={entry.url} />
       </div>
 

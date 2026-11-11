@@ -33,6 +33,8 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
 ];
 
 type SettingsTab = 'security' | 'general' | 'browser' | 'shortcuts';
+/** 可改的三个全局键：搜索小窗 / 主窗口显隐 / 随手记小窗 */
+type HotkeySlot = 'search' | 'toggle' | 'quicknote';
 
 const TABS: { id: SettingsTab; label: string; icon: string; hint: string }[] = [
   { id: 'security', label: '安全', icon: '🔒', hint: '主密码 / 自动锁定 / 备份' },
@@ -72,9 +74,9 @@ export function Settings() {
   const [clipItems, setClipItems] = useState<{ text: string; at: string }[]>([]);
   // 全局快捷键：实际生效的键位 + 正在改的那一个 + 冲突提示
   const [hkInfo, setHkInfo] = useState<HotkeyInfo | null>(null);
-  const [capturingHotkey, setCapturingHotkey] = useState<'search' | 'toggle' | null>(null);
-  const [hkError, setHkError] = useState<{ slot: 'search' | 'toggle'; msg: string } | null>(null);
-  const [hkSaved, setHkSaved] = useState<{ slot: 'search' | 'toggle'; msg: string } | null>(null);
+  const [capturingHotkey, setCapturingHotkey] = useState<HotkeySlot | null>(null);
+  const [hkError, setHkError] = useState<{ slot: HotkeySlot; msg: string } | null>(null);
+  const [hkSaved, setHkSaved] = useState<{ slot: HotkeySlot; msg: string } | null>(null);
   const hkCaptureRef = useRef<HTMLDivElement>(null);
   const [passwordAutoHideDelay, setPasswordAutoHideDelay] = useState(settings.passwordAutoHideDelay);
   const [autoLockDelay, setAutoLockDelay] = useState(settings.autoLockDelay);
@@ -442,7 +444,7 @@ export function Settings() {
   }, [settings.keybindings]);
 
   // --- 全局快捷键：捕获与生效 ---
-  const startHotkeyCapture = useCallback((slot: 'search' | 'toggle') => {
+  const startHotkeyCapture = useCallback((slot: HotkeySlot) => {
     setHkError(null);
     setHkSaved(null);
     setCapturingHotkey(slot);
@@ -451,23 +453,31 @@ export function Settings() {
   }, []);
 
   /** 交给主进程去注册；注册成功才落盘，失败会回滚并带回原因 */
-  const applyHotkey = useCallback(async (slot: 'search' | 'toggle', accel: string) => {
+  const applyHotkey = useCallback(async (slot: HotkeySlot, accel: string) => {
     // 只发改的这个：另一个键由主进程从设置里取，避免把「兜底键」当成用户自定义值写死
-    const next = slot === 'search' ? { search: accel } : { toggle: accel };
-    const other = slot === 'search' ? hkInfo?.toggleAccel : hkInfo?.searchAccel;
+    const next = slot === 'search' ? { search: accel } : slot === 'toggle' ? { toggle: accel } : { quicknote: accel };
+    const others = [hkInfo?.searchAccel, hkInfo?.toggleAccel, hkInfo?.quicknoteAccel]
+      .filter((v, i, arr) => !!v && arr.indexOf(v) === i)
+      .filter(v => {
+        if (slot === 'search') return v !== hkInfo?.searchAccel;
+        if (slot === 'toggle') return v !== hkInfo?.toggleAccel;
+        return v !== hkInfo?.quicknoteAccel;
+      });
     // 先用本地判断挡掉「两个键撞车」，省一轮 IPC（也避免把可用状态打乱）
-    if (other && sameAccel(accel, other)) {
+    if (others.some(v => v && sameAccel(accel, v))) {
       setHkError({ slot, msg: '这个组合已经用在另一个快捷键上了，换一个' });
       return;
     }
     try {
       const r = await window.electronAPI.hotkeyApply(next);
       if (r?.info) setHkInfo(r.info);
-      if (r?.success) {
+      // 随手记键是「非关键键」：撞车只废它自己，不会让搜索/窗口键一起回滚
+      const slotRes = slot === 'search' ? r?.data?.search : slot === 'toggle' ? r?.data?.toggle : r?.data?.quicknote;
+      const okThis = slot === 'quicknote' ? !!slotRes?.ok : !!r?.success;
+      if (okThis) {
         setHkError(null);
         setHkSaved({ slot, msg: `已生效：${accelLabel(accel)}` });
       } else {
-        const slotRes = slot === 'search' ? r?.data?.search : r?.data?.toggle;
         setHkError({
           slot,
           msg: slotRes?.reason === 'same'
@@ -496,8 +506,10 @@ export function Settings() {
   }, [capturingHotkey, applyHotkey]);
 
   /** 恢复默认：把默认加速键再发一次，主进程会顺手清掉设置里的自定义值 */
-  const resetHotkey = useCallback(async (slot: 'search' | 'toggle') => {
-    const accel = slot === 'search' ? hkInfo?.searchDefaultAccel : hkInfo?.toggleDefaultAccel;
+  const resetHotkey = useCallback(async (slot: HotkeySlot) => {
+    const accel = slot === 'search'
+      ? hkInfo?.searchDefaultAccel
+      : slot === 'toggle' ? hkInfo?.toggleDefaultAccel : hkInfo?.quicknoteDefaultAccel;
     if (!accel) return;
     setHkSaved(null);
     await applyHotkey(slot, accel);
@@ -1262,6 +1274,13 @@ export function Settings() {
                   shown: hkInfo?.toggle || hkInfo?.toggleDefault || 'Ctrl+Shift+P',
                   isDefault: hkInfo ? hkInfo.toggleIsDefault : true,
                 },
+                {
+                  slot: 'quicknote' as const,
+                  label: '随手记小窗',
+                  desc: '不弹主窗口，直接写一条笔记进「测试笔记」；支持粘截图',
+                  shown: hkInfo?.quicknote || hkInfo?.quicknoteDefault || 'Ctrl+Shift+N',
+                  isDefault: hkInfo ? hkInfo.quicknoteIsDefault : true,
+                },
               ]).map(row => {
                 const editing = capturingHotkey === row.slot;
                 return (
@@ -1297,7 +1316,7 @@ export function Settings() {
                 );
               })}
             </div>
-            {(hkInfo?.searchOk === false || hkInfo?.toggleOk === false) && (
+            {(hkInfo?.searchOk === false || hkInfo?.toggleOk === false || hkInfo?.quicknoteOk === false) && (
               <div className="hotkey-msg is-error">
                 有快捷键没注册成功，现在按了没反应。常见原因是同时开了两个「测试中台」，
                 或者该组合已被别的程序占用——换一个组合即可。

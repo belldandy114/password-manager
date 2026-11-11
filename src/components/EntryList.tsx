@@ -4,11 +4,14 @@ import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { useConfirm } from './confirm';
 import { getTagHue } from '../utils/tagColors';
+import { openUrlInDefaultBrowser } from '../utils/openUrl';
 
 interface Props {
   entries: PasswordEntry[];
   onEdit: (entry: PasswordEntry) => void;
   onCopy: (text: string, label: string, entryName?: string) => void;
+  /** 用默认浏览器打开网址；不传就直接走 IPC（失败时由 utils/openUrl 兜底复制） */
+  onOpen?: (url: string) => void;
   /** 安全体检标记：entry.id → 弱密码/重复密码 */
   securityFlags?: Record<string, { weak: boolean; duplicate: boolean }>;
 }
@@ -89,7 +92,7 @@ function highlightText(text: string, query: string): React.ReactNode {
 
 /* ---------- component ---------- */
 
-export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
+export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Props) {
   const selectedIds = useStore(s => s.selectedIds);
   const toggleSelected = useStore(s => s.toggleSelected);
   const settings = useStore(s => s.settings);
@@ -283,7 +286,7 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
                   <button
                     className={`cell-icon-btn ${isCopyFeedback(entry.id, 'url') ? 'copied' : ''}`}
                     onClick={(e) => { e.stopPropagation(); handleCopyWithFeedback(entry.url, 'URL', entry.id, 'url'); }}
-                    title="复制URL">
+                    title="复制网址（复制的是 URL，不是名称）">
                     {isCopyFeedback(entry.id, 'url') ? '\u2705' : '\u{1F517}'}
                     {isCopyFeedback(entry.id, 'url') && <span className="copy-feedback-text">已复制</span>}
                   </button>
@@ -445,3 +448,4 @@ export function EntryList({ entries, onEdit, onCopy, securityFlags }: Props) {
     </div>
   );
 }
+

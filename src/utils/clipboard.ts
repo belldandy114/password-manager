@@ -24,7 +24,29 @@ export async function copySensitive(text: string, label: string): Promise<boolea
   }
 }
 
-/** 普通文本复制：不触发自动清空 */
-export function copyPlain(text: string): Promise<void> {
-  return navigator.clipboard.writeText(text);
+/**
+ * 普通文本复制：不触发自动清空。
+ *
+ * 永远不抛错——它的调用点大多在「顺带复制一下」的路径上（例如打开地址失败时
+ * 把地址复制到剪贴板），一次剪贴板权限问题不该把后面的提示也一起吞掉。
+ */
+export async function copyPlain(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    /* 退化为 execCommand */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch {
+    /* 剪贴板彻底不可用，调用方自己决定怎么提示 */
+  }
 }

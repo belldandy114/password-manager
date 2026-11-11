@@ -303,7 +303,7 @@ async function main() {
   await sleep(1500);
   await ev('(() => { const b = [...document.querySelectorAll(\'button\')].find(x => /拉取「/.test(x.textContent)); if (b) { b.click(); return true; } return false; })()');
   await sleep(2200);
-  const afterSwitch = await ev('(() => ({ err: (document.querySelector(\'.pill-bad\') || {}).textContent || \'\', label: (document.querySelector(\'.zt-mine-proj-name\') || {}).textContent || \'\', rows: document.querySelectorAll(\'.tbl tbody tr\').length }))()');
+  const afterSwitch = await ev('(() => ({ err: (document.querySelector(\'.pill-bad\') || {}).textContent || \'\', label: (document.querySelector(\'.zt-mine-proj\') || {}).textContent || \'\', rows: document.querySelectorAll(\'.tbl tbody tr\').length }))()');
   check('配置切换：切到另一套地址后不报「所选项目不在项目列表里」',
     !/不在项目列表里/.test(String(afterSwitch.err)), JSON.stringify(afterSwitch));
   check('配置切换：项目标签跟着换成新地址的项目（或提示未选择）',

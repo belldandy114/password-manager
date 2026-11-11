@@ -11,6 +11,9 @@ export interface Attachment {
   name: string;
   size: number;
   addedAt: string;
+  /** 粘贴进来的图片附件会带 mime 与 kind */
+  mime?: string;
+  kind?: 'image';
 }
 
 export interface PasswordEntry {
@@ -378,6 +381,23 @@ export interface EnvEntry {
   updatedAt: string;
 }
 
+/** 单条巡检结果 */
+export interface EnvProbeResult {
+  /** 巡检目标 id（环境条目 id），用于回填到表格行 */
+  id?: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  ms: number;
+  error?: string;
+}
+
+export interface EnvProbeData {
+  results: EnvProbeResult[];
+  summary: { total: number; ok: number; fail: number; slow: number; avgMs: number; slowest: string };
+  timeoutMs: number;
+}
+
 /** 断言的检查类型 */
 export type AssertOp = 'status' | 'time' | 'json' | 'body' | 'header' | 'jsonValid';
 
@@ -582,7 +602,7 @@ export interface HotkeyApplyResult {
   success: boolean;
   error?: string;
   rolledBack?: boolean;
-  data?: { search: HotkeySlotResult; toggle: HotkeySlotResult };
+  data?: { search: HotkeySlotResult; toggle: HotkeySlotResult; quicknote: HotkeySlotResult };
   /** 应用后的实际状态（失败时是回滚后的状态） */
   info?: HotkeyInfo;
 }
@@ -602,6 +622,13 @@ export interface HotkeyInfo {
   toggleDefaultAccel: string;
   searchIsDefault: boolean;
   toggleIsDefault: boolean;
+  /** 随手记小窗（全局键直接出小记事本，不弹主窗口） */
+  quicknote: string;
+  quicknoteOk: boolean;
+  quicknoteAccel: string;
+  quicknoteDefault: string;
+  quicknoteDefaultAccel: string;
+  quicknoteIsDefault: boolean;
 }
 
 export interface ElectronAPI {
@@ -641,7 +668,7 @@ export interface ElectronAPI {
   /** 实际生效的全局快捷键（搜索键被占用时主进程会回退，显示用） */
   hotkeyInfo: () => Promise<{ success: boolean; data?: HotkeyInfo }>;
   /** 修改全局快捷键；冲突时 success:false + error（conflict / same），并回滚到原来能用的键 */
-  hotkeyApply: (payload: { search?: string; toggle?: string }) => Promise<HotkeyApplyResult>;
+  hotkeyApply: (payload: { search?: string; toggle?: string; quicknote?: string }) => Promise<HotkeyApplyResult>;
   /** 窗口隐藏时要求关闭命令面板 */
   onCloseCommandPalette: (cb: () => void) => () => void;
   /** 独立搜索小窗每次弹出时要求重取数据 */
@@ -660,6 +687,12 @@ export interface ElectronAPI {
   paletteUnlock: () => Promise<{ success: boolean }>;
   /** 主窗口接收小窗转发的命令 */
   onPaletteRun: (cb: (item: { id: string; title?: string; url?: string }) => void) => () => void;
+  /** 收起随手记小窗 */
+  quicknoteHide: () => Promise<{ success: boolean }>;
+  /** 弹出随手记小窗（与全局快捷键等价） */
+  quicknoteShow: () => Promise<{ success: boolean; error?: string }>;
+  /** 小窗每次弹出时复位临时提示 */
+  onQuickNoteFocus: (cb: () => void) => () => void;
   /** 渲染层错误/警告写入主进程 app.log */
   logRenderer: (level: 'warn' | 'error', message: string) => Promise<{ success: boolean }>;
   clipboardClear: () => Promise<{ success: boolean }>;
@@ -708,6 +741,17 @@ export interface ElectronAPI {
   attachmentPick: () => Promise<{ success?: boolean; canceled?: boolean; data?: Attachment; error?: string }>;
   attachmentOpen: (data: { id: string; name: string }) => Promise<{ success: boolean; error?: string }>;
   attachmentDelete: (data: { id: string }) => Promise<{ success: boolean; error?: string }>;
+  /** 粘贴截图：把剪贴板里的 dataURL 加密存成附件，返回元数据 */
+  attachmentSaveImage: (data: { dataUrl: string; name?: string }) =>
+    Promise<{ success: boolean; data?: Attachment; error?: string }>;
+  /** 读回图片附件（dataURL），给 <img> 直接显示 */
+  attachmentReadImage: (data: { id: string }) =>
+    Promise<{ success: boolean; data?: { dataUrl: string; mime?: string }; error?: string }>;
+
+  // 环境巡检（#3）
+  envProbe: (data: { targets: Array<{ id: string; url: string }>; timeoutMs?: number }) =>
+    Promise<{ success: boolean; data?: EnvProbeData; error?: string }>;
+  envOpen: (data: { url: string }) => Promise<{ success: boolean; error?: string }>;
 
   // API debugger / Zentao
   apiSend: (data: {
@@ -838,6 +882,9 @@ export interface ElectronAPI {
   /** 选任意文件（上传附件） */
   pickFile: (title?: string, filters?: { name: string; extensions: string[] }[]) =>
     Promise<{ success: boolean; data?: { file: string; name: string }; error?: string; canceled?: boolean }>;
+  /** 读文本文件（脱敏工具按列处理；只允许 csv/tsv/txt/json/log/md/sql，上限 8MB） */
+  readTextFile: (file: string, maxBytes?: number) =>
+    Promise<{ success: boolean; data?: { text: string; name: string; size: number }; error?: string }>;
   // JMeter（非 GUI 运行）
   jmeterDetect: () => Promise<{ success: boolean; data?: JmeterDetectInfo; error?: string }>;
   jmeterPickExe: () => Promise<{ success: boolean; data?: { jmeterPath: string }; error?: string; canceled?: boolean }>;
@@ -850,6 +897,8 @@ export interface ElectronAPI {
   codelabDetect: () => Promise<{ success: boolean; data?: CodelabDetect }>;
   codelabRun: (payload: { lang: string; code: string; timeoutMs?: number }) => Promise<{ success: boolean; data?: CodelabDone; error?: string }>;
   codelabStop: () => Promise<{ success: boolean; data?: { stopped: boolean; pid?: number } }>;
+  /** HTML 预览：把 HTML 交给主进程，换回一个 codelab:// 地址给 iframe 用 */
+  codelabPreview: (html: string) => Promise<{ success: boolean; data?: { url: string; id: string }; error?: string }>;
   onCodelabOutput: (cb: (line: { runId: string; stream: string; line: string }) => void) => () => void;
   onCodelabMeta: (cb: (d: { runId: string; file: string }) => void) => () => void;
   onCodelabDone: (cb: (d: CodelabDone) => void) => () => void;

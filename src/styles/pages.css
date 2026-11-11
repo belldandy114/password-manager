@@ -193,10 +193,6 @@
   padding: 18px;
 }
 
-.pnl-body.flush {
-  padding: 0;
-}
-
 .pnl-foot {
   padding: 10px 18px;
   border-top: 1px solid var(--border);
@@ -240,10 +236,6 @@
 
 .tbl tbody tr:hover {
   background: var(--bg-hover);
-}
-
-.tbl tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .tbl .cell-strong {
@@ -5911,8 +5903,6 @@
   padding-right: 2px;
 }
 
-.tb-rail-group { padding-bottom: 6px; }
-
 .tb-rail-group + .tb-rail-group { border-top: 1px dashed var(--border); padding-top: 4px; }
 
 .tb-rail-item {
@@ -6630,11 +6620,6 @@
 
 .api-side-v2 .api-side-search-ico { color: var(--text-muted); display: inline-flex; }
 
-.api-side-v2 .api-side-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-light);
-}
-
 /* 页签 */
 .api-side-tabs2 {
   display: flex;
@@ -6931,22 +6916,7 @@
 
 .api-side-v2 .api-hist-row .api-item-main { min-width: 0; overflow: hidden; }
 
-.api-side-v2 .api-hist-row .api-hist-line1 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
 .api-side-v2 .api-hist-row .api-name { flex: 1 1 0; min-width: 0; }
-
-.api-side-v2 .api-hist-row .api-item-sub {
-  display: block;
-  margin-top: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* 1.11.8 修：历史树形不再叠层（强制块级流 + 清除浮动） */
 .api-side-v2 .api-hist-group { display: block; margin: 0; }
@@ -7145,14 +7115,18 @@
 }
 
 /* 1.12.0 补：请求地址栏也去掉边框（只留 focus 光环），列表名称统一加粗 */
+/* 1.21.9 补：只清 border-color 不够——全局 input 规则会把 border-width 加回 1px，
+   这里连宽度一起清掉，focus 时靠 box-shadow 光环表达状态 */
 .url-bar input {
+  border: 0 !important;
   border-color: transparent !important;
   background: transparent !important;
   box-shadow: none !important;
 }
 
 .url-bar input:focus {
-  border-color: var(--accent) !important;
+  border: 0 !important;
+  border-color: transparent !important;
   box-shadow: 0 0 0 3px var(--accent-light) !important;
 }
 
@@ -8037,17 +8011,6 @@
 }
 
 /* 深色下 --line-strong 太暗，柱子会糊进背景，单独提亮一档 */
-[data-theme='dark'] .zt-sum-days {
-  border-bottom-color: var(--line-strong);
-}
-[data-theme='dark'] .zt-sum-day i {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--text-2) 62%, transparent),
-    color-mix(in srgb, var(--text-2) 34%, transparent)
-  );
-}
-
 /* 深色下 --line-strong 太暗，柱子会糊进背景，单独提亮一档 */
 [data-theme='dark'] .zt-sum-days {
   border-bottom-color: var(--line-strong);
@@ -8495,3 +8458,900 @@ html.palette-root .palette-root {
   flex: none;
 }
 
+
+/* ================================================================
+   1.13.0 工具：脱敏 / 还原
+   ================================================================ */
+
+.redact-tool .redact-opts {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+
+.redact-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.redact-check input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.redact-custom {
+  width: 100%;
+  max-width: 520px;
+}
+
+.redact-hits {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 映射表可能很长，别把整页顶下去 */
+.redact-mapping {
+  max-height: 200px;
+  overflow: auto;
+}
+
+.redact-map-input {
+  min-height: 150px;
+}
+
+/* ================================================================
+   1.13.0 新页面：环境矩阵（一键巡检）
+   ================================================================ */
+
+/* 超时下拉：全局 select 规则会强塞 padding-right:28px（给箭头留位），
+   这里的 6px 左右内边距会被压回去，60px 的宽度装不下「超时 8s」→ 文字外溢压住搜索框。
+   所以显式给足宽度和右侧留白，并且不许被 flex 压缩。 */
+.env-check-timeout {
+  flex: 0 0 auto;
+  height: 32px;
+  min-width: 104px;
+  padding: 0 26px 0 10px !important;
+  font-size: 12.5px;
+  line-height: 30px;
+  border-radius: 8px;
+}
+
+.env-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+}
+
+.env-sum-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.env-sum-bad {
+  color: var(--danger);
+}
+
+.env-sum-dim {
+  color: var(--text-muted);
+}
+
+.env-tbl .env-url {
+  display: inline-block;
+  max-width: 560px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.env-idle {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.env-probe {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.env-ms {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.env-err {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--danger, #d9534f);
+  opacity: 0.85;
+}
+/* ---------------- 19.25 随手记小窗（Ctrl+Shift+N，?window=quicknote） ---------------- */
+/* 和搜索小窗一样：窗口透明，只有卡片有底色，所以 body 必须是透明 + 无滚动 */
+html.qn-window,
+html.qn-window body {
+  background: transparent !important;
+  overflow: hidden;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html.qn-window #root {
+  height: 100%;
+}
+
+.qn-root {
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 窗口本身是透明的（为了圆角），卡片必须给不透明底色。
+     原来写的 --bg-elev-1 这个变量根本不存在，解析成 transparent → 整个小窗透出桌面。 */
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.qn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.qn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.qn-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: .2px;
+}
+
+.qn-tip {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 关闭键在拖动区里，必须显式取消拖动，否则点不动 */
+.qn-x {
+  -webkit-app-region: no-drag;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.qn-x:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.qn-input {
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.qn-input:focus {
+  border-color: var(--accent);
+}
+
+.qn-text {
+  flex: 1 1 auto;
+  min-height: 90px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  font-family: inherit;
+}
+
+.qn-text:focus {
+  border-color: var(--accent);
+}
+
+.qn-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qn-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-hint.is-error {
+  color: var(--danger);
+}
+
+.qn-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 19.26 笔记里的图片附件（MarkdownView 渲染的 <img data-att>） ---------------- */
+/* 图片是挂载后才解密成 dataURL 的，先给占位高度，避免解密完成那一瞬间页面跳动 */
+.md-img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  height: auto;
+  margin: 10px 0 4px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  object-fit: contain;
+}
+
+.md-img:not([src]) {
+  min-height: 96px;
+  min-width: 160px;
+}
+
+.md-img.is-broken {
+  min-height: 0;
+  padding: 8px 10px;
+  border-style: dashed;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: transparent;
+}
+
+/* 预览弹窗自身是滚动容器，图片别把弹窗顶出屏幕 */
+.modal .md-body .md-img {
+  max-height: 360px;
+}
+
+/* 脱敏工具：右侧结果是纯 <pre>，给它和左侧 textarea 一样的框，两栏才不歪 */
+.redact-tool .tb-panes .json-pre {
+  min-height: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-input);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 笔记卡片上的图片缩略图（正文里有 pm-att 引用时显示） */
+.card2-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.att-thumb {
+  display: block;
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  flex: 0 0 auto;
+}
+
+.att-thumb:not([src]) {
+  /* 解密完成前先占位，避免卡片高度跳动 */
+  background: var(--bg-hover);
+}
+
+.att-thumb.is-broken {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  border-style: dashed;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.card2-thumb-more {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+
+/* ---------------- 19.27 脱敏工具：两栏等高 + 按列脱敏的列选择器 ---------------- */
+/* 左边 textarea 可拖到 300px、右边 pre 会随内容长高，两栏永远对不齐。
+   这里把两边锁成同一高度、各自滚动，视觉上才是「一对」。 */
+.redact-tool .tb-panes.redact-panes {
+  align-items: stretch;
+}
+
+.redact-tool .tb-panes.redact-panes > .tb-block {
+  min-height: 0;
+}
+
+.redact-tool .tb-panes.redact-panes .tb-textarea,
+.redact-tool .tb-panes.redact-panes .json-pre {
+  height: 260px;
+  min-height: 260px;
+  max-height: 260px;
+  overflow: auto;
+  resize: none;
+}
+
+/* 列选择器：一行胶囊，勾中的用强调色，命中数跟在名字后面 */
+.redact-cols {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.redact-cols-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.redact-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card, #fff);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redact-col:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.redact-col.is-on {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.redact-col-hits {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 19.28 脱敏工具：表头等高 + 打码区间 ---------------- */
+/* 两栏错位的真正原因：右侧表头里有按钮（28px 高），左侧只有一行 12px 文字，
+   于是右栏正文比左栏低 10px。给表头一个最小高度，两边就从同一条基线开始。 */
+.tb-block-head {
+  min-height: 28px;
+}
+
+.redact-tool .tb-block-head {
+  flex-wrap: nowrap;
+  gap: 6px;
+  /* 固定成一行的高度：右侧表头带按钮，不钉住就会把右栏正文整体推下去 */
+  height: 28px;
+  min-height: 28px;
+  align-items: center;
+}
+
+.redact-tool .tb-block-head .btn-sm {
+  height: 24px;
+  padding: 0 8px;
+  line-height: 22px;
+  font-size: 11.5px;
+}
+
+.redact-tool .tb-block-title {
+  white-space: nowrap;
+}
+
+.redact-tool .tb-block-head .btn-sm,
+.redact-tool .tb-block-head .tb-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 打码区间：第 N 位 ~ 第 M 位。
+   单独占一行——和勾选项挤在一起时，标签会被压成竖排、输入框顶到下面的表头。 */
+.redact-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.redact-range-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* 选择器要压过 .tb-main input:not([type=checkbox])（宽度拉满、height 34px），
+   还要压过 pages.css:2181 的 :where(...) { min-height: 34px }——它特异性为 0，
+   但只设了 min-height，不显式覆盖就会把 26px 顶回 34px。 */
+.redact-tool .redact-range input.redact-range-input {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  text-align: center;
+  outline: none;
+}
+
+.redact-range-hint {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.redact-tool .redact-range input.redact-range-input::-webkit-outer-spin-button,
+.redact-tool .redact-range input.redact-range-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.redact-tool .redact-range input.redact-range-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.redact-range-sep,
+.redact-range-unit {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* ---------------- 19.29 环境矩阵 v2：报告 / 历史 / 卡片列表 ---------------- */
+/* 原来是一张宽表：地址一多，横向要扫、纵向要追，还看不出「这次巡检到底怎么样」。
+   现在改成「报告块 + 历史卡片条 + 按系统分组的卡片」，一组一块，地址再长也只在行内省略。 */
+
+.env-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+
+.env-report-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.env-report-headl {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.env-report-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.env-report-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.env-report-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.env-report-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.env-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  min-width: 0;
+}
+
+.env-stat-num {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-stat-of {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.env-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.env-stat.is-ok .env-stat-num { color: var(--success); }
+.env-stat.is-bad { border-color: var(--danger); }
+.env-stat.is-bad .env-stat-num { color: var(--danger); }
+
+.env-stat-slowest {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.env-report-fails {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.env-report-fails li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.env-fail-url {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-fail-why {
+  color: var(--danger);
+  flex: 0 0 auto;
+  font-size: 11.5px;
+}
+
+.env-report-ok {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---- 巡检历史 ---- */
+.env-hist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.env-hist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-hist-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.env-hist-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.env-hist-spacer { flex: 1 1 auto; }
+
+.env-hist-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.env-hist-card {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 158px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.env-hist-card:hover { border-color: var(--accent); }
+
+.env-hist-card.is-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.env-hist-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.env-hist-nums {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.env-hist-nums em {
+  font-style: normal;
+  color: var(--danger);
+}
+
+.env-hist-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ---- 系统卡片 ---- */
+.env-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.env-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.env-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.env-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-card-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.env-card-spacer { flex: 1 1 auto; }
+
+.env-card-stat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.env-card-stat.is-bad { color: var(--danger); }
+
+.env-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.env-row:last-child { border-bottom: 0; }
+.env-row:hover { background: var(--bg-hover); }
+
+.env-row-env { display: flex; }
+
+.env-dash { font-size: 12px; color: var(--text-muted); }
+
+.env-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.env-row-main .env-url,
+button.env-url {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-row-main .env-url:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.env-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-row-state {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 108px;
+}
+
+.env-row-acts {
+  display: flex;
+  gap: 2px;
+  opacity: 0.4;
+  transition: opacity 0.12s ease;
+}
+
+.env-row:hover .env-row-acts,
+.env-row:focus-within .env-row-acts {
+  opacity: 1;
+}
+
+.env-foot {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  padding: 0 2px 8px;
+}
+
+@media (max-width: 1180px) {
+  .env-cards { grid-template-columns: minmax(0, 1fr); }
+  .env-report-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.env-stale {
+  color: var(--warning);
+}
+
+/* 左右两栏的表头高度必须一致：右侧表头带「复制」按钮（26px），左侧只有标题，
+   否则正文起点会差出几像素，视觉上就是「没对齐」。 */
+.redact-tool .tb-block-head {
+  min-height: 26px;
+}
