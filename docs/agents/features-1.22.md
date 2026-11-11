@@ -73,7 +73,8 @@
 
 ## 9. 错误日志查看 + 导出诊断包
 
-- 位置：`electron/ipc-data.js` 的 `log:export-diagnostic`；设置 › 安全 › 运行日志
+- 位置：`electron/ipc-data.js` 的 `log:export-diagnostic`；设置 › 通用 › 关于
+- 「查看日志」弹窗只读最近 400 行（`logTail(400)`），带路径与刷新按钮，样式在 `redesign.css` 第 51 节（`.log-modal*`）。
 - 诊断包内容：版本 / Electron / Chrome / Node / 平台 / 数据目录 / 库文件大小 / 备份份数 / 异地目录 + 库自检文本 + `logTail(400)`。
 - **不含主密码与条目内容**——发出去也不泄露库，但里面可能有内网地址，提醒用户先看一眼再发。
 

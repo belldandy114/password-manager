@@ -149,6 +149,15 @@ async function targets() {
   await sleep(700);
   const diagBtn = await M.ev(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('导出诊断包'))`);
   check('通用页有「导出诊断包」入口', diagBtn === true);
+  const logBtn = await clickBtn('查看日志');
+  check('通用页有「查看日志」入口', logBtn === true);
+  await sleep(1200);
+  const logView = await M.ev(`(() => { const m = document.querySelector('.log-modal'); if (!m) return null; const pre = m.querySelector('.log-modal-body'); return { hasPre: !!pre, len: pre ? pre.textContent.length : 0, path: (m.querySelector('.log-modal-path')?.textContent || '').slice(-24) }; })()`);
+  check('日志查看器能读出正文（不是空壳）', !!logView && logView.hasPre && logView.len > 0, JSON.stringify(logView));
+  await M.ev(`(() => { const b = [...document.querySelectorAll('.log-modal button')].find(x => x.textContent.trim() === '关闭'); if (b) { b.click(); return true; } return false; })()`);
+  await sleep(500);
+  const logClosed = await M.ev(`!document.querySelector('.log-modal')`);
+  check('日志查看器能关掉', logClosed === true);
 
   /* ---------- ③ 代码调试片段库 ---------- */
   await navTo('代码调试');

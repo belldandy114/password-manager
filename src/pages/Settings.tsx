@@ -119,6 +119,11 @@ export function Settings() {
   /** 恢复演练结果（按备份文件名索引，避免一次演练覆盖另一次） */
   const [drill, setDrill] = useState<{ name: string; result: RestoreDrillResult } | null>(null);
   const [drillBusy, setDrillBusy] = useState('');
+  /** 运行日志查看器（只读最近若干行，出问题时不用去翻目录） */
+  const [logOpen, setLogOpen] = useState(false);
+  const [logText, setLogText] = useState('');
+  const [logPath, setLogPath] = useState('');
+  const [logBusy, setLogBusy] = useState(false);
   /** 数据目录信息（路径 / 体积 / 备份份数） */
   const [dataInfo, setDataInfo] = useState<DataLocationInfo | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -383,6 +388,24 @@ export function Settings() {
       return;
     }
     addToast('诊断包已导出', 'success');
+  };
+
+  /** 打开运行日志查看器：只读最近 400 行，不落任何东西 */
+  const openLogViewer = async () => {
+    setLogOpen(true);
+    setLogBusy(true);
+    try {
+      const r = await window.electronAPI.logTail(400);
+      if (r.success && r.data) {
+        setLogText(r.data.text || '（日志还是空的）');
+        setLogPath(r.data.path || '');
+      } else {
+        setLogText('读不到日志文件');
+        setLogPath('');
+      }
+    } finally {
+      setLogBusy(false);
+    }
   };
 
   const handleSave = async () => {
@@ -1176,6 +1199,9 @@ export function Settings() {
                 </div>
               </div>
               <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => void openLogViewer()}>
+                  查看日志
+                </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={async () => {
@@ -1792,6 +1818,30 @@ export function Settings() {
         <p className="text-sm text-muted" style={{ marginBottom: 0 }}>
           恢复前会自动把当前库另存为 <code>vault-prerestore-*.enc</code>（最近 5 份），恢复错了还能再回来。
           恢复后应用会退回到登录页 —— 这份备份可能是旧主密码加密的，需要用当时的主密码解锁。
+        </p>
+      </Modal>
+
+      {/* 运行日志查看器：只读最近 400 行，出问题不用去翻目录 */}
+      <Modal
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        title="运行日志"
+        className="log-modal"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => void openLogViewer()} disabled={logBusy}>
+              {logBusy ? '读取中…' : '刷新'}
+            </button>
+            <button className="btn btn-primary" onClick={() => setLogOpen(false)}>关闭</button>
+          </>
+        }
+      >
+        {logPath && <div className="log-modal-path">{logPath}</div>}
+        <pre className="log-modal-body" tabIndex={0} aria-label="日志内容">
+          {logBusy ? '读取中…' : logText}
+        </pre>
+        <p className="text-sm text-muted" style={{ marginBottom: 0 }}>
+          只显示最近 400 行，不记录密码和请求体。要完整日志或发给别人，用「导出诊断包」。
         </p>
       </Modal>
     </div>

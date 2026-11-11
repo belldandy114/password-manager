@@ -3673,3 +3673,38 @@ html.pin-window #root {
   background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--warn);
 }
+/* ===== 51. 运行日志查看器（设置 › 通用 › 关于）
+   为什么追加在这里：三份样式表按 global → pages → redesign 顺序加载，
+   新样式一律写在最后，避免被老规则覆盖。 */
+.log-modal {
+  width: min(860px, 92vw);
+}
+
+.log-modal-path {
+  margin-bottom: 8px;
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.log-modal-body {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-modal-body:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
