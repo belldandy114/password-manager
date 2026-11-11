@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { renderMarkdown } from '../utils/markdown';
+import { ImageLightbox } from './ImageLightbox';
 
 /** 单张加密图片：挂载后解密成 dataURL。列表缩略图与正文图片共用。 */
 export function AttImage({ id, alt, className }: { id: string; alt?: string; className?: string }) {
@@ -36,11 +37,14 @@ export function AttImage({ id, alt, className }: { id: string; alt?: string; cla
  *
  * 图片是加密存的，不能在渲染时直接给地址：先渲染出带 data-att 的占位 <img>，
  * 挂载后逐张调主进程解密，拿到 dataURL 再塞进 src。同一张图在本组件生命周期内只解一次。
+ *
+ * 点击任意图片进灯箱（背景透明、可缩放），不再需要另开窗口。
  */
 export function MarkdownView({ md, className }: { md: string; className?: string }) {
   const body = useMemo(() => renderMarkdown(md), [md]);
   const ref = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<string, string>>(new Map());
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
 
   useEffect(() => {
     const root = ref.current;
@@ -67,9 +71,26 @@ export function MarkdownView({ md, className }: { md: string; className?: string
     return () => { alive = false; };
   }, [md]);
 
+  /** 点正文里的图片 → 灯箱。用事件委托，避免给每张图单独挂 handler。 */
+  const onBodyClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName !== 'IMG') return;
+    const img = target as HTMLImageElement;
+    if (!img.src || img.classList.contains('is-broken')) return;
+    e.preventDefault();
+    setZoom({ src: img.src, alt: img.alt || '图片' });
+  };
+
   return (
-    <div ref={ref} className={`markdown-body${className ? ` ${className}` : ''}`}>
-      {body}
-    </div>
+    <>
+      <div
+        ref={ref}
+        className={`markdown-body${className ? ` ${className}` : ''}`}
+        onClick={onBodyClick}
+      >
+        {body}
+      </div>
+      {zoom && <ImageLightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
+    </>
   );
 }

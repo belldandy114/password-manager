@@ -8,6 +8,7 @@ import { formatRecent } from '../utils/time';
 import { attImageMarkdown, extractAttIds } from '../utils/attachRefs';
 import { clipboardImageFiles, saveImageFiles, insertAtCaret } from '../components/pasteImage';
 import { MarkdownView, AttImage } from '../components/MarkdownView';
+import { ImageLightbox } from '../components/ImageLightbox';
 
 const LS_DIR = 'pm.notes.dir';
 
@@ -40,16 +41,17 @@ const fileOf = (title: string) =>
  * 编辑态里的图片预览条。
  *
  * 编辑时正文只有 `![名](pm-att:<id>)` 这一行文字，看不到图，等于「不知道自己贴了什么」。
- * 这里把正文里引用到的附件按顺序解密成缩略图列出来，点一下就在新窗口打开原图。
+ * 这里把正文里引用到的附件按顺序解密成缩略图列出来，点一下进灯箱（可缩放、背景透明）。
  */
 function EditAttStrip({ content }: { content: string }) {
   const ids = useMemo(() => extractAttIds(content || ''), [content]);
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   if (!ids.length) return null;
   return (
     <div className="note-att-strip">
       <div className="note-att-strip-head">
         <Icons.image size={12} /> 正文里的图片（{ids.length}）
-        <span className="text-sm text-muted">点缩略图看大图</span>
+        <span className="text-sm text-muted">点缩略图放大</span>
       </div>
       <div className="note-att-strip-body">
         {ids.map((id, i) => (
@@ -57,18 +59,18 @@ function EditAttStrip({ content }: { content: string }) {
             key={id}
             type="button"
             className="note-att-thumb"
-            title={`第 ${i + 1} 张，点击查看大图`}
+            title={`第 ${i + 1} 张，点击放大`}
             onClick={async () => {
               const r = await window.electronAPI.attachmentReadImage({ id });
               if (!r.success || !r.data?.dataUrl) return;
-              const w = window.open('', '_blank', 'width=900,height=700');
-              if (w) w.document.write(`<title>图片 ${i + 1}</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;height:100vh"><img src="${r.data.dataUrl}" style="max-width:100%;max-height:100%"></body>`);
+              setZoom({ src: r.data.dataUrl, alt: `图片 ${i + 1}` });
             }}
           >
             <AttImage id={id} alt={`图片 ${i + 1}`} />
           </button>
         ))}
       </div>
+      {zoom && <ImageLightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
     </div>
   );
 }
@@ -587,4 +589,5 @@ export function Notes() {
     </div>
   );
 }
+
 

@@ -71,6 +71,10 @@ export function Environments() {
 
   const [search, setSearch] = useState('');
   const [envFilter, setEnvFilter] = useState<string>('all');
+  /** 报告区展开 / 收起（统计卡与失败明细一起收） */
+  const [reportOpen, setReportOpen] = useState(true);
+  /** 失败明细下钻（只有出错才有） */
+  const [failsOpen, setFailsOpen] = useState(false);
   const [timeoutMs, setTimeoutMs] = useState(8000);
   const [editing, setEditing] = useState<EnvEntry | null>(null);
   const [hint, setHint] = useState('');
@@ -363,6 +367,16 @@ export function Environments() {
                 </div>
               </div>
               <div className="env-report-acts">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setReportOpen(v => !v)}
+                  aria-expanded={reportOpen}
+                  title={reportOpen ? '收起统计卡与失败明细' : '展开统计卡与失败明细'}
+                >
+                  <Icons.chevron size={12} className={reportOpen ? 'is-open' : ''} />
+                  {reportOpen ? '收起' : '展开'}
+                </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => copyPlain(buildReportText())}>复制报告</button>
                 <button className="btn btn-ghost btn-sm" onClick={clearProbe}>清空当前</button>
               </div>
@@ -376,6 +390,7 @@ export function Environments() {
             </div>
 
             {/* 统计卡：一次巡检后一直留着，再巡检就原地刷新数字与时间 */}
+            {reportOpen && (
             <div className="env-kpis">
               <div className="env-kpi is-total">
                 <span className="env-kpi-num">{summary.total}</span>
@@ -387,11 +402,22 @@ export function Environments() {
                 <span className="env-kpi-label">可达</span>
                 <span className="env-kpi-sub">占 {pct(summary.ok, summary.total)}</span>
               </div>
-              <div className="env-kpi is-bad">
+              <button
+                type="button"
+                className={`env-kpi is-bad${failures.length ? ' is-clickable' : ''}${failsOpen ? ' is-open' : ''}`}
+                onClick={() => failures.length && setFailsOpen(v => !v)}
+                disabled={!failures.length}
+                title={failures.length ? (failsOpen ? '收起失败明细' : `展开 ${failures.length} 条失败明细`) : '本次没有失败'}
+              >
                 <span className="env-kpi-num">{summary.fail}</span>
-                <span className="env-kpi-label">失败</span>
-                <span className="env-kpi-sub">占 {pct(summary.fail, summary.total)}</span>
-              </div>
+                <span className="env-kpi-label">
+                  失败
+                  {failures.length > 0 && <Icons.chevron size={11} className={failsOpen ? 'is-open' : ''} />}
+                </span>
+                <span className="env-kpi-sub">
+                  {failures.length ? (failsOpen ? '点此收起明细' : `点此看 ${failures.length} 条明细`) : '占 0%'}
+                </span>
+              </button>
               <div className="env-kpi is-warn">
                 <span className="env-kpi-num">{summary.slow}</span>
                 <span className="env-kpi-label">慢（≥2s）</span>
@@ -410,8 +436,10 @@ export function Environments() {
                 <span className="env-kpi-sub">{viewingRecord ? '历史记录' : '最新一次'}</span>
               </div>
             </div>
+            )}
 
-            {failures.length > 0 && (
+            {/* 失败明细：只有出错才下钻，默认收起，点「失败」卡或这里展开 */}
+            {reportOpen && failures.length > 0 && failsOpen && (
               <ul className="env-report-fails">
                 {failures.map(({ entry, r }) => (
                   <li key={entry.id}>
@@ -422,7 +450,7 @@ export function Environments() {
               </ul>
             )}
 
-            {summary.total > 0 && summary.fail === 0 && (
+            {reportOpen && summary.total > 0 && summary.fail === 0 && (
               <div className="env-report-ok">全部可达，链路正常。</div>
             )}
           </section>
@@ -636,5 +664,6 @@ export function Environments() {
     </div>
   );
 }
+
 
 
