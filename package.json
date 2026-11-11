@@ -34,7 +34,8 @@
     "check:pack": "node scripts/preflight.js --pack",
     "hooks:install": "node scripts/install-hooks.js",
     "pack:asar": "node scripts/pack-asar.js",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check:debt": "node scripts/check-debt-budget.js"
   },
   "build": {
     "appId": "com.passwordmanager.app",
@@ -117,7 +118,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "uuid": "^14.0.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.13"
   }
 }

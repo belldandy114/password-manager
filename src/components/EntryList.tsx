@@ -160,12 +160,15 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
 
   const handleUrlOpen = useCallback((url: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (url) {
-      window.electronAPI.browserOpen({ browser: '', url }).catch(() => {
-        window.open(url, '_blank');
-      });
-    }
-  }, []);
+    if (!url) return;
+    // 有 onOpen 就交给页面统一处理（失败会弹提示并把地址复制走）。
+    if (onOpen) { onOpen(url); return; }
+    // 不再拿 window.open 兜底：导航守卫拒绝一切新窗口，用户只会看到「点了没反应」。
+    // openUrlInDefaultBrowser 会把失败原因带回来，这里至少把地址复制给用户。
+    void openUrlInDefaultBrowser(url).then((res) => {
+      if (!res.ok) onCopy(url, 'URL');
+    });
+  }, [onOpen, onCopy]);
 
   const handleTagClick = useCallback((tag: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -224,7 +227,7 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
               onChange={() => {
                 if (allSelected) clearSelected();
                 else selectAll(entries.map(e => e.id));
-              }} />
+              }} aria-label="全选当前列表" />
           </th>
           <th className="col-name" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('name')}>名称{sortArrow('name')}</th>
           <th className="col-env" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('envType')}>环境{sortArrow('envType')}</th>
@@ -255,7 +258,7 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
               {/* Checkbox */}
               <td className="col-checkbox" onClick={e => e.stopPropagation()}>
                 <input type="checkbox" checked={isSelected}
-                  onChange={() => toggleSelected(entry.id)} />
+                  onChange={() => toggleSelected(entry.id)} aria-label="选择此行" />
               </td>
 
               {/* Name (bold) */}

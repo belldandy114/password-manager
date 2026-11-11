@@ -124,6 +124,37 @@ const TDG_DIST_PATH = IS_DEV
 const TDG_PRELOAD_PATH = path.join(__dirname, 'preload-tdg.cjs');
 
 // ----------------------------------------------------------------
+// 导航守卫
+// ----------------------------------------------------------------
+// 主窗口开着 webviewTag，但此前没有任何 will-navigate / setWindowOpenHandler /
+// will-attach-webview。只要有一条内容能把 <a href> 或 window.open 送到渲染层
+// （Markdown 笔记、周报、导入的 CSV……），就能把应用窗口导航走或开出一个没有 preload
+// 的空白窗口。判断逻辑全在 electron/nav-guard.js（有单测），这里只做事件挂载。
+//
+// PM_USE_DIST=1 时虽然仍是开发目录，但主窗口加载的是 file://dist —— 此时不能按
+// 「开发态」放行 localhost，否则会把应用自己拦下来。所以开关取同一个表达式。
+const USE_DEV_SERVER = IS_DEV && !process.env.PM_USE_DIST;
+const APP_DIST_DIR = path.join(__dirname, '..', 'dist');
+
+const { openHttpUrl } = require('./url-open');
+const { spawn: spawnForUrlOpen } = require('child_process');
+const { installNavigationGuards, guardWebviews } = require('./nav-guard');
+
+const navGuardOptions = () => ({
+  dev: USE_DEV_SERVER,
+  distDir: APP_DIST_DIR,
+  tdgDistDir: TDG_DIST_PATH,
+  tdgPreloadPath: TDG_PRELOAD_PATH
+});
+
+installNavigationGuards({
+  app,
+  openExternalUrl: (url) => openHttpUrl(url, { shell, spawn: spawnForUrlOpen }),
+  getOptions: navGuardOptions,
+  onBlocked: (message) => console.warn('[nav-guard] ' + message)
+});
+
+// ----------------------------------------------------------------
 // Key derivation
 // ----------------------------------------------------------------
 // PBKDF2(SHA-512, 600k) costs ~400ms on this hardware. Deriving it on every read *and*
@@ -1094,12 +1125,15 @@ function createWindow() {
   if (savedState && savedState.maximized) mainWindow.maximize();
 
   // PM_USE_DIST=1：开发目录下也直接加载已构建的 dist（用于跑 UI 回归，省一次打包）
-  if (IS_DEV && !process.env.PM_USE_DIST) {
+  if (USE_DEV_SERVER) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    mainWindow.loadFile(path.join(APP_DIST_DIR, 'index.html'));
   }
+
+  // webview 的 src / preload 白名单（测试数据生成器）
+  guardWebviews(mainWindow.webContents, navGuardOptions);
 
   // "最小化到托盘": hide instead of sitting in the taskbar.
   mainWindow.on('minimize', (event) => {
