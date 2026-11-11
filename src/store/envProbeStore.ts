@@ -113,7 +113,9 @@ export const useEnvProbeStore = create<EnvProbeState>()(
     }),
     {
       name: 'pm.env.probe',
-      storage: createJSONStorage(() => sessionStorage),
+      // 用 localStorage 而不是 sessionStorage：用户要的是「巡检一次后一直显示」，
+      // 关掉应用再打开也要能看到上一次的数字与时间（sessionStorage 一关就没了）。
+      storage: createJSONStorage(() => localStorage),
       partialize: (st) => ({
         results: st.results,
         summary: st.summary,
@@ -133,3 +135,4 @@ export function formatAt(at: number | null): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+

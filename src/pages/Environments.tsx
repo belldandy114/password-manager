@@ -50,6 +50,21 @@ function shortenAddress(text: string, max = 46): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+/** 占比文案：分母为 0 时给「—」，不要除零出 NaN% */
+function pct(part: number, total: number): string {
+  if (!total) return '—';
+  return `${Math.round((part / total) * 1000) / 10}%`;
+}
+
+/** 从地址里取主机名，统计卡上比整条 URL 好读 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return String(url || '');
+  }
+}
+
 export function Environments() {
   const { items, save, loading } = useCollection<EnvEntry>('environments');
   const pwEntries = useStore(s => s.entries);
@@ -250,7 +265,14 @@ export function Environments() {
     return lines.join('\n');
   };
 
-  const viewingRecord = !!currentId && history.some(h => h.id === currentId);
+  /**
+   * 当前看的是不是「历史记录」。
+   *
+   * 不能只判 `history.some(h => h.id === currentId)`——刚跑完的那次也在 history 里，
+   * 那样每次巡检完都会显示「历史记录」，用户会以为看到的是旧数据。
+   * 只有当前 id 不是最新一条时才算回看历史。
+   */
+  const viewingRecord = !!currentId && history.length > 0 && currentId !== history[0].id;
 
   return (
     <div className="content-area">
@@ -335,7 +357,7 @@ export function Environments() {
               <div className="env-report-headl">
                 <div className="env-report-title">巡检报告</div>
                 <div className="env-report-sub">
-                  {formatAt(at)} · 超时 {timeoutMs / 1000}s
+                  上次巡检 <b className="env-report-at">{formatAt(at)}</b> · 超时 {timeoutMs / 1000}s
                   {viewingRecord ? ' · 历史记录' : ' · 最新'}
                   {stale && <span className="env-stale"> · 地址有变动，建议重跑</span>}
                 </div>
@@ -353,26 +375,39 @@ export function Environments() {
               <span className="env-bar-seg is-rest" style={{ flexGrow: Math.max(0, summary.total - summary.ok - summary.fail) || 0.0001 }} />
             </div>
 
-            <div className="env-report-stats">
-              <div className={`env-stat${summary.fail ? ' is-bad' : ' is-ok'}`}>
-                <span className="env-stat-num">{summary.ok}<span className="env-stat-of">/{summary.total}</span></span>
-                <span className="env-stat-label">可达</span>
+            {/* 统计卡：一次巡检后一直留着，再巡检就原地刷新数字与时间 */}
+            <div className="env-kpis">
+              <div className="env-kpi is-total">
+                <span className="env-kpi-num">{summary.total}</span>
+                <span className="env-kpi-label">地址总数</span>
+                <span className="env-kpi-sub">本次巡检 {summary.total} 个</span>
               </div>
-              <div className={`env-stat${summary.fail ? ' is-bad' : ''}`}>
-                <span className="env-stat-num">{summary.fail}</span>
-                <span className="env-stat-label">失败</span>
+              <div className="env-kpi is-ok">
+                <span className="env-kpi-num">{summary.ok}</span>
+                <span className="env-kpi-label">可达</span>
+                <span className="env-kpi-sub">占 {pct(summary.ok, summary.total)}</span>
               </div>
-              <div className="env-stat">
-                <span className="env-stat-num">{summary.slow}</span>
-                <span className="env-stat-label">慢（≥2s）</span>
+              <div className="env-kpi is-bad">
+                <span className="env-kpi-num">{summary.fail}</span>
+                <span className="env-kpi-label">失败</span>
+                <span className="env-kpi-sub">占 {pct(summary.fail, summary.total)}</span>
               </div>
-              <div className="env-stat">
-                <span className="env-stat-num">{summary.ok ? summary.avgMs : '—'}<span className="env-stat-of">{summary.ok ? ' ms' : ''}</span></span>
-                <span className="env-stat-label">平均耗时</span>
+              <div className="env-kpi is-warn">
+                <span className="env-kpi-num">{summary.slow}</span>
+                <span className="env-kpi-label">慢（≥2s）</span>
+                <span className="env-kpi-sub">占可达 {pct(summary.slow, summary.ok)}</span>
               </div>
-              <div className="env-stat is-wide">
-                <span className="env-stat-num env-stat-slowest">{summary.slowest || '—'}</span>
-                <span className="env-stat-label">最慢地址</span>
+              <div className="env-kpi is-time">
+                <span className="env-kpi-num">{summary.ok ? summary.avgMs : '—'}<span className="env-kpi-unit">{summary.ok ? ' ms' : ''}</span></span>
+                <span className="env-kpi-label">平均耗时</span>
+                <span className="env-kpi-sub" title={summary.slowest || ''}>
+                  {summary.slowest ? `最慢 ${hostOf(summary.slowest)}` : '无可用结果'}
+                </span>
+              </div>
+              <div className="env-kpi is-at">
+                <span className="env-kpi-num env-kpi-at">{formatAt(at).slice(5, 16)}</span>
+                <span className="env-kpi-label">上次巡检</span>
+                <span className="env-kpi-sub">{viewingRecord ? '历史记录' : '最新一次'}</span>
               </div>
             </div>
 

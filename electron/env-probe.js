@@ -7,7 +7,7 @@
  * 这里只做能单测的部分，避免把超时/并发/顺序这类容易写错的地方埋进 IPC。
  */
 
-const MAX_URLS = 50;
+const MAX_URLS = 500;
 const DEFAULT_CONCURRENCY = 6;
 const DEFAULT_TIMEOUT_MS = 8000;
 const MIN_TIMEOUT_MS = 2000;
@@ -53,7 +53,10 @@ async function runProbes(urls, probeOne, options) {
     .map((u) => (typeof u === 'string' ? u : String(u == null ? '' : u)))
     .slice(0, MAX_URLS);
   const opts = options || {};
-  const concurrency = Math.max(1, Math.min(16, Math.round(Number(opts.concurrency) || DEFAULT_CONCURRENCY)));
+  // 并发随批量自动放大一点：80 个地址用 6 并发，最坏情况（全超时）要等 100 秒以上。
+  // 上限仍卡在 16，别把内网一次打满。
+  const autoConcurrency = Math.min(16, Math.max(DEFAULT_CONCURRENCY, Math.ceil(list.length / 8)));
+  const concurrency = Math.max(1, Math.min(16, Math.round(Number(opts.concurrency) || autoConcurrency)));
   const results = new Array(list.length);
   let next = 0;
   const worker = async () => {

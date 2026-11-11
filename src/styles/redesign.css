@@ -2112,6 +2112,99 @@ button { font-family: inherit; }
   color: var(--text-primary);
 }
 
+/* ---- 巡检统计卡（对齐缺陷汇总页那种「大数字 + 说明」的卡片） ----
+   一次巡检后一直显示，再巡检原地刷新数字与时间；左侧色条区分口径。 */
+.env-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.env-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 左侧竖色条：和缺陷汇总页的统计卡一致 */
+.env-kpi::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--border);
+}
+
+.env-kpi.is-total::before { background: var(--accent); }
+.env-kpi.is-ok::before { background: var(--success); }
+.env-kpi.is-bad::before { background: var(--danger); }
+.env-kpi.is-warn::before { background: var(--warning); }
+.env-kpi.is-time::before { background: #38bdf8; }
+.env-kpi.is-at::before { background: var(--text-muted); }
+
+.env-kpi-num {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-kpi.is-ok .env-kpi-num { color: var(--success); }
+.env-kpi.is-bad .env-kpi-num { color: var(--danger); }
+.env-kpi.is-warn .env-kpi-num { color: var(--warning); }
+
+.env-kpi-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.env-kpi-at {
+  font-size: 15px;
+  font-family: var(--font-mono);
+}
+
+.env-kpi-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.env-kpi-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-report-at {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1280px) {
+  .env-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 860px) {
+  .env-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* 卡片最小宽度抬到 520：两列并排时地址不会被截得太碎（460 时 B 组那行只剩半截） */
 .env-cards { grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); }
 
@@ -2126,6 +2219,7 @@ button { font-family: inherit; }
   .env-row-state { min-width: 96px; }
   .env-err { max-width: 120px; }
 }
+
 
 
 

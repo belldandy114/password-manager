@@ -108,3 +108,41 @@ Chrome 已在运行（多窗口多 profile）。判定方法：本地 `http://12
 探针脚本的写法参考 `scripts/ui-round15-test.js`：CDP 连 `--remote-debugging-port`，
 **过滤 `devtools://`**、`delete env.ELECTRON_RUN_AS_NODE`、临时 `--user-data-dir`，
 起一个本地 http server 当「可达地址」，再断言 DOM 与剪贴板（`Get-Clipboard -Raw`）。
+
+## 6. 巡检上限与统计卡（2026-11-11）
+
+### 50 条上限已放开到 500
+
+`electron/env-probe.js` 的 `MAX_URLS` 从 **50 改成 500**。之前 80 个地址只跑 50 个，
+是因为 `runProbes` 与 `ipc-env.js` 都按 `MAX_URLS` 截断，**没有任何提示**——用户只会觉得「少了几条」。
+
+- 并发改成随批量自动放大：`min(16, max(6, ceil(n / 8)))`。80 条用 10 并发，
+  实测 80 个地址（79 可达 + 1 不可达）**2.3 秒**跑完；6 并发时最坏情况（全超时）要等 100 秒以上。
+- 上限仍卡在 16，别把内网一次打满。
+- 单测 `envProbe.test.ts` 里「超过上限的地址被截断」用的是 `MAX_URLS + 5`，改常量后自动跟着走。
+
+### 统计卡（`.env-kpis`）
+
+对齐缺陷汇总页那种「大数字 + 说明」的卡片，**一次巡检后一直显示，再巡检原地刷新数字与时间**：
+
+| 卡 | 内容 | 副标题 |
+|---|---|---|
+| 地址总数 | `summary.total` | 本次巡检 N 个 |
+| 可达 | `summary.ok` | 占 N% |
+| 失败 | `summary.fail` | 占 N% |
+| 慢（≥2s） | `summary.slow` | 占可达 N% |
+| 平均耗时 | `summary.avgMs` | 最慢 `<host>` |
+| 上次巡检 | `MM-DD HH:mm` | 最新一次 / 历史记录 |
+
+- 左侧竖色条区分口径（`.env-kpi::before`），数字按口径上色。
+- 响应式：≤1280px 三列、≤860px 两列。
+- **持久化从 sessionStorage 换成 localStorage**：用户要的是「巡检一次后一直显示」，
+  关掉应用再打开也要能看到上一次的数字与时间。key 仍是 `pm.env.probe`。
+- ⚠️ `viewingRecord` 不能只判 `history.some(h => h.id === currentId)`——刚跑完那次也在 history 里，
+  会一直显示「历史记录」。改成 `currentId !== history[0].id` 才算回看历史。
+
+### 回归
+
+临时探针（已删）验证过 11 条：80 条地址全部渲染 / 统计卡 6 张 / 总数 80（不再 50）/
+可达 79 / 失败 1 / 有时间卡 / 巡检 <60s / 真实打到 79 个不同地址 / 再巡检卡片不清空 /
+切页面回来仍在。需要时按 `scripts/ui-round15-test.js` 的写法重建。
