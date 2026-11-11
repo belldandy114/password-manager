@@ -28,6 +28,8 @@ export function AttImage({ id, alt, className }: { id: string; alt?: string; cla
       src={src || undefined}
       alt={alt || '图片'}
       title={alt || '图片'}
+      loading="lazy"
+      decoding="async"
     />
   );
 }

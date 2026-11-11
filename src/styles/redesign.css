@@ -2738,3 +2738,151 @@ button { font-family: inherit; }
   border-color: var(--accent);
 }
 
+
+/* ============================================================
+   39. 对比度修正（2026-11-11，impeccable audit 实测）
+   实测不足的四处：
+   - .tag-sidebar-item.active .tag-sidebar-count：白字压在 accent 上 3.2:1
+   - .security-badge：白字压在 danger 上 4.0:1
+   - .sec-flag-weak：danger 字压在卡片底上 4.37:1
+   - .pill-bad（环境矩阵「正式」）：danger 字压在 13% danger 底上 4.37:1
+   统一做法：文字用「同色相但更亮一档」的色，底色保持原样，不动色相。
+   ============================================================ */
+.tag-sidebar-item.active .tag-sidebar-count {
+  /* 白字在 accent 上只有 3.2:1：改成 accent 底 + 深色字，或直接给深底浅字 */
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* 选中标签名：accent 字压在 accent-light 底上只有 4.49:1，差 0.01。
+   把文字往深里压一档（浅色主题）／往亮里提一档（深色主题），色相不变。 */
+.tag-sidebar-item.active .tag-sidebar-name {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
+
+[data-theme='light'] .tag-sidebar-item.active .tag-sidebar-name {
+  color: color-mix(in srgb, var(--accent) 78%, #000);
+}
+
+.security-badge {
+  /* 白字在 danger 上 4.0:1：加深底色到能过 4.5 */
+  background: color-mix(in srgb, var(--danger) 82%, #000);
+}
+
+.sec-flag-weak {
+  /* 深色主题：danger 压在深底上偏暗，往白里提一档 */
+  color: color-mix(in srgb, var(--danger) 82%, #fff);
+}
+
+.pill-bad {
+  /* 同上（只动文字，底色不变） */
+  color: color-mix(in srgb, var(--danger) 82%, #fff);
+}
+
+/* 浅色主题反过来：danger 本身已经很深，往白里提会让对比度掉到 3.85，
+   必须往黑里压。sec-flag-dup 用的是 warning，同理压深一档。 */
+[data-theme='light'] .sec-flag-weak,
+[data-theme='light'] .pill-bad {
+  color: color-mix(in srgb, var(--danger) 78%, #000);
+}
+
+[data-theme='light'] .sec-flag-dup {
+  color: color-mix(in srgb, var(--warning) 72%, #000);
+}
+
+[data-theme='light'] .security-badge {
+  background: color-mix(in srgb, var(--danger) 90%, #000);
+}
+
+/* 收藏星标：未收藏时 1.52:1 几乎看不见，改成可见的弱化色 */
+.fav-btn {
+  color: var(--text-muted);
+  opacity: .55;
+}
+
+.fav-btn:hover,
+.fav-btn.active {
+  opacity: 1;
+}
+
+/* ============================================================
+   40. 触控目标与键盘可达（2026-11-11，impeccable audit 实测）
+   WCAG 2.5.8 要求目标至少 24×24 CSS px（有间距例外）。
+   实测偏小的：收藏星标 15×14、密码眼睛 17×13、卡片 URL 行高 14。
+   做法：给它们撑到 24px 的可点区域，视觉尺寸不变（用 padding / 伪元素扩展热区）。
+   ============================================================ */
+.fav-btn,
+.cred-eye-btn {
+  position: relative;
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* 视觉上仍是小图标，但热区撑到 24×24 */
+.fav-btn::after,
+.cred-eye-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* 卡片里的 URL 是一整行按钮，行高 14px 太薄：给上下 padding 撑到 24 */
+.entry-card .card-url {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 标签栏的收起 / 新建按钮 22px → 24px */
+.tag-sidebar-toggle,
+.tag-sidebar-add-btn {
+  width: 24px;
+  height: 24px;
+}
+
+/* 侧栏分组标题 24px 高，刚好卡在临界值：抬到 26 并保持整行可点 */
+.sidebar-group-title {
+  min-height: 26px;
+}
+
+
+/* 剩余偏小的目标（2026-11-11 复测）：
+   .card-url-copy 22px、.env-url 行高 15px、.chip 22px、.tab2 21px。
+   统一撑到 24px 的可点高度，视觉尺寸基本不变。 */
+.entry-card .card-url-copy {
+  width: 24px;
+  height: 24px;
+}
+
+.env-row-main .env-url,
+button.env-url {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+.chip {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab2 {
+  min-height: 24px;
+}
+
+/* 设置页左侧导航选中项：accent 字压在 accent-light 底上 4.49:1，差 0.01。
+   与标签栏同一处理：文字往深/亮压一档，色相不变。 */
+.set-nav.is-active .set-nav-text b {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
+
+[data-theme='light'] .set-nav.is-active .set-nav-text b {
+  color: color-mix(in srgb, var(--accent) 78%, #000);
+}
+
