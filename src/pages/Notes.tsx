@@ -36,6 +36,43 @@ const plainPreview = (md: string) =>
 const fileOf = (title: string) =>
   `${String(title || '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').slice(0, 80) || '未命名笔记'}.md`;
 
+/**
+ * 编辑态里的图片预览条。
+ *
+ * 编辑时正文只有 `![名](pm-att:<id>)` 这一行文字，看不到图，等于「不知道自己贴了什么」。
+ * 这里把正文里引用到的附件按顺序解密成缩略图列出来，点一下就在新窗口打开原图。
+ */
+function EditAttStrip({ content }: { content: string }) {
+  const ids = useMemo(() => extractAttIds(content || ''), [content]);
+  if (!ids.length) return null;
+  return (
+    <div className="note-att-strip">
+      <div className="note-att-strip-head">
+        <Icons.image size={12} /> 正文里的图片（{ids.length}）
+        <span className="text-sm text-muted">点缩略图看大图</span>
+      </div>
+      <div className="note-att-strip-body">
+        {ids.map((id, i) => (
+          <button
+            key={id}
+            type="button"
+            className="note-att-thumb"
+            title={`第 ${i + 1} 张，点击查看大图`}
+            onClick={async () => {
+              const r = await window.electronAPI.attachmentReadImage({ id });
+              if (!r.success || !r.data?.dataUrl) return;
+              const w = window.open('', '_blank', 'width=900,height=700');
+              if (w) w.document.write(`<title>图片 ${i + 1}</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;height:100vh"><img src="${r.data.dataUrl}" style="max-width:100%;max-height:100%"></body>`);
+            }}
+          >
+            <AttImage id={id} alt={`图片 ${i + 1}`} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Notes() {
   const { items, save, loading, reload } = useCollection<Note>('notes');
   const [search, setSearch] = useState('');
@@ -56,13 +93,6 @@ export function Notes() {
   /** 粘贴截图的提示（成功 / 失败 / 保存中） */
   const [attachHint, setAttachHint] = useState('');
 
-  // 随手记小窗另开一个窗口写同一个集合：主窗口回到前台时重新读一次，避免列表还是旧的
-  useEffect(() => {
-    const onFocus = () => { void reload(); };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [reload]);
-
   const dirMode = !!dir;
 
   const loadDir = useCallback(async (target: string) => {
@@ -79,6 +109,18 @@ export function Notes() {
     setFiles(res.data || []);
     setBodies({});
   }, []);
+
+  // 随手记小窗另开一个窗口写同一批笔记：主窗口回到前台时重新读一次，避免列表还是旧的。
+  // 两种存储模式都要刷——目录模式下随手记写的是 .md 文件，只 reload 加密库是看不到的。
+  useEffect(() => {
+    const onFocus = () => {
+      void reload();
+      const d = localStorage.getItem(LS_DIR) || '';
+      if (d) void loadDir(d);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reload, loadDir]);
 
   useEffect(() => { if (dir) loadDir(dir); }, [dir, loadDir]);
 
@@ -440,6 +482,7 @@ export function Notes() {
               />
               <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
               {attachHint && <div className="inline-hint">{attachHint}</div>}
+              <EditAttStrip content={editing.content} />
             </div>
           </>
         )}
@@ -497,6 +540,7 @@ export function Notes() {
               />
               <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
               {attachHint && <div className="inline-hint">{attachHint}</div>}
+              <EditAttStrip content={dirEditing.content} />
             </div>
             <div className="assert-hint">
               保存为 <code>{dir ? `${dir}\\${fileOf(dirEditing.title || '未命名笔记')}` : fileOf(dirEditing.title)}</code>
@@ -543,3 +587,4 @@ export function Notes() {
     </div>
   );
 }
+

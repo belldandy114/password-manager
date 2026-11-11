@@ -71,12 +71,30 @@ export function QuickNoteApp() {
     setSaving(true);
     setHint('');
     try {
+      const finalTitle = title.trim() || stampTitle();
+
+      /**
+       * 笔记页有两种存储模式：软件内的加密库（ws:set 'notes'）和用户自选的目录（一篇一个 .md）。
+       * 小窗必须跟着当前模式走——否则用户切到目录模式后，随手记还往加密库里写，
+       * 笔记页只列目录里的文件，看起来就是「随手记保存的内容不见了」。
+       */
+      const dir = localStorage.getItem('pm.notes.dir') || '';
+      if (dir) {
+        const r = await window.electronAPI.notesSave(dir, '', body, finalTitle);
+        if (!r?.success) { setHint('保存失败：' + (r?.error || '未知错误')); return; }
+        setTitle('');
+        setText('');
+        setHint(`已保存到目录：${r.data?.name || finalTitle}`);
+        setTimeout(() => { void window.electronAPI.quicknoteHide(); }, 600);
+        return;
+      }
+
       const key: WorkspaceKey = 'notes';
       const got = await window.electronAPI.wsGet(key);
       const list = got?.success && Array.isArray(got.data) ? (got.data as Note[]) : [];
       const note: Note = {
         id: crypto.randomUUID(),
-        title: title.trim() || stampTitle(),
+        title: finalTitle,
         content: body,
         tags: ['随手记'],
         updatedAt: new Date().toISOString(),

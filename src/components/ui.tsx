@@ -4,7 +4,7 @@ import {
   IconLink, IconExternalLink, IconServer, IconKey, IconCheck, IconList,
   IconDatabase, IconFileText, IconBug, IconTool, IconTerminal2, IconLock,
   IconClock, IconDownload, IconChartBar, IconRefresh, IconX, IconChevronRight,
-  IconTag, IconInbox, IconFolder,
+  IconTag, IconInbox, IconFolder, IconPhoto,
 } from '@tabler/icons-react';
 
 /* ================================================================
@@ -52,6 +52,7 @@ export const Icons = {
   tag: icon(IconTag),
   inbox: icon(IconInbox),
   folder: icon(IconFolder),
+  image: icon(IconPhoto),
 };
 
 /* ---------------- 页面骨架 ---------------- */
@@ -244,3 +245,5 @@ export function Field({
     </div>
   );
 }
+
+

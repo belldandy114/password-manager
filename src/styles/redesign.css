@@ -2223,3 +2223,321 @@ button { font-family: inherit; }
 
 
 
+
+/* ============================================================
+   34. 笔记编辑态图片预览条（2026-11-11）
+   编辑时正文只有 `![名](pm-att:<id>)` 一行文字，看不到图等于「不知道自己贴了什么」。
+   这里把正文引用到的附件按顺序解密成缩略图列出来，点一下看大图。
+   ============================================================ */
+.note-att-strip {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+}
+
+.note-att-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.note-att-strip-head .text-sm { margin-left: auto; }
+
+.note-att-strip-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.note-att-thumb {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+  transition: border-color .12s ease, transform .12s ease;
+}
+
+.note-att-thumb:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.note-att-thumb .att-thumb {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  display: block;
+}
+
+/* ============================================================
+   35. 网址管理左侧标签栏（2026-11-11 重做）
+   旧版是「圆点 + 文字 + 数字」平铺，选中态只有一条 3px 内阴影，看着像没选中；
+   这里改成：分组标题 + 胶囊式条目 + 选中态实心强调色 + 计数徽标。
+   ============================================================ */
+.tag-sidebar {
+  width: 216px;
+  min-width: 216px;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--pm-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tag-sidebar.collapsed {
+  width: 34px;
+  min-width: 34px;
+}
+
+.tag-sidebar-toggle {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+
+.tag-sidebar-toggle:hover {
+  color: var(--accent);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.tag-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.tag-sidebar-add-btn {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+
+.tag-sidebar-add-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.tag-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 4px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.tag-sidebar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.tag-sidebar-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  padding: 0;
+}
+
+.tag-sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tag-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.tag-sidebar-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.tag-sidebar-item.active {
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tag-sidebar-item.active .tag-sidebar-count {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tag-sidebar-item.pinned {
+  background: transparent;
+}
+
+.tag-sidebar-item.pinned.active {
+  background: var(--accent-light);
+}
+
+.tag-sidebar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.tag-sidebar-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-sidebar-count {
+  flex: 0 0 auto;
+  min-width: 20px;
+  padding: 0 6px;
+  height: 17px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tag-sidebar-empty {
+  padding: 18px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.tag-sidebar-footer {
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.tag-sidebar-manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color .12s ease;
+}
+
+.tag-sidebar-manage:hover { color: var(--accent); }
+
+.tag-sidebar-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.tag-pin-icon {
+  font-size: 9px;
+  flex: 0 0 auto;
+  opacity: .8;
+}
+
+/* ============================================================
+   36. 代码调试顶栏：语言 / 超时下拉被压扁后互相遮挡（2026-11-11）
+   两个 select 在 .codelab-actions 里默认 flex-shrink:1，窗口一窄就被压到
+   比文字还窄，文字溢出后压到右边那个下拉上，看起来就是「JavaScript 被 15s 超时挡住」。
+   这里禁止收缩并给最小宽度，宁可整组换行也不让它们重叠。
+   ============================================================ */
+.codelab-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 6px;
+}
+
+.codelab-actions .lang-select {
+  flex: 0 0 auto;
+  min-width: 96px;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
+
+.codelab-actions .lang-select:first-child { min-width: 108px; }
+
+.codelab-actions .codelab-run {
+  flex: 0 0 auto;
+}
+
+/* 窄窗口：整组独占一行靠右，不再和标题抢宽度 */
+@media (max-width: 900px) {
+  .pg-head { flex-wrap: wrap; }
+  .pg-tools { width: 100%; justify-content: flex-end; }
+}
