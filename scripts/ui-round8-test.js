@@ -174,7 +174,8 @@ const echoServer = http.createServer((req, res) => {
       activeCount: document.querySelectorAll('.set-nav.is-active').length,
     };
   })()`);
-  check('设置：左侧出现竖排菜单', !!rail && rail.n === 4, rail && `宽 ${rail.w}px / ${rail.n} 项`);
+  // 1.22.0 起设置多了「定时任务」一组，共 5 项
+  check('设置：左侧出现竖排菜单', !!rail && rail.n === 5, rail && `宽 ${rail.w}px / ${rail.n} 项`);
   check('设置：菜单是竖排（第二项在第一项下方）', !!rail && rail.stacked);
   check('设置：默认只有一个选中项', !!rail && rail.activeCount === 1);
   check('设置：菜单项带说明文字', !!rail && rail.labels.some((l) => /主密码/.test(l)), rail && rail.labels[0]);

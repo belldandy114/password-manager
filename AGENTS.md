@@ -5,8 +5,8 @@ This file provides context for AI assistants working on this project.
 ## Project Type: Node.js + Electron
 
 ### Commands
-- Install: `npm install`
-- Test: `npm test`
+- Install: `npm ci`
+- Test: `npm run test:unit`（没有 `npm test`）
 - Dev (renderer + electron concurrently): `npm run dev`
 - Dev (renderer only): `npm run dev:renderer`
 - Build renderer: `npm run build:renderer`
@@ -23,24 +23,24 @@ This project uses Git. See .gitignore for excluded files.
 - **CodeWhale reads this file as:** AGENTS.md (CodeWhale-native)
 - **Read-only surface:** `release/` — generated build artifacts (`.exe`, `.asar`, `.pak`, `.dll`, etc.)
 - **Never edit:** `release/` (build output), `package-lock.json` (lockfile), `dist/` (renderer build output), `*.pak` / `*.bin` / `*.dll` files
-- **Always test with:** `npm run build && npm start` — build the renderer then launch the electron app to verify UI + IPC integration
+- **Always test with:** `npm run build:renderer && npm start` — 构建渲染层后启动 Electron 验证 UI + IPC
 
 ## 详细文档索引（AGENTS.md 只留摘要）
 
-AGENTS.md 有 65,536 B 的工作区指令预算，超出部分会被**静默截断**（后半段等于不存在）。
-所以历史细节按主题拆到 `docs/agents/`，这里只留当前必须遵守的约束：
+AGENTS.md 有 65,536 B 预算，超出会被**静默截断**。历史细节拆到 `docs/agents/`，这里只留必须遵守的约束：
 
 | 文件 | 内容 |
 |---|---|
-| `docs/agents/history-1.x.md` | 1.1.0–1.7.2 的能力清单、构建排错、禅道登录细节、崩溃排查 |
+| `docs/agents/history-1.x.md` | 1.1.0–1.7.2 能力清单、构建排错、禅道登录、崩溃排查 |
 | `docs/agents/weekly-report.md` | 周报 + 从禅道自动成稿的全部规则（含 69 项回归） |
-| `docs/agents/update-and-release.md` | 发布流程、应用内更新（`net`）、CI 覆盖 Release、禅道截图 |
+| `docs/agents/update-and-release.md` | 发布流程、应用内更新（`net`）、CI 覆盖 Release |
 | `docs/agents/testing.md` | 页面拆包与回归脚本、单测、CI 门禁、几何量断言 |
 | `docs/agents/ipc-split.md` | `setupIpcHandlers` 拆分全过程与踩坑 |
 | `docs/agents/perf-test.md` | JMeter 非 GUI 压测 |
 | `docs/agents/visual-system.md` | 视觉体系 v2 的 token 与组件类名 |
-| `docs/agents/window-tray.md` | 单实例锁、托盘、`showMainWindow()` 顺序、全局快捷键与 `applyHotkeys()` 回滚、搜索小窗缓存/高度/主题/未解锁 |
+| `docs/agents/window-tray.md` | 单实例锁、托盘、`showMainWindow()` 顺序、全局快捷键与 `applyHotkeys()` 回滚、搜索小窗 |
 | `docs/agents/url-open.md` | 网址打开/复制入口、环境矩阵 v3 |
+| `README.md` | 新人/新 AI 第一站：目录地图、命令耗时、改什么跑什么、常见坑 |
 
 **新增内容优先写进对应主题文件**；只有「每次改代码都必须遵守」的约束才写进 AGENTS.md。
 
@@ -625,33 +625,8 @@ USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pac
 
 ### IPC 域拆分进度（D2，2026-11-10 全部完成）
 
-`main.js` 从 4652 行降到 **1622 行，`ipcMain.handle` 计数为 0**。全部 handler 已按域搬进 17 个模块：
-
-| 模块 | 负责前缀 | 备注 |
-|---|---|---|
-| `ipc-shell` | `app:` / `log:` / `update:check` / `palette:` / `quicknote:` | 另导出 `registerShellSessionIpc`（`palette:epoch`）与 `openEntryInBrowser` |
-| `ipc-auth` | `auth:` 9 个 | 登录失败计数随块进模块 |
-| `ipc-entries` | `session:` / `entries:` / `trash:` / `clipboard:` / `settings:` | 状态仍留 main.js，全部 getter 注入 |
-| `ipc-data` | `backup:` / `data:` / `audit:` | 含 `legacyInfo()` |
-| `ipc-update` | `update:download` / `pick-file` / `install` | 含 `netDownload*` 全套与 `allowedInstallFiles` |
-| `ipc-api` | `file:pick` / `file:save-text` / `ws:` / `history:` / `attachment:` / `api:send` / `api:cookies*` | `apiJar` 随块搬走，导出 `clearApiJar()` 给 `clearCaches()` |
-| `ipc-zentao` | `zentao:` 13 个 | 1289 行，最大一块；返回 `{loadSeen,pushUnread,restartNotify,getUnread}` 供 `ipc-entries` 用 |
-| `ipc-vault-io` | `import:` / `export:` | 抽出 `buildPlainExport()` 消除两处重复拼装 |
-| `ipc-files` / `ipc-system` / `ipc-tools` / `ipc-browser` / `ipc-jmeter` / `ipc-codelab` / `ipc-env` / `ipc-attach` | 各自域 | 1.9.0–1.13.0 陆续拆出 |
-| `codelab-preview` | `codelab:preview` + `codelab://` 协议 | 绕开主窗口 CSP，见下 |
-
-**搬迁铁律（踩过的坑）**：
-
-- 依赖一律**对象注入**（`registerXxxIpc({ loadVault, getPassword, getMainWindow, ... })`），模块内不 require main.js。
-- 会话密码与窗口用 **getter**（`getPassword()` / `getMainWindow()`），不要传值——传值会拿到搬迁那一刻的 `null`。
-- **搬完必须扫一遍漏 require 的 Node 核心模块**：`ipc-zentao.js` 漏了 `crypto`，`ztLoginAttempt` 抛
-  `ReferenceError: crypto is not defined`，被 `ztEnsureLogin` 的 catch 吞掉后伪装成「登录页返回 HTTP 404」，
-  r9 挂了 7 条。`node --check` 查不出这种错，只能靠跑回归。
-- 注册顺序有依赖：`ipc-entries` 要用 `ipc-zentao` 返回的 `loadSeen/pushUnread/restartNotify`，
-  所以 `registerZentaoIpc` 必须在 `registerEntriesIpc` 之前调用。
-
-> 拆 `ipc-system` 时注意：`dialog:save-file` 与 `dialog:saveFile`、`file:write` 与 `fs:writeFile`
-> 是两套**必须并存**的别名（页面用前者，测试数据子应用用后者），合并会导致子应用静默失败。
+`main.js` 4652 → **1622 行，`ipcMain.handle` 计数 0**，全部 handler 已按域搬进 17 个 `electron/ipc-*.js`。
+模块清单、搬迁铁律（对象注入 / getter / 扫漏 require / 注册顺序）与别名坑见 `docs/agents/ipc-split.md`。
 
 ## 1.9.2 起的约定（改登录页 / 接口调试标题行前先看）
 

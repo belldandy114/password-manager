@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { ipcMain } = require('electron');
+const { decodeTextBuffer } = require('./text-encoding');
 
 /** CSV 表头（导出用，顺序即列顺序） */
 const CSV_FIELDS = ['name', 'envType', 'url', 'username', 'password', 'notes', 'tags', 'createdAt', 'updatedAt'];
@@ -104,7 +105,8 @@ function registerVaultIoIpc(deps) {
         const sheet = workbook.Sheets[sheetName];
         records = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       } else {
-        const content = fs.readFileSync(filePath, 'utf8');
+        // 不能硬编码 utf8：Excel 中文环境另存的 CSV 是 GBK，按 UTF-8 读会全是「����」
+        const content = decodeTextBuffer(fs.readFileSync(filePath)).text;
         if (ext === '.json') {
           records = JSON.parse(content);
           if (!Array.isArray(records)) records = [records];

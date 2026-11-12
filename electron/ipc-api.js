@@ -19,6 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { app, ipcMain, dialog, shell } = require('electron');
 const { parseMultipartLine } = require('./multipart');
+const { decodeTextBuffer, encodingLabel } = require('./text-encoding');
 
 /** file:read-text 允许的文本扩展名与大小上限（脱敏工具按列处理用） */
 const TEXT_EXTS = ['.csv', '.tsv', '.txt', '.json', '.log', '.md', '.sql'];
@@ -152,8 +153,18 @@ function registerApiIpc(deps) {
       if (st.size > limit) {
         return { success: false, error: `文件太大（${(st.size / 1024 / 1024).toFixed(1)} MB），上限 ${Math.round(limit / 1024 / 1024)} MB` };
       }
-      const text = fs.readFileSync(target, 'utf8').replace(/^\uFEFF/, '');
-      return { success: true, data: { text, name: path.basename(target), size: st.size } };
+      // 不能硬编码 utf8：Excel 中文环境另存的 CSV 是 GBK，按 UTF-8 读会全是「����」
+      const decoded = decodeTextBuffer(fs.readFileSync(target));
+      return {
+        success: true,
+        data: {
+          text: decoded.text.replace(/^\uFEFF/, ''),
+          name: path.basename(target),
+          size: st.size,
+          encoding: decoded.encoding,
+          encodingLabel: encodingLabel(decoded.encoding),
+        },
+      };
     } catch (e) {
       return { success: false, error: e.message };
     }

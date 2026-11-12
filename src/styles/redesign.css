@@ -719,10 +719,10 @@ code, kbd, pre, .mono {
   max-width: 260px;
   min-height: 28px;
   font-size: 12.5px;
-  padding: 3px 8px;
+  padding: 3px 24px 3px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  background: var(--surface-2);
+  background-color: var(--surface-2);
   color: var(--text-1);
 }
 .zt-global-scope select:focus-visible { outline-offset: 1px; }
@@ -1834,10 +1834,10 @@ button { font-family: inherit; }
 }
 .digest-opt select {
   min-height: 30px;
-  padding: 3px 8px;
+  padding: 3px 24px 3px 8px;
   border: 1px solid var(--input-line);
   border-radius: var(--r-sm, 6px);
-  background: var(--input-bg);
+  background-color: var(--input-bg);
   color: var(--text);
   font-size: var(--fs-sm);
 }

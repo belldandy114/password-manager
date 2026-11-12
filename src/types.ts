@@ -959,9 +959,13 @@ export interface ElectronAPI {
   /** 选任意文件（上传附件） */
   pickFile: (title?: string, filters?: { name: string; extensions: string[] }[]) =>
     Promise<{ success: boolean; data?: { file: string; name: string }; error?: string; canceled?: boolean }>;
-  /** 读文本文件（脱敏工具按列处理；只允许 csv/tsv/txt/json/log/md/sql，上限 8MB） */
+  /** 读文本文件（脱敏工具按列处理；只允许 csv/tsv/txt/json/log/md/sql，上限 8MB；自动嗅探 UTF-8 / GBK） */
   readTextFile: (file: string, maxBytes?: number) =>
-    Promise<{ success: boolean; data?: { text: string; name: string; size: number }; error?: string }>;
+    Promise<{
+      success: boolean;
+      data?: { text: string; name: string; size: number; encoding?: string; encodingLabel?: string };
+      error?: string;
+    }>;
   // JMeter（非 GUI 运行）
   jmeterDetect: () => Promise<{ success: boolean; data?: JmeterDetectInfo; error?: string }>;
   jmeterPickExe: () => Promise<{ success: boolean; data?: { jmeterPath: string }; error?: string; canceled?: boolean }>;

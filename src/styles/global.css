@@ -68,15 +68,9 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* Global select style — unify all dropdowns with custom arrow */
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%236b6b80'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px !important;
-}
+/* 下拉框统一外观（箭头 + 右侧留白）在 redesign.css 里定义。
+   这里不要再写一份：两份几乎逐字相同的 select 规则会被压缩器去重合并，
+   先出现的那条（连同它的 !important）会被整条丢弃，箭头留白随之失效。 */
 
 html, body, #root {
   height: 100%;
@@ -2052,8 +2046,8 @@ mark {
 .form-group input:not([type='checkbox']):not([type='radio']),
 .form-group select, .form-group textarea {
   width: 100%;
-  padding: 10px 14px;
-  background: var(--bg-input);
+  padding: 10px 26px 10px 14px;
+  background-color: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -2699,8 +2693,8 @@ mark {
 .field-mapping select {
   width: 100%;
   min-width: 0;
-  padding: 6px 10px;
-  background: var(--bg-input);
+  padding: 6px 24px 6px 10px;
+  background-color: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text-primary);
@@ -3935,8 +3929,8 @@ mark {
 .api-url-row { display: flex; gap: 8px; }
 
 .api-url-row select {
-  padding: 8px 10px;
-  background: var(--bg-input);
+  padding: 8px 24px 8px 10px;
+  background-color: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);

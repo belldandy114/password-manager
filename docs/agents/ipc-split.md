@@ -65,3 +65,33 @@ registerFileIpc();
 - `node scripts/ui-round2-test.js`（周报）、`ui-round6-test.js`（笔记）、`ui-round9-test.js`（综合）
 - `node scripts/ui-startup-test.js`（启动期不受影响，但成本低）
 - `npm run pack && npm run smoke`（确认新模块进了 asar —— 打包白名单是 `electron/**/*`）
+
+### IPC 域拆分进度（D2，2026-11-10 全部完成）
+
+`main.js` 从 4652 行降到 **1622 行，`ipcMain.handle` 计数为 0**。全部 handler 已按域搬进 17 个模块：
+
+| 模块 | 负责前缀 | 备注 |
+|---|---|---|
+| `ipc-shell` | `app:` / `log:` / `update:check` / `palette:` / `quicknote:` | 另导出 `registerShellSessionIpc`（`palette:epoch`）与 `openEntryInBrowser` |
+| `ipc-auth` | `auth:` 9 个 | 登录失败计数随块进模块 |
+| `ipc-entries` | `session:` / `entries:` / `trash:` / `clipboard:` / `settings:` | 状态仍留 main.js，全部 getter 注入 |
+| `ipc-data` | `backup:` / `data:` / `audit:` | 含 `legacyInfo()` |
+| `ipc-update` | `update:download` / `pick-file` / `install` | 含 `netDownload*` 全套与 `allowedInstallFiles` |
+| `ipc-api` | `file:pick` / `file:save-text` / `ws:` / `history:` / `attachment:` / `api:send` / `api:cookies*` | `apiJar` 随块搬走，导出 `clearApiJar()` 给 `clearCaches()` |
+| `ipc-zentao` | `zentao:` 13 个 | 1289 行，最大一块；返回 `{loadSeen,pushUnread,restartNotify,getUnread}` 供 `ipc-entries` 用 |
+| `ipc-vault-io` | `import:` / `export:` | 抽出 `buildPlainExport()` 消除两处重复拼装 |
+| `ipc-files` / `ipc-system` / `ipc-tools` / `ipc-browser` / `ipc-jmeter` / `ipc-codelab` / `ipc-env` / `ipc-attach` | 各自域 | 1.9.0–1.13.0 陆续拆出 |
+| `codelab-preview` | `codelab:preview` + `codelab://` 协议 | 绕开主窗口 CSP，见下 |
+
+**搬迁铁律（踩过的坑）**：
+
+- 依赖一律**对象注入**（`registerXxxIpc({ loadVault, getPassword, getMainWindow, ... })`），模块内不 require main.js。
+- 会话密码与窗口用 **getter**（`getPassword()` / `getMainWindow()`），不要传值——传值会拿到搬迁那一刻的 `null`。
+- **搬完必须扫一遍漏 require 的 Node 核心模块**：`ipc-zentao.js` 漏了 `crypto`，`ztLoginAttempt` 抛
+  `ReferenceError: crypto is not defined`，被 `ztEnsureLogin` 的 catch 吞掉后伪装成「登录页返回 HTTP 404」，
+  r9 挂了 7 条。`node --check` 查不出这种错，只能靠跑回归。
+- 注册顺序有依赖：`ipc-entries` 要用 `ipc-zentao` 返回的 `loadSeen/pushUnread/restartNotify`，
+  所以 `registerZentaoIpc` 必须在 `registerEntriesIpc` 之前调用。
+
+> 拆 `ipc-system` 时注意：`dialog:save-file` 与 `dialog:saveFile`、`file:write` 与 `fs:writeFile`
+> 是两套**必须并存**的别名（页面用前者，测试数据子应用用后者），合并会导致子应用静默失败。

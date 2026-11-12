@@ -169,7 +169,9 @@ export function RedactTool() {
       setTableText(r.data.text);
       setFileName(r.data.name);
       setDelim('');
-      flash(`已载入 ${r.data.name}（${(r.data.size / 1024).toFixed(1)} KB）`);
+      // 编码不是 UTF-8 时明确告诉用户（Excel 另存的 CSV 多为 GBK），免得以为又乱码了
+      const enc = r.data.encodingLabel && r.data.encodingLabel !== 'UTF-8' ? `，按 ${r.data.encodingLabel} 解码` : '';
+      flash(`已载入 ${r.data.name}（${(r.data.size / 1024).toFixed(1)} KB${enc}）`);
     } finally {
       setLoadingFile(false);
     }
