@@ -226,10 +226,11 @@ if (dryRun) {
 step(8, '核对附件与 latest');
 if (dryRun) {
   console.log(`   [dry-run] gh release delete-asset v${next} Setup.${next}.exe -y`);
-  console.log(`   [dry-run] gh release edit v${next} --notes-file ${path.basename(notesFile)}`);
+  console.log(`   [dry-run] gh release edit v${next} --title "${productName} v${next}" --notes-file ${path.basename(notesFile)}`);
 } else {
   run(`gh release delete-asset v${next} Setup.${next}.exe -y`, { optional: true });
-  run(`gh release edit v${next} --notes-file "${notesFile}"`);
+  // --title 必须带：CI 的 workflow 里写死了旧产品名，会把标题覆盖成「测试工具 vX.Y.Z」
+  run(`gh release edit v${next} --title "${productName} v${next}" --notes-file "${notesFile}"`);
   const info = JSON.parse(sh(`gh release view v${next} --json assets,tagName`));
   const latestTag = sh('gh api repos/belldandy114/password-manager/releases/latest --jq .tag_name').trim();
   console.log(`   附件：${info.assets.map((a) => a.name).join(', ')}`);
