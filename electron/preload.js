@@ -53,7 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   pinOpen: (payload) => ipcRenderer.invoke('pin:open', payload),
   /** 小窗自己关自己 */
-  pinClose: () => ipcRenderer.invoke('pin:close'),  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
+  pinClose: () => ipcRenderer.invoke('pin:close'),
+  pinResize: (payload) => ipcRenderer.invoke('pin:resize', payload),  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
   hotkeyApply: (payload) => ipcRenderer.invoke('app:hotkeys-apply', payload),
   /** 窗口隐藏时主进程要求关掉命令面板 */
   onCloseCommandPalette: (cb) => {

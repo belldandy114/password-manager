@@ -329,6 +329,22 @@ export function ApiClient() {
     flashNotice(`已填入 ${values.length} 条生成数据（JSON）`);
   }, [apiBodySeed, consumeApiBodySeed, flashNotice]);
 
+  // 命令面板里粘贴一段 JSON → 原样填进请求体（不再 JSON.stringify，否则会被转义成字符串）
+  const apiBodyText = useStore(s => s.apiBodyText);
+  const consumeApiBodyText = useStore(s => s.consumeApiBodyText);
+  useEffect(() => {
+    if (!apiBodyText || !apiBodyText.text.trim()) return;
+    const text = apiBodyText.text;
+    setReq(prev => ({
+      ...prev,
+      body: text,
+      bodyType: 'json',
+      method: ['GET', 'HEAD'].includes(prev.method) ? 'POST' : prev.method,
+    }));
+    consumeApiBodyText();
+    flashNotice('已把粘贴的 JSON 填进请求体');
+  }, [apiBodyText, consumeApiBodyText, flashNotice]);
+
   /* ---------------- WebSocket / SSE 长连接（1.23.0） ----------------
    * 和 HTTP 请求共用同一个地址栏：切到 WS/SSE 后「发送」变成「连接」。
    * 事件由主进程通过 ws:event 推回来，这里只按连接 id 过滤后追加到日志。

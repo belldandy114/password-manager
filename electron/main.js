@@ -544,6 +544,9 @@ const DEFAULT_SETTINGS = {
   lastPage: 'passwordManager',
   zentaoNotify: false,
   zentaoNotifyInterval: 10,
+  // 超期未动提醒（待验证 / 待处理挂太久）
+  zentaoStaleOn: false,
+  zentaoStaleDays: 3,
   // 环境巡检定时执行（分钟，0 = 关）；只在状态翻转时弹通知
   envProbeInterval: 0,
   envProbeNotifyOnFlip: true,

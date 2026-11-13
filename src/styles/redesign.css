@@ -4093,3 +4093,850 @@ html.pin-window #root {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* =============================================================
+   工具箱 · 日志分析（2026-11-13）
+   聚类列表：一行一类，点开看堆栈。次数用等宽字，级别用描边胶囊，
+   深浅两套主题共用一个写法，不做底色填充。
+   ============================================================= */
+
+.log-input {
+  min-height: 420px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+}
+
+/* 日志分析的两栏：右侧要放「次数 + 级别 + 时间范围」，1:1 会把它挤成竖排 */
+.log-panes {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 1.18fr);
+}
+
+.log-panes .tb-block-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.log-panes .tb-block-title {
+  flex: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .log-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.log-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-stats {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  min-width: 0;
+}
+
+.log-stat-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.log-stat-warn {
+  color: var(--warn);
+}
+
+.log-empty {
+  padding: 16px 2px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+}
+
+.log-empty ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.log-empty code {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.log-item {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.log-item-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-1);
+}
+
+.log-item-head:hover {
+  background: var(--surface-3);
+}
+
+.log-item-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.log-count {
+  flex: none;
+  min-width: 38px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.log-lv {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+.log-lv.is-bad { color: var(--bad); }
+.log-lv.is-warn { color: var(--warn); }
+.log-lv.is-info { color: var(--info); }
+.log-lv.is-mute { color: var(--text-3); }
+
+.log-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.log-when {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.log-caret {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.log-detail {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.log-pre {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--surface-0);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-stack {
+  color: var(--text-3);
+}
+
+.log-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* 访问日志（Nginx / Apache）视图 */
+.log-stat-ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.log-item-head.is-static {
+  cursor: default;
+}
+
+.log-item-head.is-static:hover {
+  background: none;
+}
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.log-table td {
+  padding: 3px 4px;
+  font-size: var(--fs-xs);
+  vertical-align: top;
+}
+
+.log-path {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.log-num {
+  width: 54px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.log-num.is-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.log-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.log-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.log-slow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px dashed var(--line-subtle);
+}
+
+.log-slow:first-child {
+  border-top: 0;
+}
+
+/* ===== 命令面板 · 粘贴识别提示（2026-11-13）===== */
+/* 复用 .cmdk-syntax 的排版，只把「已识别为 X」的结果标成成功色，与语法高亮区分开 */
+.cmdk-paste b {
+  color: var(--ok);
+  background: transparent;
+  padding: 0;
+}
+
+.cmdk-paste-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+/* =============================================================
+   缺陷热力图 · 模块 × 周（2026-11-13）
+   格子用 accent 的透明叠加做深浅：空值走 surface-3，
+   1 档直接用既有的 --accent-soft，2 档以上用 color-mix。
+   ============================================================= */
+
+.zt-heat {
+  padding: 0 0 4px;
+}
+
+.zt-heat-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+}
+
+.zt-heat-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.zt-heat-seg {
+  padding: 4px 10px;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.zt-heat-seg.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.zt-heat-spacer {
+  flex: 1;
+}
+
+.zt-heat-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.zt-heat-inline select {
+  height: 28px;
+  padding: 0 26px 0 8px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+}
+
+.zt-heat-sum {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.zt-heat-sum b {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.zt-heat-sum em {
+  font-style: normal;
+}
+
+.zt-heat-scroll {
+  overflow-x: auto;
+  padding: 0 16px 8px;
+}
+
+.zt-heat-table {
+  border-collapse: separate;
+  border-spacing: 3px;
+}
+
+.zt-heat-table th {
+  padding: 2px 4px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.zt-heat-table thead th {
+  text-align: center;
+}
+
+.zt-heat-mod {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  /* 选到 52 / 104 周时横向滚动，左侧模块名必须钉住，否则滚两屏就不知道在看哪一行 */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface-2);
+}
+
+.zt-heat-table thead .zt-heat-mod {
+  z-index: 2;
+}
+
+.zt-heat-total {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.zt-heat-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-1);
+}
+
+.zt-heat-cell.is-0 {
+  background: var(--surface-3);
+}
+
+.zt-heat-cell.is-1 {
+  background: var(--accent-soft);
+}
+
+.zt-heat-cell.is-2 {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.zt-heat-cell.is-3 {
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+  color: #fff;
+}
+
+.zt-heat-cell.is-4 {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: #fff;
+}
+
+.zt-heat-cell.is-5 {
+  background: var(--accent);
+  color: #fff;
+}
+
+.zt-heat-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 16px 12px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 定时任务卡片里第二行控件（超期提醒这类附加开关） */
+.task-controls-sub {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.task-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* =============================================================
+   提醒中心（2026-11-13）
+   实时聚合，不做历史：每条都是「现在能去处理的一件事」。
+   ============================================================= */
+
+.notice-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px 4px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.notice-sub {
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 58vh;
+  overflow-y: auto;
+}
+
+.notice-group-head {
+  margin-bottom: 4px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.notice-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.notice-item:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.notice-item:disabled {
+  cursor: default;
+}
+
+.notice-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.notice-item.is-bad .notice-dot { background: var(--bad); }
+.notice-item.is-warn .notice-dot { background: var(--warn); }
+.notice-item.is-info .notice-dot { background: var(--info); }
+
+.notice-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notice-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+
+.notice-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.notice-foot {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* =============================================================
+   系统档案（2026-11-13）：按系统聚合账号 / 地址 / 条目
+   ============================================================= */
+
+.sys-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sys-count {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.sys-card {
+  min-width: 0;
+}
+
+.sys-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 2px;
+}
+
+.sys-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.sys-block {
+  padding: 6px 14px 10px;
+}
+
+.sys-block-head {
+  margin-bottom: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sys-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--line-subtle);
+}
+
+.sys-block-head + .sys-row {
+  border-top: 0;
+}
+
+.sys-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+.sys-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.sys-url {
+  color: var(--text-2);
+}
+
+.sys-sub {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sys-more {
+  padding-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sys-empty {
+  padding: 18px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* 系统档案 v2（列表 + 展开三列，2026-11-13）：卡片墙在 78 个系统时全是噪音 */
+.sys-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 0 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.sys-summary b {
+  margin-right: 2px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.sys-warn {
+  padding: 2px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.sys-warn:hover {
+  background: var(--surface-3);
+}
+
+.sys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sys-item {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.sys-item.is-open {
+  border-color: var(--line-strong);
+}
+
+.sys-item-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sys-item-head:hover {
+  background: var(--surface-3);
+}
+
+.sys-item-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sys-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.sys-metrics {
+  display: flex;
+  flex: none;
+  gap: 10px;
+}
+
+.sys-metric {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.sys-metric.is-zero {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.sys-caret {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.sys-item-body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+}
+
+.sys-col {
+  min-width: 0;
+  padding: 10px 14px;
+}
+
+.sys-col + .sys-col {
+  border-left: 1px solid var(--line-subtle);
+}
+
+.sys-col-head {
+  margin-bottom: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sys-col-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sys-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* =============================================================
+   钉窗右下角缩放手柄（2026-11-13）
+   无边框 + 透明窗口拖边缘命中区很窄，给一个看得见的角落。
+   ============================================================= */
+
+.pin-card {
+  position: relative;
+}
+
+.pin-grip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  opacity: 0.45;
+  border-bottom-right-radius: var(--r-md);
+  /* 三道斜线的经典缩放手柄，不依赖图标字体 */
+  background:
+    linear-gradient(135deg, transparent 46%, var(--text-3) 46%, var(--text-3) 54%, transparent 54%),
+    linear-gradient(135deg, transparent 66%, var(--text-3) 66%, var(--text-3) 74%, transparent 74%);
+}
+
+/* 「按系统」视图的分组标题：沿用 env-section-header 的间距，只把名字写成主文字色 */
+.sysview-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  margin-right: 4px;
+}
+

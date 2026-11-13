@@ -23,9 +23,10 @@ const SignTool = lazy(() => import('../components/toolbox/SecTools').then(m => (
 const TimelineTool = lazy(() => import('../components/toolbox/MiscTools').then(m => ({ default: m.TimelineTool })));
 const MediaTool = lazy(() => import('../components/toolbox/MiscTools').then(m => ({ default: m.MediaTool })));
 const RedactTool = lazy(() => import('../components/toolbox/RedactTool').then(m => ({ default: m.RedactTool })));
+const LogTool = lazy(() => import('../components/toolbox/LogTool').then(m => ({ default: m.LogTool })));
 
 type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonRepair' | 'jsonExtract' | 'aes' | 'cron' | 'timezone' | 'urlParams' | 'diff' | 'validate'
-  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media' | 'redact';
+  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media' | 'redact' | 'log';
 
 interface ToolDef { id: ToolId; label: string; icon: React.ReactNode; desc: string }
 
@@ -56,6 +57,7 @@ const TOOL_GROUPS: Array<{ title: string; tools: ToolDef[] }> = [
       { id: 'regex', label: '正则测试', icon: <Icons.search size={13} />, desc: '实时匹配高亮，支持全局/忽略大小写/多行与替换预览' },
       { id: 'regexExtract', label: '正则提取', icon: <Icons.list size={13} />, desc: '按正则批量抽取内容，可只取分组、去重、拼成 JSON' },
       { id: 'diff', label: '文本对比', icon: <Icons.list size={13} />, desc: '两段文本逐行差异，可忽略空白/大小写' },
+      { id: 'log', label: '日志分析', icon: <Icons.list size={13} />, desc: '按异常聚类，给出次数、首末时间与折叠堆栈' },
     ],
   },
   {
@@ -1499,7 +1501,8 @@ export function Toolbox() {
       case 'sign': return <SignTool />;
       case 'timeline': return <TimelineTool />;
       case 'media': return <MediaTool />;
-    case 'redact': return <RedactTool />;
+      case 'redact': return <RedactTool />;
+      case 'log': return <LogTool />;
       default: return null;
     }
   };

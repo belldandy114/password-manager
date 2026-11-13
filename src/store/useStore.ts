@@ -42,6 +42,14 @@ interface AppState {
    * 既不好读也不好截断，这里直接传数组，接口调试页消费后清空。
    */
   apiBodySeed: { values: string[]; at: number } | null;
+  /**
+   * 「命令面板粘贴 JSON」的原文种子。
+   * 和 apiBodySeed 的区别：那边是结构化数组、要重新序列化成 JSON；
+   * 这里粘贴进来的本来就是一段 JSON 文本，原样填进去才对（再序列化会变成带转义的字符串）。
+   */
+  apiBodyText: { text: string; at: number } | null;
+  /** 「命令面板粘贴 SQL」的片段草稿正文 */
+  snippetSeed: { text: string; at: number } | null;
 
   // Actions
   signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
@@ -49,6 +57,10 @@ interface AppState {
   /** 把生成的数据交给接口调试页填进请求体 */
   seedApiBody: (values: string[]) => void;
   consumeApiBodySeed: () => void;
+  seedApiBodyText: (text: string) => void;
+  consumeApiBodyText: () => void;
+  seedSnippet: (text: string) => void;
+  consumeSnippetSeed: () => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
   openToolboxTool: (tool: string, text?: string) => void;
@@ -122,6 +134,8 @@ export const useStore = create<AppState>((set, get) => ({
   newEntrySeed: null,
   cmdSignal: null,
   apiBodySeed: null,
+  apiBodyText: null,
+  snippetSeed: null,
   toolboxIntent: null,
   navigateTo: null,
   pmSubPage: 'dashboard',
@@ -155,6 +169,8 @@ export const useStore = create<AppState>((set, get) => ({
     lastPage: 'passwordManager',
     zentaoNotify: false,
     zentaoNotifyInterval: 10,
+    zentaoStaleOn: false,
+    zentaoStaleDays: 3,
     envProbeInterval: 0,
     envProbeNotifyOnFlip: true,
     backupKeep: 7,
@@ -179,6 +195,10 @@ export const useStore = create<AppState>((set, get) => ({
   signalCmd: (kind) => set({ cmdSignal: { kind, at: Date.now() } }),
   seedApiBody: (values) => set({ apiBodySeed: { values, at: Date.now() } }),
   consumeApiBodySeed: () => set({ apiBodySeed: null }),
+  seedApiBodyText: (text) => set({ apiBodyText: { text, at: Date.now() } }),
+  consumeApiBodyText: () => set({ apiBodyText: null }),
+  seedSnippet: (text) => set({ snippetSeed: { text, at: Date.now() } }),
+  consumeSnippetSeed: () => set({ snippetSeed: null }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),
   requestNavigate: (page) => set({ navigateTo: page }),

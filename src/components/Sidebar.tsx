@@ -2,13 +2,15 @@ import React, { useEffect, useState } from 'react';
 import {
   IconFileText, IconUser, IconCalendarStats, IconClipboardCheck, IconDatabase,
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
-  IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto,
+  IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell,
 } from '@tabler/icons-react';
 
 interface Props {
   currentPage: string;
   onNavigate: (page: string) => void;
   onLock: () => void;
+  /** 打开「提醒」面板（超期缺陷 / 不可达环境 / 久未备份） */
+  onNotices: () => void;
 }
 
 interface NavItem {
@@ -19,7 +21,7 @@ interface NavItem {
 
 
 
-export function Sidebar({ currentPage, onNavigate, onLock }: Props) {
+export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
   /** 侧栏项是 div：补按钮语义 + Enter/Space，键盘才能切页面 */
   const navKey = (fn: () => void) => (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
@@ -102,6 +104,18 @@ export function Sidebar({ currentPage, onNavigate, onLock }: Props) {
       {/* System zone - bottom */}
       <div className="sidebar-system">
         <div
+          className="nav-item"
+          role="button"
+          tabIndex={0}
+          onClick={onNotices}
+          onKeyDown={navKey(onNotices)}
+          title="提醒：超期缺陷 / 不可达环境 / 久未备份"
+        >
+          {bellIcon}
+          <span>提醒</span>
+          {unread > 0 && <span className="nav-dot">{unread > 99 ? '99+' : unread}</span>}
+        </div>
+        <div
           className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}
           role="button"
           tabIndex={0}
@@ -143,6 +157,7 @@ const terminalIcon = nav(IconTerminal2);
 const apiIcon = nav(IconApi);
 const settingsIcon = nav(IconSettings);
 const lockIcon = nav(IconLock);
+const bellIcon = nav(IconBell);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -162,13 +177,20 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
-    title: '工具',
+    // 原来统称「工具」，5 项挤在一起没有共同点：接口调试/压测是「对外发请求」，
+    // 代码调试/造数/小工具是「自己手边的辅助」，按这个界拆开。
+    title: '接口与压测',
     items: [
-      { id: 'dataGenerator', label: '测试数据', icon: dataGenIcon },
-      { id: 'toolbox', label: '工具箱', icon: toolboxIcon },
       { id: 'apiClient', label: '接口调试', icon: apiIcon },
       { id: 'perfTest', label: '压力测试', icon: chartIcon },
+    ],
+  },
+  {
+    title: '开发辅助',
+    items: [
       { id: 'codeLab', label: '代码调试', icon: terminalIcon },
+      { id: 'dataGenerator', label: '测试数据', icon: dataGenIcon },
+      { id: 'toolbox', label: '工具箱', icon: toolboxIcon },
     ],
   },
 ];

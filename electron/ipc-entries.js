@@ -290,6 +290,8 @@ function registerEntriesIpc(deps) {
       lastPage: s.lastPage || defaultSettings.lastPage,
       zentaoNotify: !!s.zentaoNotify,
       zentaoNotifyInterval: Number(s.zentaoNotifyInterval) || defaultSettings.zentaoNotifyInterval,
+      zentaoStaleOn: !!s.zentaoStaleOn,
+      zentaoStaleDays: Math.max(1, Math.min(60, Number(s.zentaoStaleDays) || defaultSettings.zentaoStaleDays)),
       // 多套禅道配置里「当前用哪套」：主进程的定时提醒也要跟着它走
       zentaoActiveId: String(s.zentaoActiveId || 'zentao'),
       backupKeep: Math.min(60, Math.max(1, Number(s.backupKeep) || defaultSettings.backupKeep)),
@@ -308,7 +310,9 @@ function registerEntriesIpc(deps) {
     // Keep the tray icon in sync: create it as soon as a tray behaviour is enabled,
     // remove it when both are off so the user is not left with a stray icon.
     if (prefs && (Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotify')
-      || Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotifyInterval'))) {
+      || Object.prototype.hasOwnProperty.call(prefs, 'zentaoNotifyInterval')
+      // 只开「超期提醒」也要把定时器拉起来，否则勾了等于没勾
+      || Object.prototype.hasOwnProperty.call(prefs, 'zentaoStaleOn'))) {
       try { ztRestartNotify(); } catch { /* 忽略 */ }
     }
     if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'updateCheckIntervalHours')) {

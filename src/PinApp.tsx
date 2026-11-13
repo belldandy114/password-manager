@@ -31,6 +31,23 @@ export function PinApp() {
     if (!id) { setError('这个小窗没有指定内容'); return; }
     try {
       if (kind === 'note') {
+        // 目录模式：笔记是磁盘上的 .md，不在加密库；id 用 `dir::文件名` 区分
+        if (id.startsWith('dir::')) {
+          const name = id.slice(5);
+          const dir = localStorage.getItem('pm.notes.dir') || '';
+          if (!dir) { setError('笔记目录未设置，请在笔记页重新选一次目录'); setNote(null); return; }
+          const fr = await window.electronAPI.notesRead(dir, name);
+          if (!fr.success || !fr.data) { setError(fr.error || '读取笔记失败'); setNote(null); return; }
+          setError('');
+          setNote({
+            id,
+            title: name.replace(/\.md$/i, ''),
+            content: fr.data.content || '',
+            tags: [],
+            updatedAt: '',
+          } as Note);
+          return;
+        }
         const r = await window.electronAPI.wsGet('notes');
         if (!r.success) { setError('密码库未解锁'); return; }
         const list = (r.data as Note[]) || [];
@@ -169,8 +186,35 @@ export function PinApp() {
       <div className="pin-foot">
         {hint || (kind === 'note'
           ? <button type="button" className="pin-foot-btn" onClick={() => void copy(note?.content || '', '正文')}>复制正文</button>
-          : '拖动标题栏移动 · 关掉主窗口不会关掉它')}
+          : '拖标题栏移动 · 拖右下角改大小')}
       </div>
+
+      {/* 无边框透明窗口拖边缘的命中区太窄，放一个显式手柄 */}
+      <div
+        className="pin-grip"
+        role="separator"
+        aria-label="拖动调整小窗大小"
+        title="拖动调整大小"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const startX = e.screenX;
+          const startY = e.screenY;
+          const startW = window.innerWidth;
+          const startH = window.innerHeight;
+          const onMove = (ev: MouseEvent) => {
+            void window.electronAPI.pinResize({
+              w: startW + (ev.screenX - startX),
+              h: startH + (ev.screenY - startY),
+            });
+          };
+          const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+          };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+      />
     </div>
   );
 }

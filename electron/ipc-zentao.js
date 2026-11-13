@@ -673,6 +673,14 @@ let ztNotifyBusy = false;
 let ztSeenIds = null;
 /** 未读数（侧边栏红点）：新 Bug 累加，打开禅道页清零 */
 let ztUnread = 0;
+/**
+ * 每条 Bug 的状态快照：`{ [id]: { status, resolution, since, firstSeen } }`。
+ * `since` = 进入当前状态的时间。禅道 REST 不给「最后修改时间」，
+ * 所以「挂了多久没动」只能靠本地这份快照推算 —— 这是超期提醒的基础。
+ */
+let ztMeta = null;
+/** 已经提醒过的超期：`{ [id]: { status, at } }`，同一状态只提醒一次，状态变了自然重置 */
+let ztAlerted = null;
 
 const ztNotifyStateFile = () => path.join(DATA_DIR, 'zentao-notify-state.json');
 
@@ -682,8 +690,12 @@ function ztLoadSeen() {
     const j = JSON.parse(fs.readFileSync(ztNotifyStateFile(), 'utf8'));
     ztSeenIds = new Set(Array.isArray(j.ids) ? j.ids.map(String) : []);
     ztUnread = Number(j.unread) || 0;
+    ztMeta = (j.meta && typeof j.meta === 'object') ? j.meta : {};
+    ztAlerted = (j.alerted && typeof j.alerted === 'object') ? j.alerted : {};
   } catch {
     ztSeenIds = new Set();
+    ztMeta = {};
+    ztAlerted = {};
   }
   return ztSeenIds;
 }
@@ -691,7 +703,11 @@ function ztLoadSeen() {
 function ztSaveSeen() {
   try {
     fs.writeFileSync(ztNotifyStateFile(), JSON.stringify({
-      ids: [...(ztSeenIds || [])], unread: ztUnread, at: new Date().toISOString(),
+      ids: [...(ztSeenIds || [])],
+      unread: ztUnread,
+      at: new Date().toISOString(),
+      meta: ztMeta || {},
+      alerted: ztAlerted || {},
     }), 'utf8');
   } catch { /* 忽略 */ }
 }
@@ -733,10 +749,73 @@ function ztCfgFromVault() {
 /** 最近一次提醒检查的结果（设置页展示，避免「开了但不知道有没有跑」） */
 let ztLastCheck = null;
 
+/**
+ * 更新状态快照并算出超期清单。
+ *
+ * 关键是 `since`：进入当前状态的时间。首次见到某条 Bug 时直接设为现在，
+ * 不给它算超期 —— 否则打开功能的第一天满屏都是「超期 30 天」的旧账。
+ */
+function ztUpdateMetaAndStale(list, staleDays) {
+  ztLoadSeen();
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const meta = ztMeta || {};
+  const keep = new Set();
+  const stale = { verify: [], handle: [] };
+
+  (list || []).forEach((b) => {
+    const key = String(b.id);
+    keep.add(key);
+    const status = String(b.status || '');
+    const resolution = String(b.resolution || '');
+    const prev = meta[key];
+    if (!prev) {
+      meta[key] = { status, resolution, since: nowIso, firstSeen: nowIso };
+      return;
+    }
+    if (prev.status !== status || prev.resolution !== resolution) {
+      meta[key] = { ...prev, status, resolution, since: nowIso };
+      return;
+    }
+    if (status === 'closed' || !prev.since) return;
+    const days = Math.floor((nowMs - Date.parse(prev.since)) / 86400000);
+    if (!Number.isFinite(days) || days < staleDays) return;
+    const row = { id: key, title: String(b.title || ''), days, status };
+    if (status === 'resolved' || resolution) stale.verify.push(row);
+    else if (status === 'active') stale.handle.push(row);
+  });
+
+  // 只保留当前还在列表里的条目，避免状态文件无限增长
+  Object.keys(meta).forEach((k) => { if (!keep.has(k)) delete meta[k]; });
+  const alerted = ztAlerted || {};
+  Object.keys(alerted).forEach((k) => { if (!keep.has(k)) delete alerted[k]; });
+
+  ztMeta = meta;
+  return stale;
+}
+
+/** 挑出「这次值得弹通知」的：同一状态只提醒一次，状态变了自然重置 */
+function ztPickFreshStale(stale) {
+  ztLoadSeen();
+  const alerted = ztAlerted || {};
+  const pick = (arr) => (arr || []).filter((row) => {
+    const a = alerted[row.id];
+    if (a && a.status === row.status) return false;
+    alerted[row.id] = { status: row.status, at: new Date().toISOString() };
+    return true;
+  });
+  const verify = pick(stale.verify);
+  const handle = pick(stale.handle);
+  ztAlerted = alerted;
+  return { verify, handle };
+}
+
 async function ztCheckNewBugs() {
   if (ztNotifyBusy || !getPassword()) return;
   const settings = loadSettings() || {};
-  if (!settings.zentaoNotify) return;
+  // 超期提醒也挂在这条检查上：只开「超期提醒」、没开「新 Bug 提醒」时同样要跑，
+  // 否则用户勾了超期却永远收不到（早期版本就是这个坑）。
+  if (!settings.zentaoNotify && !settings.zentaoStaleOn) return;
   const cfg = ztCfgFromVault();
   if (!cfg) {
     ztLastCheck = { at: new Date().toISOString(), ok: false, error: '还没在禅道页保存账号密码' };
@@ -753,6 +832,30 @@ async function ztCheckNewBugs() {
     const seen = ztLoadSeen();
     const isFirstRun = seen.size === 0;
     const fresh = r.data.filter(b => !seen.has(String(b.id)));
+
+    // 状态快照始终更新（不然刚打开开关那天没有基线），但不一定提醒
+    const staleDays = Math.max(1, Number(settings.zentaoStaleDays) || 3);
+    const stale = ztUpdateMetaAndStale(r.data, staleDays);
+    const staleAlert = settings.zentaoStaleOn ? ztPickFreshStale(stale) : { verify: [], handle: [] };
+    if (settings.zentaoStaleOn && (staleAlert.verify.length || staleAlert.handle.length)) {
+      const parts = [];
+      if (staleAlert.verify.length) parts.push(`待验证超 ${staleDays} 天 ${staleAlert.verify.length} 个`);
+      if (staleAlert.handle.length) parts.push(`待处理超 ${staleDays} 天 ${staleAlert.handle.length} 个`);
+      const first = [...staleAlert.verify, ...staleAlert.handle][0];
+      const body = `${parts.join(' · ')}\n举例：#${first.id} ${first.title}（已 ${first.days} 天）`;
+      try {
+        const n = new Notification({ title: '禅道：有缺陷超期未动', body });
+        n.on('click', () => {
+          if (getMainWindow() && !getMainWindow().isDestroyed()) {
+            getMainWindow().show();
+            getMainWindow().focus();
+            getMainWindow().webContents.send('zentao:open');
+          }
+        });
+        n.show();
+      } catch { /* 系统不支持通知时忽略 */ }
+    }
+
     // 首次只记录基线，不弹一堆通知
     if (!isFirstRun && fresh.length > 0) {
       const body = fresh.slice(0, 3).map(b => `#${b.id} ${b.title}`).join('\n')
@@ -774,7 +877,17 @@ async function ztCheckNewBugs() {
       ztSaveSeen();
       ztPushUnread();
     }
-    ztLastCheck = { at: new Date().toISOString(), ok: true, total: r.data.length, fresh: fresh.length };
+    ztLastCheck = {
+      at: new Date().toISOString(), ok: true, total: r.data.length, fresh: fresh.length,
+      staleDays,
+      stale: { verify: stale.verify.length, handle: stale.handle.length },
+      // 明细给「通知中心」用：截断到 20 条，避免状态对象无限大
+      staleRows: {
+        verify: stale.verify.slice(0, 20),
+        handle: stale.handle.slice(0, 20),
+      },
+      staleOn: !!settings.zentaoStaleOn,
+    };
     ztSeenIds = ids;
     ztSaveSeen();
   } catch { /* 提醒失败不打扰用户 */ } finally {
@@ -789,7 +902,7 @@ function ztRestartNotify() {
     ztNotifyTimer = null;
   }
   const settings = loadSettings() || {};
-  if (!settings.zentaoNotify || !getPassword()) return;
+  if ((!settings.zentaoNotify && !settings.zentaoStaleOn) || !getPassword()) return;
   const min = Math.max(2, Number(settings.zentaoNotifyInterval) || 10);
   ztNotifyTimer = setInterval(ztCheckNewBugs, min * 60 * 1000);
   setTimeout(ztCheckNewBugs, 8000);
@@ -811,6 +924,8 @@ ipcMain.handle('zentao:notify-status', () => {
       configured: !!cfg,
       unlocked: !!getPassword(),
       lastCheck: ztLastCheck,
+      staleOn: !!settings.zentaoStaleOn,
+      staleDays: Math.max(1, Number(settings.zentaoStaleDays) || 3),
     },
   };
 });

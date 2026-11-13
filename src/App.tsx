@@ -3,6 +3,7 @@ import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
+import { NoticeCenter } from './components/NoticeCenter';
 import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
 import { guessUrlFromInput } from './utils/urlInput';
@@ -39,6 +40,7 @@ function App() {
   const setPmSubPage = useStore(s => s.setPmSubPage);
   const [currentPage, setCurrentPage] = useState('passwordManager');
   const [cmdkOpen, setCmdkOpen] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const lastActivityRef = useRef(Date.now());
   // 锁定时会把页面切回主页，那次切换不应该覆盖「上次停留页面」
@@ -346,6 +348,19 @@ function App() {
         case 'request': setCurrentPage('apiClient'); st.signalCmd(`api:open:${arg}`); break;
         case 'checklist': setCurrentPage('checklists'); break;
         case 'env': setCurrentPage('environments'); break;
+        case 'paste':
+          // 快速搜索小窗里粘贴后的动作：原文经 item.text 带过来，这里落到对应页面
+          if (arg === 'sql') { setCurrentPage('snippets'); st.seedSnippet(String(item.text || '')); }
+          else if (arg === 'json') { setCurrentPage('apiClient'); st.seedApiBodyText(String(item.text || '')); }
+          else if (arg === 'log' || arg === 'accesslog') { st.openToolboxTool('log', String(item.text || '')); setCurrentPage('toolbox'); }
+          else if (arg === 'jwt') { st.openToolboxTool('jwt', String(item.text || '')); setCurrentPage('toolbox'); }
+          else if (arg === 'url') {
+            const guess = guessUrlFromInput(String(item.text || item.title || ''));
+            setCurrentPage('passwordManager');
+            st.setPmSubPage('dashboard');
+            st.signalNewEntry(guess ? { url: guess.url, name: guess.name } : { url: String(item.text || '') });
+          }
+          break;
         case 'action':
           if (arg === 'new-entry') { setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.signalNewEntry(); }
           else if (arg === 'new-entry-url') {
@@ -450,7 +465,8 @@ function App() {
       >
         跳到主内容
       </a>
-      <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} />
+      <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} onNotices={() => setNoticeOpen(true)} />
+      <NoticeCenter open={noticeOpen} onClose={() => setNoticeOpen(false)} onNavigate={setCurrentPage} />
       <CommandPalette
         open={cmdkOpen}
         onClose={() => setCmdkOpen(false)}

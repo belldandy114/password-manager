@@ -14,6 +14,7 @@ import { isSensitiveLabel } from '../utils/clipboard';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { isPinyinReady, onPinyinReady } from '../utils/search';
 import { getRecentEntries } from '../utils/recent';
+import { systemOfEntryName } from '../utils/systemGroups';
 
 export function Dashboard() {
   const store = useStore();
@@ -90,6 +91,18 @@ export function Dashboard() {
   const groupedEntries = filteredEntries.reduce<Record<string, PasswordEntry[]>>((acc, e) => {
     if (!acc[e.envType]) acc[e.envType] = [];
     acc[e.envType].push(e);
+    return acc;
+  }, {});
+
+  /**
+   * 按系统分组：`合同管理系统-测试` 与 `合同管理系统-正式` 归到「合同管理系统」下。
+   * 用的就是各条目自己的名字，不去跨「测试账号 / 环境矩阵」取数 —— 那部分在各自页面看，
+   * 放进来只会和网址管理重复。
+   */
+  const groupedBySystem = filteredEntries.reduce<Record<string, PasswordEntry[]>>((acc, e) => {
+    const key = systemOfEntryName(e.name) || '未命名';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(e);
     return acc;
   }, {});
 
@@ -403,8 +416,22 @@ export function Dashboard() {
             {riskCount > 0 && <span className="security-badge">{riskCount}</span>}
           </button>
 
-          <button className="view-toggle-btn" onClick={() => store.setViewMode(store.viewMode === 'card' ? 'list' : 'card')} title={store.viewMode === 'card' ? '切换列表视图' : '切换卡片视图'}>
-            {store.viewMode === 'card' ? (
+          <button
+            className="view-toggle-btn"
+            onClick={() => store.setViewMode(store.viewMode === 'card' ? 'list' : store.viewMode === 'list' ? 'system' : 'card')}
+            title={
+              store.viewMode === 'card' ? '当前：卡片 · 点击切到列表'
+                : store.viewMode === 'list' ? '当前：列表 · 点击切到按系统'
+                  : '当前：按系统 · 点击切回卡片'
+            }
+            aria-label="切换视图（卡片 / 列表 / 按系统）"
+          >
+            {store.viewMode === 'system' ? (
+              // 分组：上面两个小块 + 下面一条长的
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="4" width="7" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/>
+              </svg>
+            ) : store.viewMode === 'card' ? (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
               </svg>
@@ -570,6 +597,55 @@ export function Dashboard() {
                   {!isCollapsed && (
                     <div className="entry-grid">
                       {entries.map(entry => (
+                        <EntryCard key={entry.id} entry={entry}
+                          security={securityFlags[entry.id]}
+                          onToggleFavorite={handleToggleFavorite}
+                          onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
+                          onCopy={handleCopy}
+                          onOpen={handleOpenUrl} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
+          {filteredEntries.length > visibleLimit && (
+            <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
+          )}
+          </>
+        ) : store.viewMode === 'system' ? (
+          // 按系统视图：同名条目（-测试 / -正式）并到一组，分组头显示系统名与条数
+          <>
+          {(() => {
+            let budget = visibleLimit;
+            const groups = Object.entries(groupedBySystem)
+              .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], 'zh-CN'))
+              .map(([name, list]) => {
+                const take = Math.max(0, Math.min(list.length, budget));
+                budget -= take;
+                return [name, list.slice(0, take), list.length] as const;
+              })
+              .filter(([, list]) => list.length > 0);
+            return groups.map(([name, list, total]) => {
+              const key = `sys:${name}`;
+              const isCollapsed = collapsedEnvs.has(key);
+              return (
+                <div key={key}>
+                  <div
+                    className="env-section-header"
+                    onClick={() => toggleEnvCollapse(key)}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                  >
+                    <span className="env-collapse-icon" style={{ fontSize: 10, marginRight: 4, color: 'var(--text-muted)', transition: 'transform 0.15s' }}>
+                      {isCollapsed ? '▶' : '▼'}
+                    </span>
+                    <span className="sysview-name">{name}</span>
+                    <span className="count">({total})</span>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="entry-grid">
+                      {list.map(entry => (
                         <EntryCard key={entry.id} entry={entry}
                           security={securityFlags[entry.id]}
                           onToggleFavorite={handleToggleFavorite}

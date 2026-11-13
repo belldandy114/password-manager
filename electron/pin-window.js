@@ -119,6 +119,25 @@ function createPinManager(deps) {
       }
       return { success: false, error: '没有对应的小窗' };
     });
+
+    // 右下角拖拽缩放：frameless + transparent 的窗口拖边缘命中区很窄，
+    // 渲染层放一个可见的手柄，尺寸由这里统一 setBounds（透明窗 setSize 会被忽略）
+    ipcMain.handle('pin:resize', (event, payload) => {
+      const { w, h } = payload || {};
+      for (const [, win] of wins) {
+        if (!win.isDestroyed() && win.webContents === event.sender) {
+          const b = win.getBounds();
+          win.setBounds({
+            x: b.x,
+            y: b.y,
+            width: Math.max(260, Math.min(1200, Math.round(Number(w) || b.width))),
+            height: Math.max(140, Math.min(1000, Math.round(Number(h) || b.height))),
+          });
+          return { success: true };
+        }
+      }
+      return { success: false, error: '没有对应的小窗' };
+    });
     ipcMain.handle('pin:close-all', () => { closeAll(); return { success: true }; });
     ipcMain.handle('pin:count', () => ({ success: true, data: wins.size }));
   }

@@ -356,6 +356,10 @@ export function Notes() {
                   <div className="card2-head">
                     <div className="card2-title" title={titleOf(f.name)}>{titleOf(f.name)}</div>
                     <div className="card2-actions" onClick={e => e.stopPropagation()}>
+                      <IconBtn
+                        title="钉成小窗（浮在桌面上照着做）"
+                        onClick={() => { void window.electronAPI.pinOpen({ id: `dir::${f.name}`, kind: 'note' }); }}
+                      ><Icons.pin size={13} /></IconBtn>
                       <IconBtn title="编辑" onClick={() => editDirNote(f)}><Icons.pencil size={13} /></IconBtn>
                       <IconBtn
                         title="删除（进回收站）"
@@ -413,7 +417,7 @@ export function Notes() {
                     <IconBtn
                       title="钉成小窗（浮在桌面上照着做）"
                       onClick={() => { void window.electronAPI.pinOpen({ id: n.id, kind: 'note' }); }}
-                    ><Icons.link size={13} /></IconBtn>
+                    ><Icons.pin size={13} /></IconBtn>
                     <IconBtn title="编辑" onClick={() => setEditing(n)}><Icons.pencil size={13} /></IconBtn>
                     <IconBtn
                       title="删除"

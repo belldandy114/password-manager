@@ -1038,3 +1038,117 @@ export function dailyReportText(list: ReportInput[], at: string): string {
   const body = list.map((r, i) => (list.length === 1 ? reportParaOf(r, at) : `${i + 1}. ${r.name}\n${reportParaOf(r, at)}`));
   return [title, '', ...body].join('\n');
 }
+
+/* ============================ 模块 × 周 热力图（2026-11-13） ============================ */
+
+export interface HeatRow {
+  /** 模块短名（完整路径的最后一段） */
+  module: string;
+  /** 每一周的数量，下标与 weeks 对齐 */
+  counts: number[];
+  total: number;
+}
+
+export interface Heatmap {
+  /** 周标签：该周周一的日期（YYYY-MM-DD），从旧到新 */
+  weeks: string[];
+  rows: HeatRow[];
+  /** 单格最大值，用于着色分档 */
+  max: number;
+  /** 被合并进「其他」的模块数 */
+  mergedModules: number;
+}
+
+const MODULE_SEP = /\s*\/\s*/;
+
+/** 模块路径取最后一段：`内控管理/资产管理/添置资产` → `添置资产` */
+export function shortModuleName(full: string): string {
+  const parts = String(full || '').split(MODULE_SEP).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '未指定模块';
+}
+
+/** 某天所在周的周一（周一为一周起点，符合国内看周报的习惯） */
+export function mondayOf(day: string): string {
+  const d = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  const dow = (d.getDay() + 6) % 7;
+  return shiftDay(day, -dow);
+}
+
+/**
+ * 模块 × 周 热力图数据。
+ *
+ * 两个口径：
+ * - `onlyOpen: false`（默认）按**提交日期**分周，看「哪几周哪些模块集中爆问题」；
+ * - `onlyOpen: true` 只统计**当前仍未修复/未关闭**的缺陷，看「遗留都压在哪些模块」。
+ *
+ * 模块取完整路径的最后一段，跨项目的同名短模块会合并（与页面上「剩余最多模块」一致）。
+ */
+export function moduleWeekHeatmap(
+  bugs: ZentaoBug[],
+  opts: {
+    weeks?: number;
+    cutoffMin?: number;
+    topN?: number;
+    exclude?: Set<string>;
+    now?: Date;
+    onlyOpen?: boolean;
+  } = {},
+): Heatmap {
+  // 上限放宽到两年：看长期趋势时 26 周（半年）/ 52 周（一年）是常用档位
+  const weeks = Math.max(1, Math.min(104, opts.weeks ?? 8));
+  const cutoffMin = opts.cutoffMin ?? 0;
+  const topN = Math.max(1, opts.topN ?? 12);
+  const exclude = opts.exclude ?? new Set<string>();
+  const onlyOpen = !!opts.onlyOpen;
+  const now = opts.now ?? new Date();
+
+  const today = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const curMon = mondayOf(today) || today;
+  const weekList: string[] = [];
+  for (let i = weeks - 1; i >= 0; i -= 1) weekList.push(shiftDay(curMon, -7 * i));
+  const indexOf = new Map(weekList.map((w, i) => [w, i]));
+
+  const map = new Map<string, number[]>();
+  (bugs || []).forEach((b) => {
+    if (exclude.size && isExcluded(b, exclude)) return;
+    if (onlyOpen && (bugIsFixed(b) || bugIsClosed(b))) return;
+    const raw = String(b.openedDate || b.date || '');
+    // cutoffMin = 0 表示按自然日，不做日切点偏移（statDayOf 传 0 会把日期整体 +1 天）
+    const day = cutoffMin > 0 ? statDayOf(raw, cutoffMin) : raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    const idx = indexOf.get(mondayOf(day));
+    if (idx === undefined) return;
+    const name = shortModuleName(b.moduleName || '');
+    let arr = map.get(name);
+    if (!arr) {
+      arr = new Array(weekList.length).fill(0);
+      map.set(name, arr);
+    }
+    arr[idx] += 1;
+  });
+
+  const all = Array.from(map.entries()).map(([module, counts]) => ({
+    module,
+    counts,
+    total: counts.reduce((a, b) => a + b, 0),
+  }));
+  all.sort((a, b) => (b.total - a.total) || a.module.localeCompare(b.module, 'zh-CN'));
+
+  const rows = all.slice(0, topN);
+  const tail = all.slice(topN);
+  if (tail.length) {
+    const counts = new Array(weekList.length).fill(0);
+    tail.forEach((r) => r.counts.forEach((v, i) => { counts[i] += v; }));
+    rows.push({
+      module: `其他 ${tail.length} 个模块`,
+      counts,
+      total: counts.reduce((a, b) => a + b, 0),
+    });
+  }
+
+  let max = 0;
+  rows.forEach((r) => r.counts.forEach((v) => { if (v > max) max = v; }));
+
+  return { weeks: weekList, rows, max, mergedModules: tail.length };
+}

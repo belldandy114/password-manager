@@ -82,7 +82,7 @@ export interface AppSettings {
   updateCheckIntervalHours?: number;
   passwordAutoHideDelay: number;
   autoLockDelay: number;
-  defaultViewMode: 'card' | 'list';
+  defaultViewMode: 'card' | 'list' | 'system';
   defaultEnvFilter: string;
   theme: ThemeMode;
   /** 主题强调色 */
@@ -114,6 +114,10 @@ export interface AppSettings {
   zentaoNotify: boolean;
   /** 提醒检查间隔（分钟） */
   zentaoNotifyInterval: number;
+  /** 超期未动提醒：待验证 / 待处理挂太久时也提醒（依赖本地状态快照） */
+  zentaoStaleOn: boolean;
+  /** 超期天数阈值 */
+  zentaoStaleDays: number;
   /** 环境巡检：定时执行（分钟，0 = 关） */
   envProbeInterval: number;
   /** 环境巡检：只在可达性/耗时发生翻转时弹系统通知 */
@@ -285,7 +289,22 @@ export interface NotifyStatus {
   interval: number;
   configured: boolean;
   unlocked: boolean;
-  lastCheck: { at: string; ok: boolean; total?: number; fresh?: number; error?: string } | null;
+  lastCheck: {
+    at: string; ok: boolean; total?: number; fresh?: number; error?: string;
+    /** 超期提醒是否开启（快照里记录当次口径） */
+    staleOn?: boolean;
+    staleDays?: number;
+    /** 当次统计到的超期数：待验证 / 待处理 */
+    stale?: { verify: number; handle: number };
+    /** 超期明细（通知中心展示，主进程截断到 20 条） */
+    staleRows?: {
+      verify: Array<{ id: string; title: string; days: number; status: string }>;
+      handle: Array<{ id: string; title: string; days: number; status: string }>;
+    };
+  } | null;
+  /** 超期提醒开关与阈值（setting 项，随状态一起回给界面） */
+  staleOn?: boolean;
+  staleDays?: number;
 }
 
 /** 禅道 Bug 附件（url 是要带登录态才能取的 file-download / file-read 地址） */
@@ -548,7 +567,7 @@ export interface ApiRequest {
   updatedAt: string;
 }
 
-export type ViewMode = 'card' | 'list';
+export type ViewMode = 'card' | 'list' | 'system';
 export type SearchField = 'all' | 'name' | 'url' | 'username' | 'tags';
 /** 排序字段 */
 export type SortField = 'updatedAt' | 'createdAt' | 'name';
@@ -761,6 +780,8 @@ export interface ElectronAPI {
   pinOpen: (payload: string | { id: string; kind?: 'entry' | 'note' }) => Promise<{ success: boolean; error?: string }>;
   /** 小窗关闭自己 */
   pinClose: () => Promise<{ success: boolean; error?: string }>;
+  /** 小窗拖拽缩放：透明 frameless 窗口必须走 setBounds，setSize 会被忽略 */
+  pinResize: (payload: { w: number; h: number }) => Promise<{ success: boolean; error?: string }>;
   /** 系统通知（点击可跳转到某个页面） */
   appNotify: (payload: { title: string; body?: string; page?: string; silent?: boolean }) => Promise<{ success: boolean; error?: string }>;
   /** 主进程要求跳页（点系统通知时） */
@@ -774,7 +795,7 @@ export interface ElectronAPI {
   /** 弹出/聚焦小窗（与全局快捷键等价） */
   paletteShow: () => Promise<{ success: boolean; error?: string }>;
   /** 小窗把选中的命令交给主进程（网址带 url → 直接用默认浏览器打开） */
-  paletteRun: (item: { id: string; title?: string; url?: string }) => Promise<{ success: boolean }>;
+  paletteRun: (item: { id: string; title?: string; url?: string; text?: string }) => Promise<{ success: boolean }>;
   /** 小窗按结果条数调整自身高度 */
   paletteResize: (height: number) => Promise<{ success: boolean }>;
   /** 密码库数据版本：epoch 未变即可复用上次拼好的命令列表 */
@@ -782,7 +803,7 @@ export interface ElectronAPI {
   /** 小窗里未解锁：让主窗口出来解锁 */
   paletteUnlock: () => Promise<{ success: boolean }>;
   /** 主窗口接收小窗转发的命令 */
-  onPaletteRun: (cb: (item: { id: string; title?: string; url?: string }) => void) => () => void;
+  onPaletteRun: (cb: (item: { id: string; title?: string; url?: string; text?: string }) => void) => () => void;
   /** 收起随手记小窗 */
   quicknoteHide: () => Promise<{ success: boolean }>;
   /** 弹出随手记小窗（与全局快捷键等价） */

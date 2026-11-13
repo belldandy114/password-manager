@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { Snippet } from '../types';
 import { useCollection } from '../hooks/useCollection';
+import { useStore } from '../store/useStore';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
@@ -16,6 +17,15 @@ export function Snippets() {
   const [tagInput, setTagInput] = useState('');
   const [toast, setToast] = useState('');
   const { ask, confirmNode } = useConfirm();
+
+  // 命令面板里粘贴一段 SQL → 直接开新建弹窗并把正文填好
+  const snippetSeed = useStore(s => s.snippetSeed);
+  const consumeSnippetSeed = useStore(s => s.consumeSnippetSeed);
+  useEffect(() => {
+    if (!snippetSeed || !snippetSeed.text.trim()) return;
+    setEditing({ ...emptySnippet(), sql: snippetSeed.text });
+    consumeSnippetSeed();
+  }, [snippetSeed, consumeSnippetSeed]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

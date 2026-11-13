@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icons } from './ui';
 import { applyTheme, applyAccent, applyDensity, watchSystemTheme } from '../utils/theme';
 import { PAGES, TOOLBOX_TOOLS, KIND_LABEL, type Kind } from './CommandPalette';
+import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
 
 interface Cmd {
   id: string;
@@ -10,6 +11,8 @@ interface Cmd {
   kind: Kind;
   /** 网址条目的 URL：选中后直接交给默认浏览器打开 */
   url?: string;
+  /** 粘贴动作要带过去的原文（小窗 → 主窗口） */
+  text?: string;
 }
 
 /** .palette-root 上下各 10px 的透明留白（给卡片阴影留空间） */
@@ -199,6 +202,13 @@ export function PaletteApp() {
     return () => document.documentElement.classList.remove('palette-root');
   }, []);
 
+  // 小窗隐藏时不会卸载，粘贴动作必须跟着清掉 —— 否则下次弹出还挂着上次那条
+  useEffect(() => {
+    const onBlur = () => { setPasteItems([]); setPasteIntent(null); };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, []);
+
   // 空查询不显示任何菜单项；输入后才出结果
   const filtered = useMemo(() => {
     const key = q.trim().toLowerCase();
@@ -208,13 +218,20 @@ export function PaletteApp() {
       .slice(0, 20);
   }, [cmds, q]);
 
-  useEffect(() => { setIdx(0); }, [q]);
+  /** 粘贴识别出的动作项（小窗里置顶，执行时把原文转发给主窗口） */
+  const [pasteItems, setPasteItems] = useState<Cmd[]>([]);
+  const [pasteIntent, setPasteIntent] = useState<PasteIntent | null>(null);
+
+  useEffect(() => { setIdx(0); setPasteItems([]); setPasteIntent(null); }, [q]);
+
+  /** 粘贴动作 + 搜索结果：动作排最前，回车默认执行第一条 */
+  const display = useMemo(() => [...pasteItems, ...filtered], [pasteItems, filtered]);
 
   const hasQuery = q.trim() !== '';
-  const noMatch = !locked && hasQuery && filtered.length === 0;
+  const noMatch = !locked && hasQuery && display.length === 0;
 
   const run = useCallback((c: Cmd) => {
-    void window.electronAPI.paletteRun({ id: c.id, title: c.title, url: c.url });
+    void window.electronAPI.paletteRun({ id: c.id, title: c.title, url: c.url, text: c.text });
     setQ('');
   }, []);
 
@@ -226,26 +243,54 @@ export function PaletteApp() {
     setQ('');
   }, [q]);
 
+  /** 识别结果 → 动作项（小窗只给一条最相关的，空间小） */
+  const buildPasteItems = (intent: PasteIntent, text: string): Cmd[] => {
+    const sub = `${intent.hint} · ${intent.preview}`.slice(0, 90);
+    const table: Record<string, { id: string; label: string }> = {
+      url: { id: 'paste:url', label: PASTE_ACTION.url },
+      sql: { id: 'paste:sql', label: PASTE_ACTION.sql },
+      json: { id: 'paste:json', label: PASTE_ACTION.json },
+      log: { id: 'paste:log', label: PASTE_ACTION.log },
+      accesslog: { id: 'paste:accesslog', label: PASTE_ACTION.accesslog },
+      jwt: { id: 'paste:jwt', label: PASTE_ACTION.jwt },
+    };
+    const hit = table[intent.kind];
+    if (!hit) return [];
+    return [{ id: hit.id, kind: 'action', title: hit.label, sub, text }];
+  };
+
+  /** 粘贴：识别成功就换成动作项；识别不出来交回默认（文本填进搜索框） */
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    if (!text.trim()) return;
+    const intent = detectPaste(text);
+    if (intent.kind === 'unknown') return;
+    e.preventDefault();
+    setPasteIntent(intent);
+    setPasteItems(buildPasteItems(intent, text));
+    setIdx(0);
+  };
+
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); void window.electronAPI.paletteHide(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(filtered.length - 1, i + 1)); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(display.length - 1, i + 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const c = filtered[idx];
+      const c = display[idx];
       if (c) run(c);
       else if (locked) void window.electronAPI.paletteUnlock();
       else createFromQuery();
     }
-  }, [filtered, idx, run, locked, createFromQuery]);
+  }, [display, idx, run, locked, createFromQuery]);
 
   // 滚动到选中项
   useEffect(() => {
     const el = listRef.current?.querySelector('.cmdk-item.is-active');
     el?.scrollIntoView({ block: 'nearest' });
-  }, [idx, filtered]);
+  }, [idx, display]);
 
-  const hasBody = locked || hasQuery;   // 有列表/提示区时才出现分隔线与底部提示
+  const hasBody = locked || hasQuery || pasteItems.length > 0;   // 有列表/提示区时才出现分隔线与底部提示
 
   return (
     <div className="palette-root">
@@ -261,6 +306,7 @@ export function PaletteApp() {
             ref={inputRef}
             value={q}
             onChange={e => setQ(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={onKeyDown}
             placeholder="搜索页面、网址、片段、笔记…"
             spellCheck={false}
@@ -279,8 +325,14 @@ export function PaletteApp() {
               </div>
             </div>
           </div>
-        ) : hasQuery ? (
+        ) : (hasQuery || pasteItems.length > 0) ? (
           <>
+            {pasteIntent && (
+              <div className="cmdk-syntax cmdk-paste">
+                <span>已识别为 {PASTE_KIND_LABEL[pasteIntent.kind]}</span>
+                <b>{pasteIntent.lines > 1 ? `${pasteIntent.lines} 行` : `${pasteIntent.chars} 字`}</b>
+              </div>
+            )}
             <div className="cmdk-list" ref={listRef}>
               {noMatch ? (
                 <div className="cmdk-empty">
@@ -297,7 +349,7 @@ export function PaletteApp() {
                     </span>
                   </button>
                 </div>
-              ) : filtered.map((c, i) => (
+              ) : display.map((c, i) => (
                 <div
                   key={c.id}
                   className={`cmdk-item${i === idx ? ' is-active' : ''}`}
@@ -312,7 +364,7 @@ export function PaletteApp() {
             </div>
             <div className="cmdk-foot">
               <span>{noMatch ? 'Enter 新建网址 · Esc 关闭' : '↑↓ 选择 · Enter 执行 · Esc 关闭'}</span>
-              <span>{noMatch ? '未收录' : `${filtered.length} 项`}</span>
+              <span>{noMatch ? '未收录' : `${display.length} 项`}</span>
             </div>
           </>
         ) : null}

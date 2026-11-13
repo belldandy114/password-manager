@@ -1,4 +1,5 @@
 import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ZentaoHeatmap } from './ZentaoHeatmap';
 import type { ZentaoConfig, ZentaoProject, ZentaoBug } from '../types';
 import { useZentaoStore } from '../store/zentaoStore';
 import { Panel, Empty, Icons, SearchBox, IconBtn, Pill } from './ui';
@@ -39,7 +40,7 @@ const COPY_FORMATS: { v: CopyFormat; label: string; hint: string }[] = [
   { v: 'csv', label: 'CSV', hint: '粘到 Excel 自动分列' },
 ];
 
-type TabId = 'proj' | 'person' | 'creator' | 'daily';
+type TabId = 'proj' | 'person' | 'creator' | 'daily' | 'heat';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const nowStamp = (d: Date = new Date()) =>
@@ -1123,6 +1124,15 @@ export function ZentaoSummary({
                 >
                   日报预览
                 </button>
+                <button
+                  role="tab"
+                  aria-selected={tab === 'heat'}
+                  className={`zt-detail-tab${tab === 'heat' ? ' is-on' : ''}`}
+                  onClick={() => setTab('heat')}
+                  title="模块 × 周：看哪几周、哪些模块集中出问题"
+                >
+                  模块热力
+                </button>
               </div>
               <div className="pnl-tools">
                 {tab === 'person' && (
@@ -1357,7 +1367,11 @@ export function ZentaoSummary({
                             <th className="num">未修复</th>
                             <th className="num">待验证</th>
                             <th className="num">已关闭</th>
-                            <th className="num" style={{ minWidth: 90 }}>修复率</th>
+                            <th
+                              className="num"
+                              style={{ minWidth: 90 }}
+                              title="修复率 = 已修复（resolution=fixed）÷ 该人提交总数。已关闭里有「重复 / 无法重现 / 设计如此」等非修复解决，不计入修复率 —— 所以修复率通常低于「已关闭 ÷ 提交」"
+                            >修复率</th>
                             <th className="num">近 7 天提交</th>
                           </tr>
                         </thead>
@@ -1388,7 +1402,10 @@ export function ZentaoSummary({
                               <td className={`cell-num${c.active ? ' is-bad' : ''}`}>{c.active}</td>
                               <td className={`cell-num${c.resolved ? ' is-warn' : ''}`}>{c.resolved}</td>
                               <td className="cell-num">{c.closed}</td>
-                              <td className="cell-num is-ok">{c.rate}%</td>
+                              <td
+                                className="cell-num is-ok"
+                                title={`${c.fixed} / ${c.total} 是「已修复」解决${c.closed > c.fixed ? `；已关闭 ${c.closed} 里有 ${c.closed - c.fixed} 个是重复/无法重现等，不算修复` : ''}`}
+                              >{c.rate}%</td>
                               <td className="cell-num">{c.recentNew || ''}</td>
                             </tr>
                           ))}
@@ -1410,6 +1427,7 @@ export function ZentaoSummary({
                       {creatorsText()}
                       <span className="zt-sum-note-sub">
                         按创建人统计，含已关闭（提过就算），不受「排除人员」影响；点任意一行可看这人提交的缺陷清单。
+                        修复率是<b>已修复 ÷ 提交总数</b>，与「已关闭 ÷ 提交」不是一回事：关门原因里还有重复、无法重现、设计如此。
                       </span>
                     </div>
                   </>
@@ -1423,6 +1441,15 @@ export function ZentaoSummary({
                     直接粘到群里 / 日报里即可。窗口按换日时间固定切分（当前 {fmtCutoff(cutoffMin)} → 次日 {fmtCutoff(cutoffMin)}）。
                   </div>
                 </div>
+              )}
+
+              {tab === 'heat' && (
+                <ZentaoHeatmap
+                  bugs={sumBugs}
+                  cutoffMin={cutoffMin}
+                  exclude={exclude}
+                  now={now}
+                />
               )}
             </div>
           </section>

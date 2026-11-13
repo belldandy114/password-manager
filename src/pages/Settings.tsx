@@ -419,6 +419,9 @@ export function Settings() {
       browserPaths,
       zentaoNotify,
       zentaoNotifyInterval: Math.max(2, Math.min(120, zentaoNotifyInterval)),
+      // 超期提醒的两项直接从 settings 读回：保存时若缺字段，主进程归一化会按默认值(false/3)覆盖
+      zentaoStaleOn: !!settings.zentaoStaleOn,
+      zentaoStaleDays: Math.max(1, Math.min(60, Number(settings.zentaoStaleDays) || 3)),
       envProbeInterval: Math.max(0, Math.min(720, envInterval)),
       envProbeNotifyOnFlip: envNotify,
       backupKeep: Math.max(1, Math.min(60, backupKeep)),
@@ -930,6 +933,7 @@ export function Settings() {
                 <select value={defaultViewMode} onChange={e => setDefaultViewMode(e.target.value as any)} aria-label="默认视图">
                   <option value="card">卡片视图</option>
                   <option value="list">列表视图</option>
+                  <option value="system">按系统视图</option>
                 </select>
               </div>
             </div>
@@ -1463,7 +1467,10 @@ export function Settings() {
                         ? `成功，${notifyStatus.lastCheck.total} 条，新增 ${notifyStatus.lastCheck.fresh ?? 0} 条`
                         : `失败：${notifyStatus.lastCheck.error || '未知原因'}`}`
                       : '还没检查过',
-                  ].join(' · ')
+                    notifyStatus.lastCheck?.stale
+                      ? `超期：待验证 ${notifyStatus.lastCheck.stale.verify} · 待处理 ${notifyStatus.lastCheck.stale.handle}`
+                      : '',
+                  ].filter(Boolean).join(' · ')
                   : '用来确认禅道配置是否可用'}
               </div>
               <div className="task-controls">
@@ -1490,6 +1497,43 @@ export function Settings() {
                 >
                   检查一次
                 </button>
+              </div>
+              <div className="task-controls task-controls-sub">
+                <label className="task-inline">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.zentaoStaleOn}
+                    onChange={async e => {
+                      const on = e.target.checked;
+                      // 必须写盘：主进程的定时检查读的是 settings.json，只更新 store 它看不到
+                      updateSettings({ zentaoStaleOn: on });
+                      await window.electronAPI.settingsSave({ zentaoStaleOn: on });
+                      addToast(on ? '已开启超期提醒' : '已关闭超期提醒', 'success');
+                    }}
+                    aria-label="启用超期未动提醒"
+                  />
+                  超期提醒
+                </label>
+                <label className="task-inline">
+                  超过
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={Number(settings.zentaoStaleDays) || 3}
+                    onChange={e => updateSettings({ zentaoStaleDays: Math.max(1, Math.min(60, Number(e.target.value) || 3)) })}
+                    onBlur={async e => {
+                      const days = Math.max(1, Math.min(60, Number(e.target.value) || 3));
+                      updateSettings({ zentaoStaleDays: days });
+                      await window.electronAPI.settingsSave({ zentaoStaleDays: days });
+                    }}
+                    aria-label="超期天数"
+                  />
+                  天没动就提醒
+                </label>
+                <span className="task-hint">
+                  待验证（已解决等我回归）与指派给我仍未处理，按本地状态快照算；同一状态只提醒一次。检查频率与上面的「间隔」一致
+                </span>
               </div>
             </div>
 

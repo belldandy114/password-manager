@@ -5,6 +5,8 @@ import { applyTheme } from '../utils/theme';
 import { guessUrlFromInput } from '../utils/urlInput';
 import { entryUseScore, pageUseScore } from '../utils/recent';
 import { parseQuery, scoreTarget } from '../utils/query';
+import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
+import { openUrlInDefaultBrowser } from '../utils/openUrl';
 
 export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code';
 
@@ -14,6 +16,8 @@ interface Cmd {
   sub?: string;
   kind: Kind;
   run: () => void;
+  /** 执行后不关闭面板（「当作搜索词」这类原地动作） */
+  keepOpen?: boolean;
   /** 页面类命令的目标页（用于按常用度排序） */
   page?: string;
   /** 条目类命令的目标条目 id（同上） */
@@ -94,11 +98,16 @@ export function CommandPalette({
   const setPmSubPage = useStore(s => s.setPmSubPage);
   const signalNewEntry = useStore(s => s.signalNewEntry);
   const signalCmd = useStore(s => s.signalCmd);
+  const seedApiBodyText = useStore(s => s.seedApiBodyText);
+  const seedSnippet = useStore(s => s.seedSnippet);
   const settings = useStore(s => s.settings);
   const updateSettings = useStore(s => s.updateSettings);
 
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
+  /** 粘贴识别出的动作项：置顶显示，回车默认执行第一条 */
+  const [pasteItems, setPasteItems] = useState<Cmd[]>([]);
+  const [pasteIntent, setPasteIntent] = useState<PasteIntent | null>(null);
   const [extra, setExtra] = useState<{
     snippets: any[]; notes: any[]; accounts: any[];
     apiRequests: any[]; checklists: any[]; environments: any[];
@@ -301,22 +310,37 @@ export function CommandPalette({
         .map(c => ({ c, s: c.kind === 'page' ? pageUseScore(c.page || '') : 0 }))
         .sort((a, b) => b.s - a.s)
         .map(x => x.c)
-        .slice(0, 40);
+        .slice(0, 12);
     }
     // 有关键词：先过语法（tag:/env:/name:/url:/user:/@kind），再按
     // 「命中字段 + 常用度」排序 —— 同一个词命中多条时先给最近用过的
-    return cmds
+    const sorted = cmds
       .map(c => {
         const s = scoreTarget(c, parsed);
         return { c, s: s < 0 ? -1 : s + (c.kind === 'entry' ? entryUseScore(c.entryId || '') : 0) };
       })
       .filter(x => x.s >= 0)
       .sort((a, b) => b.s - a.s)
-      .map(x => x.c)
-      .slice(0, 60);
+      .map(x => x.c);
+
+    // 每类限量：搜一个词命中几十条网址时，屏幕会被同一类结果刷满，
+    // 其他类型（笔记/片段/请求）被挤到看不见。页面与操作不参与限量（本来就不多）。
+    const perKind = new Map<string, number>();
+    const limited: Cmd[] = [];
+    for (const c of sorted) {
+      if (c.kind === 'page' || c.kind === 'action') { limited.push(c); continue; }
+      const n = perKind.get(c.kind) || 0;
+      if (n >= 4) continue;
+      perKind.set(c.kind, n + 1);
+      limited.push(c);
+    }
+    return limited.slice(0, 30);
   }, [cmds, q, parsed]);
 
-  useEffect(() => { setIdx(0); }, [q]);
+  /** 显示列表 = 粘贴动作 + 搜索结果（动作排最前，回车默认执行第一条） */
+  const display = useMemo(() => [...pasteItems, ...filtered], [pasteItems, filtered]);
+
+  useEffect(() => { setIdx(0); setPasteItems([]); setPasteIntent(null); }, [q]);
 
   // 焦点不在输入框（点过列表）时 Esc 也要能关
   useEffect(() => {
@@ -328,12 +352,21 @@ export function CommandPalette({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // 每次打开都从干净状态开始：粘贴动作属于「这一次」的操作，
+  // 关闭再打开还挂在上次那批会让人以为识别错了。
+  useEffect(() => {
+    if (open) {
+      setPasteItems([]);
+      setPasteIntent(null);
+    }
+  }, [open]);
+
   if (!open) return null;
 
   const runAt = (i: number) => {
-    const c = filtered[i];
+    const c = display[i];
     if (!c) return;
-    onClose();
+    if (!c.keepOpen) onClose();
     setTimeout(() => c.run(), 0);
   };
 
@@ -350,13 +383,77 @@ export function CommandPalette({
     }, 0);
   };
 
+  /** 把粘贴识别结果翻成可执行的动作项 */
+  const buildPasteItems = (intent: PasteIntent, text: string): Cmd[] => {
+    const sub = `${intent.hint} · ${intent.preview}`;
+    const items: Cmd[] = [];
+    if (intent.kind === 'url') {
+      items.push({
+        id: 'paste:url-save', kind: 'action', title: PASTE_ACTION.url, sub,
+        run: () => {
+          const guess = guessUrlFromInput(text);
+          onNavigate('passwordManager');
+          setPmSubPage('dashboard');
+          signalNewEntry(guess ? { url: guess.url, name: guess.name } : { url: text, name: text });
+        },
+      });
+      items.push({
+        id: 'paste:url-open', kind: 'action', title: '用浏览器打开这个地址', sub,
+        run: () => { void openUrlInDefaultBrowser(text); },
+      });
+    } else if (intent.kind === 'sql') {
+      items.push({
+        id: 'paste:sql', kind: 'action', title: PASTE_ACTION.sql, sub,
+        run: () => { onNavigate('snippets'); seedSnippet(text); },
+      });
+    } else if (intent.kind === 'json') {
+      items.push({
+        id: 'paste:json', kind: 'action', title: PASTE_ACTION.json, sub,
+        run: () => { onNavigate('apiClient'); seedApiBodyText(text); },
+      });
+      items.push({
+        id: 'paste:json-tool', kind: 'action', title: '在工具箱里格式化 / 对比', sub,
+        run: () => { openToolboxTool('jsonRepair', text); onNavigate('toolbox'); },
+      });
+    } else if (intent.kind === 'log' || intent.kind === 'accesslog') {
+      items.push({
+        id: 'paste:log', kind: 'action', title: PASTE_ACTION[intent.kind], sub,
+        run: () => { openToolboxTool('log', text); onNavigate('toolbox'); },
+      });
+    } else if (intent.kind === 'jwt') {
+      items.push({
+        id: 'paste:jwt', kind: 'action', title: PASTE_ACTION.jwt, sub,
+        run: () => { openToolboxTool('jwt', text); onNavigate('toolbox'); },
+      });
+    }
+    // 识别可能出错：留一条「按普通文本搜索」，原地生效、不关面板
+    items.push({
+      id: 'paste:as-query', kind: 'action', keepOpen: true,
+      title: '当作搜索词', sub: '忽略上面的建议，按普通文本搜索',
+      run: () => { setQ(intent.preview); setPasteItems([]); setPasteIntent(null); },
+    });
+    return items;
+  };
+
+  /** 粘贴：识别成功就换成动作项；识别不出来交回默认（文本照常填进搜索框） */
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    if (!text.trim()) return;
+    const intent = detectPaste(text);
+    if (intent.kind === 'unknown') return;
+    e.preventDefault();
+    setPasteIntent(intent);
+    setPasteItems(buildPasteItems(intent, text));
+    setIdx(0);
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(filtered.length - 1, i + 1)); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(display.length - 1, i + 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (filtered.length === 0 && q.trim()) createFromQuery();
+      if (display.length === 0 && q.trim()) createFromQuery();
       else runAt(idx);
     }
   };
@@ -371,6 +468,7 @@ export function CommandPalette({
             ref={inputRef}
             value={q}
             onChange={e => setQ(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={onKeyDown}
             placeholder="搜索全部数据… 试试 tag:内网 env:prod @note"
             spellCheck={false} aria-label="全局搜索：页面、网址、账号、笔记、用例与环境" />
@@ -388,8 +486,15 @@ export function CommandPalette({
             {parsed.user && <b>user:{parsed.user}</b>}
           </div>
         )}
+        {pasteIntent && (
+          <div className="cmdk-syntax cmdk-paste">
+            <span>已识别为 {PASTE_KIND_LABEL[pasteIntent.kind]}</span>
+            <b>{pasteIntent.lines > 1 ? `${pasteIntent.lines} 行` : `${pasteIntent.chars} 字`}</b>
+            <span className="cmdk-paste-hint">{pasteIntent.hint}</span>
+          </div>
+        )}
         <div className="cmdk-list" ref={listRef}>
-          {filtered.length === 0 ? (
+          {display.length === 0 ? (
             <div className="cmdk-empty">
               <div>没有匹配项</div>
               {q.trim() && (
@@ -399,7 +504,7 @@ export function CommandPalette({
                 </button>
               )}
             </div>
-          ) : filtered.map((c, i) => (
+          ) : display.map((c, i) => (
             <div
               key={c.id}
               className={`cmdk-item${i === idx ? ' is-active' : ''}`}
@@ -414,7 +519,7 @@ export function CommandPalette({
         </div>
         <div className="cmdk-foot">
           <span>↑↓ 选择 · Enter 执行 · Esc 关闭</span>
-          <span>{filtered.length} 项</span>
+          <span>{display.length} 项</span>
         </div>
       </div>
     </>
