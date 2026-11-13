@@ -2,7 +2,7 @@
  * build-installer.js — 全自动构建安装包
  * 1. 质量门禁（ci-gate：隐私 / 类型 / 单测 / IPC 契约 / CSS 报告）
  * 2. 清理编译产物
- * 3. 构建 renderer / 子应用
+ * 3. 构建 renderer
  * 4. 打包到系统临时目录，再就地覆盖回 <OUT_DIR>/win-unpacked
  * 5. 从 win-unpacked 生成 NSIS 安装程序
  * 6. 完整性级别自检
@@ -86,7 +86,6 @@ console.log(`${CYAN}════════════════════
 //    注意：**不能删 OUT_DIR**，里面的 resources/app.asar 被系统句柄占住（EBUSY），
 //    删它会直接让整个构建挂掉 —— 这是历史上目录越堆越多的根因。
 cleanDir(path.join(ROOT, 'dist'), 'dist');
-cleanDir(path.join(ROOT, 'dist-tdg'), 'dist-tdg');
 cleanDir(path.join(ROOT, 'node_modules', '.cache'), 'node_modules/.cache');
 cleanDir(STAGE_ROOT, '打包临时目录');
 cleanDir(NSIS_OUT, '安装包临时目录');
@@ -110,12 +109,7 @@ function patchElectronDist(action) {
 // 2. Build renderer
 step('构建 Renderer (Vite)', 'npx vite build');
 
-// 3. Build sub-app (test-data-generator)
-//    用 node 脚本而不是 `cd ... && (test -d node_modules || npm install)`：
-//    后者是 bash 语法，Windows 的 cmd.exe 没有 test，会被判成缺依赖 → 每次重装 → 卡在联网。
-step('构建子应用 (test-data-generator)', 'node scripts/build-subapp.js');
-
-// 4. Pack Electron app 到临时目录
+// 3. Pack Electron app 到临时目录
 patchElectronDist('add');
 try {
   step('打包 Electron 应用', `npx electron-builder --dir --publish never -c.directories.output="${STAGE_ROOT.replace(/\\/g, '/')}"`);
@@ -135,7 +129,7 @@ try {
   process.exit(1);
 }
 
-// 4.1 打包产物自检：防「asar 里是旧 CSS」「漏了 dist-tdg / unpacked」这两类历史事故
+// 4.1 打包产物自检：防「asar 里是旧 CSS」「又混进废弃的子应用产物」这两类历史事故
 console.log(`\n${CYAN}▶ 打包产物自检${RESET}`);
 try {
   const asar = require('@electron/asar');
@@ -149,10 +143,10 @@ try {
   if (JSON.stringify(distCss) !== JSON.stringify(packedCss)) {
     throw new Error(`CSS 不一致：dist=[${distCss}] asar=[${packedCss}]`);
   }
-  if (!entries.some(p => p.includes('dist-tdg/'))) throw new Error('asar 缺少 dist-tdg');
-  const unp = path.join(OUT_DIR, 'win-unpacked', 'resources', 'app.asar.unpacked', 'dist-tdg', 'index.html');
-  if (!fs.existsSync(unp)) throw new Error('app.asar.unpacked/dist-tdg 缺失（测试数据页会报 ERR_FILE_NOT_FOUND）');
-  console.log(`${GREEN}✓ CSS hash / 子应用 / unpacked 项齐全${RESET}`);
+  // 1.24.2 起测试数据生成器是主应用里的 React 页面，dist-tdg 不再进包。
+  // 这里反向断言：一旦哪天又把旧子应用产物打回来，构建当场失败。
+  if (entries.some(p => p.includes('dist-tdg/'))) throw new Error('asar 里仍含已废弃的 dist-tdg');
+  console.log(`${GREEN}✓ CSS hash 一致 / 无废弃子应用产物${RESET}`);
 } catch (e) {
   console.error(`${RED}✗ 打包产物自检失败: ${e.message}${RESET}`);
   patchElectronDist('remove');

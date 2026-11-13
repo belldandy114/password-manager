@@ -3,11 +3,10 @@
  *
  * 为什么需要它：本机的安全删除钩子会拦截 electron-builder 清理
  * release/win-unpacked 的动作（>50 文件），导致打包中断；而且手工组包时
- * 容易漏掉 asarUnpack 项（dist-tdg 漏了就会报 ERR_FILE_NOT_FOUND），
- * 或误把上一轮的旧 dist 打进去。这个脚本把整套动作固化并加断言。
+ * 容易误把上一轮的旧 dist 打进去。这个脚本把整套动作固化并加断言。
  *
  * 用法：npm run pack:asar
- * 前置：npm run build:renderer && npm run build:sub-apps
+ * 前置：npm run build:renderer
  */
 const fs = require('fs');
 const path = require('path');
@@ -73,7 +72,7 @@ async function main() {
   fs.mkdirSync(STAGE, { recursive: true });
 
   // 1) 应用文件
-  for (const d of ['dist', 'dist-tdg', 'electron']) {
+  for (const d of ['dist', 'electron']) {
     const src = path.join(ROOT, d);
     if (fs.existsSync(src)) copyDir(src, path.join(STAGE, d));
   }
@@ -104,10 +103,9 @@ async function main() {
   await asar.createPackage(STAGE, OUT);
   console.log('asar 已生成:', (fs.statSync(OUT).size / 1024 / 1024).toFixed(1) + ' MB');
 
-  // 5) asarUnpack 项：生产模式实际从这里加载 dist-tdg / 图标 / tdg preload
+  // 5) asarUnpack 项：生产模式实际从这里加载图标
   fs.rmSync(UNPACKED, { recursive: true, force: true });
   fs.mkdirSync(UNPACKED, { recursive: true });
-  copyDir(path.join(ROOT, 'dist-tdg'), path.join(UNPACKED, 'dist-tdg'));
   for (const f of ['图标.png', '图标.ico']) {
     fs.copyFileSync(path.join(ROOT, f), path.join(UNPACKED, f));
   }
@@ -115,8 +113,6 @@ async function main() {
   for (const f of ['icon.png', 'icon.ico']) {
     fs.copyFileSync(path.join(ROOT, 'buildResources', f), path.join(UNPACKED, 'buildResources', f));
   }
-  fs.mkdirSync(path.join(UNPACKED, 'electron'), { recursive: true });
-  fs.copyFileSync(path.join(ROOT, 'electron', 'preload-tdg.cjs'), path.join(UNPACKED, 'electron', 'preload-tdg.cjs'));
   console.log('app.asar.unpacked 已同步');
 
   fs.rmSync(STAGE, { recursive: true, force: true });

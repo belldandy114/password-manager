@@ -2,7 +2,7 @@
  * 车牌号生成器
  * 支持：蓝牌(普通)、绿牌(新能源)、使馆牌、警用车牌
  */
-import type { GeneratorId } from '../types/types'
+import type { GeneratorId } from './types'
 
 /** 省级行政区简称 */
 const PROVINCES = [
@@ -25,7 +25,7 @@ function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function randomChoice<T>(arr: T[]): T {
+function randomChoice(arr: string | readonly string[]): string {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
@@ -81,6 +81,7 @@ export function generateLicensePlate(type: PlateType = 'random'): string {
     case 'green': return generateGreenPlate()
     case 'embassy': return generateEmbassyPlate()
     case 'police': return generatePolicePlate()
+    default: return generateBluePlate()
   }
 }
 

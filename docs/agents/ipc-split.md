@@ -56,7 +56,7 @@ registerFileIpc();
 |---|---|---|---|
 | 工具类 | `password:generate` / `totp:code` / `history:get` | 只用 crypto + 纯函数 | 低 |
 | 浏览器 | `browser:detect` / `browser:get-known` / `browser:open` | fs/path/exec/shell，需传浏览器路径设置 | 低 |
-| 系统 | `app:get-path` / `dialog:*` / `file:write` / `tdg:get-path` | 需传 `TDG_DIST_PATH` / `TDG_PRELOAD` | 中 |
+| 系统 | `app:get-path` / `dialog:*` / `file:write` | 只需传 `getWindow` | 低 |
 | 导入导出 | `import:*` / `export:*` | 依赖 `loadVault`/`saveVault`/`currentPassword`/xlsx | 高（必须传 ctx） |
 | 禅道 | `zentao:*`（约 600 行） | 依赖会话 Cookie、token 缓存、`ztCfgFromVault` | 高 |
 | 接口调试 | `api:send` / `api:cookies*` | 依赖 `apiJar` 内存状态 | 高 |
@@ -93,5 +93,6 @@ registerFileIpc();
 - 注册顺序有依赖：`ipc-entries` 要用 `ipc-zentao` 返回的 `loadSeen/pushUnread/restartNotify`，
   所以 `registerZentaoIpc` 必须在 `registerEntriesIpc` 之前调用。
 
-> 拆 `ipc-system` 时注意：`dialog:save-file` 与 `dialog:saveFile`、`file:write` 与 `fs:writeFile`
-> 是两套**必须并存**的别名（页面用前者，测试数据子应用用后者），合并会导致子应用静默失败。
+> 1.24.2 更新：`dialog:saveFile` / `fs:writeFile` 这两个只给测试数据子应用 preload 用的别名，
+> 连同 `tdg:get-path` / `tdg:to-api` / `system:paths` 一起删除了（子应用已并入主应用）。
+> 现在 `ipc-system.js` 只保留页面在用的 `dialog:save-file` 与 `file:write`。

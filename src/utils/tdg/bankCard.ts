@@ -1,7 +1,7 @@
 /**
  * 银行卡号生成器（支持 Luhn 算法校验）
  */
-import type { BankCardParams } from '../types/types'
+import type { BankCardParams } from './types'
 
 /** 各大卡品牌 IIN（发卡行识别码）前缀 */
 const CARD_PREFIXES: Record<string, string[]> = {

@@ -36,10 +36,6 @@ jobs:
       - name: 安装主应用依赖
         run: npm ci
 
-      - name: 安装子应用依赖
-        run: cd sub-apps/test-data-generator && npm ci
-        shell: cmd
-
       - name: 构建安装包（内含 ci-gate 质量门禁）
         # 门禁在 build-installer.js 开头统一跑：隐私 / 类型 / 单测 / IPC 契约 / CSS 报告。
         # 这样即使 workflow 文件推不上去，现有 CI 也已经受门禁保护。

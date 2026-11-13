@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, ipcMain, nativeImage, Menu, shell, dialog, globalShortcut, protocol, Tray, screen, Notification, net, session } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, nativeImage, Menu, shell, dialog, globalShortcut, Tray, screen, Notification, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -117,20 +117,13 @@ const KEY_LENGTH = 32;
 const BIN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // ----------------------------------------------------------------
-// Test Data Generator sub-app paths
-// ----------------------------------------------------------------
-const TDG_DIST_PATH = IS_DEV
-  ? path.join(__dirname, '..', 'dist-tdg')
-  : path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-tdg');
-const TDG_PRELOAD_PATH = path.join(__dirname, 'preload-tdg.cjs');
-
-// ----------------------------------------------------------------
 // 导航守卫
 // ----------------------------------------------------------------
-// 主窗口开着 webviewTag，但此前没有任何 will-navigate / setWindowOpenHandler /
-// will-attach-webview。只要有一条内容能把 <a href> 或 window.open 送到渲染层
-// （Markdown 笔记、周报、导入的 CSV……），就能把应用窗口导航走或开出一个没有 preload
-// 的空白窗口。判断逻辑全在 electron/nav-guard.js（有单测），这里只做事件挂载。
+// 主窗口的 will-navigate / setWindowOpenHandler 全在 nav-guard.js（有单测），
+// 这里只做事件挂载。只要有一条内容能把 <a href> 或 window.open 送到渲染层
+// （Markdown 笔记、周报、导入的 CSV……），就能把应用窗口导航走或开出一个没有
+// preload 的空白窗口。1.24.2 起测试数据生成器已并入主应用，webviewTag 关闭，
+// 守卫里的 webview 分支作为纵深防御保留（万一以后又嵌了访客内容）。
 //
 // PM_USE_DIST=1 时虽然仍是开发目录，但主窗口加载的是 file://dist —— 此时不能按
 // 「开发态」放行 localhost，否则会把应用自己拦下来。所以开关取同一个表达式。
@@ -139,7 +132,7 @@ const APP_DIST_DIR = path.join(__dirname, '..', 'dist');
 
 const { openHttpUrl } = require('./url-open');
 const { spawn: spawnForUrlOpen } = require('child_process');
-const { installNavigationGuards, guardWebviews } = require('./nav-guard');
+const { installNavigationGuards } = require('./nav-guard');
 const { createPinManager } = require('./pin-window');
 
 // 「钉」小窗：一条记录一个窗口，锁屏/退出时统一销毁
@@ -157,9 +150,7 @@ const pinManager = createPinManager({
 
 const navGuardOptions = () => ({
   dev: USE_DEV_SERVER,
-  distDir: APP_DIST_DIR,
-  tdgDistDir: TDG_DIST_PATH,
-  tdgPreloadPath: TDG_PRELOAD_PATH
+  distDir: APP_DIST_DIR
 });
 
 installNavigationGuards({
@@ -1256,8 +1247,8 @@ function createWindow() {
       nodeIntegration: false,
       // sandbox: true —— 主窗口的 preload 只用 contextBridge + ipcRenderer（不碰 Node API），
       // 因此可以开启沙箱提升隔离；改动 preload 时若引入 fs/path 等 Node 模块，这里会直接报错，必须同步调整。
-      sandbox: true,
-      webviewTag: true
+      // 1.24.2：测试数据生成器已并入主应用，全站不再使用 <webview>，关掉这个能力面。
+      sandbox: true
     },
     icon: appIcon,
     show: false
@@ -1272,9 +1263,6 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(APP_DIST_DIR, 'index.html'));
   }
-
-  // webview 的 src / preload 白名单（测试数据生成器）
-  guardWebviews(mainWindow.webContents, navGuardOptions);
 
   // 渲染进程崩了不要留白板（详见 attachCrashGuard 的注释）
   attachCrashGuard(mainWindow, '主窗口');
@@ -1713,7 +1701,7 @@ function setupIpcHandlers() {
   });
 
   // 系统类 IPC（对话框 / 文件读写 / 应用路径）已拆到 electron/ipc-system.js
-  registerSystemIpc({ getWindow: () => mainWindow, tdgPaths: { distPath: TDG_DIST_PATH, preloadPath: TDG_PRELOAD_PATH } });
+  registerSystemIpc({ getWindow: () => mainWindow });
   registerCodelabIpc({ getWindow: () => mainWindow });
   // HTML 预览走独立来源的自定义协议：srcdoc 会继承主窗口 CSP，内联脚本不执行
   registerPreviewIpc();
@@ -1736,24 +1724,11 @@ function setupIpcHandlers() {
 
 }
 
-// ---- Custom protocol for sub-app ----
-function setupTdgProtocol() {
-  protocol.registerFileProtocol('tdg', (request, callback) => {
-    let filePath = request.url.replace('tdg://', '');
-    // Default to index.html for directory requests
-    if (!filePath || filePath.endsWith('/')) filePath += 'index.html';
-    callback({ path: path.join(TDG_DIST_PATH, decodeURIComponent(filePath)) });
-  }, (error) => {
-    if (error) console.error('Failed to register tdg protocol:', error);
-  });
-}
 // 预览协议必须在 app ready 之前登记特权，否则 registerSchemesAsPrivileged 无效
 registerPreviewScheme();
 
 app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
-  // Register custom protocol for test-data-generator sub-app
-  setupTdgProtocol();
   registerPreviewProtocol();
   // Set app-level icon for Windows taskbar
   if (process.platform === 'win32') {

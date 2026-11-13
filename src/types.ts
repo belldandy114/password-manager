@@ -1122,11 +1122,6 @@ export interface ElectronAPI {
   browserDetect: () => Promise<{ id: string; name: string }[]>;
   browserGetKnown: () => Promise<{ id: string; name: string }[]>;
   browserOpen: (data: { browser: string; url: string }) => Promise<{ success: boolean; error?: string }>;
-
-  // Test Data Generator sub-app
-  tdgGetPath: () => Promise<{ distPath: string; preloadPath: string }>;
-  /** 子应用把生成结果发过来（主进程转发），主窗口据此填接口调试的请求体 */
-  onTdgToApi: (cb: (payload: { values: string[]; truncated?: boolean }) => void) => () => void;
 }
 
 declare global {

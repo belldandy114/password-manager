@@ -21,8 +21,7 @@ Electron 主进程 + preload 桥 + React 渲染层，数据全部落在本地加
 ## 0. 30 秒上手
 
 ```powershell
-npm ci                      # 主应用依赖
-cd sub-apps/test-data-generator; npm ci; cd ../..   # 子应用依赖（测试数据生成器）
+npm ci                      # 依赖
 npm run dev                 # Vite 5173 + Electron 同时起
 ```
 
@@ -50,7 +49,7 @@ node scripts/ui-round12-test.js     # 只跑你改的那一块（工具箱）
 | 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图、钉成桌面小窗 |
 | 附件管理 | `attachments` | 全库附件集中查看：缩略图、引用者、未引用清理、导出到本地 |
 | 缺陷管理 | `zentao` | 禅道 Bug 拉取、统计汇总、日报口径 |
-| 测试数据 | `dataGenerator` | **独立子应用**（webview 保活），产物 `dist-tdg/` |
+| 测试数据 | `dataGenerator` | 主应用内原生 React 页面，生成规则在 `src/utils/tdg/`（身份证校验位、Luhn、车牌等） |
 | 工具箱 | `toolbox` | 21 个纯前端小工具（见 §3.4） |
 | 接口调试 | `apiClient` | 类 Postman：环境变量、历史、断言、结构快照、WebSocket / SSE 长连接 |
 | 压力测试 | `perfTest` | JMeter 非 GUI 封装 |
@@ -87,10 +86,9 @@ src/
 
 scripts/             约 80 个：质量门禁、UI 回归、打包、发布、截图
 docs/agents/         12 个主题文档（AGENTS.md 拆出来的历史细节）
-sub-apps/test-data-generator/   独立 Vite 子应用
 ```
 
-**构建产物（不要手改）**：`dist/`（渲染层）、`dist-tdg/`（子应用）、`release/`（打包）、`run/`（`npm run try` 的运行副本）。
+**构建产物（不要手改）**：`dist/`（渲染层）、`release/`（打包）、`run/`（`npm run try` 的运行副本）。
 
 ---
 
@@ -228,7 +226,6 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | 命令 | 作用 | 耗时 |
 |---|---|---|
 | `npx vite build` | 渲染层 → `dist/` | **5.3s** |
-| `npm run build:sub-apps` | 子应用 → `dist-tdg/` | ~8s |
 | `npm run pack:asar` | 把 `dist` + `electron` + 依赖闭包塞进 `release/win-unpacked/resources/app.asar` | **1.9s** |
 | `npm run repack` | electron-builder 打到临时目录再 robocopy 覆盖回 `release/win-unpacked` | ~60s |
 | `npm run dist` | 完整安装包（含门禁 + NSIS） | 3–6 min |

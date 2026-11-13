@@ -46,7 +46,7 @@ AGENTS.md 有 65,536 B 预算，超出会被**静默截断**。历史细节拆�
 
 ## Architecture
 
-Electron desktop app (测试工具) integrating a password manager using AES-256-GCM encryption and a test data generator via webview. Three layers: Electron main process, preload bridge, and React renderer.
+Electron desktop app (测试工具) integrating a password manager using AES-256-GCM encryption and a native React test-data generator. Three layers: Electron main process, preload bridge, and React renderer.
 
 ### Entry Points
 
@@ -352,8 +352,9 @@ useEffect(() => {
 `npm run pack` 会去 GitHub 下 electron / winCodeSign，公司网络常超时。先设
 `$env:ELECTRON_BUILDER_CACHE = "$env:LOCALAPPDATA\electron-builder\Cache"`。
 实在不行只重打 asar（`npx asar extract` → 覆盖 `dist`/`electron` → `npx asar pack`），exe 本体不用变；
-**要出安装包仍必须让 electron-builder 完整跑通**。子应用构建曾因 bash 语法 `test -d` 在 cmd 下卡死，
-已改 `node scripts/build-subapp.js`。完整排错记录见 `docs/agents/history-1.x.md`。
+**要出安装包仍必须让 electron-builder 完整跑通**。1.24.2 起测试数据生成器已并入主应用，
+独立 Vue 子应用（`sub-apps/`）、`build-subapp.js` / `build:sub-apps`、`dist-tdg/`、webview preload
+与 tdg IPC 全部删除，构建只剩 renderer 一步；上面的「子应用构建卡死」排错记录仅作历史。
 
 ## 1.6.0 起的约定（改代码前先看）
 
@@ -375,7 +376,8 @@ useEffect(() => {
 
 工作台页面全部 `React.lazy` + `Suspense`，**首次进页面是异步的**：`navTo` 必须「等 `.page-loading` 消失 + `.pg` 出现」
 再断言，不要定长 `sleep(800)`（慢机器会抓到上一页 DOM，表现为随机几条失败、重跑又过）。
-数据生成器 webview 走 `tdgMounted` 保活，**别改成随页面卸载**。
+1.24.2 起测试数据是普通 `React.lazy` 页面，随页面卸载、按路由渲染；
+回归脚本不要再去 CDP 里找 `webview` target 或 `tdgMounted` 保活容器。
 
 单测：`npm run test:unit`（vitest），测试放 `src/utils/__tests__/*.test.ts`，`tsconfig` 只 include `src`（**不要引入 node 类型**）；
 主进程纯函数抽成 `electron/<mod>.js` + `.d.ts` 才能被渲染层单测 import；打包后跑 `npm run verify:packaged-csv` 确认模块真进了 asar。
@@ -671,14 +673,16 @@ USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pac
 | 能力 | 落点 | 关键约定 |
 |---|---|---|
 | 全局搜索补全 | `CommandPalette.tsx` + `utils/query.ts` | 新增 `@history` / `@code` 限定词；历史点进去只填方法/地址/状态 |
-| 数据生成器回填 | `ipc-system.js` 的 `tdg:to-api` → `useStore.seedApiBody` | 主进程截断 500 条；**GET/HEAD 会改成 POST**，否则请求体框不渲染 |
+| 数据生成器回填 | `DataGenerator.tsx` → `useStore.seedApiBody` → `ApiClient.tsx` | 页面内截断 500 条；**GET/HEAD 会改成 POST**，否则请求体框不渲染 |
 | 附件集中管理 | `pages/Attachments.tsx` + `attachment:list/export` | `attachment:list` **只返回元数据**（全解密会撑爆渲染进程）；条目引用走 `useStore(s => s.entries)`，`ws:get` 读不到 |
 | 导出 Markdown | `ipc-vault-io.js` 的 `buildPlainExport` | `format === "md"` 与 CSV/XLSX 共用拼装，两个 export 通道自动支持 |
 | 汇总按提交人 | `utils/bugSummary.ts` 的 `creatorOf` / `creatorsToText` | 看创建人、含已关闭、**不套排除名单**（排除名单是给开发积压用的） |
 | 笔记钉小窗 | `pin-window.js` + `PinApp.tsx` | `pin:open` 兼容 `id` 与 `{ id, kind }`；窗口 key 是 `${kind}:${id}` |
 | WebSocket / SSE | `ipc-ws.js` + `ws-frame.js` + `ApiClient.tsx` | 帧编解码是纯函数（16 条单测锁 RFC 6455）；`clearCaches()` 里必须 `closeWsConnections()` |
 
-- **`webPreferences.preload` 只认文件系统路径**：`nav-guard.js` 曾把 `file://` URL 赋进去，Electron 静默不执行 preload，表现为子应用 `window.electronAPI === undefined`。改 webview 后跑 `ui-round18`。
+- **历史坑（1.24.2 已随子应用移除）**：`webPreferences.preload` 只认文件系统路径，
+  `nav-guard.js` 曾把 `file://` URL 赋进去，Electron 静默不执行 preload，表现为子应用
+  `window.electronAPI === undefined`。现在没有 webview preload，回归脚本 `ui-round18` 改测主窗口页面。
 - 回归：`scripts/ui-round18-test.js`（33 条，六项功能）、`scripts/ui-round19-test.js`（19 条，WS/SSE，自带本地回声与 SSE 服务）。
 
 ## 1.14.0：缺陷管理两个列表页（「我的 Bug」「项目 Bug」）的修复

@@ -2,7 +2,7 @@
  * Lorem Ipsum 段落文本生成器
  * 支持中文和英文伪段落
  */
-import type { LoremIpsumParams } from '../types/types'
+import type { LoremIpsumParams } from './types'
 
 // ── 英文 Lorem Ipsum 词库 ──
 const LOREM_WORDS = [

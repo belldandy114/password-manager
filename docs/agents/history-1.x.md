@@ -128,6 +128,7 @@ Windows 的 npm 用 `cmd.exe` 执行脚本，**cmd 里没有 `test` 命令**，�
 
 已改为 `node scripts/build-subapp.js`：用 `fs.existsSync` 判断依赖、直接调用本地 `vite/bin/vite.js`，
 不联网、跨平台；`package.json` 的 `build:sub-apps` 也指向它。
+（**1.24.2 起子应用已并入主应用并删除**，本节排错记录仅作历史。）
 
 **另外两条必须记住**：
 

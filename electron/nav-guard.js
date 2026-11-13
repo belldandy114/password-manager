@@ -3,11 +3,15 @@
 /**
  * 导航守卫。
  *
- * 背景：主窗口开着 `webviewTag: true`（测试数据生成器用），但 `electron/main.js`
- * 里此前 **没有任何** `will-navigate` / `setWindowOpenHandler` / `will-attach-webview`。
- * 意味着只要有一条内容能把 `<a href="http://...">` 或 `window.open(...)` 送到渲染层
+ * 背景：主窗口此前开着 `webviewTag: true`（测试数据生成器子应用用），却没有
+ * `will-navigate` / `setWindowOpenHandler` / `will-attach-webview`。意味着只要有一条
+ * 内容能把 `<a href="http://...">` 或 `window.open(...)` 送到渲染层
  * （Markdown 笔记、周报、导入的 CSV、粘贴的富文本……），就能把整个应用窗口导航走，
- * 甚至开出一个没有 preload 的白页窗口继续跑。webview 也没有 src / preload 白名单。
+ * 甚至开出一个没有 preload 的白页窗口继续跑。
+ *
+ * 1.24.2：测试数据生成器已并入主应用，主窗口 `webviewTag` 关闭、guardWebviews 不再挂载。
+ * 下面第 2 条（webview 白名单）因此不会再被触发，但**故意保留**：万一将来又嵌入访客
+ * 内容，这层判断还在，不会退回「裸奔」状态；对应单测也继续跑。
  *
  * 这里把「谁能去哪」收成一组纯函数，方便 `src/utils/__tests__/navGuard.test.ts` 直接
  * 单测；`installNavigationGuards()` 只做 Electron 事件挂载，不含判断逻辑。
@@ -15,8 +19,8 @@
  * 三条规则：
  *   1. 主窗口只能在「应用自己的页面」里跳 —— 打包态是 dist 目录下的 file://，
  *      开发态是 localhost:5173。
- *   2. webview 只能加载测试数据生成器 —— 打包态是 dist-tdg 下的 file://，
- *      开发态是 localhost:5174；preload 只认官方那一个。
+ *   2. （历史/纵深防御）webview 只能加载测试数据生成器 —— 打包态是 dist-tdg 下的
+ *      file://，开发态是 localhost:5174；preload 只认官方那一个。
  *   3. `window.open` / `target=_blank` 一律不开新窗口，http(s) 交给系统默认浏览器。
  */
 

@@ -28,7 +28,7 @@ const PAGES: Array<[string, () => ReactElement]> = [
   ['Attachments', Attachments],
   ['CodeLab', CodeLab],
   ['Dashboard', Dashboard],
-  ['DataGenerator', DataGenerator],
+  ['DataGenerator', () => <DataGenerator onNavigate={() => {}} />],
   ['Environments', Environments],
   ['ExportPage', ExportPage],
   ['ImportPage', ImportPage],

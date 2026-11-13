@@ -3285,13 +3285,6 @@ mark {
   opacity: 0.7;
 }
 
-/* 保活的 webview 宿主：切走时只隐藏，避免每次进入都重启子应用 */
-.keepalive-host {
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-}
-
 /* ---- 收藏 / TOTP / 自定义字段 / 附件 / 密码历史 ---- */
 .fav-btn {
   background: none;

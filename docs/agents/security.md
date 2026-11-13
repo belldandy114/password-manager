@@ -3,6 +3,11 @@
 2026-11-11 的一轮加固，三件事都属于「渲染层能碰到系统边界」的那一侧。
 本文只记**约束与理由**，细节读代码：`electron/nav-guard.js` 有完整注释和 31 条单测。
 
+> **1.24.2 更新**：测试数据生成器已从 webview 子应用并入主应用，主窗口 `webviewTag` 关闭、
+> `guardWebviews` 不再挂载，`tdg:` 协议 / `dist-tdg/` / `preload-tdg.cjs` 全部删除。
+> 下面关于 webview 白名单的表格描述的是 1.24.2 **之前**的形态；`nav-guard.js` 里那套判断
+> 作为纵深防御保留（单测继续跑），但当前不会再被触发。
+
 ---
 
 ## 1. 导航守卫 `electron/nav-guard.js`
@@ -13,7 +18,7 @@
 但**没有任何 `will-navigate` / `setWindowOpenHandler` / `will-attach-webview`**。
 也就是说：渲染层一旦被注入（禅道返回的 HTML、接口调试的响应体、用户粘贴的 markdown），
 `window.location = 'http://evil'` 或 `<a target="_blank">` 就能把主窗口导航走，
-而主窗口的 `preload.js` 是挂着全部 143 个 IPC 的。`webviewTag: true` 更是允许动态塞 `<webview>`。
+而主窗口的 `preload.js` 是挂着全部 143 个 IPC 的。当时 `webviewTag: true` 更是允许动态塞 `<webview>`（1.24.2 已关闭）。
 
 ### 白名单（改之前先看这张表）
 
@@ -22,7 +27,7 @@
 | 主窗口 | 仅 `http://localhost:5173`（origin 相等） | 仅 `file:` 且落在 `dist/` 内 |
 | `devtools:` | 放行 | 拦 |
 | `about:` | 放行 | 放行 |
-| `<webview>` | 仅 `http://localhost:5174` | 仅 `tdg:` 与 `dist-tdg/` 内的 `file:` |
+| `<webview>`（历史，现已关闭） | 仅 `http://localhost:5174` | 仅 `tdg:` 与 `dist-tdg/` 内的 `file:` |
 | `codelab:` 预览子框架 | 放行（`will-frame-navigate` 里只放 `codelab:`） | 同左 |
 
 - `USE_DEV_SERVER = IS_DEV && !process.env.PM_USE_DIST`。**不要用 `IS_DEV` 判断**：
@@ -31,8 +36,8 @@
   `isWithinDir` 必须比到「目录 + 分隔符」这一层，否则 `dist` 会匹配上 `dist2`。
 - `setWindowOpenHandler` 一律 `deny`；http(s) 额外带 `external`，交回 `openHttpUrl`
   走「默认浏览器」那条链（见 `docs/agents/url-open.md`），不让 Electron 自己开新窗。
-- `will-attach-webview` 对 webview 的 `webPreferences` 做 `Object.assign(HARDENED_WEBVIEW_PREFERENCES)`，
-  并且 preload 只认 `dist-tdg/preload-tdg.cjs` 这一个官方路径。
+- （历史，1.24.2 起不再挂载）`will-attach-webview` 对 webview 的 `webPreferences` 做
+  `Object.assign(HARDENED_WEBVIEW_PREFERENCES)`，并且 preload 只认 `preload-tdg.cjs` 这一个官方路径。
   **src 合法但 preload 不是官方的，剥掉 preload 而不是整体拒绝** —— 拒绝会让测试数据生成器白屏。
 
 ### 坑

@@ -143,7 +143,7 @@ const PINYIN_MAP: Record<string, string> = {
   '勇': 'yong', '艳': 'yan', '杰': 'jie', '娟': 'juan', '涛': 'tao', '超': 'chao',
   '琳': 'lin', '浩': 'hao', '亮': 'liang', '政': 'zheng', '鑫': 'xin', '慧': 'hui',
   '宇': 'yu', '文': 'wen', '博': 'bo', '辉': 'hui', '玲': 'ling', '婷': 'ting',
-  '刚': 'gang', '健': 'jian', '平': 'ping', '丹': 'dan', '华': 'hua', '飞': 'fei',
+  '刚': 'gang', '健': 'jian', '平': 'ping', '丹': 'dan', '飞': 'fei',
   '红': 'hong', '春': 'chun', '海': 'hai', '峰': 'feng', '洁': 'jie', '翔': 'xiang',
   '宁': 'ning', '义': 'yi', '冰': 'bing', '雪': 'xue', '晨': 'chen', '曦': 'xi',
 }

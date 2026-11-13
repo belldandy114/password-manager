@@ -273,15 +273,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserGetKnown: () => ipcRenderer.invoke('browser:get-known'),
   browserOpen: (data) => ipcRenderer.invoke('browser:open', data),
 
-  // Test Data Generator sub-app
-  tdgGetPath: () => ipcRenderer.invoke('tdg:get-path'),
-  /** 子应用把生成结果发过来（主进程转发），主窗口据此填接口调试的请求体 */
-  onTdgToApi: (cb) => {
-    const h = (_e, payload) => cb(payload);
-    ipcRenderer.on('tdg:to-api', h);
-    return () => ipcRenderer.removeListener('tdg:to-api', h);
-  },
-
   // JMeter（非 GUI 运行）
   jmeterDetect: () => ipcRenderer.invoke('jmeter:detect'),
   jmeterPickExe: () => ipcRenderer.invoke('jmeter:pick-exe'),

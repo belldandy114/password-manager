@@ -1,6 +1,6 @@
 {
   "name": "password-manager",
-  "version": "1.24.1",
+  "version": "1.24.2",
   "productName": "测试中台",
   "description": "测试工具 - 集成网址管理与测试数据生成",
   "main": "electron/main.js",
@@ -9,8 +9,7 @@
     "dev:renderer": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron .",
     "build:renderer": "vite build",
-    "build:sub-apps": "node scripts/build-subapp.js",
-    "build:all": "npm run build:renderer && npm run build:sub-apps",
+    "build:all": "npm run build:renderer",
     "start": "electron .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -42,7 +41,6 @@
     "productName": "测试中台",
     "files": [
       "dist/**/*",
-      "dist-tdg/**/*",
       "electron/**/*",
       "buildResources/icon.ico",
       "buildResources/icon.png",
@@ -62,9 +60,7 @@
       "图标.ico",
       "图标.png",
       "buildResources/icon.ico",
-      "buildResources/icon.png",
-      "dist-tdg/**/*",
-      "electron/preload-tdg.cjs"
+      "buildResources/icon.png"
     ],
     "directories": {
       "output": "release"
@@ -112,9 +108,11 @@
   "dependencies": {
     "@tabler/icons-react": "^3.50.0",
     "7zip-bin": "^5.2.0",
+    "exceljs": "^4.4.0",
     "js-yaml": "^5.5.0",
     "pinyin-pro": "^3.29.5",
     "qrcode": "^1.5.4",
+    "randexp": "^0.5.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "uuid": "^14.0.0",

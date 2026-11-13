@@ -324,10 +324,6 @@ function App() {
     return () => clearTimeout(t);
   }, [currentPage, isLocked]);
 
-  // 测试数据子应用（webview）保活：切走只隐藏，不卸载
-  // 首次进入立即挂载；之后在解锁空闲 3 秒时预热，点进去时已经就绪
-  // 注意：这些 hooks 必须在下面的 `if (isLocked) return` 之前，否则锁定/解锁切换时
-  // hooks 数量会变化，触发 React error #310。
   // 启动检查发现新版本：在应用内横向提示条里告知（不再弹 Windows 系统通知）
   const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; url: string; notes?: string; downloadUrl?: string; assetName?: string; digest?: string } | null>(null);
   // 更新弹窗：点横幅上的「去更新」直接在这里看说明 + 下载 + 安装，不再跳设置页
@@ -399,16 +395,6 @@ function App() {
     });
     return () => { try { off?.(); } catch { /* 忽略 */ } };
   }, []);
-  // 测试数据子应用把生成结果发过来：切到接口调试，并把值交给它填进请求体
-  useEffect(() => {
-    const off = window.electronAPI.onTdgToApi?.((payload) => {
-      if (!payload || !Array.isArray(payload.values) || payload.values.length === 0) return;
-      if (useStore.getState().isLocked) return;
-      useStore.getState().seedApiBody(payload.values);
-      setCurrentPage('apiClient');
-    });
-    return () => { try { off?.(); } catch { /* 忽略 */ } };
-  }, []);
   // 窗口被隐藏时收起搜索面板，免得下次唤起看到上次没关的面板
   useEffect(() => {
     const off = window.electronAPI.onCloseCommandPalette?.(() => setCmdkOpen(false));
@@ -425,14 +411,6 @@ function App() {
     });
     return () => { try { off(); } catch { /* 忽略 */ } };
   }, []);
-
-  const [tdgMounted, setTdgMounted] = useState(false);
-  useEffect(() => {
-    if (currentPage === 'dataGenerator') { setTdgMounted(true); return; }
-    if (isLocked || tdgMounted) return;
-    const t = setTimeout(() => setTdgMounted(true), 3000);
-    return () => clearTimeout(t);
-  }, [currentPage, isLocked, tdgMounted]);
 
   // If locked or not set up, show login
   if (isLocked) {
@@ -456,6 +434,7 @@ function App() {
       case 'notes': return <Notes />;
       case 'attachments': return <Attachments />;
       case 'zentao': return <ZentaoPage />;
+      case 'dataGenerator': return <DataGenerator onNavigate={setCurrentPage} />;
       case 'apiClient': return <ApiClient />;
       case 'perfTest': return <PerfTest />;
     case 'codeLab': return <CodeLab />;
@@ -514,19 +493,10 @@ function App() {
             </button>
           </div>
         )}
-        {/* 每个页面自己是独立 chunk：切换时只挂一个局部 loading，不牵连保活的子应用 */}
-        {currentPage !== 'dataGenerator' && (
-          <Suspense fallback={<div className="page-loading">正在加载…</div>}>
-            {renderPage()}
-          </Suspense>
-        )}
-        {tdgMounted && (
-          <div className="keepalive-host" style={{ display: currentPage === 'dataGenerator' ? 'flex' : 'none' }}>
-            <Suspense fallback={null}>
-              <DataGenerator />
-            </Suspense>
-          </div>
-        )}
+        {/* 每个页面自己是独立 chunk：切换时只挂一个局部 loading，不牵连其他页面 */}
+        <Suspense fallback={<div className="page-loading">正在加载…</div>}>
+          {renderPage()}
+        </Suspense>
       </div>
     </div>
   );

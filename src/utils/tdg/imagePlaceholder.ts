@@ -2,7 +2,7 @@
  * 随机图片占位图链接生成器
  * 支持 picsum.photos 和 via.placeholder.com
  */
-import type { ImagePlaceholderParams } from '../types/types'
+import type { ImagePlaceholderParams } from './types'
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min

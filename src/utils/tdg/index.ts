@@ -18,7 +18,7 @@ import { generateUuids } from './uuidGenerator'
 import { generatePlaceholderUrls } from './imagePlaceholder'
 import { generateLoremIpsumItems } from './loremIpsum'
 import { generateFromRegexBatch } from './regexGenerator'
-import type { GenerateConfig, GenerateResultItem } from '../types/types'
+import type { GenerateConfig, GenerateResultItem } from './types'
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min

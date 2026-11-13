@@ -10,10 +10,6 @@
  * 把「运行」和「构建输出」分开：构建永远输出到 release/，运行永远在 run/，
  * 两边互不影响，可以反复 npm run dist。
  *
- * 顺带刷新子应用：dist-tdg 是 app.asar.unpacked 里的独立目录，改子应用样式
- * 不需要重打整包，复制过去就能生效。所以这里总是用项目根最新的 dist-tdg
- * 覆盖 run/ 里的那份，避免「改了半天看不到变化」。
- *
  * 环境变量：
  *   PM_RELEASE_DIR  源构建目录（默认 release）
  *   PM_NO_LAUNCH=1  只复制不启动（自动化验证用）
@@ -61,14 +57,6 @@ if (fs.existsSync(RUN)) {
 
 console.log('复制构建产物到 run/ …');
 mirror(SRC, RUN, '复制');
-
-// 用最新的子应用覆盖 run/ 里的那份
-const freshTdg = path.join(ROOT, 'dist-tdg');
-const runTdg = path.join(RUN, 'resources', 'app.asar.unpacked', 'dist-tdg');
-if (fs.existsSync(freshTdg) && fs.existsSync(path.dirname(runTdg))) {
-  console.log('同步最新子应用 dist-tdg …');
-  mirror(freshTdg, runTdg, '同步子应用');
-}
 
 if (process.env.PM_NO_LAUNCH === '1') {
   console.log('已准备好 run/，按 PM_NO_LAUNCH 跳过启动');

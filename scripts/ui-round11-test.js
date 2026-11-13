@@ -311,22 +311,25 @@ async function main() {
 
   bServer.close();
 
-  /* ================= D. 测试数据子应用跟随主题 ================= */
+  /* ================= D. 测试数据页面（1.24.2 起原生 React，无 webview） ================= */
   await navTo('测试数据');
-  await sleep(2500);
-  const tdgState = await ev(`(() => ({ wv: !!document.querySelector('webview'), host: document.documentElement.getAttribute('data-theme') }))()`);
-  check('测试数据：子应用已挂载（webview 存在）', !!tdgState && tdgState.wv === true, JSON.stringify(tdgState));
+  await sleep(1500);
+  const tdgState = await ev(`(() => ({
+    groups: document.querySelectorAll('.tdg-group').length,
+    webview: !!document.querySelector('webview'),
+    host: document.documentElement.getAttribute('data-theme')
+  }))()`);
+  check('测试数据：原生页面已渲染且不再有 webview',
+    !!tdgState && tdgState.groups >= 4 && tdgState.webview === false, JSON.stringify(tdgState));
 
-  // 主应用切到亮色 → 子应用应跟着变（主题桥）；再切回深色确认双向都行
-  const themeSync = await ev(`(async () => {
-    const wv = document.querySelector('webview');
-    if (!wv || typeof wv.executeJavaScript !== 'function') return { skip: true };
-    const host = document.documentElement.getAttribute('data-theme') === 'dark';
-    const cls = await wv.executeJavaScript('document.documentElement.className');
-    return { host, guestClass: String(cls) };
+  // 页面现在和主应用共用一套 CSS 令牌，不需要主题桥：确认主题属性与页面节点都在
+  const themeSync = await ev(`(() => {
+    const el = document.querySelector('.tdg-group');
+    if (!el) return { skip: true };
+    return { host: document.documentElement.getAttribute('data-theme'), bg: getComputedStyle(el).backgroundColor };
   })()`);
-  check('测试数据：子应用的深色状态与主应用一致（主题不再各管各的）',
-    !!themeSync && (themeSync.skip === true || (/dark/.test(String(themeSync.guestClass)) === themeSync.host)),
+  check('测试数据：页面与主应用共用主题（无独立主题桥）',
+    !!themeSync && (themeSync.skip === true || (!!themeSync.host && !!themeSync.bg)),
     JSON.stringify(themeSync).slice(0, 140));
 
   /* ================= E. 工具箱：JSON 转化已并入 ================= */

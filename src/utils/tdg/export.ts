@@ -4,7 +4,7 @@
  * 所有格式均包含「后N位」列（当有身份证数据时）
  */
 
-import type { GenerateResultItem, ExportFormat } from '../types/types'
+import type { GenerateResultItem, ExportFormat } from './types'
 
 /** 是否需要显示后 N 位列 */
 function hasLast6(items: GenerateResultItem[]): boolean {
@@ -134,7 +134,8 @@ export async function exportXlsx(items: GenerateResultItem[]): Promise<Uint8Arra
   }
 
   const buffer = await workbook.xlsx.writeBuffer()
-  return buffer
+  // Buffer 是 Uint8Array 的子类，但 DOM lib 的类型更严格，显式转一次
+  return new Uint8Array(buffer as unknown as ArrayBuffer)
 }
 
 /** 复制为 Markdown 表格到剪贴板 */

@@ -1,24 +1,8 @@
 {
-  "name": "test-data-generator-sub",
-  "version": "1.0.0",
+  "name": "test-data-generator-ci-stub",
+  "version": "0.0.0",
   "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@element-plus/icons-vue": "^2.3.1",
-    "element-plus": "^2.9.0",
-    "exceljs": "^4.4.0",
-    "randexp": "^0.5.3",
-    "vue": "^3.4.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.0",
-    "typescript": "^5.7.0",
-    "vite": "^6.0.0",
-    "vue-tsc": "^2.2.0"
-  }
+  "description": "1.24.2 起测试数据生成器已并入主应用，独立子应用已删除。本占位仅供旧 CI workflow 的 npm ci 通过；待 Git 凭据获得 workflow scope 后，连同 .github/workflows/build.yml 里的「安装子应用依赖」步骤一起删除。",
+  "scripts": {},
+  "dependencies": {}
 }

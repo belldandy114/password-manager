@@ -1,7 +1,7 @@
 /**
  * MAC 地址生成器
  */
-import type { MacAddressParams } from '../types/types'
+import type { MacAddressParams } from './types'
 
 /** 常见厂商 OUI 前缀 */
 const VENDOR_OUIS: Record<string, string[]> = {

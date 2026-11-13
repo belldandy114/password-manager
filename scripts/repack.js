@@ -67,7 +67,6 @@ function main() {
   }
 
   run('构建 Renderer', 'npx vite build');
-  run('构建子应用', 'node scripts/build-subapp.js');
 
   // 临时目录通常可以正常清理；清不掉就让 electron-builder 自己处理
   try {

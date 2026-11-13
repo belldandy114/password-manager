@@ -1,7 +1,7 @@
 /**
  * 1.23.0 回归：六项功能
  *   ① 全局搜索补全（@history / @code）
- *   ② 数据生成器回填请求体（子应用 → tdg:to-api → 接口调试 body）
+ *   ② 数据生成器回填请求体（原生页面 → store.seedApiBody → 接口调试 body）
  *   ③ 附件集中管理（侧栏入口、卡片、引用者、未引用统计、导出/删除）
  *   ④ 导出加 Markdown（导出页有 md 选项，主进程能生成表格）
  *   ⑤ 汇总 tab 按提交人统计（页签、表格列、下钻）
@@ -355,40 +355,52 @@ async function attach(wsUrl) {
   }
 
   /* ---------- ② 数据生成器回填请求体 ---------- */
-  // 子应用是 webview，等它挂载后从它自己的 target 调 toApiBody，走真实链路
+  // 1.24.2 起生成器是主应用里的 React 页面：不再有 webview target，
+  // 直接在主窗口点「生成 → 填入接口调试」，走 store 回填的真实链路。
   await gotoPage('测试数据');
-  await sleep(3500);
-  const tdgTarget = (await listTargets()).find(t => String(t.url || '').includes('dist-tdg') || String(t.url || '').includes('test-data'));
-  check('测试数据子应用已挂载（webview target 存在）', !!tdgTarget, tdgTarget ? String(tdgTarget.url).slice(0, 80) : 'none');
+  await sleep(1500);
+  const tdgPage = await ev(`(() => ({
+    groups: document.querySelectorAll('.tdg-group').length,
+    types: document.querySelectorAll('.tdg-type').length,
+    webview: !!document.querySelector('webview')
+  }))()`);
+  check('测试数据：原生页面已渲染（无 webview）',
+    !!tdgPage && tdgPage.groups >= 4 && tdgPage.types >= 15 && tdgPage.webview === false,
+    JSON.stringify(tdgPage));
 
-  if (tdgTarget) {
-    const T = await attach(tdgTarget.webSocketDebuggerUrl);
-    await sleep(1200);
-    const hasApi = await T.ev(`!!(window.electronAPI && window.electronAPI.toApiBody)`);
-    check('子应用暴露了 toApiBody', hasApi === true);
-    const sent = await T.ev(`(async () => {
-      const r = await window.electronAPI.toApiBody(['a@example.com', 'b@example.com']);
-      return r;
-    })()`);
-    check('子应用调用 toApiBody 成功', sent && sent.success === true, JSON.stringify(sent));
-    T.close();
+  const generated = await ev(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '生成');
+    if (b) { b.click(); return true; } return false;
+  })()`);
+  await sleep(1200);
+  const firstValue = String(await ev(`(() => {
+    const el = document.querySelector('.tdg-value');
+    return el ? el.textContent.trim() : '';
+  })()`) || '');
+  check('测试数据：生成出结果', generated === true && firstValue.length > 0, firstValue.slice(0, 40));
 
-    // 主窗口应已跳到接口调试，且请求体被填成 JSON 数组
-    const jumped = await waitFor(`!!document.querySelector('.url-bar')`, 8000);
-    check('主窗口自动跳到接口调试', jumped === true);
-    await sleep(800);
-    const bodyText = await ev(`(() => {
-      const tas = [...document.querySelectorAll('textarea')];
-      const hit = tas.find(t => /a@example\\.com/.test(t.value));
-      return hit ? hit.value : (tas.map(t => t.value.slice(0, 40)).join(' | ') || 'none');
-    })()`);
-    check('请求体被填成 JSON 数组', String(bodyText).includes('a@example.com') && String(bodyText).includes('['), String(bodyText).slice(0, 120));
-    const bodyType = await ev(`(() => {
-      const b = [...document.querySelectorAll('.tab2, .seg-btn, button')].find(x => x.textContent.trim() === 'JSON' && x.className.includes('is-active'));
-      return b ? b.textContent.trim() : '';
-    })()`);
-    check('请求体类型切到 JSON', bodyType === 'JSON', JSON.stringify(bodyType));
-  }
+  const filled = await ev(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('填入接口调试'));
+    if (b) { b.click(); return true; } return false;
+  })()`);
+  check('测试数据：点「填入接口调试」', filled === true);
+
+  // 主窗口应已跳到接口调试，且请求体被填成含生成值的 JSON 数组
+  const jumped = await waitFor(`!!document.querySelector('.url-bar')`, 8000);
+  check('主窗口自动跳到接口调试', jumped === true);
+  await sleep(800);
+  const bodyText = await ev(`(() => {
+    const tas = [...document.querySelectorAll('textarea')];
+    const hit = tas.find(t => t.value.includes(${JSON.stringify(firstValue)}));
+    return hit ? hit.value : (tas.map(t => t.value.slice(0, 40)).join(' | ') || 'none');
+  })()`);
+  check('请求体被填成 JSON 数组（含生成值）',
+    String(bodyText).includes(firstValue) && String(bodyText).includes('['), String(bodyText).slice(0, 120));
+  const bodyType = await ev(`(() => {
+    const b = [...document.querySelectorAll('.tab2, .seg-btn, button')].find(x => x.textContent.trim() === 'JSON' && x.className.includes('is-active'));
+    return b ? b.textContent.trim() : '';
+  })()`);
+  check('请求体类型切到 JSON', bodyType === 'JSON', JSON.stringify(bodyType));
 
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   try { app.kill(); } catch { /* ignore */ }

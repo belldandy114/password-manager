@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-tdg/
 release/
 # 带版本/后缀的输出目录（PM_RELEASE_DIR 的产物，例如 release-1.21.2）
 release-*/
