@@ -48,7 +48,20 @@ describe('parseQuery', () => {
 
   it('空字符串不产生任何约束', () => {
     const q = parseQuery('   ');
-    expect(q).toEqual({ text: '', kinds: [], tags: [], envs: [], name: '', url: '', user: '', syntax: false });
+    expect(q).toEqual({ text: '', kinds: [], tags: [], envs: [], name: '', url: '', user: '', dataType: '', syntax: false });
+  });
+
+  it('@data / @tdg 只看测试数据类型', () => {
+    expect(parseQuery('@data').kinds).toEqual(['data']);
+    expect(parseQuery('@tdg 正则').text).toBe('正则');
+  });
+
+  it('data:xxx 同时限定类别与具体类型', () => {
+    const q = parseQuery('data:身份证');
+    expect(q.kinds).toEqual(['data']);
+    expect(q.dataType).toBe('身份证');
+    expect(q.text).toBe('');
+    expect(q.syntax).toBe(true);
   });
 });
 
@@ -96,5 +109,14 @@ describe('scoreTarget', () => {
   it('语法与自由文本可以叠加', () => {
     expect(scoreTarget(entry, parseQuery('tag:内网 登录'))).toBeGreaterThan(0);
     expect(scoreTarget(entry, parseQuery('tag:内网 不存在'))).toBe(-1);
+  });
+
+  it('data: 精确定位某个测试数据类型，其它类别一律淘汰', () => {
+    const phone = { kind: 'data' as const, title: '测试数据 · 手机号', sub: '中国大陆 11 位', dataType: 'phone' };
+    expect(scoreTarget(phone, parseQuery('data:phone'))).toBeGreaterThan(0);
+    expect(scoreTarget(phone, parseQuery('data:手机号'))).toBeGreaterThan(0);
+    expect(scoreTarget(phone, parseQuery('data:身份证'))).toBe(-1);
+    expect(scoreTarget(entry, parseQuery('data:phone'))).toBe(-1);
+    expect(scoreTarget(phone, parseQuery('@data'))).toBe(0);
   });
 });

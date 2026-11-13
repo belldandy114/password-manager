@@ -17,7 +17,6 @@ import { Notes } from '../../pages/Notes';
 import { PasswordManagerPage } from '../../pages/PasswordManagerPage';
 import { PerfTest } from '../../pages/PerfTest';
 import { Settings } from '../../pages/Settings';
-import { Snippets } from '../../pages/Snippets';
 import { Toolbox } from '../../pages/Toolbox';
 import { TrashPage } from '../../pages/TrashPage';
 import { WeeklyReport } from '../../pages/WeeklyReport';
@@ -36,7 +35,6 @@ const PAGES: Array<[string, () => ReactElement]> = [
   ['PasswordManagerPage', PasswordManagerPage],
   ['PerfTest', PerfTest],
   ['Settings', Settings],
-  ['Snippets', Snippets],
   ['Toolbox', Toolbox],
   ['TrashPage', TrashPage],
   ['WeeklyReport', WeeklyReport],

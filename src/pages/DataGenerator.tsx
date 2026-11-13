@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Icons } from '../components/ui';
 import { useToast } from '../hooks/useToast';
@@ -6,6 +6,8 @@ import { ToastContainer } from '../components/Toast';
 import { copyPlain } from '../utils/clipboard';
 import { generateData, deduplicate } from '../utils/tdg';
 import { exportData } from '../utils/tdg/export';
+import { GENERATORS, GROUPS } from '../utils/tdg/catalog';
+import { REGEX_PRESETS } from '../utils/tdg/regexGenerator';
 import type {
   GenerateConfig, GenerateResultItem, GeneratorId, ExportFormat,
   IdCardType, LongTextParams, DateParams, IpParams, BoundaryParams,
@@ -27,35 +29,6 @@ import type { PlateType } from '../utils/tdg/licensePlate';
 
 /** 一次最多带进请求体的条数：再多请求体也没法用，还容易卡住渲染进程 */
 const MAX_API_VALUES = 500;
-
-interface Group { title: string; ids: GeneratorId[] }
-
-const GENERATORS: Array<{ id: GeneratorId; label: string; hint: string }> = [
-  { id: 'idCard', label: '身份证', hint: '大陆 18 位 / 香港 / 澳门' },
-  { id: 'name', label: '姓名', hint: '常见中文姓名' },
-  { id: 'phone', label: '手机号', hint: '中国大陆 11 位' },
-  { id: 'email', label: '邮箱', hint: '多域名邮箱地址' },
-  { id: 'bankCard', label: '银行卡号', hint: 'Visa / Master / 银联，Luhn 校验' },
-  { id: 'licensePlate', label: '车牌号', hint: '蓝牌 / 绿牌 / 使馆 / 警用' },
-  { id: 'url', label: 'URL', hint: '随机网址' },
-  { id: 'ip', label: 'IP 地址', hint: 'IPv4 / IPv6' },
-  { id: 'macAddress', label: 'MAC 地址', hint: '随机 MAC' },
-  { id: 'uuid', label: 'UUID', hint: 'UUID v4' },
-  { id: 'date', label: '日期', hint: '日期 / 时间 / 时间戳' },
-  { id: 'longText', label: '超长文本', hint: '中 / 英 / 日文长文本' },
-  { id: 'loremIpsum', label: '段落文本', hint: '随机段落' },
-  { id: 'imagePlaceholder', label: '占位图', hint: '图片占位链接' },
-  { id: 'sqlInjection', label: 'SQL / XSS', hint: '注入与 XSS 载荷' },
-  { id: 'boundary', label: '边界值', hint: '空 / 超长 / Emoji / RTL' },
-  { id: 'regex', label: '正则生成', hint: '按正则生成匹配串' },
-];
-
-const GROUPS: Group[] = [
-  { title: '个人信息', ids: ['idCard', 'name', 'phone', 'email', 'bankCard', 'licensePlate'] },
-  { title: '网络数据', ids: ['url', 'ip', 'macAddress', 'uuid'] },
-  { title: '通用数据', ids: ['date', 'longText', 'loremIpsum', 'imagePlaceholder'] },
-  { title: '测试专用', ids: ['sqlInjection', 'boundary', 'regex'] },
-];
 
 const FORMATS: Array<{ value: ExportFormat; label: string }> = [
   { value: 'txt', label: 'TXT' },
@@ -81,6 +54,8 @@ function toBase64(bytes: Uint8Array): string {
 export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => void }) {
   const { toasts, addToast, removeToast } = useToast();
   const seedApiBody = useStore(s => s.seedApiBody);
+  const dataSeed = useStore(s => s.dataGeneratorSeed);
+  const consumeDataSeed = useStore(s => s.consumeDataGeneratorSeed);
 
   const [type, setType] = useState<GeneratorId>('name');
   const [count, setCount] = useState(50);
@@ -109,8 +84,20 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
   const [img, setImg] = useState<ImagePlaceholderParams>({ width: 300, height: 200, service: 'picsum' });
   const [lorem, setLorem] = useState<LoremIpsumParams>({ language: 'zh', paragraphs: 3, sentencesPerParagraph: 4 });
   const [regex, setRegex] = useState({ pattern: '\\d{4}-\\d{4}-\\d{4}', flags: '' });
+  /** 手机号后 N 位（身份证的放在 idCard.lastDigits，两个类型共用一个结果列） */
+  const [phoneLastDigits, setPhoneLastDigits] = useState(4);
 
   const active = GENERATORS.find(g => g.id === type)!;
+
+  /** Ctrl+K / Ctrl+空格 里选中某个数据类型 → 打开页面时直接预选它 */
+  useEffect(() => {
+    if (!dataSeed) return;
+    if (GENERATORS.some(g => g.id === dataSeed.type)) setType(dataSeed.type as GeneratorId);
+    consumeDataSeed();
+  }, [dataSeed, consumeDataSeed]);
+
+  /** 这一批结果里是否真的有「后 N 位」：没有就不渲染那一列 */
+  const showLastN = useMemo(() => items.some(i => !!i.last6), [items]);
 
   /** 把各面板的当前值拼成 generateData 要的配置 */
   const buildConfig = (): GenerateConfig => {
@@ -122,6 +109,10 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
     if (type === 'name') {
       cfg.nameWithPinyin = nameOpt.pinyin;
       cfg.nameEthnicity = nameOpt.ethnicity;
+    }
+    if (type === 'phone') {
+      cfg.phone = { prefixes: [] };   // 空数组 = 使用内置全部号段
+      cfg.lastDigits = phoneLastDigits;
     }
     if (type === 'email') {
       cfg.email = {
@@ -265,6 +256,27 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                   <span className="tdg-hint">最多 {MAX_COUNT}</span>
                 </label>
 
+                {/* 「后 N 位」只对身份证 / 手机号有意义：别的类型没有尾号这一说 */}
+                {(type === 'idCard' || type === 'phone') && (
+                  <label className="tdg-row">
+                    <span className="tdg-label">后 N 位</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={type === 'idCard' ? 6 : 11}
+                      value={type === 'idCard' ? idCard.lastDigits : phoneLastDigits}
+                      onChange={e => {
+                        const max = type === 'idCard' ? 6 : 11;
+                        const v = Math.max(0, Math.min(max, Number(e.target.value) || 0));
+                        if (type === 'idCard') setIdCard({ ...idCard, lastDigits: v });
+                        else setPhoneLastDigits(v);
+                      }}
+                      aria-label="后 N 位"
+                    />
+                    <span className="tdg-hint">填 0 隐藏该列；结果和导出都会带上尾号</span>
+                  </label>
+                )}
+
                 {type === 'idCard' && (
                   <>
                     <label className="tdg-row">
@@ -289,11 +301,6 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                       <input type="number" value={idCard.birthYearMin} onChange={e => setIdCard({ ...idCard, birthYearMin: Number(e.target.value) || 1980 })} aria-label="最早出生年" />
                       <span className="tdg-hint">到</span>
                       <input type="number" value={idCard.birthYearMax} onChange={e => setIdCard({ ...idCard, birthYearMax: Number(e.target.value) || 2005 })} aria-label="最晚出生年" />
-                    </label>
-                    <label className="tdg-row">
-                      <span className="tdg-label">后几位</span>
-                      <input type="number" min={0} max={6} value={idCard.lastDigits} onChange={e => setIdCard({ ...idCard, lastDigits: Math.max(0, Math.min(6, Number(e.target.value) || 0)) })} aria-label="身份证后几位" />
-                      <span className="tdg-hint">额外算一列「后 N 位」，导出时带上</span>
                     </label>
                   </>
                 )}
@@ -501,10 +508,32 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                 )}
 
                 {type === 'regex' && (
-                  <label className="tdg-row">
-                    <span className="tdg-label">正则</span>
-                    <input value={regex.pattern} onChange={e => setRegex({ ...regex, pattern: e.target.value })} aria-label="正则表达式" placeholder="\\d{4}-\\d{4}" />
-                  </label>
+                  <>
+                    <div className="tdg-row tdg-row-wrap">
+                      <span className="tdg-label">快捷模板</span>
+                      <div className="tdg-presets">
+                        {REGEX_PRESETS.map(p => (
+                          <button
+                            key={p.label}
+                            type="button"
+                            className={`tdg-preset${regex.pattern === p.pattern ? ' is-on' : ''}`}
+                            title={`${p.desc} · ${p.pattern}`}
+                            onClick={() => setRegex({ ...regex, pattern: p.pattern })}
+                          >{p.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="tdg-row">
+                      <span className="tdg-label">正则</span>
+                      <input
+                        value={regex.pattern}
+                        onChange={e => setRegex({ ...regex, pattern: e.target.value })}
+                        aria-label="正则表达式"
+                        placeholder={'\\d{4}-\\d{4}-\\d{4}'}
+                      />
+                    </label>
+                    <div className="tdg-note">点快捷模板会回填到上面的输入框，之后仍可手动修改。</div>
+                  </>
                 )}
 
                 {type === 'sqlInjection' && (
@@ -515,7 +544,7 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
 
                 {type === 'url' && <div className="tdg-note">随机网址，无参数。</div>}
                 {type === 'uuid' && <div className="tdg-note">UUID v4，无参数。</div>}
-                {type === 'phone' && <div className="tdg-note">常用号段随机组合，无参数。</div>}
+                {type === 'phone' && <div className="tdg-note">常用号段随机组合；「后 N 位」常用于短信验证码、脱敏核对。</div>}
 
                 <div className="tdg-actions">
                   <label className="tdg-row-check">
@@ -554,10 +583,9 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                   <table className="tbl">
                     <thead>
                       <tr>
-                        <th style={{ width: 56 }}>#</th>
-                        <th style={{ width: 130 }}>类型</th>
+                        <th style={{ width: 52 }}>#</th>
                         <th>值</th>
-                        <th style={{ width: 88 }}>后 N 位</th>
+                        {showLastN && <th style={{ width: 96 }}>后 N 位</th>}
                         <th style={{ width: 64 }} />
                       </tr>
                     </thead>
@@ -565,9 +593,8 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                       {preview.map((it) => (
                         <tr key={it.id}>
                           <td className="text-muted">{it.id}</td>
-                          <td className="text-muted">{it.type}</td>
                           <td className="tdg-value" title={it.value}>{it.value}</td>
-                          <td className="text-muted">{it.last6 || '—'}</td>
+                          {showLastN && <td className="text-muted tdg-last-n">{it.last6 || '—'}</td>}
                           <td>
                             <button className="btn btn-ghost btn-sm" onClick={() => void copyOne(it.value)}>复制</button>
                           </td>

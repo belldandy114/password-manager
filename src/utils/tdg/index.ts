@@ -53,6 +53,8 @@ export function generateData(config: GenerateConfig): GenerateResultItem[] {
 
     case 'idCard': {
       const p = config.idCard!
+      // 「后 N 位」填 0 表示不要这一列。slice(-0) 会返回整串，必须显式挡掉。
+      const digits = config.idCardLastDigits ?? 6
       for (let i = 0; i < config.count; i++) {
         const value = generateIdCard({
           gender: p.gender,
@@ -64,7 +66,7 @@ export function generateData(config: GenerateConfig): GenerateResultItem[] {
           id: results.length + 1,
           type: getIdCardTypeLabel({ ...p }, value),
           value,
-          last6: getIdCardLast6(value, config.idCardLastDigits),
+          ...(digits > 0 ? { last6: getIdCardLast6(value, digits) } : {}),
         })
       }
       break
@@ -120,16 +122,19 @@ export function generateData(config: GenerateConfig): GenerateResultItem[] {
     }
 
     case 'phone': {
-      const p = config.phone!
+      // config.phone 可以缺省（页面没给号段参数时用内置号段），别直接解引用 p.prefixes
+      const prefixes = config.phone?.prefixes
       const phones = new Set<string>()
       while (phones.size < config.count) {
-        phones.add(generatePhone(p.prefixes))
+        phones.add(generatePhone(prefixes))
       }
+      const digits = config.lastDigits || 0
       for (const phone of phones) {
         results.push({
           id: results.length + 1,
           type: '手机号',
           value: phone,
+          ...(digits > 0 ? { last6: phone.slice(-digits) } : {}),
         })
       }
       break

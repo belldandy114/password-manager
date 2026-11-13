@@ -1615,7 +1615,7 @@ export function Settings() {
                 {
                   slot: 'search' as const,
                   label: '打开搜索',
-                  desc: '任何时候按一下就能搜网址、笔记、SQL 片段和页面',
+                  desc: '任何时候按一下就能搜网址、笔记 / SQL 片段、测试数据类型和页面',
                   shown: hkInfo?.search || hkInfo?.searchDefault || 'Ctrl+空格',
                   isDefault: hkInfo ? hkInfo.searchIsDefault : true,
                 },

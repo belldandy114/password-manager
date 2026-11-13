@@ -447,6 +447,13 @@ export interface Note {
   content: string;
   tags: string[];
   updatedAt: string;
+  /**
+   * 1.24.3：原来有「SQL 片段」和「测试笔记」两个独立菜单，底层都是
+   * 标题 + 正文 + 标签 + 时间的加密集合，只是渲染方式不同。现在合并为一个页面，
+   * 用这个字段区分 SQL 语句（等宽 / 一键复制）和 Markdown 笔记。
+   * 老数据没有这个字段，一律按 'note' 处理。
+   */
+  kind?: 'note' | 'sql';
 }
 
 export interface ChecklistItem {

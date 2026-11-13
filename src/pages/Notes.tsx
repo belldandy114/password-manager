@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Note, WeeklyFile } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Note, Snippet, WeeklyFile } from '../types';
 import { useCollection } from '../hooks/useCollection';
+import { useStore } from '../store/useStore';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
@@ -11,10 +12,18 @@ import { MarkdownView, AttImage } from '../components/MarkdownView';
 import { ImageLightbox } from '../components/ImageLightbox';
 
 const LS_DIR = 'pm.notes.dir';
+/** 旧「SQL 片段」集合并入笔记的迁移标记。旧集合**不删**，留作兜底。 */
+const LS_SQL_MERGED = 'pm.notes.sql-merged-v1';
 
-const emptyNote = (): Note => ({
-  id: '', title: '', content: '', tags: [], updatedAt: new Date().toISOString(),
+type NoteKind = 'note' | 'sql';
+type KindFilter = 'all' | NoteKind;
+
+const emptyNote = (kind: NoteKind = 'note'): Note => ({
+  id: '', title: '', content: '', tags: [], kind, updatedAt: new Date().toISOString(),
 });
+
+/** 老数据没有 kind 字段，一律当普通笔记 */
+const kindOf = (n: Note): NoteKind => (n.kind === 'sql' ? 'sql' : 'note');
 
 const fmtDate = (iso: string) => {
   const d = new Date(iso);
@@ -81,6 +90,18 @@ export function Notes() {
   const [editing, setEditing] = useState<Note | null>(null);
   const { ask, confirmNode } = useConfirm();
   const [preview, setPreview] = useState<Note | null>(null);
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [toast, setToast] = useState('');
+  const snippetSeed = useStore(s => s.snippetSeed);
+  const consumeSnippetSeed = useStore(s => s.consumeSnippetSeed);
+  const mergedRef = useRef(false);
+
+  /**
+   * 1.24.3：原来独立的「SQL 片段」页取消，历史数据并进笔记。
+   * 迁移只在本地加密库模式做一次：目录模式是纯 .md 文件，没有类型元数据。
+   * 旧 snippets 集合保留不删 —— 万一写入失败，下次启动还会重试，数据不会凭空消失。
+   * 这两个 effect 必须放在 dirMode / dirEditing 声明之后（依赖数组在渲染时求值）。
+   */
 
   /* ---------- 自选目录模式（一篇一个 .md 文件） ---------- */
   const [dir, setDir] = useState(() => localStorage.getItem(LS_DIR) || '');
@@ -96,6 +117,43 @@ export function Notes() {
   const [attachHint, setAttachHint] = useState('');
 
   const dirMode = !!dir;
+
+  /* ---------- 旧「SQL 片段」并入 ---------- */
+  useEffect(() => {
+    if (loading || dirMode || mergedRef.current || localStorage.getItem(LS_SQL_MERGED)) return;
+    mergedRef.current = true;
+    void (async () => {
+      const r = await window.electronAPI.wsGet('snippets');
+      if (!r.success || !Array.isArray(r.data) || r.data.length === 0) return;
+      const olds = r.data as Snippet[];
+      const have = new Set(items.map(n => `${n.title}\u0000${n.content}`));
+      const add: Note[] = olds
+        .filter(s => !have.has(`${s.title}\u0000${s.sql || ''}`))
+        .map(s => ({
+          id: s.id || crypto.randomUUID(),
+          title: s.title || '（未命名 SQL 片段）',
+          content: s.sql || '',
+          tags: s.tags || [],
+          kind: 'sql' as const,
+          updatedAt: s.updatedAt || new Date().toISOString(),
+        }));
+      if (add.length) {
+        const ok = await save([...items, ...add]);
+        if (!ok || ok.success === false) { mergedRef.current = false; return; }
+        setToast(`已并入 ${add.length} 条历史 SQL 片段`);
+        setTimeout(() => setToast(''), 3000);
+      }
+      localStorage.setItem(LS_SQL_MERGED, '1');
+    })();
+  }, [loading, dirMode, items, save]);
+
+  /** 命令面板粘贴一段 SQL → 直接开新建弹窗，预置为 SQL 类型 */
+  useEffect(() => {
+    if (!snippetSeed || !snippetSeed.text.trim()) return;
+    if (dirMode) setDirEditing({ name: '', title: '', content: snippetSeed.text });
+    else { setKindFilter('all'); setEditing({ ...emptyNote('sql'), content: snippetSeed.text }); }
+    consumeSnippetSeed();
+  }, [snippetSeed, consumeSnippetSeed, dirMode]);
 
   const loadDir = useCallback(async (target: string) => {
     if (!target) return;
@@ -223,11 +281,19 @@ export function Notes() {
   /* ---------- 本地加密库模式 ---------- */
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = q
-      ? items.filter(n => [n.title, n.content, (n.tags || []).join(' ')].some(v => (v || '').toLowerCase().includes(q)))
-      : items;
+    const list = items.filter(n => {
+      if (kindFilter !== 'all' && kindOf(n) !== kindFilter) return false;
+      if (!q) return true;
+      return [n.title, n.content, (n.tags || []).join(' ')].some(v => (v || '').toLowerCase().includes(q));
+    });
     return [...list].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  }, [items, search]);
+  }, [items, search, kindFilter]);
+
+  const counts = useMemo(() => ({
+    all: items.length,
+    note: items.filter(n => kindOf(n) === 'note').length,
+    sql: items.filter(n => kindOf(n) === 'sql').length,
+  }), [items]);
 
   const saveEditing = async () => {
     if (!editing || !editing.title.trim()) return;
@@ -239,6 +305,12 @@ export function Notes() {
 
   const remove = async (id: string) => {
     await save(items.filter(i => i.id !== id));
+  };
+
+  const copySql = (n: Note) => {
+    void navigator.clipboard.writeText(n.content || '');
+    setToast('SQL 已复制到剪贴板');
+    setTimeout(() => setToast(''), 1500);
   };
 
   /**
@@ -303,7 +375,7 @@ export function Notes() {
         <PageHead
           icon={<Icons.note size={16} />}
           title="测试笔记"
-          desc={dirMode ? '笔记以 .md 文件保存在你选择的目录里，可随时用其它编辑器打开' : '踩坑记录、测试结论、环境说明，支持 Markdown，加密保存在本地'}
+          desc={dirMode ? '笔记以 .md 文件保存在你选择的目录里，可随时用其它编辑器打开' : '踩坑记录、测试结论、SQL 语句片段，支持 Markdown，加密保存在本地'}
           tools={
             <>
               {!dirMode && (
@@ -311,16 +383,37 @@ export function Notes() {
                   <Icons.folder size={13} /> 存到目录
                 </button>
               )}
-              <SearchBox value={search} onChange={setSearch} placeholder={dirMode ? '搜索文件名 / 正文' : '搜索标题 / 内容'} />
+              <SearchBox value={search} onChange={setSearch} placeholder={dirMode ? '搜索文件名 / 正文' : '搜索标题 / 内容 / 标签'} />
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => (dirMode ? setDirEditing({ name: '', title: '', content: '' }) : setEditing(emptyNote()))}
+                onClick={() => (dirMode
+                  ? setDirEditing({ name: '', title: '', content: '' })
+                  : setEditing(emptyNote(kindFilter === 'sql' ? 'sql' : 'note')))}
               >
-                <Icons.plus size={13} /> 新建笔记
+                <Icons.plus size={13} /> {!dirMode && kindFilter === 'sql' ? '新建片段' : '新建笔记'}
               </button>
             </>
           }
         />
+
+        {/* 两个菜单合并后，用类型筛选区分 Markdown 笔记与 SQL 语句 */}
+        {!dirMode && (
+          <div className="notes-kind-bar">
+            {([
+              ['all', `全部 ${counts.all}`],
+              ['note', `笔记 ${counts.note}`],
+              ['sql', `SQL 片段 ${counts.sql}`],
+            ] as const).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                className={`view-switch-btn${kindFilter === k ? ' is-on' : ''}`}
+                onClick={() => setKindFilter(k)}
+              >{label}</button>
+            ))}
+          </div>
+        )}
+        {toast && <div className="inline-hint">{toast}</div>}
 
         {dirMode && dirBar}
 
@@ -397,12 +490,12 @@ export function Notes() {
           <Panel>
             <Empty
               icon={<Icons.note size={22} />}
-              title={search ? '没有匹配的笔记' : '还没有笔记'}
-              desc={search ? '换个关键词试试' : '记下第一个测试结论或踩坑记录，支持 Markdown 语法'}
+              title={search ? '没有匹配的内容' : kindFilter === 'sql' ? '还没有 SQL 片段' : '还没有笔记'}
+              desc={search ? '换个关键词试试' : '踩坑记录、测试结论、常用 SQL 语句，都存在这里'}
               hint={<>写完后用 <kbd>Ctrl+K</kbd> 全局搜索，随时找回</>}
-              action={search ? undefined : (
-                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote())}>
-                  <Icons.plus size={13} /> 新建笔记
+              action={search || kindFilter === 'all' ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote(kindFilter === 'sql' ? 'sql' : 'note'))}>
+                  <Icons.plus size={13} /> {kindFilter === 'sql' ? '新建 SQL 片段' : '新建笔记'}
                 </button>
               )}
             />
@@ -414,6 +507,9 @@ export function Notes() {
                 <div className="card2-head">
                   <div className="card2-title" title={n.title}>{n.title}</div>
                   <div className="card2-actions" onClick={e => e.stopPropagation()}>
+                    {kindOf(n) === 'sql' && (
+                      <IconBtn title="复制 SQL" onClick={() => copySql(n)}><Icons.copy size={13} /></IconBtn>
+                    )}
                     <IconBtn
                       title="钉成小窗（浮在桌面上照着做）"
                       onClick={() => { void window.electronAPI.pinOpen({ id: n.id, kind: 'note' }); }}
@@ -433,20 +529,28 @@ export function Notes() {
                 </div>
 
                 <div className="card2-meta">
-                  <Icons.note size={11} />
+                  {kindOf(n) === 'sql' ? <Icons.db size={11} /> : <Icons.note size={11} />}
                   {fmtDate(n.updatedAt)}
+                  {kindOf(n) === 'sql' && <span className="chip">SQL</span>}
                   {n.tags?.length > 0 && <span className="chip" style={{ marginLeft: 'auto' }}>{n.tags.join(' · ')}</span>}
                 </div>
 
-                <div className="card2-body" style={{
-                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                }}>
-                  {plainPreview(n.content) || (extractAttIds(n.content || '').length ? '' : '（空笔记）')}
-                </div>
+                {kindOf(n) === 'sql' ? (
+                  <div className="card2-body note-sql-preview" style={{
+                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}>{n.content || '（空片段）'}</div>
+                ) : (
+                  <div className="card2-body" style={{
+                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}>
+                    {plainPreview(n.content) || (extractAttIds(n.content || '').length ? '' : '（空笔记）')}
+                  </div>
+                )}
 
                 {/* 正文里有截图就在卡片上给缩略图，不用点开才知道记了什么 */}
-                {extractAttIds(n.content || '').length > 0 && (
+                {kindOf(n) !== 'sql' && extractAttIds(n.content || '').length > 0 && (
                   <div className="card2-thumbs">
                     {extractAttIds(n.content || '').slice(0, 3).map(id => (
                       <AttImage key={id} id={id} />
@@ -462,42 +566,70 @@ export function Notes() {
         )}
       </Page>
 
-      {/* 本地库：编辑 */}
+      {/* 本地库：编辑（Markdown 笔记 / SQL 片段共用，只是渲染方式不同） */}
       <Modal
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={editing?.id ? '编辑笔记' : '新建笔记'}
+        title={`${editing?.id ? '编辑' : '新建'}${editing && kindOf(editing) === 'sql' ? ' SQL 片段' : '笔记'}`}
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setEditing(null)}>取消</button>
-            <button className="btn btn-primary" onClick={saveEditing}>保存</button>
+            <button className="btn btn-primary" onClick={saveEditing} disabled={!editing?.title.trim()}>保存</button>
           </>
         }
       >
         {editing && (
           <>
             <div className="form-group">
+              <label>类型</label>
+              <div className="notes-kind-bar">
+                {([['note', 'Markdown 笔记'], ['sql', 'SQL 片段']] as const).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`view-switch-btn${kindOf(editing) === k ? ' is-on' : ''}`}
+                    onClick={() => setEditing({ ...editing, kind: k })}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="form-group">
               <label>标题 *</label>
               <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：资产系统登录偶发 500 的排查" autoFocus aria-label="标题" />
             </div>
             <div className="form-group">
-              <label>内容（支持 Markdown）</label>
+              <label>标签（逗号分隔）</label>
+              <input
+                value={(editing.tags || []).join(', ')}
+                onChange={e => setEditing({ ...editing, tags: e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) })}
+                placeholder="例如：登录, 回归, 造数"
+                aria-label="标签"
+              />
+            </div>
+            <div className="form-group">
+              <label>{kindOf(editing) === 'sql' ? 'SQL 语句' : '内容（支持 Markdown）'}</label>
               <textarea
                 value={editing.content}
                 onChange={e => setEditing({ ...editing, content: e.target.value })}
                 onPaste={e => void pasteImages(e, v => setEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
-                placeholder={'## 现象\n\n## 原因\n\n## 结论'} aria-label="内容（支持 Markdown）" />
-              <div className="input-hint">支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</div>
-              {attachHint && <div className="inline-hint">{attachHint}</div>}
-              <EditAttStrip content={editing.content} />
+                placeholder={kindOf(editing) === 'sql' ? 'SELECT * FROM t_user WHERE status = 1;' : '## 现象\n\n## 原因\n\n## 结论'}
+                aria-label={kindOf(editing) === 'sql' ? 'SQL 语句' : '内容（支持 Markdown）'}
+              />
+              <div className="input-hint">
+                {kindOf(editing) === 'sql'
+                  ? '保存后在卡片上点复制图标，即可一键复制整段 SQL。'
+                  : <>支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</>}
+              </div>
+              {kindOf(editing) !== 'sql' && attachHint && <div className="inline-hint">{attachHint}</div>}
+              {kindOf(editing) !== 'sql' && <EditAttStrip content={editing.content} />}
             </div>
           </>
         )}
       </Modal>
 
-      {/* 本地库：预览 */}
+      {/* 本地库：预览（SQL 不能走 Markdown，_ 和 * 会被当成格式符） */}
       <Modal
         open={!!preview}
         onClose={() => setPreview(null)}
@@ -505,11 +637,16 @@ export function Notes() {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setPreview(null)}>关闭</button>
+            {preview && kindOf(preview) === 'sql' && (
+              <button className="btn btn-ghost" onClick={() => copySql(preview)}><Icons.copy size={13} /> 复制 SQL</button>
+            )}
             <button className="btn btn-primary" onClick={() => { setEditing(preview); setPreview(null); }}>编辑</button>
           </>
         }
       >
-        <MarkdownView md={preview?.content || ''} />
+        {preview && kindOf(preview) === 'sql'
+          ? <pre className="code-block note-sql-block">{preview.content}</pre>
+          : <MarkdownView md={preview?.content || ''} />}
       </Modal>
 
       {/* 目录模式：编辑 */}

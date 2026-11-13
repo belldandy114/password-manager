@@ -26,7 +26,7 @@ function pad4(n: number): string {
 
 /** 生成单个手机号 */
 export function generatePhone(prefixes?: string[]): string {
-  const prefix = pick(prefixes || ALL_PREFIXES)
+  const prefix = pick(prefixes && prefixes.length ? prefixes : ALL_PREFIXES)
   const suffix = pad4(randInt(0, 9999)) + pad4(randInt(0, 9999))
   return prefix + suffix
 }

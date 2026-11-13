@@ -22,7 +22,6 @@ const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ de
 const Toolbox = lazy(() => import('./pages/Toolbox').then(m => ({ default: m.Toolbox })));
 const Environments = lazy(() => import('./pages/Environments').then(m => ({ default: m.Environments })));
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
-const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.Snippets })));
 const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
 const Attachments = lazy(() => import('./pages/Attachments').then(m => ({ default: m.Attachments })));
 const ZentaoPage = lazy(() => import('./pages/ZentaoPage').then(m => ({ default: m.ZentaoPage })));
@@ -340,8 +339,10 @@ function App() {
       switch (kind) {
         case 'page': setCurrentPage(arg); break;
         case 'toolbox': st.openToolboxTool(arg); setCurrentPage('toolbox'); break;
+        // 搜索里选中某个测试数据类型：先把类型写进 store，页面挂载后自己消费
+        case 'data': st.seedDataGenerator(arg); setCurrentPage('dataGenerator'); break;
         case 'entry': setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.setSearchQuery(item.title || ''); break;
-        case 'snippet': setCurrentPage('snippets'); break;
+        case 'snippet': setCurrentPage('notes'); break;
         case 'note': setCurrentPage('notes'); break;
         case 'account': {
           // 账号挂在网址条目上：落到网址管理，并按条目名筛出来
@@ -356,7 +357,7 @@ function App() {
         case 'env': setCurrentPage('environments'); break;
         case 'paste':
           // 快速搜索小窗里粘贴后的动作：原文经 item.text 带过来，这里落到对应页面
-          if (arg === 'sql') { setCurrentPage('snippets'); st.seedSnippet(String(item.text || '')); }
+          if (arg === 'sql') { setCurrentPage('notes'); st.seedSnippet(String(item.text || '')); }
           else if (arg === 'json') { setCurrentPage('apiClient'); st.seedApiBodyText(String(item.text || '')); }
           else if (arg === 'log' || arg === 'accesslog') { st.openToolboxTool('log', String(item.text || '')); setCurrentPage('toolbox'); }
           else if (arg === 'jwt') { st.openToolboxTool('jwt', String(item.text || '')); setCurrentPage('toolbox'); }
@@ -430,7 +431,8 @@ function App() {
       case 'accounts': return <PasswordManagerPage />;
     case 'environments': return <Environments />;
       case 'weeklyReport': return <WeeklyReport />;
-      case 'snippets': return <Snippets />;
+      // 「SQL 片段」页已并入测试笔记：老用户上次停在这一页时平滑落到笔记页
+      case 'snippets': return <Notes />;
       case 'notes': return <Notes />;
       case 'attachments': return <Attachments />;
       case 'zentao': return <ZentaoPage />;

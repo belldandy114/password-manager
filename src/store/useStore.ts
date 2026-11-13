@@ -50,6 +50,8 @@ interface AppState {
   apiBodyText: { text: string; at: number } | null;
   /** 「命令面板粘贴 SQL」的片段草稿正文 */
   snippetSeed: { text: string; at: number } | null;
+  /** 「全局搜索选中某个测试数据类型」的预选种子，测试数据页挂载后消费 */
+  dataGeneratorSeed: { type: string; at: number } | null;
 
   // Actions
   signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
@@ -61,6 +63,8 @@ interface AppState {
   consumeApiBodyText: () => void;
   seedSnippet: (text: string) => void;
   consumeSnippetSeed: () => void;
+  seedDataGenerator: (type: string) => void;
+  consumeDataGeneratorSeed: () => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
   openToolboxTool: (tool: string, text?: string) => void;
@@ -136,6 +140,7 @@ export const useStore = create<AppState>((set, get) => ({
   apiBodySeed: null,
   apiBodyText: null,
   snippetSeed: null,
+  dataGeneratorSeed: null,
   toolboxIntent: null,
   navigateTo: null,
   pmSubPage: 'dashboard',
@@ -199,6 +204,8 @@ export const useStore = create<AppState>((set, get) => ({
   consumeApiBodyText: () => set({ apiBodyText: null }),
   seedSnippet: (text) => set({ snippetSeed: { text, at: Date.now() } }),
   consumeSnippetSeed: () => set({ snippetSeed: null }),
+  seedDataGenerator: (type) => set({ dataGeneratorSeed: { type, at: Date.now() } }),
+  consumeDataGeneratorSeed: () => set({ dataGeneratorSeed: null }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),
   requestNavigate: (page) => set({ navigateTo: page }),

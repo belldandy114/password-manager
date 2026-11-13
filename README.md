@@ -45,11 +45,10 @@ node scripts/ui-round12-test.js     # 只跑你改的那一块（工具箱）
 | 测试账号 | `accounts` | 系统 / 角色 / 环境 / 账号密码表格，支持批量导入 |
 | 环境矩阵 | `environments` | 环境地址清单 + 一键巡检（并发探活）+ 巡检历史 |
 | 周报 | `weeklyReport` | 本地 Markdown 周报，可从禅道自动成稿 |
-| SQL 片段 | `snippets` | 常用 SQL 片段库 |
-| 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图、钉成桌面小窗 |
+| 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图、钉成桌面小窗。1.24.3 起 SQL 片段并入此页（`kind: 'sql'`），旧 `snippets` 集合保留作兜底 |
 | 附件管理 | `attachments` | 全库附件集中查看：缩略图、引用者、未引用清理、导出到本地 |
 | 缺陷管理 | `zentao` | 禅道 Bug 拉取、统计汇总、日报口径 |
-| 测试数据 | `dataGenerator` | 主应用内原生 React 页面，生成规则在 `src/utils/tdg/`（身份证校验位、Luhn、车牌等） |
+| 测试数据 | `dataGenerator` | 主应用内原生 React 页面，生成规则在 `src/utils/tdg/`（身份证校验位、Luhn、车牌等）；目录清单见 `utils/tdg/catalog.ts`，Ctrl+K / Ctrl+空格 可用 `@data`、`data:身份证` 直达某类 |
 | 工具箱 | `toolbox` | 21 个纯前端小工具（见 §3.4） |
 | 接口调试 | `apiClient` | 类 Postman：环境变量、历史、断言、结构快照、WebSocket / SSE 长连接 |
 | 压力测试 | `perfTest` | JMeter 非 GUI 封装 |

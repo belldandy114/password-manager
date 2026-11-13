@@ -5430,3 +5430,141 @@ html.pin-window #root {
   font-size: var(--fs-xs);
   color: var(--text-3);
 }
+
+/* =============================================================
+   测试笔记：SQL 片段并入后的类型筛选与等宽预览（1.24.3）
+   ============================================================= */
+
+.notes-kind-bar {
+  display: inline-flex;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.notes-kind-bar .view-switch-btn {
+  border-left: 0;
+}
+
+.notes-kind-bar .view-switch-btn + .view-switch-btn {
+  border-left: 1px solid var(--line);
+}
+
+.form-group .notes-kind-bar {
+  margin: 0;
+}
+
+.note-sql-preview {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.note-sql-block {
+  max-height: 52vh;
+  color: var(--text-1);
+}
+
+/* =============================================================
+   测试数据生成器：按常规表单 / 表格密度收敛（1.24.3）
+   写在末尾覆盖上面的旧值：CSS 顺序 tokens → global → pages → redesign
+   ============================================================= */
+
+.tdg-split {
+  grid-template-columns: 190px minmax(0, 1fr);
+  max-width: 1080px;
+}
+
+.tdg-types {
+  padding: 6px;
+  max-height: calc(100vh - 186px);
+}
+
+.tdg-group + .tdg-group {
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.tdg-group-title {
+  padding: 2px 6px 4px;
+  font-size: 10.5px;
+}
+
+.tdg-type {
+  gap: 0;
+  padding: 4px 7px;
+}
+
+.tdg-type-label {
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.tdg-type-hint {
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.tdg-form {
+  gap: 8px;
+}
+
+.tdg-label {
+  width: 68px;
+}
+
+.tdg-row > select,
+.tdg-row > input:not([type="number"]):not([type="checkbox"]) {
+  max-width: 320px;
+}
+
+/* 长值省略而不是把整张表撑宽；列宽由 thead 的 width 决定 */
+.tdg-table-wrap .tbl {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.tdg-value {
+  max-width: none;
+  width: auto;
+}
+
+.tdg-last-n {
+  font-family: var(--font-mono);
+}
+
+/* 正则快捷模板 */
+.tdg-presets {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tdg-preset {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tdg-preset:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.tdg-preset.is-on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}

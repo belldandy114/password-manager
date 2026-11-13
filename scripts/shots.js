@@ -21,7 +21,6 @@ const PAGES = [
   ['周报', 'weekly'],
   ['测试笔记', 'notes'],
   ['缺陷管理', 'zentao'],
-  ['SQL 片段', 'snippets'],
   ['工具箱', 'toolbox'],
   ['接口调试', 'api'],
   ['压力测试', 'perf'],

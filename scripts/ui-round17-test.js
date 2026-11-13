@@ -230,7 +230,7 @@ async function targets() {
   check('工作台出现「最近」条且含刚才那条', !!recent && recent.chips >= 1 && recent.first === '钉窗测试', JSON.stringify(recent));
 
   /* ---------- ⑦ 逐页走一遍 ---------- */
-  for (const label of ['测试账号', '环境矩阵', '周报', 'SQL 片段', '测试笔记', '缺陷管理', '测试数据', '工具箱', '压力测试', '代码调试', '接口调试', '设置']) {
+  for (const label of ['测试账号', '环境矩阵', '周报', '测试笔记', '缺陷管理', '测试数据', '工具箱', '压力测试', '代码调试', '接口调试', '设置']) {
     await navTo(label);
   }
   check('12 个页面切换无 console error', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' || '));

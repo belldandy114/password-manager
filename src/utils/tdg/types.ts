@@ -135,6 +135,8 @@ export interface GenerateConfig {
   loremIpsum?: LoremIpsumParams
   /** 身份证显示后几位 */
   idCardLastDigits?: number
+  /** 手机号显示后几位（与身份证共用一个「后 N 位」列） */
+  lastDigits?: number
   /** 姓名生成时是否附带拼音 */
   nameWithPinyin?: boolean
   /** 姓名民族 */

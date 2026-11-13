@@ -171,7 +171,7 @@ const check = (name, ok, detail) => {
   } else {
     console.log('- 禅道：全部项目 / 单个项目（跳过：未配置 ZT_* 环境变量）');
   }
-    for (const label of ['周报', '工具箱', '接口调试', '测试笔记', 'SQL 片段', '测试账号']) {
+    for (const label of ['周报', '工具箱', '接口调试', '测试笔记', '测试账号']) {
       await nav(label);
       await sleep(700);
       const ok = await evaluate(`(() => { const t = document.querySelector('.pg-title'); return t ? t.textContent.trim() : ''; })()`);

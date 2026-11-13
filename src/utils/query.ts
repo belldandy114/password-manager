@@ -5,14 +5,15 @@
  *   tag:内网          按标签过滤（可写多次，取交集）
  *   env:prod|test|dev|stag  按环境过滤
  *   name:登录  url:api  user:admin   限定字段
- *   @note @snippet @account @request @case @env @entry @page @history @code  只看某一类
+ *   @note @snippet @account @request @case @env @entry @page @history @code @data  只看某一类
+ *   data:身份证 / data:phone      只看测试数据里的某一种数据类型
  *   其余自由文本按原来的包含匹配
  *
  * 为什么不把语法做进 Dashboard 的搜索框：那里的搜索是「在网址里找」，
  * 而全局搜索要跨六类数据，语法只在跨类时才有意义。
  */
 
-export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code';
+export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data';
 
 const KIND_ALIAS: Record<string, QueryKind> = {
   '@page': 'page',
@@ -30,6 +31,9 @@ const KIND_ALIAS: Record<string, QueryKind> = {
   '@env': 'env',
   '@history': 'history',
   '@code': 'code',
+  '@data': 'data',
+  '@tdg': 'data',
+  '@testdata': 'data',
 };
 
 export interface ParsedQuery {
@@ -42,19 +46,21 @@ export interface ParsedQuery {
   name: string;
   url: string;
   user: string;
+  /** data:xxx 指定的测试数据类型（中文别名或 id 都行） */
+  dataType: string;
   /** 有没有用到语法（用来决定是否显示「语法生效中」提示） */
   syntax: boolean;
 }
 
 export function parseQuery(raw: string): ParsedQuery {
-  const out: ParsedQuery = { text: '', kinds: [], tags: [], envs: [], name: '', url: '', user: '', syntax: false };
+  const out: ParsedQuery = { text: '', kinds: [], tags: [], envs: [], name: '', url: '', user: '', dataType: '', syntax: false };
   const words = String(raw || '').trim().split(/\s+/).filter(Boolean);
   const free: string[] = [];
   for (const w of words) {
     const lower = w.toLowerCase();
     const alias = KIND_ALIAS[lower];
     if (alias) { out.kinds.push(alias); out.syntax = true; continue; }
-    const m = /^(tag|env|name|url|user):(.*)$/i.exec(w);
+    const m = /^(tag|env|name|url|user|data):(.*)$/i.exec(w);
     if (m && m[2]) {
       const key = m[1].toLowerCase();
       const val = m[2].toLowerCase();
@@ -62,6 +68,11 @@ export function parseQuery(raw: string): ParsedQuery {
       else if (key === 'env') out.envs.push(val);
       else if (key === 'name') out.name = val;
       else if (key === 'url') out.url = val;
+      else if (key === 'data') {
+        // data: 本身就是「只看测试数据」，值再用来定位具体类型
+        out.dataType = val;
+        if (!out.kinds.includes('data')) out.kinds.push('data');
+      }
       else out.user = val;
       out.syntax = true;
       continue;
@@ -80,6 +91,8 @@ export interface QueryTarget {
   env?: string;
   url?: string;
   user?: string;
+  /** 测试数据类命令的类型 id（如 phone），供 data: 精确匹配 */
+  dataType?: string;
 }
 
 /** 过滤 + 打分：命中字段越多分越高，供命令面板排序用 */
@@ -104,6 +117,12 @@ export function scoreTarget(t: QueryTarget, q: ParsedQuery): number {
   }
   if (q.user) {
     if (!String(t.user || '').toLowerCase().includes(q.user)) return -1;
+    score += 3;
+  }
+  if (q.dataType) {
+    if (t.kind !== 'data') return -1;
+    const hay = `${t.title} ${t.sub || ''} ${t.dataType || ''}`.toLowerCase();
+    if (!hay.includes(q.dataType)) return -1;
     score += 3;
   }
   if (q.text) {

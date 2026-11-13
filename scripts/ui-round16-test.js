@@ -264,7 +264,7 @@ async function targets() {
 
   /* ---------- ⑧ 逐页扫 console error ---------- */
   const BEFORE = consoleErrors.length;
-  for (const label of ['网址管理', '测试账号', '环境矩阵', '周报', 'SQL 片段', '测试笔记', '缺陷管理', '测试数据', '工具箱', '接口调试', '压力测试', '代码调试']) {
+  for (const label of ['网址管理', '测试账号', '环境矩阵', '周报', '测试笔记', '缺陷管理', '测试数据', '工具箱', '接口调试', '压力测试', '代码调试']) {
     await navTo(label);
   }
   await sleep(800);

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icons } from './ui';
 import { applyTheme, applyAccent, applyDensity, watchSystemTheme } from '../utils/theme';
 import { PAGES, TOOLBOX_TOOLS, KIND_LABEL, type Kind } from './CommandPalette';
+import { mergeSqlViews, plainNotes } from '../utils/notesMerge';
+import { GENERATORS } from '../utils/tdg/catalog';
 import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
 import { parseQuery, scoreTarget } from '../utils/query';
 
@@ -18,6 +20,8 @@ interface Cmd {
   tags?: string[];
   env?: string;
   user?: string;
+  /** 测试数据类命令的类型 id（data: 语法用） */
+  dataType?: string;
 }
 
 /** .palette-root 上下各 10px 的透明留白（给卡片阴影留空间） */
@@ -112,8 +116,15 @@ export function PaletteApp() {
       // 注意：CommandPalette 里 `PAGES.push(...PAGES_MORE)`，PAGES 已包含全部页面，
       // 这里只能展开 PAGES，再展开 PAGES_MORE 会重复；末尾统一按 id 去重兜底。
       const list: Cmd[] = [
-        ...PAGES.map(p => ({ id: `page:${p.page}`, title: p.label, sub: '打开页面', kind: 'page' as Kind })),
+        ...PAGES.map(p => ({ id: `page:${p.page}`, title: p.label, sub: p.page === 'notes' ? '打开页面 · 笔记 / SQL 片段' : '打开页面', kind: 'page' as Kind })),
         ...TOOLBOX_TOOLS.map(t => ({ id: `toolbox:${t.id}`, title: t.label, sub: `工具箱 · ${t.kw}`, kind: 'action' as Kind })),
+        ...GENERATORS.map(d => ({
+          id: `data:${d.id}`,
+          title: `测试数据 · ${d.label}`,
+          sub: `${d.hint} · ${d.kw}`,
+          kind: 'data' as Kind,
+          dataType: d.id,
+        })),
         { id: 'action:new-entry', title: '新建网址', sub: '相当于 Ctrl+N', kind: 'action' },
         { id: 'action:lock', title: '锁定密码库', sub: '立即锁屏', kind: 'action' },
         { id: 'action:zt-refresh', title: '刷新：我的 Bug', sub: '重新拉缺陷管理「我的 Bug」', kind: 'action' },
@@ -129,11 +140,12 @@ export function PaletteApp() {
           env: String(e.envType || ''),
           user: String(e.username || ''),
         }))),
-        ...pick(sn).slice(0, 200).map((s: any) => ({
-          id: `snippet:${s.id}`, title: String(s.title || '（无标题片段）'), sub: (s.tags || []).join(' '), kind: 'snippet' as Kind,
-          tags: Array.isArray(s.tags) ? s.tags.map(String) : [],
+        // 与主面板同一套合并视图：SQL 片段可能还在旧集合里，也可能已迁进 notes
+        ...mergeSqlViews(pick(nt), pick(sn)).slice(0, 200).map((s) => ({
+          id: `snippet:${s.id}`, title: s.title || '（无标题片段）', sub: ['SQL 片段 · 测试笔记', s.tags.join(' ')].filter(Boolean).join(' · '), kind: 'snippet' as Kind,
+          tags: s.tags,
         })),
-        ...pick(nt).slice(0, 200).map((n: any) => ({
+        ...plainNotes(pick(nt)).slice(0, 200).map((n: any) => ({
           id: `note:${n.id}`, title: String(n.title || '（无标题笔记）'), sub: '', kind: 'note' as Kind,
         })),
         // 账号挂在条目下：主账号 + 各角色账号都从 entries 派生（不再读独立的 accounts 集合）
@@ -252,7 +264,8 @@ export function PaletteApp() {
     for (const c of sorted) {
       if (c.kind === 'page' || c.kind === 'action') { out.push(c); continue; }
       const n = perKind.get(c.kind) || 0;
-      if (n >= 4) continue;
+      const cap = c.kind === 'data' ? 20 : 4;
+      if (n >= cap) continue;
       perKind.set(c.kind, n + 1);
       out.push(c);
     }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  IconFileText, IconCalendarStats, IconClipboardCheck, IconDatabase,
+  IconFileText, IconCalendarStats, IconClipboardCheck,
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell,
 } from '@tabler/icons-react';
@@ -145,7 +145,6 @@ const envIcon = nav(IconServer);
 const attachIcon = nav(IconPhoto);
 const reportIcon = nav(IconCalendarStats);
 const checkIcon = nav(IconClipboardCheck);
-const dbIcon = nav(IconDatabase);
 const noteIcon = nav(IconPencil);
 const bugIcon = nav(IconBug);
 const dataGenIcon = nav(IconTable);
@@ -168,7 +167,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'environments', label: '环境矩阵', icon: envIcon },
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
-      { id: 'snippets', label: 'SQL 片段', icon: dbIcon },
       { id: 'notes', label: '测试笔记', icon: noteIcon },
       { id: 'attachments', label: '附件管理', icon: attachIcon },
       { id: 'zentao', label: '缺陷管理', icon: bugIcon },

@@ -5,10 +5,12 @@ import { applyTheme } from '../utils/theme';
 import { guessUrlFromInput } from '../utils/urlInput';
 import { entryUseScore, pageUseScore } from '../utils/recent';
 import { parseQuery, scoreTarget } from '../utils/query';
+import { mergeSqlViews, plainNotes } from '../utils/notesMerge';
+import { GENERATORS } from '../utils/tdg/catalog';
 import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 
-export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code';
+export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data';
 
 interface Cmd {
   id: string;
@@ -27,17 +29,18 @@ interface Cmd {
   env?: string;
   url?: string;
   user?: string;
+  /** 测试数据类命令的类型 id */
+  dataType?: string;
 }
 
 export const KIND_LABEL: Record<Kind, string> = {
   page: '页面', action: '操作', entry: '网址', snippet: '片段', note: '笔记', account: '账号',
-  request: '请求', checklist: '用例', env: '环境', history: '历史', code: '代码',
+  request: '请求', checklist: '用例', env: '环境', history: '历史', code: '代码', data: '测试数据',
 };
 
 export const PAGES: { page: string; label: string }[] = [
   { page: 'passwordManager', label: '网址管理' },
   { page: 'weeklyReport', label: '周报' },
-  { page: 'snippets', label: 'SQL 片段' },
   { page: 'notes', label: '测试笔记' },
   { page: 'zentao', label: '缺陷管理' },
   { page: 'dataGenerator', label: '测试数据' },
@@ -99,6 +102,7 @@ export function CommandPalette({
   const signalCmd = useStore(s => s.signalCmd);
   const seedApiBodyText = useStore(s => s.seedApiBodyText);
   const seedSnippet = useStore(s => s.seedSnippet);
+  const seedDataGenerator = useStore(s => s.seedDataGenerator);
   const settings = useStore(s => s.settings);
   const updateSettings = useStore(s => s.updateSettings);
 
@@ -131,9 +135,12 @@ export function CommandPalette({
         window.electronAPI.wsGet('codeSnippets'),
       ]);
       const pick = (r: any) => (r && r.success ? r.data || [] : []);
+      const allNotes = pick(nt);
+      // SQL 片段已并入笔记，但旧集合保留作兜底：两处合成一份不重复的片段列表，
+      // 普通笔记只取非 SQL 的，避免同一条内容在搜索里出现两遍。
       setExtra({
-        snippets: pick(sn),
-        notes: pick(nt),
+        snippets: mergeSqlViews(allNotes, pick(sn)),
+        notes: plainNotes(allNotes),
         apiRequests: pick(rq),
         checklists: pick(ck),
         environments: pick(ev),
@@ -148,7 +155,7 @@ export function CommandPalette({
       ...PAGES.map(p => ({
         id: `page:${p.page}`,
         title: p.label,
-        sub: '打开页面',
+        sub: p.page === 'notes' ? '打开页面 · 笔记 / SQL 片段' : '打开页面',
         kind: 'page' as Kind,
         page: p.page,
         run: () => onNavigate(p.page),
@@ -219,10 +226,10 @@ export function CommandPalette({
     const fromSnippets: Cmd[] = extra.snippets.slice(0, 200).map((s: any) => ({
       id: `snippet:${s.id}`,
       title: s.title || '（无标题片段）',
-      sub: (s.tags || []).join(' '),
+      sub: ['SQL 片段 · 测试笔记', (s.tags || []).join(' ')].filter(Boolean).join(' · '),
       kind: 'snippet' as Kind,
       tags: s.tags,
-      run: () => onNavigate('snippets'),
+      run: () => onNavigate('notes'),
     }));
 
     const fromNotes: Cmd[] = extra.notes.slice(0, 200).map((n: any) => ({
@@ -315,11 +322,22 @@ export function CommandPalette({
       run: () => { onNavigate('codeLab'); signalCmd(`code:open:${s.id}`); },
     }));
 
+    // 测试数据里的每一种数据类型都能单独搜到：回车直接跳过去并预选好类型
+    const fromData: Cmd[] = GENERATORS.map(d => ({
+      id: `data:${d.id}`,
+      title: `测试数据 · ${d.label}`,
+      sub: `${d.hint} · ${d.kw}`,
+      kind: 'data' as Kind,
+      dataType: d.id,
+      run: () => { seedDataGenerator(d.id); onNavigate('dataGenerator'); },
+    }));
+
     return [
       ...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts,
       ...fromRequests, ...fromChecklists, ...fromEnvs, ...fromHistory, ...fromCode,
+      ...fromData,
     ];
-  }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, settings.theme, updateSettings]);
+  }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, seedDataGenerator, settings.theme, updateSettings]);
 
   const parsed = useMemo(() => parseQuery(q), [q]);
 
@@ -353,7 +371,9 @@ export function CommandPalette({
     for (const c of sorted) {
       if (c.kind === 'page' || c.kind === 'action') { limited.push(c); continue; }
       const n = perKind.get(c.kind) || 0;
-      if (n >= 4) continue;
+      // 测试数据有 17 类，@data 时要能一次列全；其它类仍限 4 条防刷屏
+      const cap = c.kind === 'data' ? 20 : 4;
+      if (n >= cap) continue;
       perKind.set(c.kind, n + 1);
       limited.push(c);
     }
@@ -427,7 +447,7 @@ export function CommandPalette({
     } else if (intent.kind === 'sql') {
       items.push({
         id: 'paste:sql', kind: 'action', title: PASTE_ACTION.sql, sub,
-        run: () => { onNavigate('snippets'); seedSnippet(text); },
+        run: () => { onNavigate('notes'); seedSnippet(text); },
       });
     } else if (intent.kind === 'json') {
       items.push({
