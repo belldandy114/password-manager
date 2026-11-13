@@ -19,13 +19,28 @@ const CSV_HEADERS = {
   password: '密码', notes: '备注', tags: '标签', createdAt: '创建时间', updatedAt: '修改时间',
 };
 
+/** Markdown 表格里必须转义的字符：竖线会截断单元格，换行会截断行 */
+function mdCell(v) {
+  if (Array.isArray(v)) v = v.join('; ');
+  return String(v == null ? '' : v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>').trim();
+}
+
 /**
- * 把条目列表按 format 渲染成可下载的字符串（json / xlsx(base64) / csv）。
+ * 把条目列表按 format 渲染成可下载的字符串（json / xlsx(base64) / csv / md）。
  * @param {any[]} entries
  * @param {string} format
  */
 function buildPlainExport(entries, format, XLSX) {
   if (format === 'json') return JSON.stringify(entries, null, 2);
+
+  if (format === 'md') {
+    // 给人看的清单：表格列与 CSV 一致，但去掉创建/修改时间（Markdown 里太吵）
+    const cols = ['name', 'envType', 'url', 'username', 'password', 'notes', 'tags'];
+    const head = `| ${cols.map(k => CSV_HEADERS[k] || k).join(' | ')} |`;
+    const sep = `| ${cols.map(() => '---').join(' | ')} |`;
+    const rows = entries.map(e => `| ${cols.map(k => mdCell(e[k])).join(' | ')} |`);
+    return [`# 密码库导出（${entries.length} 条）`, '', head, sep, ...rows, ''].join('\n');
+  }
 
   if (format === 'xlsx') {
     const wb = XLSX.utils.book_new();

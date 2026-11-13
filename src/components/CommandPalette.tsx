@@ -6,7 +6,7 @@ import { guessUrlFromInput } from '../utils/urlInput';
 import { entryUseScore, pageUseScore } from '../utils/recent';
 import { parseQuery, scoreTarget } from '../utils/query';
 
-export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
+export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code';
 
 interface Cmd {
   id: string;
@@ -27,7 +27,7 @@ interface Cmd {
 
 export const KIND_LABEL: Record<Kind, string> = {
   page: '页面', action: '操作', entry: '网址', snippet: '片段', note: '笔记', account: '账号',
-  request: '请求', checklist: '用例', env: '环境',
+  request: '请求', checklist: '用例', env: '环境', history: '历史', code: '代码',
 };
 
 export const PAGES: { page: string; label: string }[] = [
@@ -68,6 +68,7 @@ export const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
 
 export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'environments', label: '环境矩阵' },
+  { page: 'attachments', label: '附件管理' },
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
@@ -101,7 +102,8 @@ export function CommandPalette({
   const [extra, setExtra] = useState<{
     snippets: any[]; notes: any[]; accounts: any[];
     apiRequests: any[]; checklists: any[]; environments: any[];
-  }>({ snippets: [], notes: [], accounts: [], apiRequests: [], checklists: [], environments: [] });
+    apiHistory: any[]; codeSnippets: any[];
+  }>({ snippets: [], notes: [], accounts: [], apiRequests: [], checklists: [], environments: [], apiHistory: [], codeSnippets: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -111,13 +113,15 @@ export function CommandPalette({
     setIdx(0);
     setTimeout(() => inputRef.current?.focus(), 30);
     (async () => {
-      const [sn, nt, ac, rq, ck, ev] = await Promise.all([
+      const [sn, nt, ac, rq, ck, ev, hs, cs] = await Promise.all([
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
         window.electronAPI.wsGet('accounts'),
         window.electronAPI.wsGet('apiRequests'),
         window.electronAPI.wsGet('checklists'),
         window.electronAPI.wsGet('environments'),
+        window.electronAPI.wsGet('apiHistory'),
+        window.electronAPI.wsGet('codeSnippets'),
       ]);
       const pick = (r: any) => (r && r.success ? r.data || [] : []);
       setExtra({
@@ -127,6 +131,8 @@ export function CommandPalette({
         apiRequests: pick(rq),
         checklists: pick(ck),
         environments: pick(ev),
+        apiHistory: pick(hs),
+        codeSnippets: pick(cs),
       });
     })();
   }, [open]);
@@ -258,9 +264,28 @@ export function CommandPalette({
       run: () => onNavigate('environments'),
     }));
 
+    // 接口调试的历史记录：上周调过的接口，现在也能搜到（只保留最近 200 条）
+    const fromHistory: Cmd[] = extra.apiHistory.slice(0, 200).map((h: any) => ({
+      id: `history:${h.id}`,
+      title: (h.name && h.name !== '未命名') ? h.name : `${h.method || 'GET'} ${String(h.url || '').replace(/^https?:\/\//, '')}`.slice(0, 70),
+      sub: `${h.method || 'GET'} ${String(h.url || '').replace(/^https?:\/\//, '').slice(0, 56)} · ${h.status || 0}`,
+      kind: 'history' as Kind,
+      url: h.url,
+      run: () => { onNavigate('apiClient'); signalCmd(`api:history:${h.id}`); },
+    }));
+
+    // 代码调试的片段库
+    const fromCode: Cmd[] = extra.codeSnippets.slice(0, 200).map((s: any) => ({
+      id: `code:${s.id}`,
+      title: s.name || '（无标题片段）',
+      sub: String(s.lang || '').toUpperCase(),
+      kind: 'code' as Kind,
+      run: () => { onNavigate('codeLab'); signalCmd(`code:open:${s.id}`); },
+    }));
+
     return [
       ...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts,
-      ...fromRequests, ...fromChecklists, ...fromEnvs,
+      ...fromRequests, ...fromChecklists, ...fromEnvs, ...fromHistory, ...fromCode,
     ];
   }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, settings.theme, updateSettings]);
 

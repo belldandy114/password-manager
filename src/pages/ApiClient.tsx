@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot, ApiExtractRule } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ApiRequest, ApiResponseData, ApiEnv, ApiHistoryItem, ApiJarCookie, AssertRule, SchemaDiff, ApiSnapshot, ApiExtractRule, WsEvent } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill , SearchBox } from '../components/ui';
@@ -33,8 +33,7 @@ const emptyReq = (): ApiRequest => ({
   updatedAt: new Date().toISOString(),
 });
 
-/** 旧数据的 cookies 合并进 headers（Cookie 现在统一写在请求头里） */
-function migrateReq(r: ApiRequest): ApiRequest {
+/** 旧数据的 cookies 合并进 headers（Cookie 现在统一写在请求头里） */function migrateReq(r: ApiRequest): ApiRequest {
   if (!r.cookies) return { ...r, bodyType: r.bodyType || 'json' };
   const merged = withCookies(r.headers || '', r.cookies);
   return { ...r, headers: merged, cookies: '', bodyType: r.bodyType || 'json' };
@@ -151,6 +150,19 @@ function KvEditor({
 // 「从命令面板打开某条请求」的去重时间戳（模块级：跨挂载有效）
 let lastApiOpenAt = 0;
 
+/** WS/SSE 收到的文本：能当 JSON 解析就美化，否则原样（截断到 4000 字，避免一帧撑爆日志） */
+function prettyWsData(raw: string): string {
+  const text = String(raw ?? '');
+  const clipped = text.length > 4000 ? `${text.slice(0, 4000)}…（共 ${text.length} 字）` : text;
+  const t = clipped.trim();
+  if (!t.startsWith('{') && !t.startsWith('[')) return clipped;
+  try {
+    return JSON.stringify(JSON.parse(t), null, 2);
+  } catch {
+    return clipped;
+  }
+}
+
 export function ApiClient() {
   // 响应 → 工具箱联动（JSON 转化 / 结构对比 / YAML）
   const openToolboxTool = useStore(s => s.openToolboxTool);
@@ -180,11 +192,11 @@ export function ApiClient() {
   const [notice, setNotice] = useState('');
   const noticeTimer = useRef<number | null>(null);
   /** 一次性成功提示：2.5s 后自动消失（换新提示时重置计时） */
-  const flashNotice = (msg: string) => {
+  const flashNotice = useCallback((msg: string) => {
     setNotice(msg);
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(''), 2500);
-  };
+  }, []);
   const [sending, setSending] = useState(false);
   // 请求头经常一大屏（从 cURL 导入 15 行很常见），默认展开但可折叠
   const [headersOpen, setHeadersOpen] = useState(true);
@@ -264,7 +276,23 @@ export function ApiClient() {
 
   useEffect(() => {
     const kind = String(cmdSignal?.kind || '');
-    if (!cmdSignal || cmdSignal.at === lastApiOpenAt || !kind.startsWith('api:open:')) return;
+    if (!cmdSignal || cmdSignal.at === lastApiOpenAt) return;
+    // 命令面板深链：api:open:<已保存请求 id> / api:history:<历史记录 id>
+    if (kind.startsWith('api:history:')) {
+      lastApiOpenAt = cmdSignal.at;
+      const hid = kind.slice('api:history:'.length);
+      const h = history.find(x => x.id === hid);
+      if (!h) return;
+      // 历史只存了方法/地址/状态，没有请求体与请求头，所以填进去的是「骨架」，
+      // 用户点「发送」前能看清要重发的是什么。
+      setReq({ ...emptyReq(), method: h.method || 'GET', url: h.url || '', name: h.name || '' });
+      setSideTab('history');
+      setResponse(null);
+      setSchemaDiff(null);
+      setError('');
+      return;
+    }
+    if (!kind.startsWith('api:open:')) return;
     lastApiOpenAt = cmdSignal.at;
     const id = kind.slice('api:open:'.length);
     const hit = items.find(i => i.id === id);
@@ -274,7 +302,104 @@ export function ApiClient() {
     setResponse(null);
     setSchemaDiff(null);
     setError('');
-  }, [cmdSignal, items]);
+  }, [cmdSignal, items, history]);
+
+  /**
+   * 测试数据子应用「填入接口调试」：把生成的值写进请求体。
+   *
+   * 统一写成 JSON 数组（bodyType 也切到 json）：生成器产出的是同构的一批值，
+   * 数组是最能直接拿去测分页/批量接口的形态；只有一条时退化成单个字符串，
+   * 免得用户还要自己去掉方括号。
+   */
+  const apiBodySeed = useStore(s => s.apiBodySeed);
+  const consumeApiBodySeed = useStore(s => s.consumeApiBodySeed);
+  useEffect(() => {
+    if (!apiBodySeed || !apiBodySeed.values.length) return;
+    const values = apiBodySeed.values;
+    const body = values.length === 1 ? JSON.stringify(values[0], null, 2) : JSON.stringify(values, null, 2);
+    // GET / HEAD 不渲染请求体输入框，填了也看不见 —— 顺手换成 POST，
+    // 否则用户点完「填入接口调试」会觉得什么都没发生。
+    setReq(prev => ({
+      ...prev,
+      body,
+      bodyType: 'json',
+      method: ['GET', 'HEAD'].includes(prev.method) ? 'POST' : prev.method,
+    }));
+    consumeApiBodySeed();
+    flashNotice(`已填入 ${values.length} 条生成数据（JSON）`);
+  }, [apiBodySeed, consumeApiBodySeed, flashNotice]);
+
+  /* ---------------- WebSocket / SSE 长连接（1.23.0） ----------------
+   * 和 HTTP 请求共用同一个地址栏：切到 WS/SSE 后「发送」变成「连接」。
+   * 事件由主进程通过 ws:event 推回来，这里只按连接 id 过滤后追加到日志。
+   */
+  const [proto, setProto] = useState<'http' | 'ws' | 'sse'>('http');
+  const [wsId, setWsId] = useState('');
+  const [wsEvents, setWsEvents] = useState<WsEvent[]>([]);
+  const [wsInput, setWsInput] = useState('');
+  const [wsBusy, setWsBusy] = useState(false);
+  /** 连接是否还活着：收到 close/error 就置 false，按钮文案跟着变 */
+  const [wsOpen, setWsOpen] = useState(false);
+  const wsIdRef = useRef('');
+  wsIdRef.current = wsId;
+
+  // 订阅主进程推来的事件。只留最近 500 条：长连接跑久了日志会无限涨。
+  useEffect(() => {
+    const off = window.electronAPI.onWsEvent((ev) => {
+      if (!ev || ev.id !== wsIdRef.current) return;
+      setWsEvents(prev => {
+        const next = [...prev, ev];
+        return next.length > 500 ? next.slice(next.length - 500) : next;
+      });
+      if (ev.type === 'close' || ev.type === 'error') setWsOpen(false);
+      if (ev.type === 'open') setWsOpen(true);
+    });
+    return off;
+  }, []);
+
+  // 切协议时断开旧连接：留着一条看不见的长连接比断掉更危险
+  const switchProto = (next: 'http' | 'ws' | 'sse') => {
+    if (next === proto) return;
+    if (wsId) { void window.electronAPI.wsClose({ id: wsId }); }
+    setWsId(''); setWsOpen(false); setWsEvents([]); setWsInput('');
+    setProto(next);
+  };
+
+  const wsConnect = async () => {
+    if (!req.url.trim()) { setError('请输入地址'); return; }
+    setError('');
+    setWsBusy(true);
+    setWsEvents([]);
+    const url = applyVars(req.url, req.variables || '');
+    const headers = withCookies(applyVars(req.headers, req.variables || ''), req.cookies);
+    const res = proto === 'ws'
+      ? await window.electronAPI.wsConnect({ url, headers })
+      : await window.electronAPI.sseConnect({ url, headers });
+    setWsBusy(false);
+    if (res.success && res.data) {
+      setWsId(res.data.id);
+      setWsOpen(true);
+      flashNotice(proto === 'ws' ? 'WebSocket 已连接' : 'SSE 已连接');
+    } else {
+      setError(res.error || '连接失败');
+    }
+  };
+
+  const wsDisconnect = async () => {
+    if (!wsId) return;
+    await window.electronAPI.wsClose({ id: wsId });
+    setWsOpen(false);
+  };
+
+  const wsSendMsg = async () => {
+    if (!wsId || !wsInput.trim()) return;
+    const text = wsInput;
+    const res = await window.electronAPI.wsSend({ id: wsId, data: text });
+    if (!res.success) { setError(res.error || '发送失败'); return; }
+    setWsInput('');
+    // 自己发出去的消息也进日志，否则只有回包看不出对话关系
+    setWsEvents(prev => [...prev, { id: wsId, type: 'message' as const, data: text, at: new Date().toISOString() }].slice(-500));
+  };
 
   /** 侧栏「已保存」按关键字过滤（历史在渲染处用 filterHistory，逻辑同源） */
   const savedFiltered = useMemo(
@@ -941,19 +1066,91 @@ export function ApiClient() {
                 </div>
 
                 <div className="url-bar">
-                  <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })} aria-label="请求方法">
-                    {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
+                  <div className="proto-switch" role="group" aria-label="协议">
+                    {(['http', 'ws', 'sse'] as const).map(p => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={`proto-btn${proto === p ? ' is-active' : ''}`}
+                        onClick={() => switchProto(p)}
+                        title={p === 'http' ? '普通 HTTP 请求' : p === 'ws' ? 'WebSocket 长连接' : 'SSE（Server-Sent Events）长连接'}
+                      >
+                        {p === 'http' ? 'HTTP' : p.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  {proto === 'http' ? (
+                    <select value={req.method} onChange={e => setReq({ ...req, method: e.target.value })} aria-label="请求方法">
+                      {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  ) : (
+                    <span className="proto-tag">{proto === 'ws' ? 'WS' : 'SSE'}</span>
+                  )}
                   <input
                     value={req.url}
                     onChange={e => setReq({ ...req, url: e.target.value })}
-                    placeholder="https://api.example.com/users   支持 {{baseUrl}}/path"
-                    onKeyDown={e => { if (e.key === 'Enter') send(); }}
+                    placeholder={proto === 'http'
+                      ? 'https://api.example.com/users   支持 {{baseUrl}}/path'
+                      : proto === 'ws' ? 'wss://example.com/socket   支持 {{baseUrl}}/path' : 'https://example.com/events   支持 {{baseUrl}}/path'}
+                    onKeyDown={e => { if (e.key === 'Enter') { if (proto === 'http') void send(); else if (!wsId) void wsConnect(); } }}
                   />
-                  <button className="btn btn-primary btn-sm" onClick={send} disabled={sending} style={{ minWidth: 76 }}>
-                    {sending ? '发送中…' : '发送'}
-                  </button>
+                  {proto === 'http' ? (
+                    <button className="btn btn-primary btn-sm" onClick={send} disabled={sending} style={{ minWidth: 76 }}>
+                      {sending ? '发送中…' : '发送'}
+                    </button>
+                  ) : wsId ? (
+                    <button className="btn btn-secondary btn-sm" onClick={wsDisconnect} style={{ minWidth: 76 }}>
+                      断开
+                    </button>
+                  ) : (
+                    <button className="btn btn-primary btn-sm" onClick={wsConnect} disabled={wsBusy} style={{ minWidth: 76 }}>
+                      {wsBusy ? '连接中…' : '连接'}
+                    </button>
+                  )}
                 </div>
+
+                {proto !== 'http' && (
+                  <div className="ws-panel">
+                    <div className="ws-panel-head">
+                      <span className={`ws-dot${wsOpen ? ' is-on' : ''}`} />
+                      <span className="ws-state">{wsOpen ? '已连接' : wsId ? '已断开' : '未连接'}</span>
+                      <span className="ws-count">{wsEvents.length} 条事件</span>
+                      {wsEvents.length > 0 && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => setWsEvents([])}>清空日志</button>
+                      )}
+                    </div>
+                    <div className="ws-log">
+                      {wsEvents.length === 0 && (
+                        <div className="ws-log-empty">
+                          {proto === 'ws' ? '连接后收到的消息会显示在这里' : '连接后收到的事件会显示在这里'}
+                        </div>
+                      )}
+                      {wsEvents.map((ev, i) => (
+                        <div className={`ws-log-row is-${ev.type}`} key={`${ev.at}-${i}`}>
+                          <span className="ws-log-time">{new Date(ev.at).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                          <span className={`ws-log-dir is-${ev.type}`}>
+                            {ev.type === 'open' ? '连接' : ev.type === 'close' ? '关闭' : ev.type === 'error' ? '错误' : ev.event ? `← ${ev.event}` : '←'}
+                          </span>
+                          <span className="ws-log-body">{ev.type === 'message' ? prettyWsData(ev.data) : ev.data}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {proto === 'ws' && (
+                      <div className="ws-send">
+                        <input
+                          value={wsInput}
+                          onChange={e => setWsInput(e.target.value)}
+                          placeholder="要发送的文本（Enter 发送）"
+                          disabled={!wsOpen}
+                          onKeyDown={e => { if (e.key === 'Enter') void wsSendMsg(); }}
+                        />
+                        <button className="btn btn-primary btn-sm" onClick={wsSendMsg} disabled={!wsOpen || !wsInput.trim()}>
+                          发送
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 会话保持：响应里的 Set-Cookie 收进内存 Cookie 罐，下次请求自动带上 */}
                 <div className="api-session-row">

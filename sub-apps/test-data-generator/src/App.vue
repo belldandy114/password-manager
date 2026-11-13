@@ -393,6 +393,14 @@
             <span class="seg">
               <el-button v-for="f in exportFormats" :key="f" size="small" @click="handleExport(f)">{{ f.toUpperCase() }}</el-button>
             </span>
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :disabled="displayResults.length === 0"
+              title="把当前结果（去重后的视图）填进接口调试的请求体"
+              @click="handleToApiBody"
+            >填入接口调试</el-button>
           </div>
         </div>
 
@@ -1178,6 +1186,30 @@ async function handleCopy() {
     ElMessage.success('已复制全部 ' + displayResults.value.length + ' 条')
   } catch {
     ElMessage.warning('复制失败')
+  }
+}
+
+/**
+ * 把当前结果填进「接口调试」的请求体。
+ *
+ * 只传值（不传类型/后六位）：请求体里要的就是一串数据。
+ * 走主进程转发，因为子应用是独立 webview，拿不到主窗口的 store。
+ */
+async function handleToApiBody() {
+  const values = displayResults.value.map(i => i.value).filter(v => v !== '')
+  if (values.length === 0) { ElMessage.warning('没有可填入的数据'); return }
+  const api = window.electronAPI
+  if (!api || typeof api.toApiBody !== 'function') {
+    ElMessage.warning('当前环境不支持（请从主应用打开）')
+    return
+  }
+  try {
+    const r = await api.toApiBody(values)
+    if (!r || !r.success) { ElMessage.warning(r?.error || '填入失败'); return }
+    const n = r.data?.count ?? values.length
+    ElMessage.success(r.data?.truncated ? `已填入 ${n} 条（超出部分已截断）` : `已填入 ${n} 条到接口调试`)
+  } catch {
+    ElMessage.warning('填入失败')
   }
 }
 

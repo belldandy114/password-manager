@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   IconFileText, IconUser, IconCalendarStats, IconClipboardCheck, IconDatabase,
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
-  IconTerminal2, IconApi, IconSettings, IconLock, IconServer,
+  IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -129,6 +129,7 @@ const nav = (C: React.ComponentType<{ size?: number; stroke?: number }>) => (
 const pmIcon = nav(IconFileText);
 const accountIcon = nav(IconUser);
 const envIcon = nav(IconServer);
+const attachIcon = nav(IconPhoto);
 const reportIcon = nav(IconCalendarStats);
 const checkIcon = nav(IconClipboardCheck);
 const dbIcon = nav(IconDatabase);
@@ -156,6 +157,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
       { id: 'snippets', label: 'SQL 片段', icon: dbIcon },
       { id: 'notes', label: '测试笔记', icon: noteIcon },
+      { id: 'attachments', label: '附件管理', icon: attachIcon },
       { id: 'zentao', label: '缺陷管理', icon: bugIcon },
     ],
   },

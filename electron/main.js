@@ -203,6 +203,7 @@ function clearCaches() {
   vaultCache = { password: null, data: null };
   trashCache = { password: null, data: null };
   clearApiJar();
+  closeWsConnections();
 }
 
 // ----------------------------------------------------------------
@@ -1284,6 +1285,7 @@ const { registerAuthIpc } = require('./ipc-auth');
 const { registerDataIpc } = require('./ipc-data');
 const { registerUpdateIpc } = require('./ipc-update');
 const { registerApiIpc, clearApiJar } = require('./ipc-api');
+const { registerWsIpc, closeAll: closeWsConnections } = require('./ipc-ws');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -1561,6 +1563,13 @@ function setupIpcHandlers() {
     attachmentFile,
     attachDir: ATTACH_DIR,
     vaultCollections: VAULT_COLLECTIONS,
+  });
+
+  // ---- 接口调试的 WebSocket / SSE 长连接（实现见 electron/ipc-ws.js）----
+  // 连接只活在内存里，锁定/退出时由 clearCaches() 调 closeWsConnections() 全部断开
+  registerWsIpc({
+    getWindow: () => mainWindow,
+    getPassword: () => currentPassword,
   });
 
   // 禅道 IPC 已拆到 electron/ipc-zentao.js；未读提醒的三个函数从这里取给 ipc-entries.js

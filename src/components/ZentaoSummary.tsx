@@ -6,10 +6,11 @@ import { Modal } from './Modal';
 import { PersonPicker } from './PersonPicker';
 import { formatHm } from '../utils/time';
 import {
-  summarize, summaryTo, projectToText, personsToText, severityRows, personOf,
+  summarize, summaryTo, projectToText, personsToText, severityRows, personOf, creatorOf,
   daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf,
   periodOf, growthOf, splitSecurity, dailyReportText,
   securityStatOf, securityReportText, securityBugs, securityListText, SEVERITY_LABELS,
+  creatorsToText,
   type ProjectSummary, type SummaryFormat, type ReportInput,
 } from '../utils/bugSummary';
 import { pushHistory, prevOf, clearHistory, readHistory, type SumSnapshot } from '../utils/sumHistory';
@@ -38,7 +39,7 @@ const COPY_FORMATS: { v: CopyFormat; label: string; hint: string }[] = [
   { v: 'csv', label: 'CSV', hint: '粘到 Excel 自动分列' },
 ];
 
-type TabId = 'proj' | 'person' | 'daily';
+type TabId = 'proj' | 'person' | 'creator' | 'daily';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const nowStamp = (d: Date = new Date()) =>
@@ -100,8 +101,10 @@ export function ZentaoSummary({
   const [personDraft, setPersonDraft] = useState<string[]>([]);
   const [personQuery, setPersonQuery] = useState('');
   const [drill, setDrill] = useState<string | null>(null);
+  const [creatorDrill, setCreatorDrill] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [personAll, setPersonAll] = useState(false);
+  const [creatorAll, setCreatorAll] = useState(false);
   const [tip, setTip] = useState('');
   const [rateBasis, setRateBasis] = useState<'all' | 'open'>('all');
   const [copyOpen, setCopyOpen] = useState(false);
@@ -184,6 +187,7 @@ export function ZentaoSummary({
   const assignedTotal = useMemo(() => result.persons.reduce((s, p) => s + p.total, 0), [result.persons]);
   // 人员表默认只列前 12 人（一个项目动辄二三十人，全列出来表格太长）
   const shownPersons = personAll ? result.persons : result.persons.slice(0, 12);
+  const shownCreators = creatorAll ? result.creators : result.creators.slice(0, 12);
   const sevRows = useMemo(() => severityRows(result.severity), [result.severity]);
 
   /** 剩余缺陷最多的模块 Top5（跨项目按模块短名合并） */
@@ -420,6 +424,17 @@ export function ZentaoSummary({
     }
   };
 
+  const creatorsText = () => creatorsToText(result.creators, { closedCount: result.overall.closed });
+
+  const copyCreators = async () => {
+    try {
+      await navigator.clipboard.writeText(creatorsText());
+      flash('已复制提交分布');
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
+  };
+
   const copySecurityList = async () => {
     if (!secBugs.length) return;
     try {
@@ -543,6 +558,29 @@ export function ZentaoSummary({
       .filter(b => !since || String(b.openedDate || b.date || '').slice(0, 10) >= since)
       .sort((a, b) => Number(b.id) - Number(a.id));
   }, [drill, funcBugs, since]);
+
+  /** 提交人下钻：这人提过哪些缺陷（含已关闭，与「按提交人」口径一致） */
+  const creatorDrillBugs = useMemo(() => {
+    if (!creatorDrill) return [];
+    return funcBugs
+      .filter(b => creatorOf(b) === creatorDrill)
+      .filter(b => !since || String(b.openedDate || b.date || '').slice(0, 10) >= since)
+      .sort((a, b) => Number(b.id) - Number(a.id));
+  }, [creatorDrill, funcBugs, since]);
+
+  const copyCreatorDrill = async () => {
+    if (!creatorDrillBugs.length) return;
+    const lines = creatorDrillBugs.map(b => {
+      const st = b.status === 'active' ? '未修复' : b.status === 'resolved' ? '待验证' : b.status === 'closed' ? '已关闭' : String(b.status || '');
+      return `#${b.id} ${b.title}（${st}${b.moduleName ? ` · ${b.moduleName}` : ''}）`;
+    });
+    try {
+      await navigator.clipboard.writeText(`【${creatorDrill}】提交的 ${creatorDrillBugs.length} 个缺陷：\n${lines.join('\n')}`);
+      flash('已复制清单');
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
+  };
 
   const copyDrill = async () => {
     if (!drillBugs.length) return;
@@ -1071,6 +1109,14 @@ export function ZentaoSummary({
                 </button>
                 <button
                   role="tab"
+                  aria-selected={tab === 'creator'}
+                  className={`zt-detail-tab${tab === 'creator' ? ' is-on' : ''}`}
+                  onClick={() => setTab('creator')}
+                >
+                  按提交人 <span>{result.creators.length}</span>
+                </button>
+                <button
+                  role="tab"
                   aria-selected={tab === 'daily'}
                   className={`zt-detail-tab${tab === 'daily' ? ' is-on' : ''}`}
                   onClick={() => setTab('daily')}
@@ -1082,6 +1128,11 @@ export function ZentaoSummary({
                 {tab === 'person' && (
                   <button className="btn btn-ghost btn-sm" onClick={copyPersons} title="复制成「人员分布共 N 个：某某 X 个」一行文本">
                     <Icons.copy size={12} /> 复制人员分布
+                  </button>
+                )}
+                {tab === 'creator' && (
+                  <button className="btn btn-ghost btn-sm" onClick={copyCreators} title="复制成「提交分布共 N 个：某某 X 个」一行文本">
+                    <Icons.copy size={12} /> 复制提交分布
                   </button>
                 )}
                 {tab === 'daily' && (
@@ -1289,6 +1340,82 @@ export function ZentaoSummary({
                 )
               )}
 
+              {tab === 'creator' && (
+                result.creators.length === 0 ? (
+                  <div className="zt-sum-empty" style={{ padding: '18px 16px' }}>
+                    {busy ? '正在拉取…' : '这些项目还没有缺陷记录'}
+                  </div>
+                ) : (
+                  <>
+                    <div className="zt-proj-wrap">
+                      <table className="tbl zt-sum-tbl">
+                        <thead>
+                          <tr>
+                            <th style={{ minWidth: 120 }}>提交人</th>
+                            <th className="num">提交</th>
+                            <th className="num" style={{ minWidth: 90 }}>占比</th>
+                            <th className="num">未修复</th>
+                            <th className="num">待验证</th>
+                            <th className="num">已关闭</th>
+                            <th className="num" style={{ minWidth: 90 }}>修复率</th>
+                            <th className="num">近 7 天提交</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shownCreators.map(c => (
+                            <tr
+                              key={c.name}
+                              className="zt-sum-prow"
+                              tabIndex={0}
+                              role="button"
+                              title={`点开看 ${c.name} 提交的缺陷`}
+                              onClick={() => setCreatorDrill(c.name)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCreatorDrill(c.name); }
+                              }}
+                            >
+                              <td>
+                                <span className="zt-sum-name">{c.name}</span>
+                                {testers.includes(c.name) && <span className="zt-sum-tag">测试</span>}
+                              </td>
+                              <td className="cell-num">{c.total}</td>
+                              <td className="cell-num">
+                                <span className="zt-sum-rate">
+                                  <span className="zt-sum-bar"><i style={{ width: `${Math.min(100, c.share)}%` }} /></span>
+                                  {c.share}%
+                                </span>
+                              </td>
+                              <td className={`cell-num${c.active ? ' is-bad' : ''}`}>{c.active}</td>
+                              <td className={`cell-num${c.resolved ? ' is-warn' : ''}`}>{c.resolved}</td>
+                              <td className="cell-num">{c.closed}</td>
+                              <td className="cell-num is-ok">{c.rate}%</td>
+                              <td className="cell-num">{c.recentNew || ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        {result.creators.length > 12 && (
+                          <tfoot>
+                            <tr>
+                              <td colSpan={8} className="zt-sum-more">
+                                <button className="btn btn-ghost btn-sm" onClick={() => setCreatorAll(v => !v)}>
+                                  {creatorAll ? '只看前 12 人' : `展开全部 ${result.creators.length} 人`}
+                                </button>
+                              </td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                    <div className="zt-sum-note">
+                      {creatorsText()}
+                      <span className="zt-sum-note-sub">
+                        按创建人统计，含已关闭（提过就算），不受「排除人员」影响；点任意一行可看这人提交的缺陷清单。
+                      </span>
+                    </div>
+                  </>
+                )
+              )}
+
               {tab === 'daily' && (
                 <div className="zt-report">
                   <pre className="zt-report-text">{reportText}</pre>
@@ -1441,6 +1568,37 @@ export function ZentaoSummary({
                 <span className="zt-sum-drill-title" title={b.title}>{b.title}</span>
                 <Pill tone={b.status === 'active' ? 'bad' : b.status === 'resolved' ? 'ok' : 'mute'} dot>
                   {b.status === 'active' ? '未修复' : b.status === 'resolved' ? '待验证' : b.status}
+                </Pill>
+                <span className="zt-sum-drill-mod" title={b.moduleName}>{b.moduleName || '未指定模块'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+      {/* 提交人下钻：这人提过哪些缺陷 */}
+      <Modal
+        open={!!creatorDrill}
+        onClose={() => setCreatorDrill(null)}
+        title={`${creatorDrill || ''} 提交的缺陷（${creatorDrillBugs.length}）`}
+        footer={(
+          <>
+            <button className="btn btn-secondary" onClick={() => setCreatorDrill(null)}>关闭</button>
+            <button className="btn btn-primary" onClick={copyCreatorDrill} disabled={!creatorDrillBugs.length}>
+              <Icons.copy size={12} /> 复制清单
+            </button>
+          </>
+        )}
+      >
+        {creatorDrillBugs.length === 0 ? (
+          <div className="zt-proj-empty">没有缺陷记录</div>
+        ) : (
+          <div className="zt-sum-drill">
+            {creatorDrillBugs.map(b => (
+              <div key={b.id} className="zt-sum-drill-row">
+                <span className="zt-sum-drill-id">#{b.id}</span>
+                <span className="zt-sum-drill-title" title={b.title}>{b.title}</span>
+                <Pill tone={b.status === 'active' ? 'bad' : b.status === 'resolved' ? 'ok' : 'mute'} dot>
+                  {b.status === 'active' ? '未修复' : b.status === 'resolved' ? '待验证' : b.status === 'closed' ? '已关闭' : b.status}
                 </Pill>
                 <span className="zt-sum-drill-mod" title={b.moduleName}>{b.moduleName || '未指定模块'}</span>
               </div>

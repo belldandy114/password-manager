@@ -3386,6 +3386,63 @@ html.pin-window #root {
   white-space: nowrap;
 }
 
+/* 笔记小窗（kind=note）：正文比「网址/账号/密码」三行要长，整块可滚动 */
+.pin-card-note {
+  font-size: var(--fs-sm);
+}
+
+.pin-note-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  color: var(--text-1);
+  line-height: var(--lh-normal);
+}
+
+.pin-note-body .pin-md {
+  font-size: var(--fs-sm);
+}
+
+/* 小窗里 Markdown 的标题/代码块都收一档，不然 340px 高的窗口全是标题 */
+.pin-note-body .pin-md h1,
+.pin-note-body .pin-md h2,
+.pin-note-body .pin-md h3 {
+  margin: 8px 0 4px;
+  font-size: var(--fs-md);
+}
+
+.pin-note-body .pin-md p,
+.pin-note-body .pin-md ul,
+.pin-note-body .pin-md ol {
+  margin: 4px 0;
+}
+
+.pin-note-body .pin-md pre {
+  margin: 6px 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  font-size: var(--fs-xs);
+}
+
+.pin-note-body .pin-md img {
+  max-width: 100%;
+  border-radius: var(--r-xs);
+}
+
+.pin-foot-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.pin-foot-btn:hover {
+  text-decoration: underline;
+}
+
 /* ============================================================
    48. 设置 › 定时任务面板
    ------------------------------------------------------------
@@ -3707,4 +3764,332 @@ html.pin-window #root {
 .log-modal-body:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* ==========================================================================
+   49. 附件集中管理（1.23.0）
+   --------------------------------------------------------------------------
+   卡片网格：缩略图按 4:3 裁切，正文只放「大小 / 时间 / 引用者」三行，
+   操作按钮固定在右下角，避免每张卡片高度不一致。
+   ========================================================================== */
+
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 12px;
+  padding: 2px;
+}
+
+.att-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.att-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-1);
+}
+
+.att-card-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.att-card-thumb .att-thumb {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  border: 0;
+  border-radius: 0;
+}
+
+.att-card-thumb .att-thumb.is-broken {
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.att-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.att-card-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.att-card-size {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.att-card-time {
+  white-space: nowrap;
+}
+
+.att-card-owners {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+}
+
+.att-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.att-owner svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.att-owner-more {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.att-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 6px 6px;
+}
+
+.att-card-name {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   50. 接口调试 › WebSocket / SSE 长连接（1.23.0）
+   ------------------------------------------------------------
+   地址栏左侧加 HTTP / WS / SSE 三段切换；切到长连接后
+   「发送」变成「连接」，下方多一块事件日志。
+   ============================================================ */
+
+.proto-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+}
+
+.proto-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--r-sm) - 2px);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.proto-btn:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.proto-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 长连接模式下没有方法下拉，用一个小标签占位，保持地址栏左端对齐 */
+.proto-tag {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 0 8px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.ws-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.ws-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.ws-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: 0 0 auto;
+}
+
+.ws-dot.is-on {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+
+.ws-state {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.ws-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.ws-log {
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
+.ws-log-empty {
+  padding: 12px 4px;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  text-align: center;
+}
+
+.ws-log-row {
+  display: grid;
+  grid-template-columns: 62px 62px minmax(0, 1fr);
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.ws-log-row:last-child {
+  border-bottom: 0;
+}
+
+.ws-log-time {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ws-log-dir {
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-log-dir.is-open {
+  color: var(--ok);
+}
+
+.ws-log-dir.is-close {
+  color: var(--text-3);
+}
+
+.ws-log-dir.is-error {
+  color: var(--bad);
+}
+
+.ws-log-body {
+  min-width: 0;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ws-log-row.is-error .ws-log-body {
+  color: var(--bad);
+}
+
+.ws-send {
+  display: flex;
+  gap: 8px;
+}
+
+.ws-send input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.ws-send input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ws-send input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }

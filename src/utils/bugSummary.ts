@@ -76,6 +76,29 @@ export interface PersonRow {
   recentFixed: number;
 }
 
+/**
+ * 按「提交人」的分布：谁提了多少 Bug、其中修掉多少。
+ *
+ * 与 PersonRow 的区别是口径完全不同——PersonRow 看「当前指派人、只算未关闭」，
+ * 这里看「创建人、算全部（含已关闭）」，因为提了多少条是历史事实，不该随关闭而消失。
+ */
+export interface CreatorRow {
+  name: string;
+  /** 该人提交的缺陷总数（含已关闭） */
+  total: number;
+  fixed: number;
+  active: number;
+  resolved: number;
+  closed: number;
+  other: number;
+  /** 已修复 / 总数，百分比，保留 1 位 */
+  rate: number;
+  /** 占全部缺陷的比例，百分比，保留 1 位 */
+  share: number;
+  /** 最近 7 天提交的 */
+  recentNew: number;
+}
+
 /** 严重程度：禅道 1 致命 / 2 严重 / 3 一般 / 4 轻微 */
 export const SEVERITY_LABELS: Record<string, string> = {
   '1': '致命',
@@ -128,6 +151,36 @@ const finish = (stat: BugStat): BugStat => ({
 /** 人员桶：PersonRow 去掉最后才可能算出来的 share */
 type PersonBucket = Omit<PersonRow, 'share'>;
 
+/** 提交人桶：CreatorRow 去掉最后才可能算出来的 share / rate */
+type CreatorBucket = Omit<CreatorRow, 'share' | 'rate'>;
+
+const emptyCreator = (name: string): CreatorBucket =>
+  ({ name, total: 0, fixed: 0, active: 0, resolved: 0, closed: 0, other: 0, recentNew: 0 });
+
+/** 往提交人桶里加一条（含已关闭的，口径见 creatorOf 注释） */
+function addCreator(map: Map<string, CreatorBucket>, who: string, b: ZentaoBug, since7: string) {
+  const c = map.get(who) || emptyCreator(who);
+  c.total += 1;
+  if (bugIsFixed(b)) c.fixed += 1;
+  const st = String(b.status || '');
+  if (st === 'active') c.active += 1;
+  else if (st === 'resolved') c.resolved += 1;
+  else if (st === 'closed') c.closed += 1;
+  else c.other += 1;
+  const opened = dayOf(b.openedDate || b.date);
+  if (opened && opened >= since7) c.recentNew += 1;
+  map.set(who, c);
+}
+
+/** 提交人列表收尾：算修复率与占比、按条数降序（同条数按名字，保证顺序稳定） */
+function finishCreators(map: Map<string, CreatorBucket>): CreatorRow[] {
+  const list = Array.from(map.values());
+  const denom = list.reduce((s, c) => s + c.total, 0);
+  return list
+    .map(c => ({ ...c, rate: rateOf(c.fixed, c.total), share: rateOf(c.total, denom) }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+
 const emptyPerson = (name: string): PersonBucket =>
   ({ name, total: 0, fixed: 0, active: 0, resolved: 0, closed: 0, other: 0, recentNew: 0, recentFixed: 0 });
 
@@ -177,6 +230,18 @@ export const personOf = (b: ZentaoBug) => {
   const a = String(b.assignedTo || '').trim();
   if (!a || a === 'closed') return '';
   return a;
+};
+
+/**
+ * 「谁提了多少」只看创建人（openedBy），与指派人无关：
+ * - 已关闭的也算（提过就是提过，不因为关掉就抹掉）
+ * - 创建人为空的算「未知提交人」
+ * 注意：这里**不套用排除人员名单**——排除名单的语义是「把测试人员从开发积压里去掉」，
+ * 而按创建人统计恰恰要看测试人员提了多少，套上去会把最该看的人剔掉。
+ */
+export const creatorOf = (b: ZentaoBug) => {
+  const o = String(b.openedBy || '').trim();
+  return o || '未知提交人';
 };
 
 /**
@@ -331,6 +396,8 @@ export interface SummaryResult {
   projects: ProjectSummary[];
   overall: BugStat;
   persons: PersonRow[];
+  /** 按提交人（创建人）的分布，含已关闭，不受排除名单影响 */
+  creators: CreatorRow[];
   unassigned: number;
   skipped: number;
   /** 全局严重程度分布 */
@@ -360,6 +427,7 @@ export function summarize(bugs: ZentaoBug[], opts: SummarizeOpts): SummaryResult
   for (const id of order) map.set(String(id), newBucket());
 
   const persons = new Map<string, PersonBucket>();
+  const creators = new Map<string, CreatorBucket>();
   const overall = emptyStat();
   const severity: Record<string, number> = {};
   let overallUnassigned = 0;
@@ -391,6 +459,9 @@ export function summarize(bugs: ZentaoBug[], opts: SummarizeOpts): SummaryResult
       bucket.severity[sev] = (bucket.severity[sev] || 0) + 1;
       severity[sev] = (severity[sev] || 0) + 1;
     }
+
+    // 按提交人：放在「未指派 / 已排除」的 continue 之前，否则这两类会被漏掉
+    addCreator(creators, creatorOf(b), b, since7);
 
     // 人员口径按「当前指派人」，未关闭且没指派的单独计数，
     // 保证 人员之和 + 未指派 + 已排除 = 未关闭数
@@ -446,6 +517,7 @@ export function summarize(bugs: ZentaoBug[], opts: SummarizeOpts): SummaryResult
     projects,
     overall: finish(overall),
     persons: finishPersons(persons),
+    creators: finishCreators(creators),
     unassigned: overallUnassigned,
     skipped: overallSkipped,
     severity,
@@ -515,6 +587,23 @@ export function personsToText(
   }
   const tail = notes.length ? `（${notes.join('，')}）` : '';
   return `人员指派共 ${assigned} 个：${body}${rest}${tail}`;
+}
+
+/**
+ * 提交人分布行，形如：
+ *   提交分布共 120 个：张三 40 个、李四 35 个、……（含已关闭 90 个）
+ * 与人员分布口径不同：这里按创建人、含已关闭，不受排除名单影响。
+ */
+export function creatorsToText(
+  creators: CreatorRow[],
+  opts: { limit?: number; closedCount?: number } = {},
+): string {
+  const total = creators.reduce((s, c) => s + c.total, 0);
+  const shown = opts.limit && opts.limit > 0 ? creators.slice(0, opts.limit) : creators;
+  const body = shown.length ? shown.map(c => `${c.name} ${c.total} 个`).join('、') : '暂无';
+  const rest = creators.length > shown.length ? ` 等 ${creators.length} 人` : '';
+  const tail = opts.closedCount ? `（含已关闭 ${opts.closedCount} 个）` : '';
+  return `提交分布共 ${total} 个：${body}${rest}${tail}`;
 }
 
 const stampOf = (at?: string) => {

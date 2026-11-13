@@ -47,8 +47,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 实际生效的全局快捷键（Ctrl+空格被占用时主进程会自动回退） */
   hotkeyInfo: () => ipcRenderer.invoke('app:hotkeys'),
 
-  /** 「钉」成独立小窗：把一条记录摆到桌面上，锁屏时主进程会统一关掉 */
-  pinOpen: (id) => ipcRenderer.invoke('pin:open', id),
+  /**
+   * 「钉」成独立小窗：把一条记录摆到桌面上，锁屏时主进程会统一关掉。
+   * 传字符串 = 钉一条网址记录；传 `{ id, kind: 'note' }` = 钉一条测试笔记。
+   */
+  pinOpen: (payload) => ipcRenderer.invoke('pin:open', payload),
   /** 小窗自己关自己 */
   pinClose: () => ipcRenderer.invoke('pin:close'),  /** 修改全局快捷键：冲突会返回 success:false + error，并回滚到原来能用的键 */
   hotkeyApply: (payload) => ipcRenderer.invoke('app:hotkeys-apply', payload),
@@ -151,6 +154,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 粘贴截图（#5）：dataURL 进、加密落盘；读回 dataURL 用于显示
   attachmentSaveImage: (data) => ipcRenderer.invoke('attachment:save-image', data),
   attachmentReadImage: (data) => ipcRenderer.invoke('attachment:read-image', data),
+  /** 附件集中管理：只列元数据（id/大小/时间），内容按需逐张读 */
+  attachmentList: () => ipcRenderer.invoke('attachment:list'),
+  /** 解密后另存到用户选的位置 */
+  attachmentExport: (data) => ipcRenderer.invoke('attachment:export', data),
 
   // 环境巡检（#3）
   envProbe: (data) => ipcRenderer.invoke('env:probe', data),
@@ -160,6 +167,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apiSend: (data) => ipcRenderer.invoke('api:send', data),
   apiCookies: (origin) => ipcRenderer.invoke('api:cookies', { origin }),
   apiCookiesClear: (origin) => ipcRenderer.invoke('api:cookies-clear', { origin }),
+  // WebSocket / SSE 长连接（1.23.0）：事件统一从 ws:event 推回来
+  wsConnect: (data) => ipcRenderer.invoke('ws:connect', data),
+  wsSend: (data) => ipcRenderer.invoke('ws:send', data),
+  wsClose: (data) => ipcRenderer.invoke('ws:close', data),
+  sseConnect: (data) => ipcRenderer.invoke('sse:connect', data),
+  onWsEvent: (cb) => {
+    const h = (_e, payload) => cb(payload);
+    ipcRenderer.on('ws:event', h);
+    return () => ipcRenderer.removeListener('ws:event', h);
+  },
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
   zentaoMyBugs: (cfg, scope, productIds) => ipcRenderer.invoke('zentao:my-bugs', cfg, scope, productIds),
   zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
@@ -257,6 +274,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Test Data Generator sub-app
   tdgGetPath: () => ipcRenderer.invoke('tdg:get-path'),
+  /** 子应用把生成结果发过来（主进程转发），主窗口据此填接口调试的请求体 */
+  onTdgToApi: (cb) => {
+    const h = (_e, payload) => cb(payload);
+    ipcRenderer.on('tdg:to-api', h);
+    return () => ipcRenderer.removeListener('tdg:to-api', h);
+  },
 
   // JMeter（非 GUI 运行）
   jmeterDetect: () => ipcRenderer.invoke('jmeter:detect'),

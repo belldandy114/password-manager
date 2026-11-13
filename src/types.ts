@@ -16,6 +16,14 @@ export interface Attachment {
   kind?: 'image';
 }
 
+/** 附件目录里的一个文件（附件集中管理页用；不含内容） */
+export interface AttachmentFileMeta {
+  id: string;
+  /** 加密后文件大小（不是原图大小） */
+  size: number;
+  updatedAt: string;
+}
+
 export interface PasswordEntry {
   id: string;
   name: string;
@@ -368,6 +376,22 @@ export interface ApiJarCookie {
   name: string;
   /** 0 = 会话级 */
   expiresAt: number;
+}
+
+/** WebSocket / SSE 长连接推回来的事件（1.23.0） */
+export interface WsEvent {
+  /** 连接 id（wsConnect / sseConnect 返回的那个） */
+  id: string;
+  type: 'open' | 'message' | 'close' | 'error';
+  /** 文本内容；open/close/error 时是给人看的一句话 */
+  data: string;
+  /** SSE 的 event: 名（默认 message） */
+  event?: string;
+  /** WebSocket 二进制帧 */
+  binary?: boolean;
+  /** 收到的字节数 */
+  bytes?: number;
+  at: string;
 }
 
 export interface Snippet {
@@ -730,8 +754,11 @@ export interface ElectronAPI {
   hotkeyInfo: () => Promise<{ success: boolean; data?: HotkeyInfo }>;
   /** 修改全局快捷键；冲突时 success:false + error（conflict / same），并回滚到原来能用的键 */
   hotkeyApply: (payload: { search?: string; toggle?: string; quicknote?: string }) => Promise<HotkeyApplyResult>;
-  /** 「钉」成独立小窗（一条记录一个置顶窗口） */
-  pinOpen: (id: string) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * 「钉」成独立小窗（一条记录一个置顶窗口）。
+   * 传字符串钉网址记录；传 `{ id, kind: 'note' }` 钉测试笔记。
+   */
+  pinOpen: (payload: string | { id: string; kind?: 'entry' | 'note' }) => Promise<{ success: boolean; error?: string }>;
   /** 小窗关闭自己 */
   pinClose: () => Promise<{ success: boolean; error?: string }>;
   /** 系统通知（点击可跳转到某个页面） */
@@ -824,6 +851,11 @@ export interface ElectronAPI {
   /** 读回图片附件（dataURL），给 <img> 直接显示 */
   attachmentReadImage: (data: { id: string }) =>
     Promise<{ success: boolean; data?: { dataUrl: string; mime?: string }; error?: string }>;
+  /** 附件集中管理：列出附件目录里的全部文件（只有元数据，不含内容） */
+  attachmentList: () => Promise<{ success: boolean; data?: AttachmentFileMeta[]; error?: string }>;
+  /** 解密后另存到用户选的位置 */
+  attachmentExport: (data: { id: string; name?: string }) =>
+    Promise<{ success: boolean; data?: { file: string }; canceled?: boolean; error?: string }>;
 
   // 环境巡检（#3）
   envProbe: (data: { targets: Array<{ id: string; url: string }>; timeoutMs?: number }) =>
@@ -841,6 +873,16 @@ export interface ElectronAPI {
   /** 会话 Cookie 罐（仅内存） */
   apiCookies: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
   apiCookiesClear: (origin?: string) => Promise<{ success: boolean; data?: ApiJarCookie[] }>;
+  /** WebSocket 连接（1.23.0）：事件从 onWsEvent 推回来 */
+  wsConnect: (data: { url: string; headers?: string; insecure?: boolean }) =>
+    Promise<{ success: boolean; data?: { id: string }; error?: string }>;
+  wsSend: (data: { id: string; data: string }) =>
+    Promise<{ success: boolean; data?: { bytes: number }; error?: string }>;
+  wsClose: (data: { id: string }) => Promise<{ success: boolean; error?: string }>;
+  /** SSE 连接：事件同样从 onWsEvent 推回来 */
+  sseConnect: (data: { url: string; headers?: string }) =>
+    Promise<{ success: boolean; data?: { id: string }; error?: string }>;
+  onWsEvent: (cb: (payload: WsEvent) => void) => () => void;
   zentaoLogin: (cfg: ZentaoConfig) => Promise<{ success: boolean; error?: string }>;
   /** 我提交的 / 待我验证：必须传选中的项目 id（禅道 REST 强制 product，且全量遍历太慢） */
   zentaoMyBugs: (cfg: ZentaoConfig, scope?: MyBugScope, productIds?: string[]) => Promise<{
@@ -1042,6 +1084,8 @@ export interface ElectronAPI {
 
   // Test Data Generator sub-app
   tdgGetPath: () => Promise<{ distPath: string; preloadPath: string }>;
+  /** 子应用把生成结果发过来（主进程转发），主窗口据此填接口调试的请求体 */
+  onTdgToApi: (cb: (payload: { values: string[]; truncated?: boolean }) => void) => () => void;
 }
 
 declare global {

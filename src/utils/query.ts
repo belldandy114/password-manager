@@ -5,14 +5,14 @@
  *   tag:内网          按标签过滤（可写多次，取交集）
  *   env:prod|test|dev|stag  按环境过滤
  *   name:登录  url:api  user:admin   限定字段
- *   @note @snippet @account @request @case @env @entry @page  只看某一类
+ *   @note @snippet @account @request @case @env @entry @page @history @code  只看某一类
  *   其余自由文本按原来的包含匹配
  *
  * 为什么不把语法做进 Dashboard 的搜索框：那里的搜索是「在网址里找」，
  * 而全局搜索要跨六类数据，语法只在跨类时才有意义。
  */
 
-export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env';
+export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code';
 
 const KIND_ALIAS: Record<string, QueryKind> = {
   '@page': 'page',
@@ -28,6 +28,8 @@ const KIND_ALIAS: Record<string, QueryKind> = {
   '@case': 'checklist',
   '@checklist': 'checklist',
   '@env': 'env',
+  '@history': 'history',
+  '@code': 'code',
 };
 
 export interface ParsedQuery {

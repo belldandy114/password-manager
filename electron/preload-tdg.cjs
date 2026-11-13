@@ -11,4 +11,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     return ipcRenderer.invoke('fs:writeFile', { filePath, content, encoding })
   },
+
+  /**
+   * 把生成结果交给主窗口的「接口调试」填进请求体。
+   * 子应用是独立 webview，拿不到主窗口的 store，只能经主进程转发。
+   */
+  toApiBody: (values) => ipcRenderer.invoke('tdg:to-api', { values }),
 })

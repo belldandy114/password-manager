@@ -223,7 +223,10 @@ function guardWebviews(hostContents, getOptions) {
       return;
     }
     Object.assign(webPreferences, HARDENED_WEBVIEW_PREFERENCES);
-    if (result.sanitizedPreload) webPreferences.preload = result.sanitizedPreload;
+    // webPreferences.preload 要的是**文件系统路径**，不是 file:// URL。
+    // 直接把 params.preload（URL）赋回去，Electron 解析不到文件、preload 静默不执行，
+    // 子应用就拿不到 window.electronAPI（表现为「填入接口调试」按钮点了没反应）。
+    if (result.sanitizedPreload) webPreferences.preload = toLocalPath(result.sanitizedPreload);
     else delete webPreferences.preload;
   });
 }

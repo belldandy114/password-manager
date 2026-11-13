@@ -36,10 +36,19 @@ interface AppState {
   pmSubPage: string;
   /** 命令面板触发的跨页动作（kind + 时间戳，页面监听变化后执行） */
   cmdSignal: { kind: string; at: number } | null;
+  /**
+   * 「测试数据 → 接口调试」的请求体种子。
+   * 放 store 而不是 URL/命令字符串：生成结果可能上千条，塞进 cmdSignal 的 kind 里
+   * 既不好读也不好截断，这里直接传数组，接口调试页消费后清空。
+   */
+  apiBodySeed: { values: string[]; at: number } | null;
 
   // Actions
   signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
   signalCmd: (kind: string) => void;
+  /** 把生成的数据交给接口调试页填进请求体 */
+  seedApiBody: (values: string[]) => void;
+  consumeApiBodySeed: () => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
   openToolboxTool: (tool: string, text?: string) => void;
@@ -112,6 +121,7 @@ export const useStore = create<AppState>((set, get) => ({
   triggerNewEntry: 0,
   newEntrySeed: null,
   cmdSignal: null,
+  apiBodySeed: null,
   toolboxIntent: null,
   navigateTo: null,
   pmSubPage: 'dashboard',
@@ -167,6 +177,8 @@ export const useStore = create<AppState>((set, get) => ({
     newEntrySeed: seed || null,
   })),
   signalCmd: (kind) => set({ cmdSignal: { kind, at: Date.now() } }),
+  seedApiBody: (values) => set({ apiBodySeed: { values, at: Date.now() } }),
+  consumeApiBodySeed: () => set({ apiBodySeed: null }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),
   requestNavigate: (page) => set({ navigateTo: page }),

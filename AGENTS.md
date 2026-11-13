@@ -666,6 +666,21 @@ USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pac
 | 依赖注意 | 新增 `qrcode`、`js-yaml`；`tsconfig` 设了 `types: []`（渲染层不引 Node 类型），`@types/node` 不要去装（本机那份损坏会让 tsc 报 binary） |
 | 回归 | `scripts/ui-round12-test.js` 覆盖 22 条（分组/键盘/状态保留/YAML/JSON对比/JWT/ID/SQL/时间轴/签名/二维码/时间戳单位/GBK/diff忽略空白/Cron反查/侧栏折叠/命令面板工具搜索） |
 
+## 1.23.0：七项能力（改这里前先看）
+
+| 能力 | 落点 | 关键约定 |
+|---|---|---|
+| 全局搜索补全 | `CommandPalette.tsx` + `utils/query.ts` | 新增 `@history` / `@code` 限定词；历史点进去只填方法/地址/状态 |
+| 数据生成器回填 | `ipc-system.js` 的 `tdg:to-api` → `useStore.seedApiBody` | 主进程截断 500 条；**GET/HEAD 会改成 POST**，否则请求体框不渲染 |
+| 附件集中管理 | `pages/Attachments.tsx` + `attachment:list/export` | `attachment:list` **只返回元数据**（全解密会撑爆渲染进程）；条目引用走 `useStore(s => s.entries)`，`ws:get` 读不到 |
+| 导出 Markdown | `ipc-vault-io.js` 的 `buildPlainExport` | `format === "md"` 与 CSV/XLSX 共用拼装，两个 export 通道自动支持 |
+| 汇总按提交人 | `utils/bugSummary.ts` 的 `creatorOf` / `creatorsToText` | 看创建人、含已关闭、**不套排除名单**（排除名单是给开发积压用的） |
+| 笔记钉小窗 | `pin-window.js` + `PinApp.tsx` | `pin:open` 兼容 `id` 与 `{ id, kind }`；窗口 key 是 `${kind}:${id}` |
+| WebSocket / SSE | `ipc-ws.js` + `ws-frame.js` + `ApiClient.tsx` | 帧编解码是纯函数（16 条单测锁 RFC 6455）；`clearCaches()` 里必须 `closeWsConnections()` |
+
+- **`webPreferences.preload` 只认文件系统路径**：`nav-guard.js` 曾把 `file://` URL 赋进去，Electron 静默不执行 preload，表现为子应用 `window.electronAPI === undefined`。改 webview 后跑 `ui-round18`。
+- 回归：`scripts/ui-round18-test.js`（33 条，六项功能）、`scripts/ui-round19-test.js`（19 条，WS/SSE，自带本地回声与 SSE 服务）。
+
 ## 1.14.0：缺陷管理两个列表页（「我的 Bug」「项目 Bug」）的修复
 
 | 问题 | 根因 | 现在 |

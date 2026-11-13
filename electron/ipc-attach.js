@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
 const {
   parseImageDataUrl, stampedImageName, sniffImageMime, buildImageDataUrl,
 } = require('./attach-image');
@@ -80,6 +80,60 @@ function registerAttachIpc(deps = {}) {
       const mime = sniffImageMime(b64);
       if (!mime) return { success: false, error: '不是支持的图片格式' };
       return { success: true, data: { dataUrl: buildImageDataUrl(mime, b64), mime } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /**
+   * 列出附件目录里的全部文件（附件集中管理页用）。
+   *
+   * 只返回 id / 大小 / 修改时间，**不返回内容**：一页可能几百个附件，
+   * 全解密成 base64 送过去会直接把渲染进程撑爆；缩略图由页面按需逐张读。
+   * 「属于谁」由渲染层拿 vault 里的引用关系去对，主进程不碰业务数据。
+   */
+  ipcMain.handle('attachment:list', () => {
+    try {
+      if (!fs.existsSync(attachDir)) return { success: true, data: [] };
+      const out = [];
+      for (const name of fs.readdirSync(attachDir)) {
+        if (!name.endsWith('.enc')) continue;
+        const id = name.slice(0, -4);
+        try {
+          const st = fs.statSync(path.join(attachDir, name));
+          if (!st.isFile()) continue;
+          out.push({ id, size: st.size, updatedAt: new Date(st.mtimeMs).toISOString() });
+        } catch { /* 单个文件读不到就跳过 */ }
+      }
+      out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+      return { success: true, data: out };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /**
+   * 把附件解密后另存到用户选的位置（导出）。
+   * 走 dialog 在主进程里选路径，避免渲染层拿到任意写权限。
+   */
+  ipcMain.handle('attachment:export', async (_event, payload = {}) => {
+    const password = getPassword();
+    if (!password) return { success: false, error: '未解锁' };
+    if (!payload.id) return { success: false, error: '缺少附件 id' };
+    try {
+      const b64 = readAttachment(payload.id, password);
+      if (!b64) return { success: false, error: '附件不存在或已损坏' };
+      const mime = sniffImageMime(b64);
+      // 扩展名优先用调用方给的原文件名（密钥/证书这类非图片附件只能靠它），
+      // 其次按图片魔数推，最后兜底 .bin
+      const nameExt = path.extname(String(payload.name || '')).replace(/^\./, '').toLowerCase();
+      const ext = nameExt || (mime ? mime.replace('image/', '').replace('jpeg', 'jpg') : 'bin');
+      const r = await dialog.showSaveDialog({
+        defaultPath: safeName(payload.name, `附件-${payload.id.slice(0, 8)}.${ext}`),
+      });
+      if (r.canceled || !r.filePath) return { success: false, canceled: true };
+      fs.writeFileSync(r.filePath, Buffer.from(b64, 'base64'));
+      return { success: true, data: { file: r.filePath } };
     } catch (e) {
       return { success: false, error: e.message };
     }

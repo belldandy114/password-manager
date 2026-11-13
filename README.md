@@ -12,7 +12,7 @@ Electron 主进程 + preload 桥 + React 渲染层，数据全部落在本地加
 | 版本 | 1.22.0（`package.json`） |
 | 运行时 | Node 22.22.0 / Electron 37.10.3 |
 | 前端 | React 19.2.6 + TypeScript 6.0.3 + Vite 8.0.14 + Zustand 5.0.13 |
-| 测试 | Vitest 5.0.5（62 文件 / 783 条） |
+| 测试 | Vitest 5.0.5（63 文件 / 808 条） |
 | 打包 | electron-builder 26.x → NSIS，`productName: 测试中台` |
 | 仓库 | `github.com/belldandy114/password-manager`（公开，**禁止提交真实姓名/账号/内网地址**） |
 
@@ -38,7 +38,7 @@ node scripts/ui-round12-test.js     # 只跑你改的那一块（工具箱）
 
 ## 1. 这个项目是什么
 
-12 个页面（侧栏顺序；另有底部「设置」`settings`，5 个 tab：安全 / 通用 / 浏览器 / 快捷键 / 定时任务）：
+13 个页面（侧栏顺序；另有底部「设置」`settings`，5 个 tab：安全 / 通用 / 浏览器 / 快捷键 / 定时任务）：
 
 | 页面 | 路由 key | 说明 |
 |---|---|---|
@@ -47,11 +47,12 @@ node scripts/ui-round12-test.js     # 只跑你改的那一块（工具箱）
 | 环境矩阵 | `environments` | 环境地址清单 + 一键巡检（并发探活）+ 巡检历史 |
 | 周报 | `weeklyReport` | 本地 Markdown 周报，可从禅道自动成稿 |
 | SQL 片段 | `snippets` | 常用 SQL 片段库 |
-| 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图 |
+| 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图、钉成桌面小窗 |
+| 附件管理 | `attachments` | 全库附件集中查看：缩略图、引用者、未引用清理、导出到本地 |
 | 缺陷管理 | `zentao` | 禅道 Bug 拉取、统计汇总、日报口径 |
 | 测试数据 | `dataGenerator` | **独立子应用**（webview 保活），产物 `dist-tdg/` |
 | 工具箱 | `toolbox` | 21 个纯前端小工具（见 §3.4） |
-| 接口调试 | `apiClient` | 类 Postman：环境变量、历史、断言、结构快照 |
+| 接口调试 | `apiClient` | 类 Postman：环境变量、历史、断言、结构快照、WebSocket / SSE 长连接 |
 | 压力测试 | `perfTest` | JMeter 非 GUI 封装 |
 | 代码调试 | `codeLab` | 跑 JS/Python/Java 片段，HTML 预览走 `codelab://` 协议 |
 
@@ -115,7 +116,8 @@ sub-apps/test-data-generator/   独立 Vite 子应用
 | `ipc-entries.js` | `session:` `entries:` `trash:` `clipboard:` `settings:` |
 | `ipc-data.js` | `data:` `backup:` `audit:` |
 | `ipc-update.js` | `update:download/pick-file/install` |
-| `ipc-api.js` | `api:` `ws:` `history:` `attachment:` `file:pick` `file:save-text` `file:read-text` |
+| `ipc-api.js` | `api:` `history:` `attachment:` `file:pick` `file:save-text` `file:read-text` |
+| `ipc-ws.js` | `ws:` `sse:`（WebSocket / SSE 长连接，锁定时全部断开） |
 | `ipc-zentao.js` | `zentao:`（13 个，最大的一块） |
 | `ipc-vault-io.js` | `import:` `export:` |
 | `ipc-files.js` | `weekly:` `notes:` |
@@ -125,7 +127,7 @@ sub-apps/test-data-generator/   独立 Vite 子应用
 | `ipc-jmeter.js` | `jmeter:` |
 | `ipc-codelab.js` | `codelab:` |
 | `ipc-env.js` | `env:probe` `env:open` |
-| `ipc-attach.js` | `attachment:save-image` `attachment:read-image` |
+| `ipc-attach.js` | `attachment:save-image` `attachment:read-image` `attachment:list` `attachment:export` |
 
 **新增 IPC 的完整动作**（漏一步就是「点了没反应」）：
 
@@ -189,6 +191,7 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | 禅道拉取与解析 | `electron/ipc-zentao.js` + `electron/zentao-parse.js` + `electron/zentao-filter.js` |
 | 缺陷统计口径 / 日报文本 | `src/utils/bugSummary.ts`（59 条单测锁口径） |
 | 接口调试请求/响应处理 | `src/pages/ApiClient.tsx` + `src/utils/api*.ts` |
+| WebSocket / SSE 长连接 | `electron/ipc-ws.js` + `electron/ws-frame.js`（RFC 6455 纯函数，16 条单测） |
 | 工具箱某个工具 | `src/components/toolbox/<X>Tool.tsx` + `src/utils/<x>.ts` |
 | 命令面板条目 | `src/components/CommandPalette.tsx`（`PAGES` / `PAGES_MORE` / `TOOLBOX_TOOLS`） |
 | 全局状态 | `src/store/useStore.ts`（主）/ `zentaoStore.ts` / `envProbeStore.ts` |
@@ -214,7 +217,7 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 |---|---|---|
 | `npm run check` | 隐私 → tsc → vitest → IPC 契约 → CSS 重复 → 静态债 | **16s** |
 | `npx tsc --noEmit` | 类型 | 12.6s |
-| `npx vitest run` | 62 文件 / 783 条 | 18.8s |
+| `npx vitest run` | 63 文件 / 808 条 | 18.8s |
 | `npx vitest run src/utils/__tests__/redact.test.ts` | 单文件 | 2–4s |
 | `npm run check:ipc` | IPC 三处一致性 | ~0.2s |
 | `npm run check:privacy` | 真实姓名/账号/内网 IP 扫描 | ~0.3s |
@@ -254,6 +257,8 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | `ui-round7-test.js` | 数据安全（原子写 / 备份恢复 / 数据目录） | 42.4s |
 | `ui-round11-test.js` | 禅道指派 / 项目集 / 代码调试运行时 | 42.7s |
 | `ui-round9-test.js` | cURL 互转 / 禅道三视图 / 备份异地 / 下载 | 92.6s |
+| `ui-round18-test.js` | 全局搜索补全 / 附件管理 / 导出 Markdown / 按提交人 / 笔记钉小窗 / 数据回填 | 未实测 |
+| `ui-round19-test.js` | 接口调试 WebSocket / SSE（自带本地回声与 SSE 服务） | 未实测 |
 | `ui-round13/14-test.js` | 缺陷管理汇总 / 两个列表页 | **需真实禅道**，未配 `ZT_*` 时 0.1s 跳过 |
 | `verify-packaged-csv.js` | 打包后 CSV 导出 | 1.9s |
 
@@ -271,9 +276,9 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | 新增/改单测 | 同上 | — |
 | 单个页面/组件的 JSX 或样式 | `npx vite build` + `npm run pack:asar` + 对应 `ui-roundN` | `ui-round16`（逐页 console error） |
 | 工具箱某个工具 | `ui-round12`（24s） | `ui-round16` |
-| 接口调试 | `ui-round6`（42s）+ `ui-round7`（42s） | `ui-round8`（分区样式） |
+| 接口调试 | `ui-round6`（42s）+ `ui-round7`（42s） | `ui-round8`（分区样式）、`ui-round19`（WS/SSE） |
 | 缺陷管理 / 周报 | `ui-round2` + `ui-round11`（禅道走本地桩） | `ui-round13/14`（需真实禅道） |
-| 环境矩阵 / 随手记 / 附件 | `ui-round15`（23s） | `ui-round17` |
+| 环境矩阵 / 随手记 / 附件 | `ui-round15`（23s）+ `ui-round18`（附件管理） | `ui-round17` |
 | 主进程 IPC / vault / 加密 | `npm run check` + `smoke-test`（4s）+ `ui-round7`（42s） | `ui-round9`（92s，含下载） |
 | 全局 CSS（`tokens/global/pages/redesign`） | `npm run check`（含 CSS 重复 + 静态债）+ `ui-round8` + `ui-round16` | 全量 UI |
 | 打包配置 / 依赖 | `npm run dist` + `smoke` + `verify-packaged-csv` | 全量 UI |

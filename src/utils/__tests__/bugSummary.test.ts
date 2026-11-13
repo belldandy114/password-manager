@@ -4,7 +4,7 @@ import {
   summaryToMarkdown, summaryToCsv, summaryTo, severityRows, daysAgoDay, personOf,
   dailyNew, parseCutoff, fmtCutoff, statDayOf, statWindowOf,
   periodOf, workdaysBetween, growthOf, splitSecurity, dailyReportText,
-  securityStatOf, securityReportText,
+  securityStatOf, securityReportText, creatorsToText,
 } from '../bugSummary';
 import type { ZentaoBug } from '../../types';
 
@@ -692,5 +692,54 @@ describe('安全问题统计（按创建人）', () => {
 
   it('没有安全缺陷时文案给出空态而不是 0 个', () => {
     expect(securityReportText(securityStatOf(secBugs, ['查无此人']))).toBe('禅道中暂无安全缺陷。');
+  });
+});
+
+describe('按提交人（创建人）统计', () => {
+  const bugs = [
+    bug('1', '58', 'active', '', '张三', 'lisi'),
+    bug('2', '58', 'resolved', 'fixed', '张三', 'lisi'),
+    bug('3', '58', 'closed', 'fixed', '张三', ''),
+    bug('4', '58', 'active', '', '李四', 'wangwu'),
+    bug('5', '58', 'closed', 'duplicate', '李四', ''),
+    bug('6', '58', 'active', '', '', 'lisi'),
+  ];
+
+  it('按创建人统计，含已关闭，不受指派人影响', () => {
+    const { creators } = summarize(bugs, { productIds: ['58'] });
+    expect(creators.map(c => c.name)).toEqual(['张三', '李四', '未知提交人']);
+    expect(creators[0]).toMatchObject({ total: 3, fixed: 2, active: 1, resolved: 1, closed: 1, rate: 66.7, share: 50 });
+    expect(creators[1]).toMatchObject({ total: 2, fixed: 0, active: 1, closed: 1, rate: 0, share: 33.3 });
+    expect(creators[2]).toMatchObject({ total: 1, active: 1, share: 16.7 });
+  });
+
+  it('提交人之和等于缺陷总数（含未指派与已关闭）', () => {
+    const { creators, overall } = summarize(bugs, { productIds: ['58'] });
+    expect(creators.reduce((s, c) => s + c.total, 0)).toBe(overall.total);
+  });
+
+  it('排除名单只作用于指派人，不影响提交人分布', () => {
+    const withEx = summarize(bugs, { productIds: ['58'], exclude: ['张三'] });
+    expect(withEx.creators.map(c => c.name)).toEqual(['张三', '李四', '未知提交人']);
+    expect(withEx.creators[0].total).toBe(3);
+    // 指派人口径里张三被剔掉了
+    expect(withEx.persons.map(p => p.name)).not.toContain('张三');
+  });
+
+  it('时间窗按提交时间过滤，提交人分布跟着变', () => {
+    const dated = [
+      { ...bug('1', '58', 'active', '', '张三'), openedDate: '2026-01-01 10:00' },
+      { ...bug('2', '58', 'active', '', '李四'), openedDate: '2026-06-01 10:00' },
+    ];
+    const r = summarize(dated, { productIds: ['58'], since: '2026-05-01' });
+    expect(r.creators.map(c => c.name)).toEqual(['李四']);
+    expect(r.creators[0].total).toBe(1);
+  });
+
+  it('复制文案按固定格式输出', () => {
+    const { creators } = summarize(bugs, { productIds: ['58'] });
+    expect(creatorsToText(creators)).toBe('提交分布共 6 个：张三 3 个、李四 2 个、未知提交人 1 个');
+    expect(creatorsToText(creators, { limit: 2 })).toBe('提交分布共 6 个：张三 3 个、李四 2 个 等 3 人');
+    expect(creatorsToText([], {})).toBe('提交分布共 0 个：暂无');
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decideWindowOpen,
+  guardWebviews,
   inspectWebviewAttach,
   isAllowedMainNavigation,
   isAllowedWebviewNavigation,
@@ -183,5 +184,55 @@ describe('inspectWebviewAttach', () => {
   it('裸路径形式的 preload 也能认出来', () => {
     const r = inspectWebviewAttach({ src: fileUrl(TDG_DIST + '\\index.html'), preload: TDG_PRELOAD }, prod());
     expect(r.sanitizedPreload).toBe(TDG_PRELOAD);
+  });
+});
+
+describe('guardWebviews', () => {
+  /** 造一个只实现 .on 的假 hostContents，拿到 will-attach-webview 的回调 */
+  const attachHandler = () => {
+    let handler: any = null;
+    const host = { on: (name: string, fn: any) => { if (name === 'will-attach-webview') handler = fn; } };
+    guardWebviews(host as any, prod);
+    return handler;
+  };
+
+  it('官方 preload 写进 webPreferences 时是文件路径，不是 file:// URL', () => {
+    const handler = attachHandler();
+    const prefs: any = {};
+    let prevented = false;
+    handler(
+      { preventDefault: () => { prevented = true; } },
+      prefs,
+      { src: fileUrl(TDG_DIST + '\\index.html'), preload: fileUrl(TDG_PRELOAD) },
+    );
+    expect(prevented).toBe(false);
+    // Electron 的 webPreferences.preload 只认文件系统路径；传 URL 会静默不执行
+    expect(prefs.preload).toBe(TDG_PRELOAD);
+    expect(String(prefs.preload)).not.toMatch(/^file:/);
+    expect(prefs.contextIsolation).toBe(true);
+    expect(prefs.nodeIntegration).toBe(false);
+  });
+
+  it('非官方 preload 被剥掉，但 src 合法时仍放行', () => {
+    const handler = attachHandler();
+    const prefs: any = { preload: 'C:\\evil\\payload.js' };
+    handler(
+      { preventDefault: () => {} },
+      prefs,
+      { src: fileUrl(TDG_DIST + '\\index.html'), preload: 'C:\\evil\\payload.js' },
+    );
+    expect(prefs.preload).toBeUndefined();
+  });
+
+  it('src 不在白名单 → 阻止挂载', () => {
+    const handler = attachHandler();
+    const prefs: any = {};
+    let prevented = false;
+    handler(
+      { preventDefault: () => { prevented = true; } },
+      prefs,
+      { src: 'https://evil.example/', preload: fileUrl(TDG_PRELOAD) },
+    );
+    expect(prevented).toBe(true);
   });
 });

@@ -32,7 +32,7 @@ export function Dashboard() {
   const [batchEnvType, setBatchEnvType] = useState('production');
   const [batchTag, setBatchTag] = useState('');
   const [exportType, setExportType] = useState<'encrypted' | 'plain'>('encrypted');
-  const [exportFormat, setExportFormat] = useState<'csv' | 'json' | 'xlsx'>('json');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json' | 'xlsx' | 'md'>('json');
   const [exportPassword, setExportPassword] = useState('');
   const [includePasswords, setIncludePasswords] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -249,7 +249,7 @@ export function Dashboard() {
           addToast(result.error || '导出失败', 'error');
         }
       } else {
-        const formatLabel = exportFormat.toUpperCase();
+        const formatLabel = exportFormat === 'md' ? 'Markdown' : exportFormat.toUpperCase();
         const result = await window.electronAPI.exportSelectedPlain({ ids, format: exportFormat, includePasswords });
         if (result.success && result.data) {
           const ext = exportFormat === 'xlsx' ? 'xlsx' : exportFormat;
@@ -760,6 +760,7 @@ export function Dashboard() {
                     <option value="json">JSON</option>
                     <option value="csv">CSV</option>
                     <option value="xlsx">Excel (XLSX)</option>
+                    <option value="md">Markdown 表格</option>
                   </select>
                 </div>
               </div>

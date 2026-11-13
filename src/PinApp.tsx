@@ -1,29 +1,45 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import type { PasswordEntry } from './types';
+import type { Note, PasswordEntry } from './types';
 import { applyAccent, applyDensity, applyTheme, watchSystemTheme } from './utils/theme';
 import { openUrlInDefaultBrowser } from './utils/openUrl';
+import { MarkdownView } from './components/MarkdownView';
 
 const ENV_LABEL: Record<string, string> = { production: '正式', testing: '测试', development: '开发', staging: '预发布' };
 
 /**
- * 「钉」小窗（`?window=pin&id=xxx`）。
+ * 「钉」小窗（`?window=pin&kind=entry|note&id=xxx`）。
  *
- * 一条记录一个置顶窗口：测试时主窗口缩在后面，小窗一直浮着显示网址/账号/密码。
+ * 一条记录一个置顶窗口：测试时主窗口缩在后面，小窗一直浮着。
+ * - `kind=entry`（默认）：显示网址/账号/密码，边看边操作；
+ * - `kind=note`：显示一条测试笔记的正文，照着步骤做，不用来回切窗口。
  *
- * 为什么不新建 IPC 取单条：`entries:get-all` 已经有了，按 id 找一次就够；
- * 条目内容不进 URL 参数（URL 会进窗口标题和日志），只传 id。
+ * 为什么不新建 IPC 取单条：`entries:get-all` / `ws:get` 已经有了，按 id 找一次就够；
+ * 内容不进 URL 参数（URL 会进窗口标题和日志），只传 id。
  */
 export function PinApp() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id') || '';
+  const kind = params.get('kind') === 'note' ? 'note' : 'entry';
+
   const [entry, setEntry] = useState<PasswordEntry | null>(null);
+  const [note, setNote] = useState<Note | null>(null);
   const [error, setError] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [hint, setHint] = useState('');
 
-  const id = new URLSearchParams(window.location.search).get('id') || '';
-
   const load = useCallback(async () => {
-    if (!id) { setError('这个小窗没有指定条目'); return; }
+    if (!id) { setError('这个小窗没有指定内容'); return; }
     try {
+      if (kind === 'note') {
+        const r = await window.electronAPI.wsGet('notes');
+        if (!r.success) { setError('密码库未解锁'); return; }
+        const list = (r.data as Note[]) || [];
+        const hit = list.find((n) => n.id === id);
+        if (!hit) { setError('笔记已不存在'); setNote(null); return; }
+        setError('');
+        setNote(hit);
+        return;
+      }
       const r = await window.electronAPI.entriesGetAll();
       if (!r.success || !r.data) { setError('密码库未解锁'); return; }
       const hit = (r.data.entries || []).find((e) => e.id === id);
@@ -33,10 +49,11 @@ export function PinApp() {
     } catch {
       setError('读取失败');
     }
-  }, [id]);
+  }, [id, kind]);
 
   useEffect(() => {
     document.documentElement.classList.add('pin-window');
+    if (kind === 'note') document.documentElement.classList.add('pin-window-note');
     void load();
     // 主窗口改了这条之后，小窗切回来就能看到新值
     const onFocus = () => { void load(); setHint(''); };
@@ -44,8 +61,9 @@ export function PinApp() {
     return () => {
       window.removeEventListener('focus', onFocus);
       document.documentElement.classList.remove('pin-window');
+      document.documentElement.classList.remove('pin-window-note');
     };
-  }, [load]);
+  }, [load, kind]);
 
   // 小窗是独立 BrowserWindow，不走 App.tsx 的主题初始化，这里自己读一次
   useEffect(() => {
@@ -77,10 +95,12 @@ export function PinApp() {
 
   const close = () => { void window.electronAPI.pinClose(); };
 
+  const title = kind === 'note' ? (note?.title || '未命名笔记') : (entry?.name || '未命名');
+
   return (
-    <div className="pin-card">
+    <div className={`pin-card${kind === 'note' ? ' pin-card-note' : ''}`}>
       <div className="pin-head">
-        <span className="pin-title" title={entry?.name || ''}>{entry?.name || '未命名'}</span>
+        <span className="pin-title" title={title}>{title}</span>
         <div className="pin-head-actions">
           <button type="button" className="pin-icon" onClick={() => void load()} title="刷新">↻</button>
           <button type="button" className="pin-icon pin-close" onClick={close} title="关闭" aria-label="关闭小窗">×</button>
@@ -89,6 +109,15 @@ export function PinApp() {
 
       {error ? (
         <div className="pin-empty">{error}</div>
+      ) : kind === 'note' ? (
+        !note ? (
+          <div className="pin-empty">读取中…</div>
+        ) : (
+          <div className="pin-note-body">
+            <MarkdownView md={note.content || ''} className="pin-md" />
+            {!note.content?.trim() && <div className="pin-empty">（空笔记）</div>}
+          </div>
+        )
       ) : !entry ? (
         <div className="pin-empty">读取中…</div>
       ) : (
@@ -137,7 +166,11 @@ export function PinApp() {
         </div>
       )}
 
-      <div className="pin-foot">{hint || '拖动标题栏移动 · 关掉主窗口不会关掉它'}</div>
+      <div className="pin-foot">
+        {hint || (kind === 'note'
+          ? <button type="button" className="pin-foot-btn" onClick={() => void copy(note?.content || '', '正文')}>复制正文</button>
+          : '拖动标题栏移动 · 关掉主窗口不会关掉它')}
+      </div>
     </div>
   );
 }

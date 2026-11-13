@@ -23,6 +23,7 @@ const Environments = lazy(() => import('./pages/Environments').then(m => ({ defa
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
 const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.Snippets })));
 const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
+const Attachments = lazy(() => import('./pages/Attachments').then(m => ({ default: m.Attachments })));
 const ZentaoPage = lazy(() => import('./pages/ZentaoPage').then(m => ({ default: m.ZentaoPage })));
 const ApiClient = lazy(() => import('./pages/ApiClient').then(m => ({ default: m.ApiClient })));
 const PerfTest = lazy(() => import('./pages/PerfTest').then(m => ({ default: m.PerfTest })));
@@ -373,6 +374,16 @@ function App() {
     });
     return () => { try { off?.(); } catch { /* 忽略 */ } };
   }, []);
+  // 测试数据子应用把生成结果发过来：切到接口调试，并把值交给它填进请求体
+  useEffect(() => {
+    const off = window.electronAPI.onTdgToApi?.((payload) => {
+      if (!payload || !Array.isArray(payload.values) || payload.values.length === 0) return;
+      if (useStore.getState().isLocked) return;
+      useStore.getState().seedApiBody(payload.values);
+      setCurrentPage('apiClient');
+    });
+    return () => { try { off?.(); } catch { /* 忽略 */ } };
+  }, []);
   // 窗口被隐藏时收起搜索面板，免得下次唤起看到上次没关的面板
   useEffect(() => {
     const off = window.electronAPI.onCloseCommandPalette?.(() => setCmdkOpen(false));
@@ -416,6 +427,7 @@ function App() {
       case 'weeklyReport': return <WeeklyReport />;
       case 'snippets': return <Snippets />;
       case 'notes': return <Notes />;
+      case 'attachments': return <Attachments />;
       case 'zentao': return <ZentaoPage />;
       case 'apiClient': return <ApiClient />;
       case 'perfTest': return <PerfTest />;

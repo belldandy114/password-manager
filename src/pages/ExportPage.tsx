@@ -5,10 +5,15 @@ import { ToastContainer } from '../components/Toast';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { callIpc } from '../utils/ipc';
 
+/** 明文导出的格式显示名（保存对话框的过滤器名与按钮文案共用） */
+const FORMAT_LABEL: Record<string, string> = {
+  json: 'JSON', csv: 'CSV', xlsx: 'Excel', md: 'Markdown',
+};
+
 export function ExportPage() {
   const { toasts, addToast, removeToast } = useToast();
   const [exportType, setExportType] = useState<'encrypted' | 'plain'>('encrypted');
-  const [format, setFormat] = useState<'csv' | 'json' | 'xlsx'>('json');
+  const [format, setFormat] = useState<'csv' | 'json' | 'xlsx' | 'md'>('json');
   const [includePasswords, setIncludePasswords] = useState(false);
   const [exportFilter, setExportFilter] = useState('all');
   const [exportPassword, setExportPassword] = useState('');
@@ -67,7 +72,7 @@ export function ExportPage() {
       const saveResult = await window.electronAPI.dialogSaveFile({
         defaultName: `password-manager-export-${new Date().toISOString().slice(0, 10)}.${ext}`,
         filters: [
-          { name: format === 'json' ? 'JSON' : format === 'csv' ? 'CSV' : 'Excel', extensions: [ext] },
+          { name: FORMAT_LABEL[format], extensions: [ext] },
         ],
       });
       if (!saveResult.canceled && saveResult.filePath) {
@@ -162,6 +167,7 @@ export function ExportPage() {
                   <option value="json">JSON</option>
                   <option value="csv">CSV</option>
                   <option value="xlsx">Excel (XLSX)</option>
+                  <option value="md">Markdown 表格</option>
                 </select>
               </div>
             </div>
@@ -186,7 +192,7 @@ export function ExportPage() {
               </ul>
             </div>
             <button className="btn btn-secondary" style={{ marginTop: 16 }} onClick={handlePlainExport}>
-              导出 {format === 'xlsx' ? 'Excel' : format.toUpperCase()}
+              导出 {FORMAT_LABEL[format] || format.toUpperCase()}
             </button>
           </div>
         )}

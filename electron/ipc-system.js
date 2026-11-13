@@ -13,6 +13,9 @@ const fs = require('fs');
 const path = require('path');
 const { ipcMain, dialog, app } = require('electron');
 
+/** 「测试数据 → 接口调试」一次最多带多少条：再多请求体也没法用，还容易卡住渲染进程 */
+const MAX_TDG_VALUES = 500;
+
 /**
  * @param {{ getWindow: () => any, tdgPaths?: { distPath: string, preloadPath: string } }} deps
  */
@@ -78,6 +81,26 @@ function registerSystemIpc(deps = {}) {
     preloadPath: tdg.preloadPath,
   }));
 
+  /**
+   * 测试数据子应用 → 主窗口：把生成结果交给「接口调试」填进请求体。
+   *
+   * 子应用是独立 webview，拿不到主窗口的 store，所以走主进程转发一次。
+   * 只转发字符串数组并做上限截断：生成结果可能上万条，整包塞进 IPC 会把
+   * 主窗口卡住，而请求体本来也用不了那么多。
+   */
+  ipcMain.handle('tdg:to-api', (_event, payload = {}) => {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return { success: false, error: '主窗口不可用' };
+    const raw = Array.isArray(payload.values) ? payload.values : [];
+    const values = raw
+      .map((v) => String(v == null ? '' : v))
+      .filter((v) => v !== '')
+      .slice(0, MAX_TDG_VALUES);
+    if (!values.length) return { success: false, error: '没有可填入的数据' };
+    win.webContents.send('tdg:to-api', { values, truncated: raw.length > values.length });
+    return { success: true, data: { count: values.length, truncated: raw.length > values.length } };
+  });
+
   // 目录型文件 IPC（周报 / 笔记）在 electron/ipc-files.js；这里只做校验反馈
   ipcMain.handle('system:paths', () => ({
     userData: app.getPath('userData'),
@@ -86,4 +109,4 @@ function registerSystemIpc(deps = {}) {
   }));
 }
 
-module.exports = { registerSystemIpc };
+module.exports = { registerSystemIpc, MAX_TDG_VALUES };

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Page, PageHead, Pill, Icons } from '../components/ui';
 import type { CodelabDetect, CodelabDone, CodelabSnippet } from '../types';
 import { useToast } from '../hooks/useToast';
+import { useStore } from '../store/useStore';
 
 /**
  * 代码调试：写一段代码、在本机跑、看输出。
@@ -119,6 +120,8 @@ export function CodeLab() {
   const [snipName, setSnipName] = useState('');
   const [savingSnip, setSavingSnip] = useState(false);
   const outRef = useRef<HTMLDivElement | null>(null);
+  const cmdSignal = useStore(s => s.cmdSignal);
+  const lastCodeOpenAt = useRef(0);
   const codeRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
@@ -142,6 +145,22 @@ export function CodeLab() {
   }, []);
 
   useEffect(() => { void loadSnips(); }, [loadSnips]);
+
+  // 命令面板深链：code:open:<片段 id> —— 跳到本页并把片段载入编辑器
+  useEffect(() => {
+    const kind = String(cmdSignal?.kind || '');
+    if (!cmdSignal || cmdSignal.at === lastCodeOpenAt.current || !kind.startsWith('code:open:')) return;
+    lastCodeOpenAt.current = cmdSignal.at;
+    const id = kind.slice('code:open:'.length);
+    const hit = snips.find(s => s.id === id);
+    if (!hit) return;
+    setLang(hit.lang || 'javascript');
+    setCode(hit.code || '');
+    setSnipName(hit.name || '');
+    setLines([]);
+    setPreviewUrl('');
+    addToast(`已载入片段「${hit.name || '未命名'}」`, 'success');
+  }, [cmdSignal, snips, addToast]);
 
   const saveSnip = useCallback(async () => {
     const name = snipName.trim() || `${LANGS.find(l => l.id === lang)?.label || lang} 片段 ${snips.length + 1}`;
