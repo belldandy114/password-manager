@@ -4524,17 +4524,17 @@ html.pin-window #root {
 
 .zt-heat-cell.is-3 {
   background: color-mix(in srgb, var(--accent) 48%, transparent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .zt-heat-cell.is-4 {
   background: color-mix(in srgb, var(--accent) 70%, transparent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .zt-heat-cell.is-5 {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .zt-heat-foot {

@@ -41,6 +41,8 @@
   --bad-hover: #bb4b46;
   /* 压在危险色上的文字 / 悬浮阴影的墨色（两套主题相同） */
   --text-on-bad: #ffffff;
+  /* 强调色 / 深色块上的文字（热力图最深的几档） */
+  --on-accent: #ffffff;
   --shadow-ink: #000000;
   --info: #5b8fb0;
 
@@ -173,6 +175,8 @@
   --bad: #b8443f;
   --bad-hover: #a13a36;
   --text-on-bad: #ffffff;
+  /* 强调色 / 深色块上的文字（热力图最深的几档） */
+  --on-accent: #ffffff;
   --shadow-ink: #000000;
   --info: #3f6f8e;
 
