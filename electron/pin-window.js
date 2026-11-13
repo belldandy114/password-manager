@@ -68,6 +68,12 @@ function createPinManager(deps) {
       win.setContentProtection(true);
     }
 
+    // 钉窗渲染进程崩了就关掉它：留着只会是个说不明白的小白框
+    win.webContents.on('render-process-gone', (_e, details) => {
+      console.warn('[crash] 钉窗渲染进程退出 reason=' + ((details && details.reason) || 'unknown'));
+      try { win.destroy(); } catch { /* 已经没了 */ }
+    });
+
     const query = `window=pin&kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`;
     if (isDev) {
       win.loadURL(`http://localhost:5173?${query}`);

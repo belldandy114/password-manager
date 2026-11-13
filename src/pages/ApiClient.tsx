@@ -15,6 +15,12 @@ import { callIpc } from '../utils/ipc';
 import { responseSaveTarget } from '../utils/apiResponse';
 import { flattenJsonPaths, upsertVariable } from '../../electron/json-paths';
 import { applyVars, readJsonPath, mergeVarPool } from '../utils/apiVars';
+import { runRequests, withCookies, type RunStep } from '../utils/apiRunner';
+import {
+  REGRESSION_INTERVALS, summarizeRun, compareRuns, pruneRuns, latestRunOf,
+  diffAlerts, DIFF_LABEL, type RegressionSet, type RegressionRun, type StepDiff,
+} from '../utils/regression';
+import { REGRESSION_RAN_EVENT } from '../hooks/useRegressionScheduler';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -37,15 +43,6 @@ const emptyReq = (): ApiRequest => ({
   if (!r.cookies) return { ...r, bodyType: r.bodyType || 'json' };
   const merged = withCookies(r.headers || '', r.cookies);
   return { ...r, headers: merged, cookies: '', bodyType: r.bodyType || 'json' };
-}
-
-/** 把 cookies（每行 key=value）拼成 Cookie 头；已有 Cookie 头时不覆盖 */
-function withCookies(headers: string, cookies?: string): string {
-  const ck = String(cookies || '').split('\n').map(l => l.trim()).filter(Boolean).join('; ');
-  if (!ck) return headers;
-  if (/^cookie\s*:/im.test(headers || '')) return headers;
-  const base = String(headers || '').replace(/\n+$/, '');
-  return `${base ? `${base}\n` : ''}Cookie: ${ck}`;
 }
 
 /** 把 {{var}} 替换成变量表里的值（实现见 utils/apiVars，批量运行共用同一份规则） */
@@ -230,16 +227,31 @@ export function ApiClient() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
-  const [batchRows, setBatchRows] = useState<{
-    id: string; name: string; method: string; url: string; ok: boolean;
-    status: number; timeMs: number; error?: string; asserts: AssertResult[];
-    /** 这一步从响应里提取出来的变量（跑完只用于报告展示） */
-    extracted?: Record<string, string>;
-    /** 配了提取规则但没取到值的变量名 */
-    extractMissing?: string[];
-  }[]>([]);
+  const [batchRows, setBatchRows] = useState<RunStep[]>([]);
   const [batchStartedAt, setBatchStartedAt] = useState(0);
   const [batchFinishedAt, setBatchFinishedAt] = useState(0);
+
+  // ---- 接口回归（回归集 + 与上次比对；定时由 App 层调度器负责） ----
+  const regSets = useCollection<RegressionSet>('regressionSets');
+  const regRuns = useCollection<RegressionRun>('regressionRuns');
+  const [regOpen, setRegOpen] = useState(false);
+  const [regNewName, setRegNewName] = useState('');
+  const [regNewInterval, setRegNewInterval] = useState(30);
+  const [regBusyId, setRegBusyId] = useState('');
+  /** 本次批量运行对应的基线（上次结果），用于逐条比对 */
+  const [baseline, setBaseline] = useState<RunStep[] | null>(null);
+  const [diffs, setDiffs] = useState<StepDiff[] | null>(null);
+  /** 本次结果来自哪个回归集（null = 临时批量运行） */
+  const [resultSet, setResultSet] = useState<{ id: string; name: string } | null>(null);
+
+  // 定时器在别处跑完后会广播，页面跟着刷新「上次运行 / 通过数」
+  const reloadRegSets = regSets.reload;
+  const reloadRegRuns = regRuns.reload;
+  useEffect(() => {
+    const onRan = () => { void reloadRegSets(); void reloadRegRuns(); };
+    window.addEventListener(REGRESSION_RAN_EVENT, onRan);
+    return () => window.removeEventListener(REGRESSION_RAN_EVENT, onRan);
+  }, [reloadRegSets, reloadRegRuns]);
 
   const prettyBody = useMemo(() => {
     if (!response) return '';
@@ -591,55 +603,106 @@ export function ApiClient() {
    * 后面的请求用 {{name}} 就能拿到 —— 登录拿 token 再调业务接口这种链路，
    * 不用再手动复制粘贴。变量池不落盘，跑完就丢（下次跑重新登录，避免拿过期 token）。
    */
-  const runBatch = async (list: ApiRequest[]) => {
+  const runBatch = async (
+    list: ApiRequest[],
+    meta?: { setId: string; setName: string; baseline: RunStep[] | null; trigger: 'manual' | 'schedule' },
+  ) => {
     if (list.length === 0) return;
+    setBatchOpen(true);
     setBatchRunning(true);
     setBatchRows([]);
+    setDiffs(null);
+    setBaseline(meta ? meta.baseline : null);
+    setResultSet(meta ? { id: meta.setId, name: meta.setName } : null);
     setBatchStartedAt(Date.now());
-    const rows: typeof batchRows = [];
-    /** 上游提取出来的变量，覆盖请求自身变量里的同名键 */
-    const pool: Record<string, string> = {};
-    for (const r of list) {
-      const vars = mergeVarPool(r.variables || '', pool);
-      const url = applyVars(r.url, vars);
-      const headers = withCookies(applyVars(r.headers, vars), r.cookies);
-      const body = applyVars(r.body, vars);
-      const res = await window.electronAPI.apiSend({
-        method: r.method, url, headers, body,
-        bodyType: r.bodyType || 'json', rawContentType: r.rawContentType || '',
-        autoSession,
-      });
-      const asserts = res.success && res.data ? runAssertions(r.assertions, res.data) : [];
-      const ok = !!(res.success && res.data) && (asserts.length === 0 || asserts.every(a => a.ok));
-
-      // 提取变量：只在请求成功且响应是 JSON 时尝试，取不到就记一条提示
-      let extracted: Record<string, string> | undefined;
-      const extractMissing: string[] = [];
-      if (ok && res.data && Array.isArray(r.extract) && r.extract.length > 0) {
-        let parsed: unknown = null;
-        try { parsed = JSON.parse(res.data.body || 'null'); } catch { parsed = null; }
-        const got: Record<string, string> = {};
-        for (const rule of r.extract) {
-          const name = String(rule.name || '').trim();
-          if (!name) continue;
-          const v = readJsonPath(parsed, rule.path || '');
-          if (v === undefined) { extractMissing.push(name); continue; }
-          got[name] = v;
-          pool[name] = v;
-        }
-        if (Object.keys(got).length > 0) extracted = got;
-      }
-
-      rows.push({
-        id: r.id, name: r.name, method: r.method, url,
-        ok, status: res.data?.status || 0, timeMs: res.data?.timeMs || 0,
-        error: res.success ? undefined : res.error, asserts,
-        extracted, extractMissing: extractMissing.length ? extractMissing : undefined,
-      });
-      setBatchRows([...rows]);
-    }
+    // 跑批逻辑统一在 utils/apiRunner（定时回归用的也是同一份）
+    const rows = await runRequests(list, {
+      autoSession,
+      send: (payload) => window.electronAPI.apiSend(payload),
+      onStep: (steps) => setBatchRows([...steps]),
+    });
     setBatchRunning(false);
     setBatchFinishedAt(Date.now());
+
+    if (!meta) return;
+
+    // 落盘这次结果 + 更新回归集的上次状态（只留最近 20 次，防止库文件越跑越大）
+    const runId = `run-${Date.now()}`;
+    const at = new Date().toISOString();
+    const record: RegressionRun = {
+      id: runId, setId: meta.setId, setName: meta.setName, at,
+      trigger: meta.trigger, steps: rows,
+    };
+    const saved = await regRuns.save(pruneRuns([record, ...regRuns.items], 20));
+    const nextSets = regSets.items.map(s => (s.id === meta.setId
+      ? { ...s, lastRunAt: at, lastRunId: runId, lastStatus: (rows.every(r => r.ok) ? 'pass' : 'fail') as 'pass' | 'fail' }
+      : s));
+    const savedSet = await regSets.save(nextSets);
+    if (!saved?.success || !savedSet?.success) setNotice('结果保存失败，请确认密码库已解锁');
+
+    setDiffs(compareRuns(meta.baseline, rows));
+  };
+
+  /**
+   * 跑一个回归集：带上「上次结果」当基线，跑完直接给出新失败 / 已恢复。
+   * 定时器走的是同一套（App 层 useRegressionScheduler），行为完全一致。
+   */
+  const runRegression = async (set: RegressionSet, trigger: 'manual' | 'schedule' = 'manual') => {
+    const list = set.requestIds
+      .map(id => items.find(i => i.id === id))
+      .filter((x): x is ApiRequest => !!x);
+    if (list.length === 0) {
+      setNotice(`回归集「${set.name}」里的请求都被删了`);
+      return;
+    }
+    const prev = latestRunOf(regRuns.items, set.id);
+    // 结果弹窗和回归列表是两层弹窗，同 z-index 时后渲染的会盖住前者；
+    // 直接收起列表，让结果独占焦点（关掉结果后按钮还在，随时能回来）。
+    setRegOpen(false);
+    setRegBusyId(set.id);
+    try {
+      await runBatch(list, {
+        setId: set.id, setName: set.name,
+        baseline: prev ? prev.steps : null,
+        trigger,
+      });
+    } finally {
+      setRegBusyId('');
+    }
+  };
+
+  /** 把当前勾选的请求存成回归集（按列表顺序，顺序会影响变量传递） */
+  const saveAsRegression = async () => {
+    const ids = items.filter(i => picked.has(i.id)).map(i => i.id);
+    if (ids.length === 0) return;
+    const name = regNewName.trim() || `回归集 ${regSets.items.length + 1}`;
+    const next: RegressionSet[] = [...regSets.items, {
+      id: `reg-${Date.now()}`,
+      name,
+      requestIds: ids,
+      intervalMin: regNewInterval,
+      enabled: regNewInterval > 0,
+      createdAt: new Date().toISOString(),
+    }];
+    const r = await regSets.save(next);
+    if (!r?.success) { setNotice('保存回归集失败，请确认密码库已解锁'); return; }
+    setRegNewName('');
+    setRegOpen(true);
+    setNotice(`已保存回归集「${name}」（${ids.length} 个请求）`);
+  };
+
+  /** 回归集开关 / 间隔 / 删除 */
+  const patchRegression = async (id: string, patch: Partial<RegressionSet>) => {
+    const next = regSets.items.map(s => (s.id === id ? { ...s, ...patch } : s));
+    const r = await regSets.save(next);
+    if (!r?.success) setNotice('修改没保存成功');
+  };
+
+  const removeRegression = async (id: string) => {
+    const r = await regSets.save(regSets.items.filter(s => s.id !== id));
+    if (!r?.success) { setNotice('删除失败'); return; }
+    // 历史结果一起清掉，避免留下没有集合的孤儿记录
+    await regRuns.save(regRuns.items.filter(x => x.setId !== id));
   };
 
   /** 批量结果 → Markdown（能直接贴到群/周报里） */
@@ -819,6 +882,12 @@ export function ApiClient() {
           desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存"
           tools={
             <>
+              <button className="btn btn-secondary btn-sm" onClick={() => setRegOpen(true)} title="把一组请求存成回归集：定时自动跑，并与上次结果逐条比对">
+                <Icons.refresh size={13} /> 回归
+                {regSets.items.some(s => s.enabled) && (
+                  <span className="api-reg-dot" aria-hidden="true" />
+                )}
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setCurlText(''); setCurlError(''); setCurlOpen(true); }} title="粘贴同事/文档里的 curl 命令，自动拆成方法、地址、请求头、请求体">
                 <Icons.download size={13} /> 从 cURL 导入
               </button>
@@ -1016,6 +1085,26 @@ export function ApiClient() {
                   全选
                 </label>
                 <span className="api-batch-count">已选 {picked.size} 项</span>
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={picked.size === 0 || batchRunning}
+                  onClick={() => {
+                    // 按列表顺序跑：顺序会影响变量传递（登录 → 取 token → 业务接口）
+                    const list = items.filter(i => picked.has(i.id));
+                    void runBatch(list);
+                  }}
+                  title="按列表顺序依次发送，支持上一步提取的变量传给下一步"
+                >
+                  {batchRunning ? '运行中…' : '运行'}
+                </button>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  disabled={picked.size === 0}
+                  onClick={() => void saveAsRegression()}
+                  title="把选中的请求存成一个回归集，之后可以定时自动跑"
+                >
+                  存为回归集
+                </button>
                 <button
                   className="btn btn-sm btn-secondary"
                   disabled={picked.size === 0}
@@ -1882,7 +1971,7 @@ export function ApiClient() {
       <Modal
         open={batchOpen}
         onClose={() => setBatchOpen(false)}
-        title="批量运行结果"
+        title={resultSet ? `回归结果 · ${resultSet.name}` : '批量运行结果'}
         footer={(
           <>
             <button className="btn btn-ghost btn-sm" onClick={() => void copyBatchReport()} disabled={batchRows.length === 0}>
@@ -1907,13 +1996,46 @@ export function ApiClient() {
                 失败 {batchRows.filter(r => !r.ok).length} 条
                 {batchStartedAt && batchFinishedAt ? ` · 总耗时 ${((batchFinishedAt - batchStartedAt) / 1000).toFixed(1)}s` : ''}
               </span>
+              {diffs && (
+                <span className={`batch-diff${diffAlerts(diffs) > 0 ? ' is-alert' : ''}`}>
+                  {diffs.some(d => d.kind !== 'added')
+                    ? (diffAlerts(diffs) > 0
+                      ? `较上次：${diffAlerts(diffs)} 条变差（${diffs.filter(d => d.kind === 'new-fail').length} 新失败 / ${diffs.filter(d => d.kind === 'gone').length} 已移除）`
+                      : '较上次：没有变差')
+                    : '首次运行，已记为基线'}
+                </span>
+              )}
+              {!diffs && baseline === null && resultSet && (
+                <span className="batch-diff">首次运行，已记为基线</span>
+              )}
             </div>
             <div className="batch-list">
-              {batchRows.map(r => (
+              {batchRows.map(r => {
+                const d = diffs?.find(x => x.id === r.id);
+                return (
                 <div key={r.id} className={`batch-row${r.ok ? ' is-ok' : ' is-bad'}`}>
                   <span className="batch-flag">{r.ok ? '✓' : '✗'}</span>
                   <span className={`method m-${r.method}`}>{r.method}</span>
                   <span className="batch-name" title={r.url}>{r.name || r.url}</span>
+                  {d && (
+                    <span
+                      className={`batch-diff-tag is-${d.kind}`}
+                      title={[
+                        DIFF_LABEL[d.kind],
+                        d.statusChanged ? '状态码变了' : '',
+                        d.timeDeltaMs !== null && Math.abs(d.timeDeltaMs) >= 50
+                          ? `耗时 ${d.timeDeltaMs > 0 ? '+' : ''}${d.timeDeltaMs}ms`
+                          : '',
+                      ].filter(Boolean).join(' · ')}
+                    >
+                      {DIFF_LABEL[d.kind]}
+                      {d.timeDeltaMs !== null && Math.abs(d.timeDeltaMs) >= 50 && (
+                        <b className={d.timeDeltaMs > 0 ? 'is-slow' : 'is-fast'}>
+                          {d.timeDeltaMs > 0 ? '+' : ''}{d.timeDeltaMs}ms
+                        </b>
+                      )}
+                    </span>
+                  )}
                   <span className="batch-meta">
                     {r.error ? r.error : `${r.status} · ${r.timeMs}ms`}
                   </span>
@@ -1933,9 +2055,109 @@ export function ApiClient() {
                     </span>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
+        )}
+      </Modal>
+
+      {/* 回归任务：把一组请求存成集合，定时自动跑，并与上次比对 */}
+      <Modal
+        open={regOpen}
+        onClose={() => setRegOpen(false)}
+        title="接口回归"
+        className="reg-modal"
+        footer={<button className="btn btn-secondary" onClick={() => setRegOpen(false)}>关闭</button>}
+      >
+        <div className="reg-new">
+          <input
+            className="reg-new-name"
+            value={regNewName}
+            onChange={e => setRegNewName(e.target.value)}
+            placeholder={`回归集名称（默认「回归集 ${regSets.items.length + 1}」）`}
+            aria-label="回归集名称"
+          />
+          <select
+            value={regNewInterval}
+            onChange={e => setRegNewInterval(Number(e.target.value))}
+            aria-label="回归间隔"
+          >
+            {REGRESSION_INTERVALS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={picked.size === 0}
+            onClick={() => void saveAsRegression()}
+            title={picked.size === 0 ? '先在左侧勾选请求' : '按当前勾选顺序保存'}
+          >
+            用已选 {picked.size} 个请求新建
+          </button>
+        </div>
+        <div className="reg-hint">
+          按勾选顺序依次发送；上一步「提取变量」的值会喂给下一步。定时只在应用打开时执行，
+          错过的那次会在下次启动后立即补跑。
+        </div>
+
+        {regSets.items.length === 0 ? (
+          <div className="api-side-empty">还没有回归集。在左侧勾选几个请求，点「存为回归集」。</div>
+        ) : (
+          <div className="reg-list">
+            {regSets.items.map((s) => {
+              const lastRun = latestRunOf(regRuns.items, s.id);
+              const summary = lastRun ? summarizeRun(lastRun.steps) : null;
+              return (
+                <div key={s.id} className="reg-row">
+                  <label className="wk-check" title="开启后按间隔自动跑">
+                    <input
+                      type="checkbox"
+                      checked={s.enabled}
+                      onChange={e => void patchRegression(s.id, { enabled: e.target.checked })}
+                    />
+                  </label>
+                  <div className="reg-main">
+                    <div className="reg-name">{s.name}</div>
+                    <div className="reg-sub">
+                      {s.requestIds.length} 个请求
+                      {lastRun
+                        ? ` · 上次 ${formatRecent(lastRun.at)} · 通过 ${summary!.pass}/${summary!.total}`
+                        : ' · 还没跑过'}
+                    </div>
+                  </div>
+                  <select
+                    className="reg-interval"
+                    value={s.intervalMin}
+                    onChange={e => void patchRegression(s.id, { intervalMin: Number(e.target.value) })}
+                    aria-label={`${s.name} 的间隔`}
+                  >
+                    {REGRESSION_INTERVALS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  <span className={`reg-status${s.lastStatus === 'pass' ? ' is-ok' : s.lastStatus === 'fail' ? ' is-bad' : ''}`}>
+                    {s.lastStatus === 'pass' ? '通过' : s.lastStatus === 'fail' ? '有失败' : '—'}
+                  </span>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    disabled={regBusyId === s.id}
+                    onClick={() => void runRegression(s)}
+                  >
+                    {regBusyId === s.id ? '运行中…' : '立即运行'}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => ask({
+                      title: '删除回归集',
+                      message: `删除「${s.name}」？它的历史结果也会一起清掉（请求本身不会删）。`,
+                      confirmText: '删除',
+                      danger: true,
+                      onOk: () => removeRegression(s.id),
+                    })}
+                  >
+                    删除
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
       </Modal>
 

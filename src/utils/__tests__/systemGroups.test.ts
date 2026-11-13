@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSystems, systemKey, systemOfEntryName, matchesSystem, systemStats } from '../systemGroups';
+import { buildSystems, systemKey, systemOfEntryName, matchesSystem, systemStats, pickOrphanAccounts } from '../systemGroups';
 
 describe('systemKey', () => {
   it('忽略大小写、首尾空白与连续空格', () => {
@@ -134,5 +134,39 @@ describe('matchesSystem', () => {
 
   it('不命中返回 false', () => {
     expect(matchesSystem(g, '宿舍')).toBe(false);
+  });
+});
+
+describe('pickOrphanAccounts（旧账号集合里没并进条目的）', () => {
+  const entries = [
+    { name: '合同管理系统-测试' },
+    { name: '学工综合平台（正式）' },
+  ];
+
+  it('系统名能对上条目的不算历史账号', () => {
+    const legacy = [
+      { id: '1', username: 'admin', system: '合同管理系统' },
+      { id: '2', username: 'stu', system: '学工综合平台' },
+    ];
+    expect(pickOrphanAccounts(entries, legacy)).toHaveLength(0);
+  });
+
+  it('对不上的留下，且保持原顺序', () => {
+    const legacy = [
+      { id: '1', username: 'admin', system: '合同管理系统' },
+      { id: '2', username: 'ghost', system: '早就没了的系统' },
+      { id: '3', username: 'old', system: '另一个旧系统' },
+    ];
+    expect(pickOrphanAccounts(entries, legacy).map(a => a.id)).toEqual(['2', '3']);
+  });
+
+  it('没填账号的空记录不进兜底列表', () => {
+    const legacy = [{ id: '1', username: '', system: '旧系统' }];
+    expect(pickOrphanAccounts(entries, legacy)).toHaveLength(0);
+  });
+
+  it('空条目/空集合都不炸', () => {
+    expect(pickOrphanAccounts([], [])).toEqual([]);
+    expect(pickOrphanAccounts([], [{ id: '1', username: 'a', system: 'X' }])).toHaveLength(1);
   });
 });

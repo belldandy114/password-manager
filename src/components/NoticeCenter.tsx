@@ -50,7 +50,19 @@ export function NoticeCenter({
     (async () => {
       try {
         const r = await window.electronAPI.zentaoNotifyStatus();
-        if (alive && r?.data) setZt(r.data);
+        let status = r?.data || null;
+        if (alive && status) setZt(status);
+
+        // 打开时自动补一次：提醒中心读的是「上次定时检查」的结果，
+        // 昨天没开应用的话今天看到的就是昨天的数据。
+        // 只在已配置、已解锁、且距上次检查超过 10 分钟时才触发（纯读请求，安全）。
+        const at = status?.lastCheck?.at ? Date.parse(status.lastCheck.at) : 0;
+        const outdated = !at || Date.now() - at > 10 * 60 * 1000;
+        if (status?.configured && status?.unlocked && outdated) {
+          await window.electronAPI.zentaoNotifyNow();
+          const r2 = await window.electronAPI.zentaoNotifyStatus();
+          if (alive && r2?.data) setZt(r2.data);
+        }
       } catch { /* 忽略 */ }
       try {
         const b = await window.electronAPI.backupList();
@@ -151,19 +163,25 @@ export function NoticeCenter({
     <Modal open={open} onClose={onClose} title={items.length ? `提醒（${items.length}）` : '提醒'}>
       {loading && !items.length ? (
         <div className="notice-empty">正在汇总…</div>
-      ) : items.length === 0 ? (
-        <div className="notice-empty">
-          <Icons.check size={16} />
-          <div>
-            <div>{zt && zt.lastCheck ? '暂时没有需要处理的' : '禅道还没检查过'}</div>
-            <div className="notice-sub">
-              {zt && zt.lastCheck
-                ? '超期缺陷、不可达环境、久未备份都会出现在这里'
-                : '去「设置 › 定时任务」点一次「检查一次」，之后这里才会有超期数据'}
+      ) : items.length === 0 ? (() => {
+        const checked = !!(zt && zt.lastCheck);
+        const off = !!(zt && !zt.enabled && !zt.staleOn);
+        return (
+          <div className="notice-empty">
+            <Icons.check size={16} />
+            <div>
+              <div>{checked ? '暂时没有需要处理的' : off ? '提醒还没开启' : '禅道还没检查过'}</div>
+              <div className="notice-sub">
+                {checked
+                  ? '超期缺陷、不可达环境、久未备份都会出现在这里'
+                  : off
+                    ? '去「设置 › 定时任务」打开「新 Bug 检查」或「超期提醒」，这里才会有数据'
+                    : '去「设置 › 定时任务」点一次「检查一次」，之后这里才会有超期数据'}
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
+        );
+      })() : (
         <div className="notice-list">
           {groups.map(([group, list]) => (
             <div key={group} className="notice-group">

@@ -29,13 +29,16 @@ const VAULT_COLLECTIONS = [
   'apiEnvs',
   'apiHistory',
   'codeSnippets',
+  // 接口回归：回归集定义 + 最近若干次运行结果
+  'regressionSets',
+  'regressionRuns',
 ];
 
 /**
  * 当前库结构版本。**只许往上加，不许改历史值** ——
  * 已经把 v1 迁到 v2 的库，改动 v2 的定义就等于让它们的数据对不上号。
  */
-const VAULT_SCHEMA_VERSION = 2;
+const VAULT_SCHEMA_VERSION = 3;
 
 /**
  * 迁移表：key = 源版本，value = 把该版本的结构升到「下一版」的纯函数。
@@ -62,7 +65,60 @@ const MIGRATIONS = {
     }
     return next;
   },
+
+  /**
+   * v2 → v3：把独立的「测试账号」并进网址条目。
+   *
+   * 以前同一个系统的地址在 entries、账号在 accounts，查一个系统要在两个页面之间对。
+   * 现在账号挂到条目下（entry.accounts），一个地址看得全：主账号 + 各角色账号。
+   *
+   * 匹配从严到宽：① 系统名 + 环境都相同；② 只比系统名。
+   * 都匹配不上就跳过 —— 挂错条目比不合并更糟。
+   * 原 accounts 集合**原样保留**（只追加不删除）：迁移写错了也不丢数据，回退旧版本还能看到。
+   */
+  2: (v) => {
+    const next = { ...v };
+    const entries = Array.isArray(next.entries) ? next.entries.map((e) => ({ ...e })) : [];
+    const accts = Array.isArray(next.accounts) ? next.accounts : [];
+    if (!entries.length || !accts.length) return next;
+
+    for (const a of accts) {
+      const sys = sysKeyOf(a.system);
+      const user = String(a.username || '').trim();
+      if (!sys || !user) continue;
+      let hit = entries.find((e) => sysKeyOf(e.name) === sys && String(e.envType || '') === String(a.envType || ''));
+      if (!hit) hit = entries.find((e) => sysKeyOf(e.name) === sys);
+      if (!hit) continue;
+      const list = Array.isArray(hit.accounts) ? hit.accounts.slice() : [];
+      const dup = list.some((x) => String(x.username || '') === user && String(x.role || '') === String(a.role || ''));
+      if (dup) continue;
+      list.push({
+        id: String(a.id || '') || `acc-${user}`,
+        role: String(a.role || ''),
+        username: user,
+        password: String(a.password || ''),
+        note: String(a.note || ''),
+      });
+      hit.accounts = list;
+    }
+
+    next.entries = entries;
+    return next;
+  },
 };
+
+/**
+ * v3 迁移用的系统名归一：与渲染层 `src/utils/systemGroups.ts` 的 systemOfEntryName 保持一致。
+ * 主进程不能 import TS，所以这里保留一份等价实现（规则很短，改一处记得改两处）。
+ */
+function sysKeyOf(name) {
+  return String(name || '').trim()
+    .replace(/[-_—\s]*[（(]\s*(正式|测试|开发|预发|生产|验收)(环境|版)?\s*[）)]\s*$/i, '')
+    .replace(/[-_—\s]+(正式|测试|开发|预发|生产|验收)(环境|版)?\s*$/i, '')
+    .replace(/[-_—\s]+(uat|sit|fat|dev|prod|test|staging|pre|stage)\s*$/i, '')
+    .trim()
+    .toLowerCase();
+}
 
 /**
  * 读出库里声明的版本；没有就当 v1（本项目第一版没写版本号）。

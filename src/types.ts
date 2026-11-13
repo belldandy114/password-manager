@@ -24,6 +24,22 @@ export interface AttachmentFileMeta {
   updatedAt: string;
 }
 
+/**
+ * 条目下的「其他角色账号」。
+ *
+ * 主账号仍是 `entry.username` / `entry.password`（沿用所有现有逻辑：卡片、钉窗、复制、搜索），
+ * 这里只放「同一个地址下的其它角色」—— 一个系统往往有 admin / 普通用户 / 只读 三套。
+ * 以前这些存在独立的「测试账号」集合里，同一个系统的地址和账号要在两个页面之间对。
+ */
+export interface EntryAccount {
+  id: string;
+  /** 管理员 / 普通用户 / 只读 …… */
+  role: string;
+  username: string;
+  password: string;
+  note?: string;
+}
+
 export interface PasswordEntry {
   id: string;
   name: string;
@@ -43,6 +59,8 @@ export interface PasswordEntry {
   totpSecret?: string;
   /** 自定义字段（安全问题、API Key 等） */
   customFields?: CustomField[];
+  /** 其他角色账号（v3 起由「测试账号」集合合并而来） */
+  accounts?: EntryAccount[];
   /** 附件（加密存储在本地） */
   attachments?: Attachment[];
   deletedAt?: string;
@@ -191,7 +209,9 @@ export interface PasswordGenOptions {
 
 /** 与主进程 VAULT_COLLECTIONS 对应 */
 export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations' | 'codeSnippets'
-  | 'ztPresets' | 'apiEnvs' | 'apiHistory';
+  | 'ztPresets' | 'apiEnvs' | 'apiHistory'
+  /** 接口回归：回归集与运行历史（类型见 utils/regression.ts） */
+  | 'regressionSets' | 'regressionRuns';
 
 export interface ZentaoConfig {
   id: string;

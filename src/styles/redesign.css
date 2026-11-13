@@ -1,23 +1,4 @@
-/* ================================================================
-   Redesign V9 — Graphite Instrument
-   ----------------------------------------------------------------
-   加载顺序：tokens.css → global.css → pages.css → 本文件（最后）。
-   职责：
-   1. 把 global.css 的旧变量别名映射到 tokens.css 的新语义层
-   2. 重塑应用外壳与核心组件（侧栏/工具栏/表格/卡片/按钮/输入框）
-   3. 实现 data-density 三档密度
-   不改动任何布局结构与业务逻辑，整文件可整体回退。
-   ================================================================ */
-
-/* ---------------- 1. 旧变量 → 新令牌 ---------------- */
 :root {
-  --bg-primary: var(--surface-0);
-  --bg-secondary: var(--surface-1);
-  --bg-card: var(--surface-2);
-  --bg-hover: var(--surface-3);
-  --bg-input: var(--surface-inset);
-  --bg-sidebar: var(--surface-1);
-  --bg-selected: var(--surface-selected);
   --text-primary: var(--text-1);
   --text-secondary: var(--text-2);
   --text-muted: var(--text-3);
@@ -4940,3 +4921,320 @@ html.pin-window #root {
   margin-right: 4px;
 }
 
+/* 视图切换：卡片 / 列表 / 按系统 三段 */
+.view-switch {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.view-switch-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.view-switch-btn + .view-switch-btn {
+  border-left: 1px solid var(--line);
+}
+
+.view-switch-btn:hover {
+  background: var(--surface-3);
+}
+
+.view-switch-btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* =============================================================
+   其他角色账号（条目表单）+ 账号汇总页（2026-11-13）
+   ============================================================= */
+
+.acc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.acc-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) minmax(0, 1fr) 28px;
+  gap: 6px;
+  align-items: center;
+}
+
+.acc-row input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--input-line);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+}
+
+.acc-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.acc-del {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.acc-del:hover {
+  background: var(--surface-3);
+  color: var(--bad);
+}
+
+.acc-user-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.acc-user-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* 卡片上「还有 N 个角色账号」的小徽标 */
+.cred-more {
+  margin-left: 5px;
+  padding: 0 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  font-size: 10px;
+  color: var(--text-3);
+  vertical-align: 1px;
+}
+
+/* 历史账号兜底条（原「测试账号」页删除后，没并进条目的账号在这里露个脸） */
+.orphan-strip {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.orphan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.orphan-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex: none;
+}
+
+.orphan-toggle {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.orphan-toggle:hover {
+  text-decoration: underline;
+}
+
+.orphan-hint {
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.orphan-table {
+  margin-top: 10px;
+  background: var(--surface-1);
+  border-radius: var(--r-sm);
+}
+
+/* ---------------- 接口回归 ---------------- */
+
+/* 有回归集开着定时时，页头按钮上带一个小圆点 */
+.api-reg-dot {
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  display: inline-block;
+  vertical-align: 3px;
+}
+
+/* 回归弹窗比默认弹窗宽一点：一行要放名称 + 间隔 + 按钮 */
+.reg-modal {
+  width: 700px;
+  max-width: 94vw;
+}
+
+.reg-new {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.reg-new-name {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.reg-hint {
+  margin-bottom: 14px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.reg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.reg-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.reg-name {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reg-sub {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.reg-interval {
+  flex: none;
+  width: 118px;
+}
+
+.reg-status {
+  flex: none;
+  width: 48px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 行内按钮不参与压缩，否则「立即运行」会被挤成「立即运」 */
+.reg-row .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.reg-row .wk-check {
+  flex: none;
+}
+
+.reg-status.is-ok {
+  color: var(--ok);
+}
+
+.reg-status.is-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+/* 批量/回归结果里「较上次」的汇总与逐条标签 */
+.batch-diff {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.batch-diff.is-alert {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.batch-diff-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  font-size: 10.5px;
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+.batch-diff-tag.is-new-fail {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
+.batch-diff-tag.is-recovered {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.batch-diff-tag.is-added {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.batch-diff-tag b {
+  font-weight: 600;
+}
+
+.batch-diff-tag b.is-slow {
+  color: var(--warn);
+}
+
+.batch-diff-tag b.is-fast {
+  color: var(--ok);
+}

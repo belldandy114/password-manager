@@ -122,6 +122,14 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
       <div className="card-credential-row">
         <span className="cred-account">
           {'\u{1F464}'} {entry.username || '--'}
+          {(entry.accounts?.length || 0) > 0 && (
+            <span
+              className="cred-more"
+              title={`还有 ${entry.accounts!.length} 个角色账号：${entry.accounts!.map(a => a.role || a.username).join('、')}`}
+            >
+              +{entry.accounts!.length}
+            </span>
+          )}
         </span>
         <span className="cred-gap">{'  '}</span>
         <span className="cred-password-wrapper">

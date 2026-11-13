@@ -36,7 +36,6 @@ export const KIND_LABEL: Record<Kind, string> = {
 
 export const PAGES: { page: string; label: string }[] = [
   { page: 'passwordManager', label: '网址管理' },
-  { page: 'accounts', label: '测试账号' },
   { page: 'weeklyReport', label: '周报' },
   { page: 'snippets', label: 'SQL 片段' },
   { page: 'notes', label: '测试笔记' },
@@ -109,10 +108,10 @@ export function CommandPalette({
   const [pasteItems, setPasteItems] = useState<Cmd[]>([]);
   const [pasteIntent, setPasteIntent] = useState<PasteIntent | null>(null);
   const [extra, setExtra] = useState<{
-    snippets: any[]; notes: any[]; accounts: any[];
+    snippets: any[]; notes: any[];
     apiRequests: any[]; checklists: any[]; environments: any[];
     apiHistory: any[]; codeSnippets: any[];
-  }>({ snippets: [], notes: [], accounts: [], apiRequests: [], checklists: [], environments: [], apiHistory: [], codeSnippets: [] });
+  }>({ snippets: [], notes: [], apiRequests: [], checklists: [], environments: [], apiHistory: [], codeSnippets: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -122,10 +121,9 @@ export function CommandPalette({
     setIdx(0);
     setTimeout(() => inputRef.current?.focus(), 30);
     (async () => {
-      const [sn, nt, ac, rq, ck, ev, hs, cs] = await Promise.all([
+      const [sn, nt, rq, ck, ev, hs, cs] = await Promise.all([
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
-        window.electronAPI.wsGet('accounts'),
         window.electronAPI.wsGet('apiRequests'),
         window.electronAPI.wsGet('checklists'),
         window.electronAPI.wsGet('environments'),
@@ -136,7 +134,6 @@ export function CommandPalette({
       setExtra({
         snippets: pick(sn),
         notes: pick(nt),
-        accounts: pick(ac),
         apiRequests: pick(rq),
         checklists: pick(ck),
         environments: pick(ev),
@@ -236,14 +233,40 @@ export function CommandPalette({
       run: () => onNavigate('notes'),
     }));
 
-    const fromAccounts: Cmd[] = extra.accounts.slice(0, 200).map((a: any) => ({
-      id: `account:${a.id}`,
-      title: `${a.system || '未分组'} · ${a.username || ''}`,
-      sub: a.role || '',
-      kind: 'account' as Kind,
-      user: a.username,
-      run: () => onNavigate('accounts'),
-    }));
+    const fromAccounts: Cmd[] = entries.flatMap((e) => {
+      const list: Cmd[] = [];
+      if (e.username) {
+        list.push({
+          id: `account:${e.id}:p`,
+          title: `${e.name} · ${e.username}`,
+          sub: '主账号',
+          kind: 'account' as Kind,
+          env: e.envType,
+          user: e.username,
+          run: () => {
+            onNavigate('passwordManager');
+            setPmSubPage('dashboard');
+            setSearchQuery(e.name);
+          },
+        });
+      }
+      (e.accounts || []).forEach((a) => {
+        list.push({
+          id: `account:${e.id}:${a.id}`,
+          title: `${e.name} · ${a.username}`,
+          sub: a.role || '角色',
+          kind: 'account' as Kind,
+          env: e.envType,
+          user: a.username,
+          run: () => {
+            onNavigate('passwordManager');
+            setPmSubPage('dashboard');
+            setSearchQuery(e.name);
+          },
+        });
+      });
+      return list;
+    }).slice(0, 300);
 
     const fromRequests: Cmd[] = extra.apiRequests.slice(0, 200).map((r: any) => ({
       id: `request:${r.id}`,

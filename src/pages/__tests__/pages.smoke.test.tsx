@@ -5,7 +5,6 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import type { ReactElement } from 'react';
 
-import { Accounts } from '../../pages/Accounts';
 import { ApiClient } from '../../pages/ApiClient';
 import { Attachments } from '../../pages/Attachments';
 import { CodeLab } from '../../pages/CodeLab';
@@ -25,7 +24,6 @@ import { WeeklyReport } from '../../pages/WeeklyReport';
 import { ZentaoPage } from '../../pages/ZentaoPage';
 
 const PAGES: Array<[string, () => ReactElement]> = [
-  ['Accounts', Accounts],
   ['ApiClient', ApiClient],
   ['Attachments', Attachments],
   ['CodeLab', CodeLab],

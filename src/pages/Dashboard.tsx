@@ -14,6 +14,7 @@ import { isSensitiveLabel } from '../utils/clipboard';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { isPinyinReady, onPinyinReady } from '../utils/search';
 import { getRecentEntries } from '../utils/recent';
+import { OrphanAccounts } from '../components/OrphanAccounts';
 import { systemOfEntryName } from '../utils/systemGroups';
 
 export function Dashboard() {
@@ -416,31 +417,21 @@ export function Dashboard() {
             {riskCount > 0 && <span className="security-badge">{riskCount}</span>}
           </button>
 
-          <button
-            className="view-toggle-btn"
-            onClick={() => store.setViewMode(store.viewMode === 'card' ? 'list' : store.viewMode === 'list' ? 'system' : 'card')}
-            title={
-              store.viewMode === 'card' ? '当前：卡片 · 点击切到列表'
-                : store.viewMode === 'list' ? '当前：列表 · 点击切到按系统'
-                  : '当前：按系统 · 点击切回卡片'
-            }
-            aria-label="切换视图（卡片 / 列表 / 按系统）"
-          >
-            {store.viewMode === 'system' ? (
-              // 分组：上面两个小块 + 下面一条长的
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="4" width="7" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/>
-              </svg>
-            ) : store.viewMode === 'card' ? (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(90deg)' }}>
-                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
-              </svg>
-            )}
-          </button>
+          {/* 三个视图直接摆出来：循环按钮得点两下才知道回到哪 */}
+          <div className="view-switch" role="group" aria-label="视图切换">
+            {([['card', '卡片'], ['list', '列表'], ['system', '按系统']] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={`view-switch-btn${store.viewMode === mode ? ' is-on' : ''}`}
+                aria-pressed={store.viewMode === mode}
+                onClick={() => store.setViewMode(mode)}
+                title={mode === 'system' ? '按系统：同名条目（-测试 / -正式）并成一组' : `${label}视图`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           <button className="btn-add" onClick={() => { setEditingEntry(null); setFormSeed(null); setShowForm(true); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -536,6 +527,8 @@ export function Dashboard() {
             ))}
           </div>
         )}
+        {/* 迁移时没能并进条目的历史账号：原来在「测试账号」页，现在挂在这里兜底 */}
+        <OrphanAccounts />
         {filteredEntries.length === 0 ? (
           <div className="empty-state">
             {store.filterTags && store.filterTags.size > 0 ? (

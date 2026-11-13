@@ -9,6 +9,7 @@ import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils
 import { guessUrlFromInput } from './utils/urlInput';
 import { recordPageUse } from './utils/recent';
 import { useEnvAutoProbe } from './utils/envSchedule';
+import { useRegressionScheduler } from './hooks/useRegressionScheduler';
 
 /**
  * 工作台页面按需加载：首屏只装登录 + 侧边栏，
@@ -19,7 +20,6 @@ const PasswordManagerPage = lazy(() => import('./pages/PasswordManagerPage').the
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ default: m.DataGenerator })));
 const Toolbox = lazy(() => import('./pages/Toolbox').then(m => ({ default: m.Toolbox })));
-const Accounts = lazy(() => import('./pages/Accounts').then(m => ({ default: m.Accounts })));
 const Environments = lazy(() => import('./pages/Environments').then(m => ({ default: m.Environments })));
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
 const Snippets = lazy(() => import('./pages/Snippets').then(m => ({ default: m.Snippets })));
@@ -96,6 +96,9 @@ function App() {
   const autoProbeInterval = useStore(s => s.settings.envProbeInterval || 0);
   const autoProbeNotify = useStore(s => s.settings.envProbeNotifyOnFlip !== false);
   useEnvAutoProbe(autoProbeInterval, autoProbeNotify, !isLocked);
+
+  // 接口回归定时：解锁后才跑，错过的会在解锁瞬间补跑一次
+  useRegressionScheduler(!isLocked);
 
   // 点系统通知时主进程要求跳页
   useEffect(() => window.electronAPI.onAppNavigate?.((p) => {
@@ -344,7 +347,14 @@ function App() {
         case 'entry': setCurrentPage('passwordManager'); st.setPmSubPage('dashboard'); st.setSearchQuery(item.title || ''); break;
         case 'snippet': setCurrentPage('snippets'); break;
         case 'note': setCurrentPage('notes'); break;
-        case 'account': setCurrentPage('accounts'); break;
+        case 'account': {
+          // 账号挂在网址条目上：落到网址管理，并按条目名筛出来
+          const entryName = String(item.title || '').split(' · ')[0];
+          setCurrentPage('passwordManager');
+          st.setPmSubPage('dashboard');
+          if (entryName) st.setSearchQuery(entryName);
+          break;
+        }
         case 'request': setCurrentPage('apiClient'); st.signalCmd(`api:open:${arg}`); break;
         case 'checklist': setCurrentPage('checklists'); break;
         case 'env': setCurrentPage('environments'); break;
@@ -437,7 +447,9 @@ function App() {
       // 1.11.0：JSON 转化已并入工具箱，老用户上次停在这一页也能平滑落到工具箱
       case 'jsonConverter': return <Toolbox />;
       case 'toolbox': return <Toolbox />;
-      case 'accounts': return <Accounts />;
+      // 「测试账号」页已并入网址管理（账号就挂在条目上）。老用户上次停在这一页时
+      // 持久化的 currentPage 还是 accounts，落到网址管理而不是白屏。
+      case 'accounts': return <PasswordManagerPage />;
     case 'environments': return <Environments />;
       case 'weeklyReport': return <WeeklyReport />;
       case 'snippets': return <Snippets />;

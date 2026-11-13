@@ -827,6 +827,7 @@ function createSearchWindow() {
   });
   searchWin.setAlwaysOnTop(true, 'screen-saver');
   if ((loadSettings() || {}).contentProtection) searchWin.setContentProtection(true);
+  attachCrashGuard(searchWin, '搜索小窗');
   if (IS_DEV && !process.env.PM_USE_DIST) {
     searchWin.loadURL('http://localhost:5173?window=palette');
   } else {
@@ -932,6 +933,7 @@ function createQuickNoteWindow() {
   });
   quickNoteWin.setAlwaysOnTop(true, 'screen-saver');
   if ((loadSettings() || {}).contentProtection) quickNoteWin.setContentProtection(true);
+  attachCrashGuard(quickNoteWin, '随手记小窗');
   if (IS_DEV && !process.env.PM_USE_DIST) {
     quickNoteWin.loadURL('http://localhost:5173?window=quicknote');
   } else {
@@ -1028,6 +1030,14 @@ function showMainWindow() {
     createWindow();
     return;
   }
+  // 单实例模式下的救命逻辑：如果占着锁的那个窗口其实是块白板（渲染进程早崩了），
+  // 只 show 出来还是白屏。先重载，再显示。
+  try {
+    if (mainWindow.webContents.isCrashed()) {
+      console.warn('[crash] 检测到白屏窗口（渲染进程已崩溃），重新加载后再显示');
+      mainWindow.webContents.reload();
+    }
+  } catch { /* 忽略：老版本 Electron 没有 isCrashed 也不影响主流程 */ }
   // Show first, then restore: a window that was hidden *while minimized* reports
   // isMinimized() === false until it is visible again, so restoring up-front would be
   // skipped and the user would get a taskbar-minimized window back from the tray.
@@ -1037,21 +1047,31 @@ function showMainWindow() {
 }
 
 function hideToTray() {
-  createTray();
+  // 托盘建不起来时不能 hide：窗口一藏就只剩快捷键能找回，用户会以为程序没了
+  if (!createTray()) return;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
 }
 
 function createTray() {
-  if (tray) return;
+  if (tray) return true;
   let icon = nativeImage.createFromPath(appIconPath());
   if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(__dirname, '..', 'buildResources', 'icon.ico'));
 
-  tray = new Tray(icon);
-  tray.setToolTip('测试中台');
-  buildTrayMenu();
-  // Left click / double click on the icon restores the window (Windows convention).
-  tray.on('click', () => showMainWindow());
-  tray.on('double-click', () => showMainWindow());
+  try {
+    tray = new Tray(icon);
+    tray.setToolTip('测试中台');
+    buildTrayMenu();
+    // Left click / double click on the icon restores the window (Windows convention).
+    tray.on('click', () => showMainWindow());
+    tray.on('double-click', () => showMainWindow());
+    return true;
+  } catch (e) {
+    // 某些机器上 Windows 不给建通知区图标（Explorer 重启后未恢复等），这时返回 false，
+    // 由调用方退化成「正常最小化 / 真的关闭」，不要留下一个找不回来的隐藏窗口。
+    console.warn('[tray] 创建托盘图标失败：' + (e && e.message));
+    tray = null;
+    return false;
+  }
 }
 
 // Rebuilt whenever the vault changes so "最近条目" stays current.
@@ -1148,6 +1168,75 @@ function scheduleSaveWindowState() {
   windowStateTimer = setTimeout(() => { windowStateTimer = null; saveWindowState(); }, 600);
 }
 
+/**
+ * 渲染进程崩溃兜底。
+ *
+ * 事故（1.24.0 → 1.24.1）：渲染进程挂掉后，窗口留在白板状态，但主进程还活着、
+ * 继续占着单实例锁。用户再双击 exe 只会走 second-instance，把这块白板重新 show 出来，
+ * 于是「关掉再开」永远是白屏，只能去任务管理器杀进程。
+ *
+ * 这里做三件事：崩了自动重载（限次）、连续崩改成可点的重试页、把原因写进 app.log。
+ */
+const CRASH_RELOAD_LIMIT = 2;
+
+function crashFallbackPage(label) {
+  const safe = String(label || '窗口').replace(/[<>&]/g, '');
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${safe}</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{display:flex;align-items:center;justify-content:center;background:#f5f6f8;
+       color:#1f2328;font:14px/1.7 "Microsoft YaHei",system-ui,sans-serif}
+  .box{max-width:420px;padding:28px 32px;background:#fff;border:1px solid #e3e5e9;border-radius:12px;
+       box-shadow:0 6px 24px rgba(20,30,50,.08);text-align:center}
+  h1{margin:0 0 8px;font-size:16px}
+  p{margin:0 0 18px;color:#5b6472;font-size:13px}
+  button{padding:7px 18px;border:0;border-radius:8px;background:#2f6fed;color:#fff;
+         font-size:13px;cursor:pointer}
+  button:hover{background:#255cc7}
+</style></head><body><div class="box">
+  <h1>${safe}连续崩溃了</h1>
+  <p>渲染进程起不来，通常是显卡驱动或内存不足。点下面重试一次；还是不行就关掉窗口重新打开。</p>
+  <button onclick="location.reload()">重新加载</button>
+</div></body></html>`;
+}
+
+function attachCrashGuard(win, label = '窗口') {
+  const wc = win.webContents;
+  let reloads = 0;
+  let aliveTimer = null;
+
+  wc.on('render-process-gone', (_e, details) => {
+    const reason = (details && details.reason) || 'unknown';
+    const code = (details && details.exitCode) || 0;
+    console.error(`[crash] ${label} 渲染进程退出 reason=${reason} exitCode=${code}`);
+    if (reason === 'clean-exit') return;
+    if (reloads >= CRASH_RELOAD_LIMIT) {
+      console.error(`[crash] ${label} 连续崩溃，改为显示重试页`);
+      try { void wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(crashFallbackPage(label))); } catch { /* 忽略 */ }
+      return;
+    }
+    reloads += 1;
+    setTimeout(() => {
+      if (wc.isDestroyed()) return;
+      console.warn(`[crash] ${label} 自动重载（第 ${reloads} 次）`);
+      try { wc.reload(); } catch { /* 忽略 */ }
+    }, 400);
+  });
+
+  wc.on('unresponsive', () => console.warn(`[crash] ${label} 无响应`));
+
+  wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error(`[load] ${label} 加载失败 code=${code} ${desc} ${String(url || '').slice(0, 120)}`);
+  });
+
+  wc.on('did-finish-load', () => {
+    if (aliveTimer) clearTimeout(aliveTimer);
+    // 稳定跑满 20 秒才清零，避免「崩溃 → 重载 → 又崩」的死循环
+    aliveTimer = setTimeout(() => { reloads = 0; }, 20000);
+  });
+}
+
 function createWindow() {
   // Remove default menu bar (File, Edit, View, etc.)
   Menu.setApplicationMenu(null);
@@ -1187,9 +1276,14 @@ function createWindow() {
   // webview 的 src / preload 白名单（测试数据生成器）
   guardWebviews(mainWindow.webContents, navGuardOptions);
 
+  // 渲染进程崩了不要留白板（详见 attachCrashGuard 的注释）
+  attachCrashGuard(mainWindow, '主窗口');
+
   // "最小化到托盘": hide instead of sitting in the taskbar.
+  // 托盘建不起来时不做拦截，退化成普通最小化（否则窗口永远找不回来）。
   mainWindow.on('minimize', (event) => {
     if (!getWindowPrefs().minimizeToTray) return;
+    if (!createTray()) return;
     event.preventDefault();
     hideToTray();
   });
@@ -1198,6 +1292,7 @@ function createWindow() {
   mainWindow.on('close', (event) => {
     if (isQuitting) return;
     if (!getWindowPrefs().closeToTray) return;
+    if (!createTray()) return;
     event.preventDefault();
     hideToTray();
   });

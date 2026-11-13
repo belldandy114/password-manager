@@ -3,6 +3,7 @@ import { Icons } from './ui';
 import { applyTheme, applyAccent, applyDensity, watchSystemTheme } from '../utils/theme';
 import { PAGES, TOOLBOX_TOOLS, KIND_LABEL, type Kind } from './CommandPalette';
 import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
+import { parseQuery, scoreTarget } from '../utils/query';
 
 interface Cmd {
   id: string;
@@ -13,6 +14,10 @@ interface Cmd {
   url?: string;
   /** 粘贴动作要带过去的原文（小窗 → 主窗口） */
   text?: string;
+  /** 语法过滤用（tag: / env: / user:），与主面板保持同一套规则 */
+  tags?: string[];
+  env?: string;
+  user?: string;
 }
 
 /** .palette-root 上下各 10px 的透明留白（给卡片阴影留空间） */
@@ -86,11 +91,10 @@ export function PaletteApp() {
         return;
       }
 
-      const [er, sn, nt, ac, rq, ck, ev] = await Promise.all([
+      const [er, sn, nt, rq, ck, ev] = await Promise.all([
         window.electronAPI.entriesGetAll?.(),
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
-        window.electronAPI.wsGet('accounts'),
         window.electronAPI.wsGet('apiRequests'),
         window.electronAPI.wsGet('checklists'),
         window.electronAPI.wsGet('environments'),
@@ -121,16 +125,34 @@ export function PaletteApp() {
           sub: [e.username, e.url].filter(Boolean).join(' · '),
           kind: 'entry' as Kind,
           url: String(e.url || ''),
+          tags: Array.isArray(e.tags) ? e.tags.map(String) : [],
+          env: String(e.envType || ''),
+          user: String(e.username || ''),
         }))),
         ...pick(sn).slice(0, 200).map((s: any) => ({
           id: `snippet:${s.id}`, title: String(s.title || '（无标题片段）'), sub: (s.tags || []).join(' '), kind: 'snippet' as Kind,
+          tags: Array.isArray(s.tags) ? s.tags.map(String) : [],
         })),
         ...pick(nt).slice(0, 200).map((n: any) => ({
           id: `note:${n.id}`, title: String(n.title || '（无标题笔记）'), sub: '', kind: 'note' as Kind,
         })),
-        ...pick(ac).slice(0, 200).map((a: any) => ({
-          id: `account:${a.id}`, title: `${a.system || '未分组'} · ${a.username || ''}`, sub: String(a.role || ''), kind: 'account' as Kind,
-        })),
+        // 账号挂在条目下：主账号 + 各角色账号都从 entries 派生（不再读独立的 accounts 集合）
+        ...((vault.entries || []).flatMap((e: any) => {
+          const out: Cmd[] = [];
+          if (e.username) {
+            out.push({
+              id: `account:${e.id}:p`, title: `${e.name || ''} · ${e.username}`, sub: '主账号', kind: 'account' as Kind,
+              env: String(e.envType || ''), user: String(e.username),
+            });
+          }
+          (Array.isArray(e.accounts) ? e.accounts : []).forEach((a: any) => {
+            out.push({
+              id: `account:${e.id}:${a.id}`, title: `${e.name || ''} · ${a.username || ''}`, sub: String(a.role || '角色'), kind: 'account' as Kind,
+              env: String(e.envType || ''), user: String(a.username || ''),
+            });
+          });
+          return out;
+        })).slice(0, 300),
         ...pick(rq).slice(0, 200).map((r: any) => ({
           id: `request:${r.id}`,
           title: (r.name && r.name !== '未命名') ? String(r.name) : `${r.method || 'GET'} ${String(r.url || '').replace(/^https?:\/\//, '')}`.slice(0, 70),
@@ -142,6 +164,7 @@ export function PaletteApp() {
         })),
         ...pick(ev).slice(0, 200).map((e: any) => ({
           id: `env:${e.id}`, title: `${e.system || '未命名'} · ${e.env || ''}`.trim(), sub: String(e.url || '').slice(0, 70), kind: 'env' as Kind,
+          env: String(e.envType || e.env || ''),
         })),
       ];
       // 按 id 去重：重复 key 会让 React 在结果变化时留下上一屏的残留行
@@ -210,13 +233,31 @@ export function PaletteApp() {
   }, []);
 
   // 空查询不显示任何菜单项；输入后才出结果
+  // 与主面板共用 parseQuery / scoreTarget：tag: / env: / user: / @kind 的语义必须一致，
+  // 否则同一个词在两个入口给出不同结果，用户会以为搜索坏了
+  const parsed = useMemo(() => parseQuery(q), [q]);
+
   const filtered = useMemo(() => {
-    const key = q.trim().toLowerCase();
+    const key = q.trim();
     if (!key) return [];
-    return cmds
-      .filter(c => `${c.title} ${c.sub || ''}`.toLowerCase().includes(key))
-      .slice(0, 20);
-  }, [cmds, q]);
+    const sorted = cmds
+      .map(c => ({ c, s: scoreTarget(c, parsed) }))
+      .filter(x => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
+      .map(x => x.c);
+
+    // 每类限量，和主面板一致：搜一个词时不让某一类把屏幕刷满
+    const perKind = new Map<string, number>();
+    const out: Cmd[] = [];
+    for (const c of sorted) {
+      if (c.kind === 'page' || c.kind === 'action') { out.push(c); continue; }
+      const n = perKind.get(c.kind) || 0;
+      if (n >= 4) continue;
+      perKind.set(c.kind, n + 1);
+      out.push(c);
+    }
+    return out.slice(0, 20);
+  }, [cmds, q, parsed]);
 
   /** 粘贴识别出的动作项（小窗里置顶，执行时把原文转发给主窗口） */
   const [pasteItems, setPasteItems] = useState<Cmd[]>([]);
@@ -331,6 +372,18 @@ export function PaletteApp() {
               <div className="cmdk-syntax cmdk-paste">
                 <span>已识别为 {PASTE_KIND_LABEL[pasteIntent.kind]}</span>
                 <b>{pasteIntent.lines > 1 ? `${pasteIntent.lines} 行` : `${pasteIntent.chars} 字`}</b>
+              </div>
+            )}
+            {/* 语法提示跟主面板同一套：小窗以前只能按标题包含匹配，tag:/env: 写了没反应 */}
+            {parsed.syntax && (
+              <div className="cmdk-syntax">
+                <span>语法生效</span>
+                {parsed.kinds.map(k => <b key={k}>@{k}</b>)}
+                {parsed.tags.map(t => <b key={`t${t}`}>tag:{t}</b>)}
+                {parsed.envs.map(t => <b key={`e${t}`}>env:{t}</b>)}
+                {parsed.name && <b>name:{parsed.name}</b>}
+                {parsed.url && <b>url:{parsed.url}</b>}
+                {parsed.user && <b>user:{parsed.user}</b>}
               </div>
             )}
             <div className="cmdk-list" ref={listRef}>

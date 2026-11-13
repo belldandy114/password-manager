@@ -73,6 +73,16 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
   };
 
+  /* ---- 其他角色账号（v3：由「测试账号」集合合并而来） ---- */
+  const accounts = form.accounts || [];
+  const addAccount = () => update('accounts', [
+    ...accounts,
+    { id: `acc-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, role: '', username: '', password: '' },
+  ]);
+  const patchAccount = (i: number, key: 'role' | 'username' | 'password', value: string) =>
+    update('accounts', accounts.map((a, idx) => (idx === i ? { ...a, [key]: value } : a)));
+  const removeAccount = (i: number) => update('accounts', accounts.filter((_, idx) => idx !== i));
+
   const applyPatch = (patch: Partial<PasswordEntry>) => setForm(prev => ({ ...prev, ...patch }));
 
   // 每次改动选项或展开时重新生成（主进程用 crypto 保证随机性）
@@ -249,6 +259,56 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
             >
               使用此密码
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* 其他角色账号：一个地址下往往有 admin / 普通用户 / 只读 三套 */}
+      <div className="form-group">
+        <div className="field-label-row">
+          <label>其他角色账号</label>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={addAccount}>+ 添加</button>
+        </div>
+        {accounts.length === 0 ? (
+          <div className="input-hint">
+            一个地址下有多个角色时（管理员 / 普通用户 / 只读）在这里各存一套；上面的账号密码仍是最常用的那个
+          </div>
+        ) : (
+          <div className="acc-list">
+            {accounts.map((a, i) => (
+              <div className="acc-row" key={a.id}>
+                <input
+                  className="acc-role"
+                  value={a.role}
+                  onChange={e => patchAccount(i, 'role', e.target.value)}
+                  placeholder="角色"
+                  aria-label={`第 ${i + 1} 个账号的角色`}
+                />
+                <input
+                  className="acc-user"
+                  value={a.username}
+                  onChange={e => patchAccount(i, 'username', e.target.value)}
+                  placeholder="账号"
+                  spellCheck={false}
+                  aria-label={`第 ${i + 1} 个账号`}
+                />
+                <input
+                  className="acc-pw"
+                  value={a.password}
+                  onChange={e => patchAccount(i, 'password', e.target.value)}
+                  placeholder="密码"
+                  spellCheck={false}
+                  aria-label={`第 ${i + 1} 个账号的密码`}
+                />
+                <button
+                  type="button"
+                  className="acc-del"
+                  onClick={() => removeAccount(i)}
+                  title="删除这个账号"
+                  aria-label={`删除第 ${i + 1} 个账号`}
+                >×</button>
+              </div>
+            ))}
           </div>
         )}
       </div>

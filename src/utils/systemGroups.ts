@@ -177,3 +177,20 @@ export function systemStats(groups: SystemGroup[]): SystemStats {
     orphanAccounts: (groups.find(g => g.key === '__none__')?.accounts || []).length,
   };
 }
+
+/**
+ * 旧「测试账号」集合里，没能并进任何网址条目的账号。
+ *
+ * v3 迁移按「系统名 + 环境」把账号并进条目的 `accounts`，系统名对不上的会留下。
+ * 那个页面已经删了，这些账号仍然留在库里，必须有个地方能看见它们
+ * （`OrphanAccounts` 兜底条就是干这个的）。
+ *
+ * 判定口径和迁移一致：条目的系统名 = 条目名去掉环境后缀，两边做 `systemKey` 归一后比对。
+ */
+export function pickOrphanAccounts<T extends { username?: string; system?: string }>(
+  entries: Array<{ name?: string }>,
+  legacy: T[],
+): T[] {
+  const known = new Set((entries || []).map(e => systemKey(systemOfEntryName(e.name || '') || (e.name || ''))));
+  return (legacy || []).filter(a => !!a.username && !known.has(systemKey(a.system || '')));
+}
