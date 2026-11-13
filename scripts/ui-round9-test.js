@@ -509,52 +509,19 @@ const echo = http.createServer((req, res) => {
     !!pvFilled && /\/api\/preview/.test(pvFilled.url) && pvFilled.modal === false, JSON.stringify(pvFilled));
 
 
-  // 测试账号：新增窗口的「系统」可从已有数据里选（环境矩阵 / 历史账号 / 网址管理条目）
-  await ev(`(async () => {
-    await window.electronAPI.wsSet('environments', [
-      { id: 'env1', system: '示例系统A', env: '测试', url: 'http://env.example.com' },
-    ]);
-    await window.electronAPI.wsSet('accounts', [
-      { id: 'acc0', system: '示例系统A', role: '管理员', envType: 'testing', username: 'u', password: 'p', note: '', updatedAt: new Date().toISOString() },
-    ]);
-    return 1;
-  })()`);
-  await navTo('测试账号');
-  await sleep(400);
-  await ev(`(() => { const b = [...document.querySelectorAll("button")].find(x => /新增|添加/.test(x.textContent)); if (b) b.click(); return !!b; })()`);
-  await sleep(500);
-  const acctSys = await ev(`(() => {
-    const sel = document.querySelector(".modal .suggest-select");
-    return { has: !!sel, opts: sel ? sel.options.length : 0, first: sel && sel.options.length > 1 ? sel.options[1].value : "" };
-  })()`);
-  check("测试账号：系统可从已有系统里选择（下拉存在且有待选项）",
-    !!acctSys && acctSys.has === true && acctSys.opts > 1, JSON.stringify(acctSys));
-  // 选中后应回填到输入框
-  if (acctSys && acctSys.first) {
-    await setVal(".modal .suggest-select", acctSys.first);
-    await sleep(300);
-    const filledSys = await ev(`(() => { const el = document.querySelector(".modal input"); return el ? el.value : ""; })()`);
-    check("测试账号：选中后系统名回填到输入框", String(filledSys) === String(acctSys.first), String(filledSys));
-  }
-  await ev(`(() => { const b = [...document.querySelectorAll(".modal button")].find(x => x.textContent.trim() === "取消"); if (b) b.click(); return true; })()`);
-  await sleep(300);
+  // 「测试账号」页已在 1.24.1 并入网址管理（账号挂在条目下，页面本身删除）。
+  // 原来这里测的「系统下拉」「批量导入」随页面一起下线，改为验证合并后的形态。
+  const acctNavGone = await ev(`(() => ![...document.querySelectorAll('.nav-item')].some(n => n.textContent.includes('测试账号')))()`);
+  check('测试账号：侧栏入口已移除（并入网址管理）', acctNavGone === true);
+
+  await navTo('网址管理');
+  await sleep(600);
+  const viewBtns = await ev(`(() => [...document.querySelectorAll('.view-switch-btn')].map(b => b.textContent.trim()).join('/'))()`);
+  check('网址管理：视图切换是三个小按钮', /卡片/.test(viewBtns) && /列表/.test(viewBtns) && /按系统/.test(viewBtns), viewBtns);
 
   // 登录页「从旧版本恢复」按钮：窄卡片下不能被裁剪
   const btnFit = await ev(`window.electronAPI.dataLegacyInfo().then(info => ({ info: !!info.data }))`);
   check('登录页：旧数据恢复入口可查询（IPC 可用）', !!btnFit && btnFit.info === true, JSON.stringify(btnFit));
-
-  // C2：测试账号批量导入  // C2：测试账号批量导入（粘贴多行 → 一次生成多条）
-  await navTo('测试账号');
-  await sleep(400);
-  const bulkBtn = await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === '批量导入'); if (b) { b.click(); return true; } return false; })()`);
-  check('测试账号：有「批量导入」入口', bulkBtn === true);
-  await sleep(400);
-  await setVal('.bulk-text', '# 注释行\n资产系统 | 管理员 | bulk1 | p1 | 备注A\n业务系统 | 教师 | bulk2 | p2');
-  await sleep(200);
-  await ev(`(() => { const b = [...document.querySelectorAll('.modal button')].find(x => x.textContent.trim() === '导入'); if (b) { b.click(); return true; } return false; })()`);
-  await sleep(800);
-  const bulkState = await ev(`(() => ({ has1: /bulk1/.test(document.body.textContent), has2: /bulk2/.test(document.body.textContent), modal: !!document.querySelector('.bulk-text') }))()`);
-  check('测试账号：批量导入生成多条账号', !!bulkState && bulkState.has1 === true && bulkState.has2 === true && bulkState.modal === false, JSON.stringify(bulkState));
 
   // 新版本提示：走应用内横幅  // 新版本提示：走应用内横幅（主进程 update:available → 渲染层），不再发系统通知
   const hasInAppHook = await ev(`(async () => { const r = await window.electronAPI.updateCheck().catch(() => null); return !!(r && typeof r === "object"); })()`);
