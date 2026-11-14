@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AttachmentFileMeta, Note } from '../types';
+import type { AttachmentFileMeta, Note, WeeklyFile } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
@@ -53,8 +53,12 @@ export function Attachments() {
   /**
    * 反查引用：附件 id → 引用它的条目 / 笔记。
    * 条目附件在 `entry.attachments`，笔记图片在正文的 `pm-att:<id>` 里。
+   *
+   * 1.24.4：笔记有两种存储模式——加密库集合（上面 `notes`）和自选目录（.md 文件，
+   * Notes 页的 LS_DIR）。目录模式笔记的正文同样能粘图，此前只扫集合，
+   * 导致目录模式用户的所有笔记截图都被标成「未引用」。
    */
-  const owners = useMemo(() => {
+  const vaultOwners = useMemo(() => {
     const map = new Map<string, { kind: 'entry' | 'note'; id: string; label: string }[]>();
     const push = (attId: string, owner: { kind: 'entry' | 'note'; id: string; label: string }) => {
       const list = map.get(attId);
@@ -73,6 +77,43 @@ export function Attachments() {
     }
     return map;
   }, [entries, notes]);
+
+  /** 目录模式笔记（.md 文件）正文里的附件引用；打开页面时读一次 */
+  const [dirOwners, setDirOwners] = useState<Map<string, { kind: 'note'; id: string; label: string }[]>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      let dir = '';
+      try { dir = localStorage.getItem('pm.notes.dir') || ''; } catch { /* 忽略 */ }
+      if (!dir) { setDirOwners(new Map()); return; }
+      const lr = await window.electronAPI.notesList(dir);
+      if (!alive) return;
+      if (!lr.success || !Array.isArray(lr.data)) return;
+      const map = new Map<string, { kind: 'note'; id: string; label: string }[]>();
+      for (const f of (lr.data as WeeklyFile[])) {
+        const r = await window.electronAPI.notesRead(dir, f.name);
+        const body = r.success && r.data ? String(r.data.content || '') : '';
+        for (const attId of extractAttIds(body)) {
+          const owner = { kind: 'note' as const, id: f.name, label: f.name.replace(/\.md$/i, '') || '未命名笔记' };
+          const list = map.get(attId);
+          if (list) list.push(owner);
+          else map.set(attId, [owner]);
+        }
+      }
+      if (alive) setDirOwners(map);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const owners = useMemo(() => {
+    if (dirOwners.size === 0) return vaultOwners;
+    const map = new Map(vaultOwners);
+    for (const [k, v] of dirOwners) {
+      const ex = map.get(k);
+      map.set(k, ex ? [...ex, ...v] : v);
+    }
+    return map;
+  }, [vaultOwners, dirOwners]);
 
   /**
    * 附件原名：只有条目附件在 vault 里存了 name（笔记里的截图没有），

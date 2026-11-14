@@ -5568,3 +5568,52 @@ html.pin-window #root {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* =============================================================
+   1.24.4 修复
+   ============================================================= */
+
+/* ---- 紧凑密度下 select 文字被截半（用户截图：主题 / 界面密度下拉） ----
+   select 此前用固定 height: var(--d-control-h)，compact 档 28px。
+   Chromium 原生 select 有固有内边距，28px 装不下 13px 中文的完整行框，
+   下半截被裁掉。改 min-height + 显式垂直 padding，让高度自适应字号线。 */
+select {
+  height: auto;
+  min-height: var(--d-control-h);
+  padding-block: 3px;
+  line-height: 1.45;
+}
+
+/* ---- 测试数据页密度接入（此前全是固定值，不跟随「界面密度」设置） ----
+   只覆盖 .tdg-* 作用域，不牵连其它页面的 .tbl 表格。 */
+html[data-density='compact'] .tdg-types { padding: 4px; }
+html[data-density='compact'] .tdg-type { padding: 2px 6px; }
+html[data-density='compact'] .tdg-group + .tdg-group { margin-top: 4px; padding-top: 4px; }
+html[data-density='compact'] .tdg-form { gap: 6px; }
+html[data-density='compact'] .tdg-preset { padding: 1px 7px; }
+html[data-density='compact'] .tdg-result-tools { gap: 6px; }
+
+html[data-density='cozy'] .tdg-types { padding: 10px; }
+html[data-density='cozy'] .tdg-type { padding: 7px 9px; }
+html[data-density='cozy'] .tdg-group + .tdg-group { margin-top: 10px; padding-top: 10px; }
+html[data-density='cozy'] .tdg-form { gap: 14px; }
+html[data-density='cozy'] .tdg-preset { padding: 5px 12px; }
+
+/* 表格行高：.tbl 的 padding 写死在 pages.css，这里让 tdg 的结果表
+   跟着 --d-row-py（紧凑 5px / 标准 10px / 宽松 16px）走。 */
+.tdg-table-wrap .tbl th,
+.tdg-table-wrap .tbl td { padding-block: var(--d-row-py); }
+
+/* 提醒中心：一键清除工具行 */
+.notice-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 6px;
+}
+.notice-toolbar .notice-sub { padding: 0; }
+
+

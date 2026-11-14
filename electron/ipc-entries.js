@@ -295,6 +295,21 @@ function registerEntriesIpc(deps) {
       // 多套禅道配置里「当前用哪套」：主进程的定时提醒也要跟着它走
       zentaoActiveId: String(s.zentaoActiveId || 'zentao'),
       backupKeep: Math.min(60, Math.max(1, Number(s.backupKeep) || defaultSettings.backupKeep)),
+      // 异地备份目录：设置页用它初始化草稿，读不回会让用户点一次「保存设置」就把它清空
+      backupMirrorDir: String(s.backupMirrorDir || ''),
+      // ---- 环境巡检（1.24.3 用户反馈：重启后定时巡检回默认）----
+      // settings:save 是全量 merge 能写进文件，但 settings:get 没把这两个键返回给渲染层，
+      // 渲染层的巡检调度器和设置页草稿永远读到默认值 —— 保存等于没保存。
+      envProbeInterval: Math.min(720, Math.max(0, Number(s.envProbeInterval) || 0)),
+      envProbeNotifyOnFlip: s.envProbeNotifyOnFlip !== false,
+      // ---- 同类缺口：渲染层会读、重启后回默认的开关与路径 ----
+      clipboardHistory: !!s.clipboardHistory,
+      updateCheckOnStart: s.updateCheckOnStart !== false,
+      hotkeySearch: String(s.hotkeySearch || ''),
+      hotkeyToggle: String(s.hotkeyToggle || ''),
+      jmeterPath: String(s.jmeterPath || ''),
+      jmeterOutDir: String(s.jmeterOutDir || ''),
+      jmeterLastJmx: String(s.jmeterLastJmx || ''),
       // 更新源与检查周期：设置页要能读回当前值，否则保存时会把已有值覆盖掉
       updateMirrorUrl: String(s.updateMirrorUrl || ''),
       updateCheckIntervalHours: Math.min(168, Math.max(0, Number(s.updateCheckIntervalHours) || 0)),

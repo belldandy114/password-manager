@@ -160,6 +160,20 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
     }
   };
 
+  /** 1.24.4：纯文本之外再给一个 JSON 数组出口。
+   * 用户反馈「填进接口调试的不是 JSON」——实测按钮直填是 JSON 数组且模式会切过去，
+   * 真实场景是走「复制全部」（每行一个值的纯文本）再手动粘贴进请求体。
+   * 这里补一个一键复制 JSON 数组的按钮，粘进 JSON 模式请求体直接可用。 */
+  const copyAsJson = async () => {
+    if (items.length === 0) return;
+    try {
+      await copyPlain(JSON.stringify(items.map(i => i.value)));
+      addToast(`已复制 ${items.length} 条（JSON 数组）`, 'success');
+    } catch {
+      addToast('复制失败', 'error');
+    }
+  };
+
   const copyOne = async (value: string) => {
     try {
       await copyPlain(value);
@@ -569,6 +583,7 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                     title="把生成结果写进接口调试的请求体（最多 500 条）"
                   >填入接口调试</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => void copyAll()}>复制全部</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => void copyAsJson()} title="复制成 JSON 数组，粘进接口调试的 JSON 请求体直接可用">复制为 JSON</button>
                   <select value={format} onChange={e => setFormat(e.target.value as ExportFormat)} aria-label="导出格式">
                     {FORMATS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </select>

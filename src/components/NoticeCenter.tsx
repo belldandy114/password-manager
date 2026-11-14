@@ -25,6 +25,16 @@ interface Item {
 
 const DAY = 86400000;
 
+/** 一键清除的落盘键：记住「清除时看到的那批事项」的签名 */
+const LS_DISMISSED = 'pm.notices.dismissed';
+
+function readDismissedSig(): string {
+  try {
+    const d = JSON.parse(localStorage.getItem(LS_DISMISSED) || 'null');
+    return (d && typeof d.sig === 'string') ? d.sig : '';
+  } catch { return ''; }
+}
+
 function daysSince(iso: string): number | null {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return null;
@@ -143,6 +153,31 @@ export function NoticeCenter({
     return out;
   }, [zt, results, backupAt]);
 
+  /* ---------- 一键清除（1.24.4） ----------
+   * 聚合是实时的，单纯把列表藏起来下次打开又会回来。按「事项集合的签名」记：
+   * 清除时存下当时那批 key，下次打开只要集合没变就不再显示；
+   * 出现任何新事项（签名变了）自动恢复展示，不会漏掉新提醒。
+   */
+  const [dismissedSig, setDismissedSig] = useState(readDismissedSig);
+  const itemsSig = useMemo(() => items.map(i => i.key).join('|'), [items]);
+  const clearedCount = useMemo(
+    () => (dismissedSig && dismissedSig === itemsSig ? items.length : 0),
+    [dismissedSig, itemsSig, items.length],
+  );
+  const visible = useMemo(
+    () => (dismissedSig && dismissedSig === itemsSig ? [] : items),
+    [dismissedSig, itemsSig, items],
+  );
+
+  const clearAll = () => {
+    try { localStorage.setItem(LS_DISMISSED, JSON.stringify({ sig: itemsSig, at: Date.now() })); } catch { /* 忽略 */ }
+    setDismissedSig(itemsSig);
+  };
+  const restore = () => {
+    try { localStorage.removeItem(LS_DISMISSED); } catch { /* 忽略 */ }
+    setDismissedSig('');
+  };
+
   const go = (page?: string) => {
     if (!page) return;
     onClose();
@@ -151,19 +186,32 @@ export function NoticeCenter({
 
   const groups = useMemo(() => {
     const map = new Map<string, Item[]>();
-    items.forEach((it) => {
+    visible.forEach((it) => {
       const arr = map.get(it.group) || [];
       arr.push(it);
       map.set(it.group, arr);
     });
     return Array.from(map.entries());
-  }, [items]);
+  }, [visible]);
 
   return (
-    <Modal open={open} onClose={onClose} title={items.length ? `提醒（${items.length}）` : '提醒'}>
+    <Modal open={open} onClose={onClose} title={visible.length ? `提醒（${visible.length}）` : '提醒'}>
       {loading && !items.length ? (
         <div className="notice-empty">正在汇总…</div>
-      ) : items.length === 0 ? (() => {
+      ) : visible.length === 0 ? (() => {
+        // 一键清除后的空态：不是「没有提醒」，而是「这批你已经清掉了」
+        if (clearedCount > 0) {
+          return (
+            <div className="notice-empty">
+              <Icons.check size={16} />
+              <div>
+                <div>已清除 {clearedCount} 条提醒</div>
+                <div className="notice-sub">状态没变化就不再打扰；出现新事项会自动恢复显示</div>
+                <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={restore}>恢复显示</button>
+              </div>
+            </div>
+          );
+        }
         const checked = !!(zt && zt.lastCheck);
         const off = !!(zt && !zt.enabled && !zt.staleOn);
         return (
@@ -183,6 +231,10 @@ export function NoticeCenter({
         );
       })() : (
         <div className="notice-list">
+          <div className="notice-toolbar">
+            <span className="notice-sub">共 {visible.length} 项 · 清除后状态不变就不再显示</span>
+            <button className="btn btn-ghost btn-sm" onClick={clearAll}>全部清除</button>
+          </div>
           {groups.map(([group, list]) => (
             <div key={group} className="notice-group">
               <div className="notice-group-head">{group}</div>

@@ -94,6 +94,11 @@ installFileLogging(path.join(USER_DATA_DIR, 'logs'));
 const LOCATION_FILE = path.join(USER_DATA_DIR, 'data-location.json');
 
 function resolveDataDir() {
+  // 测试 / 多开隔离（1.24.4）：PM_DATA_DIR 环境变量优先。
+  // 必须用它而不是 --user-data-dir：后者只是 Chromium 的开关，影响不到
+  // app.getPath('userData')，实测会让自动化测试直接读写用户真实数据。
+  const override = process.env.PM_DATA_DIR;
+  if (override && path.isAbsolute(override)) return override;
   try {
     if (fs.existsSync(LOCATION_FILE)) {
       const j = JSON.parse(fs.readFileSync(LOCATION_FILE, 'utf8'));
