@@ -119,3 +119,46 @@ npx vitest run src/utils/__tests__/csv.test.ts   # 单跑一个
   已经抽出去的是 `parseCsv` / `normalizeImportRecords` / `extractTotpSecret` / `IMPORT_FIELD_ALIASES`。
 - 打包后还要确认「抽出去的模块真的进了 asar」：`npm run verify:packaged-csv`（4 项：导入可用 / 引号逗号 / 中文表头 / 标签与环境归一化）。
 
+### CSS 级联死声明门禁（2026-11-14）
+
+`scripts/css-cascade-audit.js` 已进 `npm run check`（`ci-gate.js`）。它按
+`src/main.tsx` 的真实加载顺序 `tokens → global → pages → redesign` 解析 4 份样式表，
+按「at-rule 栈 + 选择器文本」分组，只清掉**被后面同组同名声明完全覆盖**的单条声明
+（同选择器 ⇒ 同特异性、同命中元素，删除不改变级联结果）。
+
+| 命令 | 作用 |
+|---|---|
+| `node scripts/css-cascade-audit.js` | 报告死声明数量，不阻断 |
+| `node scripts/css-cascade-audit.js assert` | 门禁用：死声明 > 0 直接失败 |
+| `node scripts/css-cascade-audit.js fix` | 清理并写入，写入前做「最终声明 0 差异」断言 |
+| `node scripts/css-cascade-audit.js verify <旧 CSS 目录>` | 与清理前对比最终声明 |
+
+守卫：跳过 `@keyframes`、涉及 `!important` 的声明、以及「旧值给 `color-mix()` / `clamp()` 等新函数兜底」的写法。
+2026-11-14 首次运行删掉 926 条死声明 / 127 条空规则（-26.7 KB），
+`check-css-dup.js` 的同名冲突从 309 组降到 231 组；剩下的 231 组是**各规则都还有独有声明**，
+合并会改变同特异性插入规则的胜负，必须人工确认，脚本不碰。
+
+改完 CSS 的验证顺序：`npm run check` → `npm run build:renderer` → 用 CDP 把同一份真实 DOM
+分别注入旧/新 CSS，逐元素哈希 `getComputedStyle`（含 `::before/::after`），深浅主题各跑一遍。
+首次清理实测 13 个页面 / 3158 + 3358 个元素 / 0 差异。
+
+## 1.24.3：菜单合并 / 测试数据（改这里前先看）
+
+> 2026-11-14 从 `AGENTS.md` 末尾搬来，原文未改。原因：`AGENTS.md` 超出 65,536 B 预算，
+> 这段正好落在被静默截断的尾部，会丢掉号段回退与正则预设两条注意事项。
+
+- **「SQL 片段」与「测试笔记」已合并成一个菜单**（`notes`）。SQL 语句是 `Note.kind === 'sql'`，
+  等宽显示 + 一键复制；普通笔记走 Markdown。旧 `snippets` 集合**保留不删**——笔记页首次打开时
+  迁移（标记 `pm.notes.sql-merged-v1`），搜索面板用 `utils/notesMerge.ts` 合并新旧两处，
+  迁移前后都能搜到。别把旧集合或迁移标记删掉，会丢历史数据。
+- **17 类测试数据的唯一清单是 `src/utils/tdg/catalog.ts`**：左侧列表和全局搜索命令都从它派生。
+  加类型只改这一处；搜索关键词写在 `kw`。`@data` / `@tdg` 只看测试数据，`data:身份证` / `data:phone`
+  还能定位到某一类。两个搜索入口的 `perKind` 限量对 `data` 放宽到 20，否则 17 类会被截成 4 条。
+- **「后 N 位」只在身份证 / 手机号有值**：结果表按 `items.some(i => i.last6)` 条件渲染整列，
+  其它类型不再出现空列。导出侧的 `hasLast6()` 会自动跟随。填 0 表示不要这一列——
+  `String.slice(-0)` 会返回整串，必须在生成时显式挡掉。
+- `generateData({ id: 'phone' })` 不能解引用 `config.phone!.prefixes`：号段参数是可选的，
+  缺省要用内置号段。空号段数组同样要回退（`phoneGenerator.ts` 里已处理）。
+- 正则快捷预设复用 `utils/tdg/regexGenerator.ts` 的 `REGEX_PRESETS`（16 个），
+  点击只回填输入框、之后仍可手改；别用 lookahead `(?=)`，randexp 不支持。
+

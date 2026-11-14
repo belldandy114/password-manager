@@ -38,6 +38,9 @@ function runGate() {
   // 只报告不阻断：三份 CSS 有历史重复规则，目的是让新增重复可见；
   // 但「声明完全相同」的重复已经清零，新增会失败（这是可机械清理的那一半）。
   step('CSS 重复选择器检查', process.execPath, ['scripts/check-css-dup.js']);
+  // 2026-11-14 清完 926 条死声明后加的回归门禁：新增「被后面同名规则完全覆盖」的
+  // 声明要拦住；同名但声明不同的冲突不拦（那本来就是本项目换肤手段，需人工确认）。
+  step('CSS 级联死声明检查', process.execPath, ['scripts/css-cascade-audit.js', 'assert']);
   step('静态债预算 (check:debt)', process.execPath, ['scripts/check-debt-budget.js']);
   console.log('\n静态门禁全部通过');
 }

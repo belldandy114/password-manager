@@ -34,7 +34,7 @@ AGENTS.md 有 65,536 B 预算，超出会被**静默截断**。历史细节拆�
 | `docs/agents/history-1.x.md` | 1.1.0–1.7.2 能力清单、构建排错、禅道登录、崩溃排查 |
 | `docs/agents/weekly-report.md` | 周报 + 从禅道自动成稿的全部规则（含 69 项回归） |
 | `docs/agents/update-and-release.md` | 发布流程、应用内更新（`net`）、CI 覆盖 Release |
-| `docs/agents/testing.md` | 页面拆包与回归脚本、单测、CI 门禁、几何量断言 |
+| `docs/agents/testing.md` | 页面拆包与回归脚本、单测、CI 门禁、CSS 级联死声明门禁、1.24.3 菜单合并/测试数据笔记、几何量断言 |
 | `docs/agents/ipc-split.md` | `setupIpcHandlers` 拆分全过程与踩坑 |
 | `docs/agents/perf-test.md` | JMeter 非 GUI 压测 |
 | `docs/agents/visual-system.md` | 视觉体系 v2 的 token 与组件类名 |
@@ -841,18 +841,8 @@ USE_PACKED=1 node scripts/ui-startup-test.js    # 打包版（需先 npm run pac
 
 ## 1.24.3：菜单合并 / 测试数据（改这里前先看）
 
-- **「SQL 片段」与「测试笔记」已合并成一个菜单**（`notes`）。SQL 语句是 `Note.kind === 'sql'`，
-  等宽显示 + 一键复制；普通笔记走 Markdown。旧 `snippets` 集合**保留不删**——笔记页首次打开时
-  迁移（标记 `pm.notes.sql-merged-v1`），搜索面板用 `utils/notesMerge.ts` 合并新旧两处，
-  迁移前后都能搜到。别把旧集合或迁移标记删掉，会丢历史数据。
-- **17 类测试数据的唯一清单是 `src/utils/tdg/catalog.ts`**：左侧列表和全局搜索命令都从它派生。
-  加类型只改这一处；搜索关键词写在 `kw`。`@data` / `@tdg` 只看测试数据，`data:身份证` / `data:phone`
-  还能定位到某一类。两个搜索入口的 `perKind` 限量对 `data` 放宽到 20，否则 17 类会被截成 4 条。
-- **「后 N 位」只在身份证 / 手机号有值**：结果表按 `items.some(i => i.last6)` 条件渲染整列，
-  其它类型不再出现空列。导出侧的 `hasLast6()` 会自动跟随。填 0 表示不要这一列——
-  `String.slice(-0)` 会返回整串，必须在生成时显式挡掉。
-- `generateData({ id: 'phone' })` 不能解引用 `config.phone!.prefixes`：号段参数是可选的，
-  缺省要用内置号段。空号段数组同样要回退（`phoneGenerator.ts` 里已处理）。
-- 正则快捷预设复用 `utils/tdg/regexGenerator.ts` 的 `REGEX_PRESETS`（16 个），
-  点击只回填输入框、之后仍可手改；别用 lookahead `(?=)`，randexp 不支持。
+完整笔记已搬到 `docs/agents/testing.md` 的同名章节（原文未改）：SQL 片段并入笔记的迁移标记、
+17 类数据唯一清单 `tdg/catalog.ts`、后 N 位整列渲染、手机号段缺省回退、
+`REGEX_PRESETS` 不能用 lookahead。**AGENTS.md 有 65,536 B 预算，超出的尾部会被静默截断；
+新增内容请写进 `docs/agents/` 的对应主题文件，这里只留摘要与指针。**
 

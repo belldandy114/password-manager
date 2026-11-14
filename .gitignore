@@ -18,6 +18,8 @@ release-notes-*.md
 .claude/settings.local.json.bak
 # Agent 会话记忆与临时预览文件
 .workbuddy/
+# 本机工作日志；项目级 .workbuddy-ai/skills/ 是要共享的，别整个目录忽略
+.workbuddy-ai/memory/
 # Agent 会话锁文件（只有 sessionId 与 pid，不该进仓库）
 .claude/*.lock
 # 禅道测试账号密码：用环境变量 ZT_BASEURL / ZT_ACCOUNT / ZT_PASSWORD 提供

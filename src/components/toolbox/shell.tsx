@@ -42,6 +42,10 @@ export function useToolShell() {
 
 const NS = 'pm.toolbox.';
 
+/** 大文本不要每次按键都同步写 sessionStorage：粘贴几 MB 日志会明显卡输入 */
+const STATE_LARGE_BYTES = 16 * 102;
+const STATE_WRITE_DELAY = 180;
+
 /** sessionStorage 持久化的工具状态 */
 export function useToolState<T>(key: string, initial: T): [T, (v: T) => void] {
   const { toolId } = useToolShell();
@@ -56,14 +60,40 @@ export function useToolState<T>(key: string, initial: T): [T, (v: T) => void] {
     return initial;
   });
 
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<{ storageKey: string; raw: string } | null>(null);
+
   const set = (v: T) => {
     setValue(v);
-    try {
-      sessionStorage.setItem(storageKey, JSON.stringify(v));
-    } catch {
-      /* ignore */
+    let raw: string;
+    try { raw = JSON.stringify(v); } catch { return; }
+
+    if (raw.length <= STATE_LARGE_BYTES) {
+      // 小值（开关、选项、短输入）仍同步写，切页签不会丢；同时取消可能排队的大值
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      pendingRef.current = null;
+      try { sessionStorage.setItem(storageKey, raw); } catch { /* ignore */ }
+      return;
     }
+
+    // 大值：连续输入时只保留最后一次，停下来 180ms 再落盘
+    pendingRef.current = { storageKey, raw };
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      const p = pendingRef.current;
+      pendingRef.current = null;
+      timerRef.current = null;
+      if (p) { try { sessionStorage.setItem(p.storageKey, p.raw); } catch { /* ignore */ } }
+    }, STATE_WRITE_DELAY);
   };
+
+  // 切工具 / 页面卸载时把未落盘的最后一次输入补上
+  useEffect(() => () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    if (p) { try { sessionStorage.setItem(p.storageKey, p.raw); } catch { /* ignore */ } }
+  }, []);
 
   return [value, set];
 }

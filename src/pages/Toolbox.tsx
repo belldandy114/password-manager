@@ -5,6 +5,7 @@ import { ToastContainer } from '../components/Toast';
 import { Page, PageHead, Panel, Icons } from '../components/ui';
 import { ToolShellProvider, copyText, useToolState, useToolResult } from '../components/toolbox/shell';
 import { parseTimestamp } from '../utils/timeParse';
+import { diffTexts } from '../utils/textDiff';
 import { cronFromText } from '../utils/cron';
 import { validateIdCard } from '../utils/idCard';
 import { JsonTool } from '../components/toolbox/JsonTool';
@@ -1198,48 +1199,19 @@ function UrlParamsTool() {
   );
 }
 
-/* ---------------- 文本对比 ---------------- */
-function diffLines(a: string, b: string) {
-  const A = a.split('\n');
-  const B = b.split('\n');
-  const n = A.length, m = B.length;
-  // LCS 动态规划（行数控制在 1500 以内，避免内存爆炸）
-  if (n * m > 2_250_000) {
-    return [{ type: 'same' as const, text: `文本过大（${n} 行 × ${m} 行），请缩小对比范围` }];
-  }
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-  const out: { type: 'same' | 'add' | 'del'; text: string }[] = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (A[i] === B[j]) { out.push({ type: 'same', text: A[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: 'del', text: A[i] }); i++; }
-    else { out.push({ type: 'add', text: B[j] }); j++; }
-  }
-  while (i < n) out.push({ type: 'del', text: A[i++] });
-  while (j < m) out.push({ type: 'add', text: B[j++] });
-  return out;
-}
-
+/* ---------------- 文本对比 ----------------
+ * 归一化与 LCS 抽到 utils/textDiff.ts（有单测，见 __tests__/textDiff.test.ts）。 */
 function DiffTool() {
   const [left, setLeft] = useToolState('left', '');
   const [right, setRight] = useToolState('right', '');
   const [ignoreWs, setIgnoreWs] = useToolState('ignoreWs', false);
   const [ignoreCase, setIgnoreCase] = useToolState('ignoreCase', false);
 
-  /** 归一化后再比：忽略行尾空白 / 全部空白 / 大小写 */
-  const norm = (v: string) => {
-    let out = v;
-    if (ignoreWs) out = out.replace(/[ \t]+$/gm, '').replace(/[ \t]{2,}/g, ' ');
-    if (ignoreCase) out = out.toLowerCase();
-    return out;
-  };
-
-  const lines = useMemo(() => diffLines(norm(left), norm(right)), [left, right, ignoreWs, ignoreCase]);
+  const normOpts = useMemo(() => ({ ignoreWs, ignoreCase }), [ignoreWs, ignoreCase]);
+  const lines = useMemo(
+    () => diffTexts(left, right, normOpts),
+    [left, right, normOpts],
+  );
   const stats = useMemo(() => ({
     add: lines.filter(l => l.type === 'add').length,
     del: lines.filter(l => l.type === 'del').length,
@@ -1252,7 +1224,7 @@ function DiffTool() {
       <div className="tool-inline" style={{ marginBottom: 8 }}>
         <label className="json-chk"><input type="checkbox" checked={ignoreWs} onChange={e => setIgnoreWs(e.target.checked)} />忽略空白差异</label>
         <label className="json-chk"><input type="checkbox" checked={ignoreCase} onChange={e => setIgnoreCase(e.target.checked)} />忽略大小写</label>
-        <span className="text-sm text-muted">归一化后再比较，避免只改了缩进就整段标红</span>
+        <span className="text-sm text-muted">按归一化值比较，但结果仍展示原始文本（缩进 / 大小写不会被改写）</span>
       </div>
       <div className="diff-inputs">
         <div className="tool-field">
@@ -1270,14 +1242,16 @@ function DiffTool() {
           删除 <span style={{ color: 'var(--danger)' }}>{stats.del}</span> 行
         </div>
         {(left || right) && (
-          <pre className="diff-view">
+          // 用 div 而不是 pre：pre 只允许短语内容，里面塞 div 是非法 HTML。
+          // 换行的保留由 .diff-line 的 white-space: pre-wrap 负责。
+          <div className="diff-view">
             {lines.map((l, i) => (
               <div key={i} className={`diff-line diff-${l.type}`}>
                 <span className="diff-sign">{l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' '}</span>
                 {l.text || ' '}
               </div>
             ))}
-          </pre>
+          </div>
         )}
       </div>
     </div>
@@ -1404,6 +1378,9 @@ export function Toolbox() {
       .filter(g => g.tools.length > 0);
   }, [toolQuery]);
 
+  /** 搜索过滤后可见的工具，键盘换页（左右键 / Alt+上下键）都只在这批里转 */
+  const visibleTools = useMemo(() => visibleGroups.flatMap(g => g.tools), [visibleGroups]);
+
   const currentGroupTitle = useMemo(
     () => (TOOL_GROUPS.find(g => g.tools.some(t => t.id === active)) || { title: '' }).title,
     [active],
@@ -1437,13 +1414,14 @@ export function Toolbox() {
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
       e.preventDefault();
-      const i = ALL_TOOLS.findIndex(t => t.id === active);
-      const next = e.key === 'ArrowDown' ? (i + 1) % ALL_TOOLS.length : (i - 1 + ALL_TOOLS.length) % ALL_TOOLS.length;
-      setActive(ALL_TOOLS[next].id);
+      if (!visibleTools.length) return;
+      const i = Math.max(0, visibleTools.findIndex(t => t.id === active));
+      const next = e.key === 'ArrowDown' ? (i + 1) % visibleTools.length : (i - 1 + visibleTools.length) % visibleTools.length;
+      setActive(visibleTools[next].id);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active]);
+  }, [active, visibleTools]);
 
   const current = ALL_TOOLS.find(t => t.id === active);
 
@@ -1451,14 +1429,18 @@ export function Toolbox() {
     const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
     if (!keys.includes(e.key)) return;
     e.preventDefault();
-    const i = ALL_TOOLS.findIndex(t => t.id === active);
+    // 键盘导航必须跟着「搜索过滤后的可见列表」走，否则搜出 1 个工具时按 →
+    // 会跳到列表外；旧代码还用 .tab2 找焦点，而这里的按钮是 .tb-rail-item，
+    // 导致换页后焦点永远不移动（role=tab 的键盘可达性形同虚设）。
+    if (!visibleTools.length) return;
+    const i = Math.max(0, visibleTools.findIndex(t => t.id === active));
     let next = i;
-    if (e.key === 'ArrowRight') next = (i + 1) % ALL_TOOLS.length;
-    else if (e.key === 'ArrowLeft') next = (i - 1 + ALL_TOOLS.length) % ALL_TOOLS.length;
+    if (e.key === 'ArrowRight') next = (i + 1) % visibleTools.length;
+    else if (e.key === 'ArrowLeft') next = (i - 1 + visibleTools.length) % visibleTools.length;
     else if (e.key === 'Home') next = 0;
-    else next = ALL_TOOLS.length - 1;
-    setActive(ALL_TOOLS[next].id);
-    const btn = tabListRef.current?.querySelectorAll<HTMLButtonElement>('.tab2')[next];
+    else next = visibleTools.length - 1;
+    setActive(visibleTools[next].id);
+    const btn = tabListRef.current?.querySelectorAll<HTMLButtonElement>('.tb-rail-item')[next];
     btn?.focus();
   };
 
@@ -1541,7 +1523,7 @@ export function Toolbox() {
               </select>
             </div>
 
-            <div className="tb-rail-scroll" role="tablist" aria-label="工具箱" ref={tabListRef} onKeyDown={onTabKeyDown}>
+            <div className="tb-rail-scroll" role="tablist" aria-label="工具箱" aria-orientation="vertical" ref={tabListRef} onKeyDown={onTabKeyDown}>
               {visibleGroups.map(g => (
                 <div key={g.title} className="tb-rail-group">
                   <div className="tool-group-label">{g.title}</div>
@@ -1550,6 +1532,7 @@ export function Toolbox() {
                       key={t.id}
                       role="tab"
                       aria-selected={active === t.id}
+                      aria-controls="tb-tool-panel"
                       tabIndex={active === t.id ? 0 : -1}
                       className={`tb-rail-item${active === t.id ? ' is-active' : ''}`}
                       onClick={() => setActive(t.id)}
@@ -1566,7 +1549,7 @@ export function Toolbox() {
           </aside>
 
           {/* 右侧：当前工具 */}
-          <section className="tb-main">
+          <section className="tb-main" id="tb-tool-panel" role="tabpanel" aria-label={current?.label || '工具'}>
             <header className="tb-main-head">
               <span className="tb-main-icon">{current?.icon}</span>
               <div className="tb-main-title">
