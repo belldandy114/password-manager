@@ -70,12 +70,15 @@ export function Dashboard() {
     });
   }, []);
 
-  // Watch triggerNewEntry signal from keyboard shortcut (Ctrl+N)
+  // 一次性「新增网址」信号（Ctrl+N / 快速搜索粘贴网址 / 快捷动作）。
+  // 旧实现只判断 counter > 0 却从不清零，页面一重挂就又弹一次新增窗口；
+  // 这里读出种子后立即消费，信号回到 0，下次进入页面不会再自动弹。
   useEffect(() => {
     if (store.triggerNewEntry > 0) {
       setEditingEntry(null);
       setFormSeed(useStore.getState().newEntrySeed || null);
       setShowForm(true);
+      useStore.getState().consumeNewEntry();
     }
   }, [store.triggerNewEntry]);
 

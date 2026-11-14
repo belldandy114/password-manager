@@ -5,7 +5,9 @@ import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 import { AttImage } from '../components/MarkdownView';
+import { ImageLightbox } from '../components/ImageLightbox';
 import { extractAttIds } from '../utils/attachRefs';
+import { copyPlain } from '../utils/clipboard';
 import { formatRecent } from '../utils/time';
 
 /**
@@ -22,11 +24,15 @@ export function Attachments() {
   const entries = useStore(s => s.entries);
   const { items: notes } = useCollection<Note>('notes');
   const [files, setFiles] = useState<AttachmentFileMeta[]>([]);
+  /** 附件目录（磁盘绝对路径）：目录为空时也要能显示 */
+  const [dir, setDir] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [onlyOrphan, setOnlyOrphan] = useState(false);
   const [hint, setHint] = useState('');
+  /** 点缩略图进灯箱：与测试笔记一致，滚轮缩放 / 拖动 / Esc 关闭 */
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   const { ask, confirmNode } = useConfirm();
 
   const flash = (msg: string) => {
@@ -41,6 +47,7 @@ export function Attachments() {
       if (!r.success) { setError(r.error || '读取附件目录失败'); setFiles([]); return; }
       setError('');
       setFiles(r.data || []);
+      setDir(r.dir || r.data?.[0]?.dir || '');
     } catch {
       setError('读取附件目录失败');
     } finally {
@@ -156,6 +163,25 @@ export function Attachments() {
     flash('已导出');
   };
 
+  /** 与测试笔记里的图片查看一致：解密出 dataURL 后交给灯箱 */
+  const openZoom = async (f: AttachmentFileMeta & { name?: string }) => {
+    const r = await window.electronAPI.attachmentReadImage({ id: f.id });
+    if (!r.success || !r.data?.dataUrl) { flash('图片无法读取'); return; }
+    setZoom({ src: r.data.dataUrl, alt: f.name || `附件 ${f.id.slice(0, 8)}` });
+  };
+
+  /** 在资源管理器里定位这个附件（或直接打开附件目录） */
+  const reveal = async (id?: string) => {
+    const r = await window.electronAPI.attachmentReveal(id ? { id } : undefined);
+    if (!r.success) flash(r.error || '打开目录失败');
+  };
+
+  const copyDir = async () => {
+    if (!dir) return;
+    await copyPlain(dir);
+    flash('已复制附件目录');
+  };
+
   const removeOne = (f: AttachmentFileMeta) => {
     const used = owners.get(f.id) || [];
     ask({
@@ -199,6 +225,20 @@ export function Attachments() {
           }
         />
 
+        {dir && (
+          <div className="att-dir-bar">
+            <Icons.folder size={13} />
+            <span className="att-dir-label">存放目录</span>
+            <code className="att-dir-path" title={dir}>{dir}</code>
+            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void copyDir()}>
+              复制路径
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void reveal()}>
+              打开目录
+            </button>
+          </div>
+        )}
+
         {hint && <div className="inline-hint">{hint}</div>}
 
         <Panel
@@ -221,12 +261,20 @@ export function Attachments() {
             <div className="att-grid">
               {rows.map(f => (
                 <div key={f.id} className="att-card">
-                  <div className="att-card-thumb">
+                  <button
+                    type="button"
+                    className="att-card-thumb"
+                    onClick={() => void openZoom(f)}
+                    title="点击放大 / 缩小（与测试笔记一致）"
+                  >
                     <AttImage id={f.id} alt="附件预览" />
-                  </div>
+                  </button>
                   <div className="att-card-body">
                     <div className="att-card-name" title={f.name || f.id}>
                       {f.name || `附件 ${f.id.slice(0, 8)}`}
+                    </div>
+                    <div className="att-card-dir" title={f.file || f.dir || ''}>
+                      <Icons.folder size={11} /> {f.dir || '—'}
                     </div>
                     <div className="att-card-meta">
                       <span className="att-card-size">{kb(f.size)}</span>
@@ -247,6 +295,7 @@ export function Attachments() {
                     </div>
                   </div>
                   <div className="att-card-actions">
+                    <IconBtn title={f.file ? `定位文件：${f.file}` : '定位附件文件'} onClick={() => void reveal(f.id)}><Icons.folder size={13} /></IconBtn>
                     <IconBtn title="导出到本地" onClick={() => void exportOne(f)}><Icons.download size={13} /></IconBtn>
                     <IconBtn title="删除附件" danger onClick={() => removeOne(f)}><Icons.trash size={13} /></IconBtn>
                   </div>
@@ -256,6 +305,7 @@ export function Attachments() {
           )}
         </Panel>
       </Page>
+      {zoom && <ImageLightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
       {confirmNode}
     </div>
   );

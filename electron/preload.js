@@ -155,10 +155,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 粘贴截图（#5）：dataURL 进、加密落盘；读回 dataURL 用于显示
   attachmentSaveImage: (data) => ipcRenderer.invoke('attachment:save-image', data),
   attachmentReadImage: (data) => ipcRenderer.invoke('attachment:read-image', data),
-  /** 附件集中管理：只列元数据（id/大小/时间），内容按需逐张读 */
+  /** 附件集中管理：只列元数据（id/大小/时间/所在目录），内容按需逐张读 */
   attachmentList: () => ipcRenderer.invoke('attachment:list'),
   /** 解密后另存到用户选的位置 */
   attachmentExport: (data) => ipcRenderer.invoke('attachment:export', data),
+  /** 在资源管理器中定位附件文件（不传 id 则只打开附件目录） */
+  attachmentReveal: (data) => ipcRenderer.invoke('attachment:reveal', data || {}),
 
   // 环境巡检（#3）
   envProbe: (data) => ipcRenderer.invoke('env:probe', data),

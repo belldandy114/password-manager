@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { ipcMain, dialog } = require('electron');
+const { ipcMain, dialog, shell } = require('electron');
 const {
   parseImageDataUrl, stampedImageName, sniffImageMime, buildImageDataUrl,
 } = require('./attach-image');
@@ -94,19 +94,35 @@ function registerAttachIpc(deps = {}) {
    */
   ipcMain.handle('attachment:list', () => {
     try {
-      if (!fs.existsSync(attachDir)) return { success: true, data: [] };
+      // dir 单独回传：目录为空时也能在界面上显示「附件存在哪个文件夹」
+      if (!fs.existsSync(attachDir)) return { success: true, data: [], dir: attachDir };
       const out = [];
       for (const name of fs.readdirSync(attachDir)) {
         if (!name.endsWith('.enc')) continue;
         const id = name.slice(0, -4);
         try {
-          const st = fs.statSync(path.join(attachDir, name));
+          const file = path.join(attachDir, name);
+          const st = fs.statSync(file);
           if (!st.isFile()) continue;
-          out.push({ id, size: st.size, updatedAt: new Date(st.mtimeMs).toISOString() });
+          out.push({ id, size: st.size, updatedAt: new Date(st.mtimeMs).toISOString(), dir: attachDir, file });
         } catch { /* 单个文件读不到就跳过 */ }
       }
       out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-      return { success: true, data: out };
+      return { success: true, data: out, dir: attachDir };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /** 在资源管理器里定位附件（带 id 定位 .enc 文件，不带 id 打开附件目录） */
+  ipcMain.handle('attachment:reveal', (_event, payload = {}) => {
+    try {
+      const id = String(payload.id || '').replace(/[^a-zA-Z0-9-]/g, '');
+      const file = id ? fileOf(id) : '';
+      if (file && fs.existsSync(file)) shell.showItemInFolder(file);
+      else if (fs.existsSync(attachDir)) shell.openPath(attachDir);
+      else return { success: false, error: '附件目录不存在' };
+      return { success: true, data: { dir: attachDir, file } };
     } catch (e) {
       return { success: false, error: e.message };
     }

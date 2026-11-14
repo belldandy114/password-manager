@@ -149,6 +149,7 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
 
   return (
     <Modal open={open} onClose={onClose} title={entry ? '编辑网址' : '新增网址'} closeOnOverlay={false}
+      className="entry-form-modal"
       footer={
         <>
           <button className="btn btn-secondary" onClick={onClose}>取消</button>
@@ -159,9 +160,10 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
       <div className="form-group">
         <div className="field-label-row">
           <label>名称 *</label>
-          <label className="favorite-toggle" title="收藏后排在列表最前">
+          <label className={`favorite-toggle${form.favorite ? ' is-on' : ''}`} title="收藏后排在列表最前">
             <input type="checkbox" checked={!!form.favorite} onChange={e => update('favorite', e.target.checked)} />
-            ★ 收藏
+            <span aria-hidden="true">★</span>
+            <span>收藏</span>
           </label>
         </div>
         <input type="text" value={form.name} onChange={e => update('name', e.target.value)} placeholder="例如: 阿里云管理后台" autoFocus aria-label="名称" />

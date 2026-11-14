@@ -55,6 +55,8 @@ interface AppState {
 
   // Actions
   signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
+  /** 消费一次性「新增网址」信号：读完即清零，避免页面重挂时又弹一次 */
+  consumeNewEntry: () => void;
   signalCmd: (kind: string) => void;
   /** 把生成的数据交给接口调试页填进请求体 */
   seedApiBody: (values: string[]) => void;
@@ -197,6 +199,7 @@ export const useStore = create<AppState>((set, get) => ({
     // 否则上次从快速搜索带过来的 URL 会残留在下一次新建弹窗里。
     newEntrySeed: seed || null,
   })),
+  consumeNewEntry: () => set({ triggerNewEntry: 0, newEntrySeed: null }),
   signalCmd: (kind) => set({ cmdSignal: { kind, at: Date.now() } }),
   seedApiBody: (values) => set({ apiBodySeed: { values, at: Date.now() } }),
   consumeApiBodySeed: () => set({ apiBodySeed: null }),

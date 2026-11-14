@@ -5624,3 +5624,200 @@ input[type='checkbox']:not(.switch input):focus-visible,
 input[type='radio']:not(.switch input):focus-visible {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+
+/* ================================================================
+   1.24.6 导出数据页：整套表单收回设计系统
+   ----------------------------------------------------------------
+   旧页面直接复用「设置」的 .settings-section / .setting-row：
+   - 没有 .set-main 作用域，h3 用浏览器默认字号/上下 margin，三块之间空一大截；
+   - .setting-row 的 space-between 把下拉推到 600px 列的最右，标签与控件隔了半屏；
+   - .setting-control select 的 padding 简写把 select 的箭头预留位（28px）盖掉，
+     带 emoji 的长选项文字被箭头压住（用户截图红框）。
+   这里只在导出页作用域里重排，不动设置页与其它子页。
+   ================================================================ */
+.export-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 4px 0 12px;
+}
+.export-page .settings-section {
+  max-width: none;
+  margin: 0;
+  padding: 14px 18px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.export-page .settings-section > h3 {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.export-page .settings-section > p { margin: 0 0 12px; }
+.export-page .setting-row {
+  justify-content: flex-start;
+  gap: 20px;
+  padding: 6px 0;
+}
+.export-page .setting-row > div:first-child { flex: 0 0 200px; min-width: 0; }
+.export-page .setting-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.export-page .setting-desc {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.export-page .setting-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 420px;
+}
+.export-page .setting-control select {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--d-control-h);
+  padding-right: 30px;
+}
+.export-page .setting-control input[type='checkbox'] { width: 15px; height: 15px; }
+.export-page .form-group { max-width: 420px; margin-bottom: 12px; }
+.export-page .form-group > input { width: 100%; }
+.export-page .settings-section > .btn { margin-top: 4px; }
+.export-page .export-warn {
+  max-width: 640px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+}
+.export-page .export-warn p { margin: 0; color: var(--warn); }
+.export-page .export-warn ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* ================================================================
+   1.24.6 新增网址弹窗：收藏开关 / 滚动留白 / 稳定宽度
+   ----------------------------------------------------------------
+   截图里「★ 收藏」是裸的原生 checkbox 贴在表单右上角、被滚动条挤住，
+   而旁边的「生成」「+ 添加」早已是 .entry-mini-btn 那套小按钮；
+   TOTP 字段又恰好卡在滚动区底边，看起来像被页脚截断。
+   ================================================================ */
+.entry-form-modal { width: min(560px, 90vw); }
+.entry-form-modal .modal-body {
+  padding: 16px 20px 22px;
+  scrollbar-gutter: stable;
+}
+.entry-form-modal .modal-body > .form-group:last-child { margin-bottom: 4px; }
+.entry-form-modal .field-label-row { margin-bottom: 8px; }
+.entry-form-modal .favorite-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--d-control-h);
+  padding: 0 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+.entry-form-modal .favorite-toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+/* 全局 checkbox 规则是 input[type='checkbox']:not(.switch input)（0,2,2），
+   .favorite-toggle input 只有 (0,2,1)，15px 的方块会抢回来把星星挤开。
+   这里把特异性抬到 (0,3,1)，真正做成视觉隐藏但可聚焦的开关。 */
+.entry-form-modal .favorite-toggle > input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  flex: none;
+}
+.entry-form-modal .favorite-toggle:focus-within {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ================================================================
+   1.24.6 附件管理：目录可见 + 缩略图可缩放
+   ----------------------------------------------------------------
+   附件统一放在 DATA_DIR/attachments 下，以前界面只显示 id/大小，
+   用户没法知道文件落在哪个文件夹；缩略图也只是一张静态图，点不开。
+   这里补一条目录栏（可复制 / 可打开）、每张卡片的所在目录与定位按钮，
+   并把缩略图改成可点击的 button，交给与测试笔记同一个灯箱。
+   ================================================================ */
+.att-dir-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+.att-dir-bar > svg { flex: 0 0 auto; color: var(--text-3); }
+.att-dir-label { flex: 0 0 auto; font-weight: 600; color: var(--text-1); }
+.att-dir-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-code);
+  color: var(--text-2);
+}
+.att-dir-btn { flex: 0 0 auto; }
+.att-grid .att-card-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-inset);
+  cursor: zoom-in;
+}
+.att-grid .att-card-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.att-card-dir {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.att-card-dir svg { flex: 0 0 auto; opacity: 0.7; }

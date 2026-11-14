@@ -99,7 +99,7 @@ export function ExportPage() {
       </div>
       <div className="content-area">
         <ToastContainer toasts={toasts} onRemove={removeToast} />
-        <div className="export-section export-wide">
+        <div className="export-section export-wide export-page">
 
         <div className="settings-section">
           <h3>导出方式</h3>
@@ -110,8 +110,8 @@ export function ExportPage() {
             </div>
             <div className="setting-control">
               <select value={exportType} onChange={e => setExportType(e.target.value as any)} aria-label="导出类型">
-                <option value="encrypted">🔒 加密备份 (AES-256)</option>
-                <option value="plain">📄 明文导出</option>
+                <option value="encrypted">加密备份 (AES-256)</option>
+                <option value="plain">明文导出</option>
               </select>
             </div>
           </div>
@@ -181,11 +181,11 @@ export function ExportPage() {
                   onChange={e => setIncludePasswords(e.target.checked)} aria-label="导出时包含密码" />
               </div>
             </div>
-            <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--warning)' }}>
-              <p className="text-sm" style={{ color: 'var(--warning)' }}>
+            <div className="export-warn">
+              <p className="text-sm">
                 ⚠️ 明文导出存在安全风险，导出的文件包含未加密的敏感信息。请确保：
               </p>
-              <ul style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, paddingLeft: 20 }}>
+              <ul>
                 <li>不要在非安全环境传输文件</li>
                 <li>使用后及时删除导出的文件</li>
                 <li>如果包含密码，文件泄露可能导致账号被盗</li>

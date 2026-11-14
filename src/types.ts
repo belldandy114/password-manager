@@ -22,6 +22,9 @@ export interface AttachmentFileMeta {
   /** 加密后文件大小（不是原图大小） */
   size: number;
   updatedAt: string;
+  /** 所在目录 / 加密文件的绝对路径（附件管理页展示与定位用） */
+  dir?: string;
+  file?: string;
 }
 
 /**
@@ -900,10 +903,13 @@ export interface ElectronAPI {
   attachmentReadImage: (data: { id: string }) =>
     Promise<{ success: boolean; data?: { dataUrl: string; mime?: string }; error?: string }>;
   /** 附件集中管理：列出附件目录里的全部文件（只有元数据，不含内容） */
-  attachmentList: () => Promise<{ success: boolean; data?: AttachmentFileMeta[]; error?: string }>;
+  attachmentList: () => Promise<{ success: boolean; data?: AttachmentFileMeta[]; dir?: string; error?: string }>;
   /** 解密后另存到用户选的位置 */
   attachmentExport: (data: { id: string; name?: string }) =>
     Promise<{ success: boolean; data?: { file: string }; canceled?: boolean; error?: string }>;
+  /** 在资源管理器里定位附件（不传 id 时打开附件目录） */
+  attachmentReveal: (data?: { id?: string }) =>
+    Promise<{ success: boolean; data?: { dir: string; file: string }; error?: string }>;
 
   // 环境巡检（#3）
   envProbe: (data: { targets: Array<{ id: string; url: string }>; timeoutMs?: number }) =>
