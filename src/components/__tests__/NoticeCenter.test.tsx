@@ -106,13 +106,13 @@ describe('NoticeCenter 一键清除', () => {
 
   it('环境不可达事项同样可被清除（签名覆盖全部分组）', async () => {
     useEnvProbeStore.setState({
-      results: { e1: { id: 'e1', url: 'http://10.0.0.8:8080', ok: false, error: '超时' } },
+      results: { e1: { id: 'e1', url: 'http://192.0.2.10:8080', ok: false, error: '超时' } },
       at: Date.now(),
     });
     mockApi(makeStatus([]));
     render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
 
-    await waitFor(() => expect(screen.getByText('不可达：10.0.0.8:8080')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('不可达：192.0.2.10:8080')).toBeTruthy());
     screen.getByText('全部清除').click();
     await waitFor(() => expect(screen.getByText(/已清除 1 条提醒/)).toBeTruthy());
   });
