@@ -539,7 +539,14 @@ const echo = http.createServer((req, res) => {
   const mirrorDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r9-mirror-'));
   await navTo('设置');
   await sleep(300);
-  // 设置页「安全」分组里的备份卡片
+  // 1.25.1：设置页重分类后，「异地备份」从「安全」移到了「数据与备份」tab。
+  // 先点开那个 tab 再找，否则只会在默认的「安全」tab 里空找。
+  await ev(`(() => {
+    const b = [...document.querySelectorAll('.set-nav')].find(x => /数据与备份/.test(x.textContent || ''));
+    if (b) b.click();
+    return !!b;
+  })()`);
+  await sleep(400);
   const backupUi = await ev(`(() => {
     const nodes = [...document.querySelectorAll('.setting-row')];
     const row = nodes.find(n => n.textContent.includes('异地备份') || n.textContent.includes('第二目录') || n.textContent.includes('镜像'));
