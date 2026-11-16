@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { useToast } from '../hooks/useToast';
 import { callIpc } from '../utils/ipc';
@@ -10,9 +10,11 @@ import { accelFromKeyEvent, accelLabel, isImeClash, sameAccel } from '../utils/h
 import { DEFAULT_KEYBINDINGS, findConflicts } from '../utils/keybindings';
 import { applyTheme, applyAccent, applyDensity, ACCENTS } from '../utils/theme';
 import { logWarn } from '../utils/log';
-import { formatDateTime } from '../utils/time';
+import { formatDateTime, formatHm } from '../utils/time';
 import { runEnvProbeOnce } from '../utils/envSchedule';
 import { useEnvProbeStore, formatAt } from '../store/envProbeStore';
+import { nextRunAt, type RegressionSet } from '../utils/regression';
+import { REGRESSION_RAN_EVENT } from '../hooks/useRegressionScheduler';
 
 interface BrowserInfo {
   id: string;
@@ -35,17 +37,40 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
   { id: 'export', label: '导出数据', desc: '打开导出页面' },
 ];
 
-type SettingsTab = 'security' | 'general' | 'browser' | 'shortcuts' | 'tasks';
+type SettingsTab = 'security' | 'data' | 'appearance' | 'tasks' | 'about';
 /** 可改的三个全局键：搜索小窗 / 主窗口显隐 / 随手记小窗 */
 type HotkeySlot = 'search' | 'toggle' | 'quicknote';
 
 const TABS: { id: SettingsTab; label: string; icon: string; hint: string }[] = [
-  { id: 'security', label: '安全', icon: '🔒', hint: '主密码 / 自动锁定 / 备份' },
-  { id: 'general', label: '通用', icon: '⚙️', hint: '主题 / 剪贴板 / 启动行为' },
-  { id: 'browser', label: '浏览器', icon: '🌐', hint: '路径与默认浏览器' },
-  { id: 'shortcuts', label: '快捷键', icon: '⌨️', hint: '自定义按键' },
-  { id: 'tasks', label: '定时任务', icon: '⏱️', hint: '巡检 / 检查 / 更新 / 备份' },
+  { id: 'security', label: '安全', icon: '🔒', hint: '主密码 / 锁定 / 剪贴板' },
+  { id: 'data', label: '数据与备份', icon: '💾', hint: '备份 / 目录 / 自检' },
+  { id: 'appearance', label: '外观与交互', icon: '🎨', hint: '主题 / 浏览器 / 按键' },
+  { id: 'tasks', label: '定时任务', icon: '⏱️', hint: '巡检 / 禅道 / 回归' },
+  { id: 'about', label: '关于与更新', icon: 'ℹ️', hint: '版本 / 更新 / 日志' },
 ];
+
+/**
+ * 老 tab id → 新 tab id（重新分类）。
+ * 以前是 security / general / browser / shortcuts / tasks 五个 tab：
+ * general（主题、剪贴板、托盘、关于）、browser（路径）、shortcuts（快捷键）合并成 appearance，
+ * 备份与目录从 security 拆到 data，更新从 tasks 拆到 about。
+ * 老用户 localStorage 里存的旧 id 必须能落到新 tab 上，否则会白屏（switch 找不到 case）。
+ */
+const LEGACY_TAB_MAP: Record<string, SettingsTab> = {
+  general: 'appearance',
+  browser: 'appearance',
+  shortcuts: 'appearance',
+  // 老 tasks 里同时装着「定时任务」和「更新」，无法精确拆分；主用途仍是定时任务，保持原样
+  tasks: 'tasks',
+};
+const SETTINGS_TAB_KEY = 'pm.settings.tab';
+
+/** 把任意历史 tab id 归一到当前 5 个 tab 之一；认不出来就回安全页 */
+function normalizeSettingsTab(rawTab: string | null | undefined): SettingsTab {
+  if (!rawTab) return 'security';
+  const mapped = LEGACY_TAB_MAP[rawTab] || rawTab;
+  return TABS.some(t => t.id === mapped) ? (mapped as SettingsTab) : 'security';
+}
 
 /** 下载体积显示：1.2 MB / 860 KB */
 function fmtBytes(n: number): string {
@@ -69,7 +94,9 @@ export function Settings() {
   const updateSettings = useStore(s => s.updateSettings);
   const { toasts, addToast, removeToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>('security');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    try { return normalizeSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY)); } catch { return 'security'; }
+  });
   const [knownBrowsers, setKnownBrowsers] = useState<BrowserInfo[]>([]);
   const [browserPaths, setBrowserPaths] = useState<Record<string, string>>(settings.browserPaths || {});
   const [clipboardClearDelay, setClipboardClearDelay] = useState(settings.clipboardClearDelay);
@@ -110,6 +137,11 @@ export function Settings() {
   const [probeMsg, setProbeMsg] = useState('');
   const envProbeAt = useEnvProbeStore(s => s.at);
   const envProbeSummary = useEnvProbeStore(s => s.summary);
+  /**
+   * 接口回归（1.25.0）：定时任务面板第 5 张卡。
+   * 只读展示 —— 回归集的增删改在「接口调试」页，这里改会出现两套配置入口。
+   */
+  const [regSets, setRegSets] = useState<RegressionSet[]>([]);
   /** 待确认恢复的备份文件名（空=不显示确认框） */
   const [restoreName, setRestoreName] = useState('');
   const [restoring, setRestoring] = useState(false);
@@ -127,6 +159,8 @@ export function Settings() {
   /** 数据目录信息（路径 / 体积 / 备份份数） */
   const [dataInfo, setDataInfo] = useState<DataLocationInfo | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  /** 应用版本号：主进程没有单独的 version IPC，jmeter:defaults 里带了 appVersion */
+  const [appVersion, setAppVersion] = useState('');
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; hasUpdate: boolean; url: string; downloadUrl?: string; assetName?: string; digest?: string } | null>(null);
   const [checking, setChecking] = useState(false);
   // 应用内更新：下载进度 / 已下载文件
@@ -202,6 +236,34 @@ export function Settings() {
       } catch { /* 拿不到就用默认值 */ }
     })();
   }, [refreshNotifyStatus, loadAudit]);
+
+  /**
+   * 读回归集（定时任务面板第 5 张卡）。
+   * 未解锁 / 读失败就当空列表：这张卡是只读展示，不该因为读不到而报错。
+   * 定时任务跑完会广播 REGRESSION_RAN_EVENT，监听它刷新「上次结果」。
+   */
+  const loadRegSets = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.wsGet('regressionSets');
+      setRegSets(r && r.success && Array.isArray(r.data) ? (r.data as RegressionSet[]) : []);
+    } catch {
+      setRegSets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'tasks') return;
+    void loadRegSets();
+    const onRan = () => { void loadRegSets(); };
+    window.addEventListener(REGRESSION_RAN_EVENT, onRan);
+    return () => window.removeEventListener(REGRESSION_RAN_EVENT, onRan);
+  }, [activeTab, loadRegSets]);
+
+  const regEnabledCount = useMemo(() => regSets.filter(s => s.enabled).length, [regSets]);
+  const regFailCount = useMemo(
+    () => regSets.filter(s => s.enabled && s.lastStatus === 'fail').length,
+    [regSets],
+  );
 
   /** 保存自定义更新源：只接受干净的 http(s) 前缀，留空恢复「只走 GitHub」 */
   const saveMirrorUrl = async () => {
@@ -304,12 +366,14 @@ export function Settings() {
     window.electronAPI.browserGetKnown().then(setKnownBrowsers);
   }, []);
 
-  // 备份列表（进入安全页时刷新）
+  // 备份列表（进入「数据与备份」页时刷新）
   const refreshBackups = useCallback(async () => {
     const res = await window.electronAPI.backupList();
     if (res.success) {
       setBackups(res.data);
       setBackupDir(res.dir);
+      // backup:list 已经带了最近一份的时间，以前没接上 → 「上次备份」永远显示「还没有备份」
+      setBackupLastAt(res.lastAt || '');
     }
     // 异地备份状态（同步盘目录里最近一份的时间）
     const st = await window.electronAPI.backupStatus();
@@ -323,15 +387,79 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'security') refreshBackups();
+    if (activeTab === 'data') refreshBackups();
   }, [activeTab, refreshBackups]);
+
+  // 记住上次停留的 tab：老 id 已在 normalizeSettingsTab 里映射过
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_TAB_KEY, activeTab); } catch { /* 隐私模式写不了，忽略 */ }
+  }, [activeTab]);
+
+  /**
+   * 统一保存设置：先更新内存（界面立即生效），再落盘。
+   * 以前一半字段「改动即存」、一半要等底部「保存设置」，用户分不清哪次改动丢了。
+   */
+  const persist = async (patch: Partial<AppSettings>, okMsg = ''): Promise<boolean> => {
+    updateSettings(patch);
+    const r = await callIpc(() => window.electronAPI.settingsSave(patch));
+    if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return false; }
+    if (okMsg) addToast(okMsg, 'success');
+    return true;
+  };
+
+  const saveDirSetting = async (key: 'notesDir' | 'weeklyDir', dir: string) => {
+    const ok = await persist({ [key]: dir } as Partial<AppSettings>, dir ? '目录已更新' : '已改回默认位置');
+    if (!ok) return;
+    // 双写旧键：笔记页/附件页反查仍有读 localStorage 的兜底路径，
+    // 只清 settings 会让「改回加密库」在下一次进入页面时被旧目录拉回去。
+    try {
+      if (key === 'notesDir') {
+        if (dir) localStorage.setItem('pm.notes.dir', dir);
+        else localStorage.removeItem('pm.notes.dir');
+      } else {
+        if (dir) localStorage.setItem('weekly.report.dir', dir);
+        else localStorage.removeItem('weekly.report.dir');
+      }
+    } catch { /* 隐私模式下写不了，忽略 */ }
+  };
+
+  const pickNotesDir = async () => {
+    const r = await window.electronAPI.notesPickDir();
+    if (!r.success || !r.data) return;
+    await saveDirSetting('notesDir', r.data);
+  };
+
+  const pickWeeklyDir = async () => {
+    const r = await window.electronAPI.weeklyPickDir();
+    if (!r.success || !r.data) return;
+    await saveDirSetting('weeklyDir', r.data);
+  };
+
+  /** 切换附件目录：主进程先把已有附件复制过去，成功才切换（不用重启） */
+  const changeAttachDir = async () => {
+    const p = await window.electronAPI.attachmentPickDir();
+    if (!p.success || !p.data?.dir) return;
+    const r = await window.electronAPI.attachmentSetDir({ dir: p.data.dir });
+    if (!r.success || !r.data) { addToast(r.error || '切换附件目录失败', 'error'); return; }
+    addToast(`附件目录已切换，复制 ${r.data.copied} 个附件`, 'success');
+    void refreshBackups();
+  };
+
+  const resetAttachDir = async () => {
+    const r = await window.electronAPI.attachmentSetDir({ dir: '' });
+    if (!r.success || !r.data) { addToast(r.error || '改回默认目录失败', 'error'); return; }
+    addToast(r.data.copied
+      ? `已改回默认，补回 ${r.data.copied} 个附件`
+      : '已改回默认目录（附件已在默认位置）', 'success');
+    void refreshBackups();
+  };
 
   /** 选异地备份目录（可直接选 OneDrive / 坚果云 的同步文件夹） */
   const pickMirrorDir = async () => {
     const r = await window.electronAPI.backupMirrorPick();
     if (!r.success || !r.data) return;
     setMirrorDir(r.data);
-    addToast('已选择异地备份目录，记得点「保存设置」', 'success');
+    await persist({ backupMirrorDir: r.data }, '已启用异地备份目录');
   };
 
   /** 立即备份一次：本地 + 异地，并把结果说清楚 */
@@ -344,9 +472,10 @@ export function Settings() {
       return;
     }
     const m = r.data.mirror;
-    if (m.skipped) addToast('已备份到本地；未配置异地目录', 'info');
-    else if (m.ok) addToast('已同时写入异地目录', 'success');
-    else addToast(`本地已备份，异地写入失败：${m.error || '未知原因'}`, 'error');
+    const attTip = r.data.attachments?.copied ? `，附件 ${r.data.attachments.copied} 个` : '';
+    if (m.skipped) addToast(`已备份到本地${attTip}；未配置异地目录`, 'info');
+    else if (m.ok) addToast(`已同时写入异地目录${attTip}`, 'success');
+    else addToast(`本地已备份${attTip}，异地写入失败：${m.error || '未知原因'}`, 'error');
     await refreshBackups();
   };
 
@@ -429,10 +558,9 @@ export function Settings() {
       theme: settings.theme,
       keybindings: localKeybindings,
     };
-    updateSettings(prefs);
-    const saved = await callIpc(() => window.electronAPI.settingsSave(prefs));
-    if (!saved.ok) { addToast(`保存失败：${saved.error}`, 'error'); return; }
-    addToast('设置已保存', 'success');
+    // 走统一保存：和「改动即存」的开关是同一条路径，避免两套机制给出不同结果
+    const ok = await persist(prefs);
+    if (ok) addToast('设置已保存', 'success');
   };
 
   // Tray behaviours take effect immediately (no need to hit 保存设置) — the main process
@@ -449,7 +577,9 @@ export function Settings() {
       filters: [{ name: '可执行文件', extensions: ['exe'] }]
     });
     if (result.canceled || !result.filePath) return;
-    setBrowserPaths(prev => ({ ...prev, [id]: result.filePath } as Record<string, string>));
+    const next = { ...browserPaths, [id]: result.filePath } as Record<string, string>;
+    setBrowserPaths(next);
+    await persist({ browserPaths: next });
   };
 
   const handleChangePassword = async () => {
@@ -458,7 +588,20 @@ export function Settings() {
     if (newPwd !== newPwd2) { addToast('两次密码不一致', 'error'); return; }
     const result = await window.electronAPI.authChangePassword({ oldPassword: oldPwd, newPassword: newPwd });
     if (result.success) {
-      addToast('主密码已修改', 'success');
+      // 1.25.0：主进程会把所有附件用新密码重新加密，并回报统计。
+      // 有失败时必须明确告诉用户「哪些附件打不开了」，不能只说「已修改」。
+      const att = result.attachments;
+      const warning = result.warning;
+      if (att && att.failed > 0) {
+        addToast(
+          `主密码已修改，但有 ${att.failed} / ${att.total} 个附件未能重新加密，这些附件将无法打开。${warning || ''}`,
+          'error',
+        );
+      } else if (att && att.total > 0) {
+        addToast(`主密码已修改，${att.ok} 个附件已用新密码重新加密`, 'success');
+      } else {
+        addToast('主密码已修改', 'success');
+      }
       setShowChangePwd(false);
       setOldPwd('');
       setNewPwd('');
@@ -600,6 +743,16 @@ export function Settings() {
     await applyHotkey(slot, accel);
   }, [hkInfo, applyHotkey]);
 
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const d = await window.electronAPI.jmeterDefaults();
+        if (d?.success && d.data?.appVersion) setAppVersion(d.data.appVersion);
+      } catch { /* 拿不到就显示「读取中…」 */ }
+    })();
+  }, []);
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 'security':
@@ -622,7 +775,6 @@ export function Settings() {
                 {hasSecurityWord ? '修改安全词' : '设置安全词'}
               </button>
             </div>
-
             <h3 style={{ marginTop: 24 }}>自动锁定</h3>
             <div className="setting-row">
               <div>
@@ -630,12 +782,161 @@ export function Settings() {
                 <div className="setting-desc">无操作后自动锁定应用</div>
               </div>
               <div className="setting-control">
-                <input type="number" value={autoLockDelay} onChange={e => setAutoLockDelay(Number(e.target.value))} min={1} max={60} aria-label="自动锁定分钟数" />
+                <input type="number" value={autoLockDelay} onChange={e => setAutoLockDelay(Number(e.target.value))} onBlur={() => void persist({ autoLockDelay: Math.max(1, Math.min(60, Number(autoLockDelay) || 5)) })} min={1} max={60} aria-label="自动锁定分钟数" />
                 <span className="text-sm text-muted">分钟</span>
               </div>
             </div>
+            <h3 style={{ marginTop: 24 }}>剪贴板</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">复制密码后清空延迟 (秒)</div>
+                <div className="setting-desc">复制密码后，剪贴板自动清空的时间 (5-300秒)</div>
+              </div>
+              <div className="setting-control">
+                <input type="number" value={clipboardClearDelay} onChange={e => setClipboardClearDelay(Number(e.target.value))} onBlur={() => void persist({ clipboardClearDelay: Math.max(5, Math.min(300, Number(clipboardClearDelay) || 30)) })} min={5} max={300} aria-label="剪贴板清空延迟秒数" />
+                <span className="text-sm text-muted">秒</span>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">记录最近复制（最多 30 条）</div>
+                <div className="setting-desc">
+                  只记密码 / 验证码这类敏感内容，用当前主密码加密后存在本机数据目录，锁屏只清内存、
+                  下次解锁自动读回；点「清空」才真正删除文件。改主密码时会用新密码重写一次。
+                  默认关闭：开启后本机其它程序理论上可通过剪贴板读取到这些历史。
+                </div>
+                {clipHistoryOn && clipItems.length > 0 && (
+                  <div className="clip-history">
+                    {clipItems.map((it, i) => (
+                      <div key={`${it.at}-${i}`} className="clip-history-item">
+                        <span className="clip-history-text" title="内容不显示，点右侧按钮可直接复制">
+                          {'•'.repeat(Math.min(12, Math.max(4, it.text.length)))}
+                          <span className="clip-history-len">{it.text.length} 位</span>
+                        </span>
+                        {/* 必须走 formatHm：it.at 是 toISOString() 的 UTC，slice(11,16) 会少 8 小时 */}
+              <span className="clip-history-time">{formatHm(it.at)}</span>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={async () => {
+                            await window.electronAPI.clipboardCopy({ text: it.text, delay: settings.clipboardClearDelay * 1000 });
+                            addToast('已复制（仍会按设置自动清空）', 'success');
+                          }}
+                        >
+                          <Icons.copy size={12} /> 复制
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {clipHistoryOn && clipItems.length === 0 && (
+                  <div className="setting-desc" style={{ marginTop: 4 }}>还没有记录：复制一次密码或验证码后回来刷新。</div>
+                )}
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {clipHistoryOn && clipItems.length > 0 && (
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={async () => {
+                      await window.electronAPI.clipboardHistoryClear();
+                      setClipItems([]);
+                      addToast('已清空复制历史', 'success');
+                    }}
+                  >
+                    清空
+                  </button>
+                )}
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={clipHistoryOn}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setClipHistoryOn(val);
+                      const r = await callIpc(() => window.electronAPI.settingsSave({ clipboardHistory: val }));
+                      if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
+                      addToast(val ? '已开启复制历史（仅内存）' : '已关闭复制历史', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <h3 style={{ marginTop: 24 }}>密码显示</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">密码自动隐藏 (秒)</div>
+                <div className="setting-desc">明文密码显示后自动恢复掩码的时间 (3-120秒)</div>
+              </div>
+              <div className="setting-control">
+                <input type="number" value={passwordAutoHideDelay} onChange={e => setPasswordAutoHideDelay(Number(e.target.value))} onBlur={() => void persist({ passwordAutoHideDelay: Math.max(3, Math.min(120, Number(passwordAutoHideDelay) || 10)) })} min={3} max={120} aria-label="密码自动隐藏秒数" />
+                <span className="text-sm text-muted">秒</span>
+              </div>
+            </div>
+            <h3 style={{ marginTop: 24 }}>隐私保护</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">防截屏 / 录屏</div>
+                <div className="setting-desc">开启后窗口内容在截图和录屏中显示为黑屏（Windows 10+）</div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!contentProtection}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setContentProtection(val);
+                      updateSettings({ contentProtection: val });
+                      await window.electronAPI.settingsSave({ contentProtection: val });
+                      addToast(val ? '已开启防截屏' : '已关闭防截屏', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
+            <h3 style={{ marginTop: 24 }}>审计日志</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">敏感操作记录</div>
+                <div className="setting-desc">
+                  记录复制密码等操作（只记条目名与时间，不记密码内容），最多保留 2000 条，仅存本机
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm btn-secondary" onClick={loadAudit}>刷新</button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={async () => {
+                    await window.electronAPI.auditClear();
+                    setAudit([]);
+                    addToast('审计日志已清空', 'success');
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+            <div className="audit-list">
+              {audit.length === 0 ? (
+                <div className="text-sm text-muted">暂无记录（复制过一次密码就会出现）</div>
+              ) : (
+                audit.map((a, i) => (
+                  <div key={`${a.at}-${i}`} className="audit-row">
+                    <span className="audit-time">{formatDateTime(a.at)}</span>
+                    <span className="audit-action">{a.action}</span>
+                    <span className="audit-detail">{a.detail || ''}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        );
 
-            <h3 style={{ marginTop: 24 }}>数据备份</h3>
+      case 'data':
+        return (
+          <div className="settings-section">
+            <h3>备份与恢复</h3>
             <div className="setting-row">
               <div>
                 <div className="setting-label">自动备份</div>
@@ -651,6 +952,7 @@ export function Settings() {
                   min={1}
                   max={60}
                   onChange={e => setBackupKeep(Number(e.target.value))}
+                  onBlur={() => void persist({ backupKeep: Math.max(1, Math.min(60, Number(backupKeep) || 7)) })}
                   style={{ width: 70 }} aria-label="备份保留份数" />
                 <span className="text-sm text-muted">份</span>
                 <button className="btn btn-sm btn-secondary" onClick={() => window.electronAPI.backupOpenFolder()}>
@@ -728,52 +1030,6 @@ export function Settings() {
                 </div>
               </div>
             )}
-
-            <h3 style={{ marginTop: 24 }}>库自检</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">体检当前密码库</div>
-                <div className="setting-desc">
-                  检查结构、悬空标签、丢失的附件、孤儿历史。只读，不会改动任何数据。
-                </div>
-              </div>
-              <div className="setting-control">
-                <button className="btn btn-sm btn-secondary" onClick={() => void runVaultAudit()} disabled={auditBusy}>
-                  {auditBusy ? '体检中…' : '开始自检'}
-                </button>
-              </div>
-            </div>
-            {auditReport && (
-              <div className="vault-audit">
-                <div className="vault-audit-sum">
-                  <span className={`vault-audit-pill ${auditReport.counts.error ? 'is-bad' : 'is-ok'}`}>
-                    {auditReport.counts.error} 错误
-                  </span>
-                  <span className={`vault-audit-pill ${auditReport.counts.warn ? 'is-warn' : 'is-ok'}`}>
-                    {auditReport.counts.warn} 警告
-                  </span>
-                  <span className="vault-audit-pill">{auditReport.counts.info} 提示</span>
-                  <span className="text-sm text-muted">
-                    结构 v{auditReport.schemaVersion} · {auditReport.stats.entries} 条记录 · {auditReport.stats.tags} 个标签
-                  </span>
-                </div>
-                {auditReport.issues.length === 0 ? (
-                  <div className="text-sm text-muted">没发现问题。</div>
-                ) : (
-                  <ul className="vault-audit-list">
-                    {auditReport.issues.map(it => (
-                      <li key={it.code} className={`vault-audit-item is-${it.level}`}>
-                        <div className="vault-audit-msg">{it.message}</div>
-                        {it.samples.length > 0 && (
-                          <div className="vault-audit-samples">{it.samples.join('、')}{it.count > it.samples.length ? ' …' : ''}</div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
             <h3 style={{ marginTop: 24 }}>数据目录</h3>
             <div className="setting-row">
               <div style={{ minWidth: 0 }}>
@@ -822,46 +1078,137 @@ export function Settings() {
             <div className="text-sm text-muted" style={{ marginTop: 6 }}>
               迁移只复制不删除，原目录会原样保留；确认新目录可用后可自行删除旧文件。
             </div>
-
-            <h3 style={{ marginTop: 24 }}>审计日志</h3>
+            <h3 style={{ marginTop: 24 }}>库自检</h3>
             <div className="setting-row">
               <div>
-                <div className="setting-label">敏感操作记录</div>
+                <div className="setting-label">体检当前密码库</div>
                 <div className="setting-desc">
-                  记录复制密码等操作（只记条目名与时间，不记密码内容），最多保留 2000 条，仅存本机
+                  检查结构、悬空标签、丢失的附件、孤儿历史。只读，不会改动任何数据。
                 </div>
               </div>
-              <div className="setting-control" style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-sm btn-secondary" onClick={loadAudit}>刷新</button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={async () => {
-                    await window.electronAPI.auditClear();
-                    setAudit([]);
-                    addToast('审计日志已清空', 'success');
-                  }}
-                >
-                  清空
+              <div className="setting-control">
+                <button className="btn btn-sm btn-secondary" onClick={() => void runVaultAudit()} disabled={auditBusy}>
+                  {auditBusy ? '体检中…' : '开始自检'}
                 </button>
               </div>
             </div>
-            <div className="audit-list">
-              {audit.length === 0 ? (
-                <div className="text-sm text-muted">暂无记录（复制过一次密码就会出现）</div>
-              ) : (
-                audit.map((a, i) => (
-                  <div key={`${a.at}-${i}`} className="audit-row">
-                    <span className="audit-time">{formatDateTime(a.at)}</span>
-                    <span className="audit-action">{a.action}</span>
-                    <span className="audit-detail">{a.detail || ''}</span>
-                  </div>
-                ))
-              )}
+            {auditReport && (
+              <div className="vault-audit">
+                <div className="vault-audit-sum">
+                  <span className={`vault-audit-pill ${auditReport.counts.error ? 'is-bad' : 'is-ok'}`}>
+                    {auditReport.counts.error} 错误
+                  </span>
+                  <span className={`vault-audit-pill ${auditReport.counts.warn ? 'is-warn' : 'is-ok'}`}>
+                    {auditReport.counts.warn} 警告
+                  </span>
+                  <span className="vault-audit-pill">{auditReport.counts.info} 提示</span>
+                  <span className="text-sm text-muted">
+                    结构 v{auditReport.schemaVersion} · {auditReport.stats.entries} 条记录 · {auditReport.stats.tags} 个标签
+                  </span>
+                </div>
+                {auditReport.issues.length === 0 ? (
+                  <div className="text-sm text-muted">没发现问题。</div>
+                ) : (
+                  <ul className="vault-audit-list">
+                    {auditReport.issues.map(it => (
+                      <li key={it.code} className={`vault-audit-item is-${it.level}`}>
+                        <div className="vault-audit-msg">{it.message}</div>
+                        {it.samples.length > 0 && (
+                          <div className="vault-audit-samples">{it.samples.join('、')}{it.count > it.samples.length ? ' …' : ''}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            <h3 style={{ marginTop: 24 }}>存储位置</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">附件存放目录</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }} title={dataInfo?.attachDir || ''}>
+                  {dataInfo?.attachDir || '读取中…'}
+                  {dataInfo?.attachIsCustom ? '（自定义）' : '（默认）'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  截图、证书、密钥都存在这里；随手记和测试笔记里粘的图片也走这个目录。
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => void changeAttachDir()}>
+                  更改目录
+                </button>
+                {dataInfo?.attachIsCustom && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void resetAttachDir()}>
+                    改回默认
+                  </button>
+                )}
+                <button className="btn btn-sm btn-ghost" onClick={() => void window.electronAPI.attachmentReveal()}>
+                  打开目录
+                </button>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">测试笔记目录</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  {settings.notesDir || '未启用（笔记存在加密库里）'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  选了目录后，笔记一篇一个 .md 文件存在那里，方便用其它编辑器打开。
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => void pickNotesDir()}>
+                  选择目录
+                </button>
+                {settings.notesDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void window.electronAPI.notesReveal(settings.notesDir || '')}>
+                    打开
+                  </button>
+                )}
+                {settings.notesDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void saveDirSetting('notesDir', '')}>
+                    改回加密库
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">周报目录</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  {settings.weeklyDir || '未选择'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  周报 .md 文件存放的位置，换电脑时选同一个目录就能接着写。
+                </div>
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => void pickWeeklyDir()}>
+                  选择目录
+                </button>
+                {settings.weeklyDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void window.electronAPI.weeklyReveal(settings.weeklyDir || '')}>
+                    打开
+                  </button>
+                )}
+                {settings.weeklyDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void saveDirSetting('weeklyDir', '')}>
+                    清除
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="text-sm text-muted" style={{ marginTop: 6 }}>
+              目录切换只复制、不删除原文件；附件目录改完立即生效，不需要重启。
             </div>
           </div>
         );
 
-      case 'general':
+      case 'appearance':
         return (
           <div className="settings-section">
             <h3>显示</h3>
@@ -930,174 +1277,22 @@ export function Settings() {
                 <div className="setting-desc">网址的默认显示模式</div>
               </div>
               <div className="setting-control">
-                <select value={defaultViewMode} onChange={e => setDefaultViewMode(e.target.value as any)} aria-label="默认视图">
+                <select
+                  value={defaultViewMode}
+                  onChange={e => {
+                    const val = e.target.value as AppSettings['defaultViewMode'];
+                    setDefaultViewMode(val);
+                    void persist({ defaultViewMode: val });
+                  }}
+                  aria-label="默认视图"
+                >
                   <option value="card">卡片视图</option>
                   <option value="list">列表视图</option>
                   <option value="system">按系统视图</option>
                 </select>
               </div>
             </div>
-
-            <h3 style={{ marginTop: 24 }}>剪贴板</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">复制密码后清空延迟 (秒)</div>
-                <div className="setting-desc">复制密码后，剪贴板自动清空的时间 (5-300秒)</div>
-              </div>
-              <div className="setting-control">
-                <input type="number" value={clipboardClearDelay} onChange={e => setClipboardClearDelay(Number(e.target.value))} min={5} max={300} aria-label="剪贴板清空延迟秒数" />
-                <span className="text-sm text-muted">秒</span>
-              </div>
-            </div>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">记录最近复制（最多 30 条）</div>
-                <div className="setting-desc">
-                  只记密码 / 验证码这类敏感内容，用当前主密码加密后存在本机数据目录，锁屏只清内存、
-                  下次解锁自动读回；点「清空」才真正删除文件。改主密码时会用新密码重写一次。
-                  默认关闭：开启后本机其它程序理论上可通过剪贴板读取到这些历史。
-                </div>
-                {clipHistoryOn && clipItems.length > 0 && (
-                  <div className="clip-history">
-                    {clipItems.map((it, i) => (
-                      <div key={`${it.at}-${i}`} className="clip-history-item">
-                        <span className="clip-history-text" title="内容不显示，点右侧按钮可直接复制">
-                          {'•'.repeat(Math.min(12, Math.max(4, it.text.length)))}
-                          <span className="clip-history-len">{it.text.length} 位</span>
-                        </span>
-                        <span className="clip-history-time">{it.at.slice(11, 16)}</span>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={async () => {
-                            await window.electronAPI.clipboardCopy({ text: it.text, delay: settings.clipboardClearDelay * 1000 });
-                            addToast('已复制（仍会按设置自动清空）', 'success');
-                          }}
-                        >
-                          <Icons.copy size={12} /> 复制
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {clipHistoryOn && clipItems.length === 0 && (
-                  <div className="setting-desc" style={{ marginTop: 4 }}>还没有记录：复制一次密码或验证码后回来刷新。</div>
-                )}
-              </div>
-              <div className="setting-control" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {clipHistoryOn && clipItems.length > 0 && (
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={async () => {
-                      await window.electronAPI.clipboardHistoryClear();
-                      setClipItems([]);
-                      addToast('已清空复制历史', 'success');
-                    }}
-                  >
-                    清空
-                  </button>
-                )}
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={clipHistoryOn}
-                    onChange={async e => {
-                      const val = e.target.checked;
-                      setClipHistoryOn(val);
-                      const r = await callIpc(() => window.electronAPI.settingsSave({ clipboardHistory: val }));
-                      if (!r.ok) { addToast(`保存失败：${r.error}`, 'error'); return; }
-                      addToast(val ? '已开启复制历史（仅内存）' : '已关闭复制历史', 'success');
-                    }}
-                  />
-                  <span className="switch-slider" />
-                </label>
-              </div>
-            </div>
-
-            <h3 style={{ marginTop: 24 }}>密码显示</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">密码自动隐藏 (秒)</div>
-                <div className="setting-desc">明文密码显示后自动恢复掩码的时间 (3-120秒)</div>
-              </div>
-              <div className="setting-control">
-                <input type="number" value={passwordAutoHideDelay} onChange={e => setPasswordAutoHideDelay(Number(e.target.value))} min={3} max={120} aria-label="密码自动隐藏秒数" />
-                <span className="text-sm text-muted">秒</span>
-              </div>
-            </div>
-
-            <h3 style={{ marginTop: 24 }}>禅道提醒</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">新 Bug 提醒</div>
-                <div className="setting-desc">
-                  后台定时检查「我的 Bug」，有新的指派给我就弹系统通知（需先在禅道页保存过账号密码）
-                </div>
-              </div>
-              <div className="setting-control">
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={!!zentaoNotify}
-                    onChange={async e => {
-                      const val = e.target.checked;
-                      setZentaoNotify(val);
-                      updateSettings({ zentaoNotify: val });
-                      await window.electronAPI.settingsSave({ zentaoNotify: val });
-                      addToast(val ? '已开启新 Bug 提醒' : '已关闭新 Bug 提醒', 'success');
-                    }}
-                  />
-                  <span className="switch-slider" />
-                </label>
-              </div>
-            </div>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">检查间隔（分钟）</div>
-                <div className="setting-desc">最少 2 分钟；改完点「保存设置」生效</div>
-              </div>
-              <div className="setting-control">
-                <input
-                  type="number"
-                  value={zentaoNotifyInterval}
-                  onChange={e => setZentaoNotifyInterval(Number(e.target.value))}
-                  min={2}
-                  max={120} aria-label="禅道检查间隔分钟数" />
-                <span className="text-sm text-muted">分钟</span>
-              </div>
-            </div>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">立即检查一次</div>
-                <div className="setting-desc">
-                  {notifyStatus
-                    ? [
-                      notifyStatus.configured ? '禅道账号已保存' : '⚠ 还没在禅道页保存账号密码',
-                      notifyStatus.unlocked ? '已解锁' : '未解锁（锁定状态下不检查）',
-                      notifyStatus.lastCheck
-                        ? `上次检查 ${formatDateTime(notifyStatus.lastCheck.at)} · ${notifyStatus.lastCheck.ok
-                          ? `成功，${notifyStatus.lastCheck.total} 条，新增 ${notifyStatus.lastCheck.fresh ?? 0} 条`
-                          : `失败：${notifyStatus.lastCheck.error || '未知原因'}`}`
-                        : '还没检查过',
-                    ].join(' · ')
-                    : '手动触发，用来确认配置是否可用'}
-                </div>
-              </div>
-              <div className="setting-control">
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={async () => {
-                    const r = await window.electronAPI.zentaoNotifyNow();
-                    await refreshNotifyStatus();
-                    if (r.data?.ok) addToast(`检查完成：${r.data.total} 条，新增 ${r.data.fresh ?? 0} 条`, 'success');
-                    else addToast(r.data?.error || '检查未执行（确认已开启提醒并已解锁）', 'error');
-                  }}
-                >
-                  检查一次
-                </button>
-              </div>
-            </div>
-
-            <h3 style={{ marginTop: 24 }}>窗口与托盘</h3>
+            <h3 style={{ marginTop: 24 }}>窗口与启动</h3>
             <div className="setting-row">
               <div>
                 <div className="setting-label">最小化到托盘</div>
@@ -1140,34 +1335,6 @@ export function Settings() {
                 </label>
               </div>
             </div>
-            <div className="setting-desc" style={{ padding: '4px 0 0' }}>
-              托盘图标单击可恢复窗口；全局快捷键 <kbd>{hkInfo?.toggle || 'Ctrl+Shift+P'}</kbd> 显示/隐藏窗口，
-              <kbd>{hkInfo?.search || 'Ctrl+空格'}</kbd> 直接搜索（隐藏状态下按下即弹出搜索框，可在「快捷键」里改）。
-            </div>
-
-            <h3 style={{ marginTop: 24 }}>隐私与系统</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">防截屏 / 录屏</div>
-                <div className="setting-desc">开启后窗口内容在截图和录屏中显示为黑屏（Windows 10+）</div>
-              </div>
-              <div className="setting-control">
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={!!contentProtection}
-                    onChange={async e => {
-                      const val = e.target.checked;
-                      setContentProtection(val);
-                      updateSettings({ contentProtection: val });
-                      await window.electronAPI.settingsSave({ contentProtection: val });
-                      addToast(val ? '已开启防截屏' : '已关闭防截屏', 'success');
-                    }}
-                  />
-                  <span className="switch-slider" />
-                </label>
-              </div>
-            </div>
             <div className="setting-row">
               <div>
                 <div className="setting-label">开机自动启动</div>
@@ -1193,8 +1360,397 @@ export function Settings() {
                 </label>
               </div>
             </div>
+            <div className="setting-desc" style={{ padding: '4px 0 0' }}>
+              托盘图标单击可恢复窗口；全局快捷键 <kbd>{hkInfo?.toggle || 'Ctrl+Shift+P'}</kbd> 显示/隐藏窗口，
+              <kbd>{hkInfo?.search || 'Ctrl+空格'}</kbd> 直接搜索（隐藏状态下按下即弹出搜索框，可在「快捷键」里改）。
+            </div>
+            <h3 style={{ marginTop: 24 }}>浏览器路径</h3>
+            {knownBrowsers.map(b => (
+              <div key={b.id} className="setting-row">
+                <div>
+                  <div className="setting-label">{b.name} 路径</div>
+                  <div className="setting-desc">留空则自动检测常见安装位置</div>
+                </div>
+                <div className="setting-control browser-path-control">
+                  <input
+                    type="text"
+                    value={browserPaths[b.id] || ''}
+                    onChange={e => setBrowserPaths(prev => ({ ...prev, [b.id]: e.target.value } as Record<string, string>))}
+                    onBlur={() => void persist({ browserPaths })}
+                    placeholder={`设置 ${b.name} 的路径，留空自动检测`} />
+                  <button className="btn btn-sm btn-secondary" onClick={() => handleSelectBrowserPath(b.id)}>浏览</button>
+                </div>
+              </div>
+            ))}
+            <h3 style={{ marginTop: 24 }}>全局快捷键</h3>
+            <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
+              系统级生效（应用在后台也有效）。点右侧键位即可重新设置，改完立即生效；被其它程序占用时会直接提示。
+            </p>
+            <div
+              ref={hkCaptureRef}
+              onKeyDown={onHotkeyKeyDown}
+              tabIndex={-1}
+              style={{ outline: 'none' }}
+            >
+              {([
+                {
+                  slot: 'search' as const,
+                  label: '打开搜索',
+                  desc: '任何时候按一下就能搜网址、笔记 / SQL 片段、测试数据类型和页面',
+                  shown: hkInfo?.search || hkInfo?.searchDefault || 'Ctrl+空格',
+                  isDefault: hkInfo ? hkInfo.searchIsDefault : true,
+                },
+                {
+                  slot: 'toggle' as const,
+                  label: '显示 / 隐藏窗口',
+                  desc: '从任何界面把窗口叫出来，再按一次收回去',
+                  shown: hkInfo?.toggle || hkInfo?.toggleDefault || 'Ctrl+Shift+P',
+                  isDefault: hkInfo ? hkInfo.toggleIsDefault : true,
+                },
+                {
+                  slot: 'quicknote' as const,
+                  label: '随手记小窗',
+                  desc: '不弹主窗口，直接写一条笔记进「测试笔记」；支持粘截图',
+                  shown: hkInfo?.quicknote || hkInfo?.quicknoteDefault || 'Ctrl+Shift+N',
+                  isDefault: hkInfo ? hkInfo.quicknoteIsDefault : true,
+                },
+              ]).map(row => {
+                const editing = capturingHotkey === row.slot;
+                return (
+                  <div key={row.slot} className={`setting-row shortcut-row ${editing ? 'capturing' : ''}`}>
+                    <div>
+                      <div className="setting-label">{row.label}</div>
+                      <div className="setting-desc">{row.desc}</div>
+                      {hkError?.slot === row.slot && <div className="hotkey-msg is-error">{hkError.msg}</div>}
+                      {hkSaved?.slot === row.slot && <div className="hotkey-msg is-ok">{hkSaved.msg}</div>}
+                    </div>
+                    <div className="shortcut-key-wrapper">
+                      {editing ? (
+                        <span className="shortcut-key shortcut-key-capturing">按下新快捷键…（Esc 取消）</span>
+                      ) : (
+                        <span
+                          className="shortcut-key"
+                          onClick={() => startHotkeyCapture(row.slot)}
+                          title="点击修改快捷键"
+                        >
+                          <kbd>{row.shown}</kbd>
+                          <svg className="shortcut-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
+                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                          </svg>
+                        </span>
+                      )}
+                      {!row.isDefault && !editing && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => void resetHotkey(row.slot)}>
+                          恢复默认
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {(hkInfo?.searchOk === false || hkInfo?.toggleOk === false || hkInfo?.quicknoteOk === false) && (
+              <div className="hotkey-msg is-error">
+                有快捷键没注册成功，现在按了没反应。常见原因是同时开了两个「测试中台」，
+                或者该组合已被别的程序占用——换一个组合即可。
+              </div>
+            )}
+            {isImeClash(hkInfo?.searchAccel || '') && (
+              <div className="shortcut-note" style={{ marginTop: 8 }}>
+                提示：<kbd>Ctrl+空格</kbd> 被本应用占用后，输入法的「Ctrl+空格 切中英文」会失效（可继续用 Shift 切换）。
+                想留输入法的话，把搜索键改成 <kbd>Ctrl+Shift+空格</kbd> 之类即可。
+              </div>
+            )}
 
-            <h3 style={{ marginTop: 24 }}>关于</h3>
+            <h3 style={{ marginTop: 28 }}>应用内快捷键</h3>
+            <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
+              只在应用窗口内生效。点击快捷键组合即可修改，修改后点击页面底部的「保存设置」生效。
+            </p>
+            {(() => {
+              const conflicts = findConflicts(localKeybindings);
+              const list = Object.values(conflicts).flat();
+              if (list.length === 0) return null;
+              return (
+                <div className="hotkey-msg is-error">
+                  有两个动作绑了同一个组合：{list.map((id) => KEYBINDING_DEFS.find((d) => d.id === id)?.label || id).join('、')}
+                  。保存后只有排在前面的那个会响应，请换一个。
+                </div>
+              );
+            })()}
+            <div style={{ marginBottom: 4 }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setLocalKeybindings({ ...DEFAULT_KEYBINDINGS })}
+                title="把 7 个应用内快捷键恢复成出厂值（仍需点「保存设置」）"
+              >
+                恢复默认快捷键
+              </button>
+            </div>
+            <div
+              onKeyDown={handleCaptureKey}
+              tabIndex={-1}
+              style={{ outline: 'none' }}
+            >
+              {KEYBINDING_DEFS.map(def => {
+                const isEditing = editingKeybinding === def.id;
+                return (
+                  <div key={def.id} className={`setting-row shortcut-row ${isEditing ? 'capturing' : ''}`}>
+                    <div>
+                      <div className="setting-label">{def.label}</div>
+                      <div className="setting-desc">{def.desc}</div>
+                    </div>
+                    <div className="shortcut-key-wrapper">
+                      {isEditing ? (
+                        <span className="shortcut-key shortcut-key-capturing">
+                          按下新快捷键...
+                        </span>
+                      ) : (
+                        <span
+                          className="shortcut-key"
+                          onClick={() => startCapture(def.id)}
+                          title="点击修改快捷键"
+                        >
+                          <kbd>{localKeybindings[def.id]}</kbd>
+                          <svg className="shortcut-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
+                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+
+      case 'tasks':
+        return (
+          <div className="settings-section task-tab">
+            <h3>定时任务</h3>
+            <p className="task-note">
+              这些检查都在应用运行期间执行，关掉应用就停了（本工具不常驻后台）。间隔填 0 表示关闭。
+            </p>
+            <div className="task-card">
+              <div className="task-head">
+                <span className="task-name">环境矩阵巡检</span>
+                <span className={`task-badge${envInterval > 0 ? ' is-on' : ''}`}>
+                  {envInterval > 0 ? `每 ${envInterval} 分钟` : '未启用'}
+                </span>
+              </div>
+              <div className="task-desc">
+                对所有环境地址发起一次探测，记录可达性与耗时。
+                {envProbeAt ? ` 上次 ${formatAt(envProbeAt)}` : ' 还没巡检过'}
+                {envProbeSummary ? ` · ${envProbeSummary.ok}/${envProbeSummary.total} 可达 · 平均 ${envProbeSummary.avgMs} ms` : ''}
+              </div>
+              <div className="task-controls">
+                <label className="task-inline">
+                  间隔
+                  <input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={envInterval}
+                    onChange={e => setEnvInterval(Math.max(0, Math.min(720, Number(e.target.value) || 0)))}
+                    onBlur={() => void persist({ envProbeInterval: Math.max(0, Math.min(720, Number(envInterval) || 0)) })}
+                    aria-label="环境巡检间隔分钟数"
+                  />
+                  分钟
+                </label>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={envNotify}
+                    onChange={e => {
+                      const val = e.target.checked;
+                      setEnvNotify(val);
+                      void persist({ envProbeNotifyOnFlip: val });
+                    }}
+                    aria-label="环境状态翻转时发系统通知"
+                  />
+                  <span className="switch-slider" />
+                </label>
+                <span className="text-sm text-muted">只在「可达→不可达 / 变慢」时通知</span>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  disabled={probeBusy}
+                  onClick={async () => {
+                    setProbeBusy(true);
+                    setProbeMsg('');
+                    const r = await runEnvProbeOnce(false);
+                    setProbeBusy(false);
+                    if (!r.ok) setProbeMsg(r.error || '巡检失败');
+                    else setProbeMsg(`巡检完成：${r.total} 条地址${r.flips.length ? `，${r.flips.length} 条有变化` : '，没有变化'}`);
+                  }}
+                >
+                  {probeBusy ? '巡检中…' : '立即巡检'}
+                </button>
+              </div>
+              {probeMsg && <div className="task-msg">{probeMsg}</div>}
+            </div>
+            <div className="task-card">
+              <div className="task-head">
+                <span className="task-name">禅道新 Bug 检查</span>
+                <span className={`task-badge${settings.zentaoNotify ? ' is-on' : ''}`}>
+                  {settings.zentaoNotify ? `每 ${zentaoNotifyInterval} 分钟` : '未启用'}
+                </span>
+              </div>
+              <div className="task-desc">
+                {notifyStatus
+                  ? [
+                    notifyStatus.configured ? '账号已保存' : '⚠ 还没在缺陷管理页保存账号',
+                    notifyStatus.unlocked ? '已解锁' : '未解锁时不检查',
+                    notifyStatus.lastCheck
+                      ? `上次 ${formatDateTime(notifyStatus.lastCheck.at)} · ${notifyStatus.lastCheck.ok
+                        ? `成功，${notifyStatus.lastCheck.total} 条，新增 ${notifyStatus.lastCheck.fresh ?? 0} 条`
+                        : `失败：${notifyStatus.lastCheck.error || '未知原因'}`}`
+                      : '还没检查过',
+                    notifyStatus.lastCheck?.stale
+                      ? `超期：待验证 ${notifyStatus.lastCheck.stale.verify} · 待处理 ${notifyStatus.lastCheck.stale.handle}`
+                      : '',
+                  ].filter(Boolean).join(' · ')
+                  : '用来确认禅道配置是否可用'}
+              </div>
+              <div className="task-controls">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!zentaoNotify}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setZentaoNotify(val);
+                      updateSettings({ zentaoNotify: val });
+                      await window.electronAPI.settingsSave({ zentaoNotify: val });
+                      addToast(val ? '已开启新 Bug 提醒' : '已关闭新 Bug 提醒', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+                <span className="text-sm text-muted">新 Bug 提醒（有新的指派给我就弹系统通知）</span>
+                <label className="task-inline">
+                  间隔
+                  <input
+                    type="number"
+                    min={2}
+                    max={120}
+                    value={zentaoNotifyInterval}
+                    onChange={e => setZentaoNotifyInterval(Number(e.target.value))}
+                    onBlur={() => void persist({ zentaoNotifyInterval: Math.max(2, Math.min(120, Number(zentaoNotifyInterval) || 10)) })}
+                    aria-label="禅道检查间隔分钟数"
+                  />
+                  分钟
+                </label>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={async () => {
+                    const r = await window.electronAPI.zentaoNotifyNow();
+                    await refreshNotifyStatus();
+                    if (r.data?.ok) addToast(`检查完成：${r.data.total} 条，新增 ${r.data.fresh ?? 0} 条`, 'success');
+                    else addToast(r.data?.error || '检查未执行（确认已开启提醒并已解锁）', 'error');
+                  }}
+                >
+                  检查一次
+                </button>
+              </div>
+              <div className="task-controls task-controls-sub">
+                <label className="task-inline">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.zentaoStaleOn}
+                    onChange={async e => {
+                      const on = e.target.checked;
+                      // 必须写盘：主进程的定时检查读的是 settings.json，只更新 store 它看不到
+                      updateSettings({ zentaoStaleOn: on });
+                      await window.electronAPI.settingsSave({ zentaoStaleOn: on });
+                      addToast(on ? '已开启超期提醒' : '已关闭超期提醒', 'success');
+                    }}
+                    aria-label="启用超期未动提醒"
+                  />
+                  超期提醒
+                </label>
+                <label className="task-inline">
+                  超过
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={Number(settings.zentaoStaleDays) || 3}
+                    onChange={e => updateSettings({ zentaoStaleDays: Math.max(1, Math.min(60, Number(e.target.value) || 3)) })}
+                    onBlur={async e => {
+                      const days = Math.max(1, Math.min(60, Number(e.target.value) || 3));
+                      updateSettings({ zentaoStaleDays: days });
+                      await window.electronAPI.settingsSave({ zentaoStaleDays: days });
+                    }}
+                    aria-label="超期天数"
+                  />
+                  天没动就提醒
+                </label>
+                <span className="task-hint">
+                  待验证（已解决等我回归）与指派给我仍未处理，按本地状态快照算；同一状态只提醒一次。检查频率与上面的「间隔」一致
+                </span>
+              </div>
+            </div>
+            <div className="task-card">
+              <div className="task-head">
+                <span className="task-name">接口回归</span>
+                <span className={`task-badge${regEnabledCount > 0 ? ' is-on' : ''}`}>
+                  {regEnabledCount > 0 ? `${regEnabledCount} 个回归集在跑` : '未配置'}
+                </span>
+              </div>
+              <div className="task-desc">
+                {regSets.length === 0
+                  ? '还没有回归集。在「接口调试」里把几条请求存成回归集，勾上定时后这里会显示上次结果与下次到期时间。'
+                  : `共 ${regSets.length} 个回归集，其中 ${regEnabledCount} 个开了定时。`}
+                {regFailCount > 0 ? ` 上次有 ${regFailCount} 个失败。` : ''}
+              </div>
+              {regSets.length > 0 && (
+                <div className="task-reg-list">
+                  {regSets.map(s => {
+                    const due = nextRunAt(s);
+                    const status = s.lastStatus === 'pass' ? 'ok' : s.lastStatus === 'fail' ? 'bad' : 'mute';
+                    const statusText = s.lastStatus === 'pass' ? '通过' : s.lastStatus === 'fail' ? '失败' : '未跑';
+                    return (
+                      <div className="task-reg-row" key={s.id}>
+                        <span className="task-reg-name" title={s.name}>{s.name}</span>
+                        <span className={`task-reg-status is-${status}`}>{statusText}</span>
+                        <span className="task-reg-when">
+                          {s.lastRunAt ? `上次 ${formatDateTime(s.lastRunAt)}` : '还没跑过'}
+                        </span>
+                        <span className="task-reg-due">
+                          {!s.enabled || !s.intervalMin
+                            ? '不定时'
+                            : due === null
+                              ? '—'
+                              : due <= Date.now()
+                                ? '已到期'
+                                : `下次 ${formatDateTime(new Date(due).toISOString())}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="task-controls">
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => useStore.getState().requestNavigate('apiClient')}
+                >
+                  去接口调试
+                </button>
+                <span className="task-hint">回归集的增删改在「接口调试」页，这里只读展示</span>
+              </div>
+            </div>
+            <div className="task-hint">
+              间隔与开关改完自动保存（输入完点一下别处即可）。
+            </div>
+          </div>
+        );
+
+      case 'about':
+        return (
+          <div className="settings-section">
+            <h3>版本与日志</h3>
             <div className="setting-row">
               <div>
                 <div className="setting-label">运行日志</div>
@@ -1220,6 +1776,16 @@ export function Settings() {
                 </button>
               </div>
             </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">版本号</div>
+                <div className="setting-desc">当前安装的版本；有新版本时会在应用内顶部提示</div>
+              </div>
+              <div className="setting-control">
+                <code>{appVersion || updateInfo?.current || '读取中…'}</code>
+              </div>
+            </div>
+            <h3 style={{ marginTop: 24 }}>更新</h3>
             <div className="setting-row">
               <div>
                 <div className="setting-label">启动时检查更新</div>
@@ -1388,361 +1954,6 @@ export function Settings() {
             </div>
           </div>
         );
-
-      case 'tasks':
-        return (
-          <div className="settings-section task-tab">
-            <h3>定时任务</h3>
-            <p className="task-note">
-              这些检查都在应用运行期间执行，关掉应用就停了（本工具不常驻后台）。间隔填 0 表示关闭。
-            </p>
-
-            <div className="task-card">
-              <div className="task-head">
-                <span className="task-name">环境矩阵巡检</span>
-                <span className={`task-badge${envInterval > 0 ? ' is-on' : ''}`}>
-                  {envInterval > 0 ? `每 ${envInterval} 分钟` : '未启用'}
-                </span>
-              </div>
-              <div className="task-desc">
-                对所有环境地址发起一次探测，记录可达性与耗时。
-                {envProbeAt ? ` 上次 ${formatAt(envProbeAt)}` : ' 还没巡检过'}
-                {envProbeSummary ? ` · ${envProbeSummary.ok}/${envProbeSummary.total} 可达 · 平均 ${envProbeSummary.avgMs} ms` : ''}
-              </div>
-              <div className="task-controls">
-                <label className="task-inline">
-                  间隔
-                  <input
-                    type="number"
-                    min={0}
-                    max={720}
-                    value={envInterval}
-                    onChange={e => setEnvInterval(Math.max(0, Math.min(720, Number(e.target.value) || 0)))}
-                    aria-label="环境巡检间隔分钟数"
-                  />
-                  分钟
-                </label>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={envNotify}
-                    onChange={e => setEnvNotify(e.target.checked)}
-                    aria-label="环境状态翻转时发系统通知"
-                  />
-                  <span className="switch-slider" />
-                </label>
-                <span className="text-sm text-muted">只在「可达→不可达 / 变慢」时通知</span>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  disabled={probeBusy}
-                  onClick={async () => {
-                    setProbeBusy(true);
-                    setProbeMsg('');
-                    const r = await runEnvProbeOnce(false);
-                    setProbeBusy(false);
-                    if (!r.ok) setProbeMsg(r.error || '巡检失败');
-                    else setProbeMsg(`巡检完成：${r.total} 条地址${r.flips.length ? `，${r.flips.length} 条有变化` : '，没有变化'}`);
-                  }}
-                >
-                  {probeBusy ? '巡检中…' : '立即巡检'}
-                </button>
-              </div>
-              {probeMsg && <div className="task-msg">{probeMsg}</div>}
-            </div>
-
-            <div className="task-card">
-              <div className="task-head">
-                <span className="task-name">禅道新 Bug 检查</span>
-                <span className={`task-badge${settings.zentaoNotify ? ' is-on' : ''}`}>
-                  {settings.zentaoNotify ? `每 ${zentaoNotifyInterval} 分钟` : '未启用'}
-                </span>
-              </div>
-              <div className="task-desc">
-                {notifyStatus
-                  ? [
-                    notifyStatus.configured ? '账号已保存' : '⚠ 还没在缺陷管理页保存账号',
-                    notifyStatus.unlocked ? '已解锁' : '未解锁时不检查',
-                    notifyStatus.lastCheck
-                      ? `上次 ${formatDateTime(notifyStatus.lastCheck.at)} · ${notifyStatus.lastCheck.ok
-                        ? `成功，${notifyStatus.lastCheck.total} 条，新增 ${notifyStatus.lastCheck.fresh ?? 0} 条`
-                        : `失败：${notifyStatus.lastCheck.error || '未知原因'}`}`
-                      : '还没检查过',
-                    notifyStatus.lastCheck?.stale
-                      ? `超期：待验证 ${notifyStatus.lastCheck.stale.verify} · 待处理 ${notifyStatus.lastCheck.stale.handle}`
-                      : '',
-                  ].filter(Boolean).join(' · ')
-                  : '用来确认禅道配置是否可用'}
-              </div>
-              <div className="task-controls">
-                <label className="task-inline">
-                  间隔
-                  <input
-                    type="number"
-                    min={2}
-                    max={120}
-                    value={zentaoNotifyInterval}
-                    onChange={e => setZentaoNotifyInterval(Number(e.target.value))}
-                    aria-label="禅道检查间隔分钟数"
-                  />
-                  分钟
-                </label>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={async () => {
-                    const r = await window.electronAPI.zentaoNotifyNow();
-                    await refreshNotifyStatus();
-                    if (r.data?.ok) addToast(`检查完成：${r.data.total} 条，新增 ${r.data.fresh ?? 0} 条`, 'success');
-                    else addToast(r.data?.error || '检查未执行（确认已开启提醒并已解锁）', 'error');
-                  }}
-                >
-                  检查一次
-                </button>
-              </div>
-              <div className="task-controls task-controls-sub">
-                <label className="task-inline">
-                  <input
-                    type="checkbox"
-                    checked={!!settings.zentaoStaleOn}
-                    onChange={async e => {
-                      const on = e.target.checked;
-                      // 必须写盘：主进程的定时检查读的是 settings.json，只更新 store 它看不到
-                      updateSettings({ zentaoStaleOn: on });
-                      await window.electronAPI.settingsSave({ zentaoStaleOn: on });
-                      addToast(on ? '已开启超期提醒' : '已关闭超期提醒', 'success');
-                    }}
-                    aria-label="启用超期未动提醒"
-                  />
-                  超期提醒
-                </label>
-                <label className="task-inline">
-                  超过
-                  <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={Number(settings.zentaoStaleDays) || 3}
-                    onChange={e => updateSettings({ zentaoStaleDays: Math.max(1, Math.min(60, Number(e.target.value) || 3)) })}
-                    onBlur={async e => {
-                      const days = Math.max(1, Math.min(60, Number(e.target.value) || 3));
-                      updateSettings({ zentaoStaleDays: days });
-                      await window.electronAPI.settingsSave({ zentaoStaleDays: days });
-                    }}
-                    aria-label="超期天数"
-                  />
-                  天没动就提醒
-                </label>
-                <span className="task-hint">
-                  待验证（已解决等我回归）与指派给我仍未处理，按本地状态快照算；同一状态只提醒一次。检查频率与上面的「间隔」一致
-                </span>
-              </div>
-            </div>
-
-            <div className="task-card">
-              <div className="task-head">
-                <span className="task-name">检查更新</span>
-                <span className="task-badge is-on">每次启动后 8 秒</span>
-              </div>
-              <div className="task-desc">
-                {updateInfo
-                  ? `当前 ${updateInfo.current} · ${updateInfo.hasUpdate ? `发现新版本 ${updateInfo.latest}` : '已是最新版本'}`
-                  : '启动后在后台查一次 GitHub Release，有新版才提示'}
-              </div>
-              <div className="task-controls">
-                <button className="btn btn-sm btn-secondary" onClick={checkUpdate} disabled={checking}>
-                  {checking ? '检查中…' : '立即检查'}
-                </button>
-              </div>
-            </div>
-
-            <div className="task-card">
-              <div className="task-head">
-                <span className="task-name">每日备份</span>
-                <span className="task-badge is-on">保留 {backupKeep} 份</span>
-              </div>
-              <div className="task-desc">
-                每天第一次保存时自动备份一份到 <code>{backupDir || '数据目录/backups'}</code>
-                {mirrorDir ? `，并镜像到 ${mirrorDir}` : ''}。
-                {backupLastAt ? ` 上次 ${formatDateTime(backupLastAt)}` : ' 还没有备份'}
-                {backups.length > 0 ? ` · 现有 ${backups.length} 份` : ''}
-              </div>
-              <div className="task-controls">
-                <button className="btn btn-sm btn-secondary" onClick={runBackupNow}>
-                  立即备份
-                </button>
-              </div>
-            </div>
-
-            <div className="task-hint">
-              改完间隔记得点右下角「保存设置」。
-            </div>
-          </div>
-        );
-
-      case 'browser':
-        return (
-          <div className="settings-section browser-tab">
-            <h3>浏览器路径</h3>
-            {knownBrowsers.map(b => (
-              <div key={b.id} className="setting-row">
-                <div>
-                  <div className="setting-label">{b.name} 路径</div>
-                  <div className="setting-desc">留空则自动检测常见安装位置</div>
-                </div>
-                <div className="setting-control browser-path-control">
-                  <input type="text" value={browserPaths[b.id] || ''} onChange={e => setBrowserPaths(prev => ({ ...prev, [b.id]: e.target.value } as Record<string, string>))}
-                    placeholder={`设置 ${b.name} 的路径，留空自动检测`} />
-                  <button className="btn btn-sm btn-secondary" onClick={() => handleSelectBrowserPath(b.id)}>浏览</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-
-      case 'shortcuts':
-        return (
-          <div className="settings-section shortcuts-tab">
-            <h3>全局快捷键</h3>
-            <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-              系统级生效（应用在后台也有效）。点右侧键位即可重新设置，改完立即生效；被其它程序占用时会直接提示。
-            </p>
-            <div
-              ref={hkCaptureRef}
-              onKeyDown={onHotkeyKeyDown}
-              tabIndex={-1}
-              style={{ outline: 'none' }}
-            >
-              {([
-                {
-                  slot: 'search' as const,
-                  label: '打开搜索',
-                  desc: '任何时候按一下就能搜网址、笔记 / SQL 片段、测试数据类型和页面',
-                  shown: hkInfo?.search || hkInfo?.searchDefault || 'Ctrl+空格',
-                  isDefault: hkInfo ? hkInfo.searchIsDefault : true,
-                },
-                {
-                  slot: 'toggle' as const,
-                  label: '显示 / 隐藏窗口',
-                  desc: '从任何界面把窗口叫出来，再按一次收回去',
-                  shown: hkInfo?.toggle || hkInfo?.toggleDefault || 'Ctrl+Shift+P',
-                  isDefault: hkInfo ? hkInfo.toggleIsDefault : true,
-                },
-                {
-                  slot: 'quicknote' as const,
-                  label: '随手记小窗',
-                  desc: '不弹主窗口，直接写一条笔记进「测试笔记」；支持粘截图',
-                  shown: hkInfo?.quicknote || hkInfo?.quicknoteDefault || 'Ctrl+Shift+N',
-                  isDefault: hkInfo ? hkInfo.quicknoteIsDefault : true,
-                },
-              ]).map(row => {
-                const editing = capturingHotkey === row.slot;
-                return (
-                  <div key={row.slot} className={`setting-row shortcut-row ${editing ? 'capturing' : ''}`}>
-                    <div>
-                      <div className="setting-label">{row.label}</div>
-                      <div className="setting-desc">{row.desc}</div>
-                      {hkError?.slot === row.slot && <div className="hotkey-msg is-error">{hkError.msg}</div>}
-                      {hkSaved?.slot === row.slot && <div className="hotkey-msg is-ok">{hkSaved.msg}</div>}
-                    </div>
-                    <div className="shortcut-key-wrapper">
-                      {editing ? (
-                        <span className="shortcut-key shortcut-key-capturing">按下新快捷键…（Esc 取消）</span>
-                      ) : (
-                        <span
-                          className="shortcut-key"
-                          onClick={() => startHotkeyCapture(row.slot)}
-                          title="点击修改快捷键"
-                        >
-                          <kbd>{row.shown}</kbd>
-                          <svg className="shortcut-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
-                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
-                          </svg>
-                        </span>
-                      )}
-                      {!row.isDefault && !editing && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => void resetHotkey(row.slot)}>
-                          恢复默认
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {(hkInfo?.searchOk === false || hkInfo?.toggleOk === false || hkInfo?.quicknoteOk === false) && (
-              <div className="hotkey-msg is-error">
-                有快捷键没注册成功，现在按了没反应。常见原因是同时开了两个「测试中台」，
-                或者该组合已被别的程序占用——换一个组合即可。
-              </div>
-            )}
-            {isImeClash(hkInfo?.searchAccel || '') && (
-              <div className="shortcut-note" style={{ marginTop: 8 }}>
-                提示：<kbd>Ctrl+空格</kbd> 被本应用占用后，输入法的「Ctrl+空格 切中英文」会失效（可继续用 Shift 切换）。
-                想留输入法的话，把搜索键改成 <kbd>Ctrl+Shift+空格</kbd> 之类即可。
-              </div>
-            )}
-
-            <h3 style={{ marginTop: 28 }}>应用内快捷键</h3>
-            <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
-              只在应用窗口内生效。点击快捷键组合即可修改，修改后点击页面底部的「保存设置」生效。
-            </p>
-            {(() => {
-              const conflicts = findConflicts(localKeybindings);
-              const list = Object.values(conflicts).flat();
-              if (list.length === 0) return null;
-              return (
-                <div className="hotkey-msg is-error">
-                  有两个动作绑了同一个组合：{list.map((id) => KEYBINDING_DEFS.find((d) => d.id === id)?.label || id).join('、')}
-                  。保存后只有排在前面的那个会响应，请换一个。
-                </div>
-              );
-            })()}
-            <div style={{ marginBottom: 4 }}>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => setLocalKeybindings({ ...DEFAULT_KEYBINDINGS })}
-                title="把 7 个应用内快捷键恢复成出厂值（仍需点「保存设置」）"
-              >
-                恢复默认快捷键
-              </button>
-            </div>
-            <div
-              onKeyDown={handleCaptureKey}
-              tabIndex={-1}
-              style={{ outline: 'none' }}
-            >
-              {KEYBINDING_DEFS.map(def => {
-                const isEditing = editingKeybinding === def.id;
-                return (
-                  <div key={def.id} className={`setting-row shortcut-row ${isEditing ? 'capturing' : ''}`}>
-                    <div>
-                      <div className="setting-label">{def.label}</div>
-                      <div className="setting-desc">{def.desc}</div>
-                    </div>
-                    <div className="shortcut-key-wrapper">
-                      {isEditing ? (
-                        <span className="shortcut-key shortcut-key-capturing">
-                          按下新快捷键...
-                        </span>
-                      ) : (
-                        <span
-                          className="shortcut-key"
-                          onClick={() => startCapture(def.id)}
-                          title="点击修改快捷键"
-                        >
-                          <kbd>{localKeybindings[def.id]}</kbd>
-                          <svg className="shortcut-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
-                            <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
-                          </svg>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
     }
   };
 
@@ -1753,7 +1964,7 @@ export function Settings() {
         <PageHead
           icon={<Icons.tool size={16} />}
           title="设置"
-          desc="安全、通用、浏览器与快捷键；改完点右下角「保存设置」生效"
+          desc="安全、数据与备份、外观与交互、定时任务、关于与更新；大部分改动会自动保存，也可点右下角统一保存"
         />
 
         {/* 左侧竖排菜单 + 右侧内容：以前是顶部横排 tab + 600px 居中窄栏，右边大片留白 */}
@@ -1779,7 +1990,7 @@ export function Settings() {
           <div className="set-main">
             {renderTabContent()}
             <div className="set-foot">
-              <span className="set-foot-hint">改动只在本页临时保存，点右侧按钮写入设置</span>
+              <span className="set-foot-hint">大部分设置改完自动保存；快捷键等草稿项点右侧按钮写入</span>
               <button className="btn btn-primary" onClick={handleSave}>
                 保存设置
               </button>
@@ -1849,7 +2060,10 @@ export function Settings() {
                 setRestoring(false);
                 setRestoreName('');
                 if (!r.success) { addToast(r.error || '恢复失败', 'error'); return; }
-                addToast('已恢复，请用这份备份对应的主密码重新解锁', 'success');
+                const att = r.attachments;
+                addToast(att?.found
+                  ? `已恢复，补回 ${att.copied} 个附件；请用这份备份对应的主密码重新解锁`
+                  : '已恢复，请用这份备份对应的主密码重新解锁', 'success');
                 refreshBackups();
               }}
             >

@@ -13,7 +13,8 @@
  * 而全局搜索要跨六类数据，语法只在跨类时才有意义。
  */
 
-export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data';
+export type QueryKind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data'
+  | 'integration' | 'ztpreset' | 'apienv' | 'regression';
 
 const KIND_ALIAS: Record<string, QueryKind> = {
   '@page': 'page',
@@ -34,6 +35,15 @@ const KIND_ALIAS: Record<string, QueryKind> = {
   '@data': 'data',
   '@tdg': 'data',
   '@testdata': 'data',
+  // 1.24.7：补齐的集合
+  '@zt': 'integration',
+  '@zentao': 'integration',
+  '@integration': 'integration',
+  '@preset': 'ztpreset',
+  '@ztpreset': 'ztpreset',
+  '@apienv': 'apienv',
+  '@regression': 'regression',
+  '@reg': 'regression',
 };
 
 export interface ParsedQuery {

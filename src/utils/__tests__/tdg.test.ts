@@ -3,6 +3,8 @@ import { generateData } from '../tdg';
 import type { GenerateConfig } from '../tdg/types';
 import { generateFromRegex, REGEX_PRESETS } from '../tdg/regexGenerator';
 import { GENERATORS, GROUPS } from '../tdg/catalog';
+import { exportSql } from '../tdg/export';
+import type { GenerateResultItem } from '../tdg/types';
 
 describe('测试数据：后 N 位只对身份证 / 手机号生效', () => {
   const idCardCfg = {
@@ -68,5 +70,46 @@ describe('生成器目录', () => {
     const grouped = GROUPS.flatMap(g => g.ids);
     expect(new Set(grouped).size).toBe(17);
     expect(grouped.sort()).toEqual(GENERATORS.map(g => g.id).sort());
+  });
+});
+
+describe('SQL 导出：表名 / 列名可配', () => {
+  const items: GenerateResultItem[] = [
+    { id: 1, type: '姓名', value: '张三' },
+    { id: 2, type: '姓名', value: "O'Brien" },
+  ];
+
+  it('不传参数时保持默认 test_data / value（老调用方与老单测不受影响）', () => {
+    const sql = exportSql(items);
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_data');
+    expect(sql).toContain('INSERT INTO test_data (id, type, value)');
+  });
+
+  it('自定义表名与列名会同时出现在建表与插入语句里', () => {
+    const sql = exportSql(items, { table: 't_user', column: 'user_name' });
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS t_user');
+    expect(sql).toContain('user_name TEXT');
+    expect(sql).toContain('INSERT INTO t_user (id, type, user_name)');
+    expect(sql).not.toContain('test_data');
+  });
+
+  it('单引号仍然被转义（自定义表名不影响转义逻辑）', () => {
+    expect(exportSql(items, { table: 't_user' })).toContain("'O''Brien'");
+  });
+
+  it('非法标识符退回默认值，不产出坏 SQL', () => {
+    // 空格 / 分号 / 数字开头 / 空串都不可用
+    for (const bad of ['my table', 't;drop', '1abc', '', '   ', 'a-b']) {
+      const sql = exportSql(items, { table: bad, column: bad });
+      expect(sql, bad).toContain('CREATE TABLE IF NOT EXISTS test_data');
+      expect(sql, bad).toContain('INSERT INTO test_data (id, type, value)');
+    }
+  });
+
+  it('有后 N 位时列名同样生效', () => {
+    const withLast: GenerateResultItem[] = [{ id: 1, type: '身份证', value: '110101199001011234', last6: '011234' }];
+    const sql = exportSql(withLast, { table: 't_id', column: 'id_no' });
+    expect(sql).toContain('id_no TEXT');
+    expect(sql).toContain('INSERT INTO t_id (id, type, id_no, last_x)');
   });
 });

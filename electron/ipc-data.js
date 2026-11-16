@@ -22,7 +22,11 @@ function registerDataIpc(deps) {
     USER_DATA_DIR,
     DATA_FILE,
     BACKUP_DIR,
-    ATTACH_DIR,
+    getAttachDir,
+    DEFAULT_ATTACH_DIR,
+    backupAttachments,
+    restoreAttachments,
+    attachmentFile,
     AUDIT_FILE,
     LOCATION_FILE,
     listBackups,
@@ -36,7 +40,7 @@ function registerDataIpc(deps) {
     getMainWindow,
     loadVault,
     getPassword,
-    attachmentFile,
+    loadSettings,
     decrypt,
   } = deps;
 
@@ -142,9 +146,15 @@ function registerDataIpc(deps) {
       const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
       fs.copyFileSync(DATA_FILE, target);
+      // 附件跟着备份走：只备份 vault 的话，换机器恢复后所有截图/证书都会「图片已失效」
+      const attachments = typeof backupAttachments === 'function' ? backupAttachments(day) : { copied: 0, skipped: 0 };
       const mirror = mirrorBackupFile(target, day);
-      appendAudit({ action: 'vault-backup', entry: path.basename(target) });
-      return { success: true, data: { file: target, day, mirror } };
+      appendAudit({
+        action: 'vault-backup',
+        entry: path.basename(target),
+        detail: attachments.copied ? `附件 ${attachments.copied} 个` : '',
+      });
+      return { success: true, data: { file: target, day, mirror, attachments } };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -188,10 +198,19 @@ function registerDataIpc(deps) {
 
       writeFileAtomic(DATA_FILE, fs.readFileSync(src, 'utf8'));
       clearCaches();
-      appendAudit({ action: 'vault-restore', entry: safe });
+      // 同一天的附件备份合并回当前附件目录（不覆盖已有文件）
+      const day = safe.slice(6, 16);
+      const attachments = typeof restoreAttachments === 'function'
+        ? restoreAttachments(day)
+        : { copied: 0, skipped: 0, found: false };
+      appendAudit({
+        action: 'vault-restore',
+        entry: safe,
+        detail: attachments.copied ? `附件补回 ${attachments.copied} 个` : '',
+      });
       const win = getMainWindow();
       if (win && !win.isDestroyed()) win.webContents.send('lock-request');
-      return { success: true, preRestore };
+      return { success: true, preRestore, attachments };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -209,7 +228,7 @@ function registerDataIpc(deps) {
 
   // ---- 库自检（只读体检）----
   /**
-   * 体检当前库：结构、悬空标签、丢失的附件、孤儿历史。
+   * 体检当前库：结构、悬空标签、丢失的附件、孤儿历史、**附件能否用当前主密码解开**。
    * 只读 —— 报告里的问题一律由用户自己决定怎么处理，这里绝不自动改数据。
    */
   ipcMain.handle('vault:audit', () => {
@@ -222,7 +241,55 @@ function registerDataIpc(deps) {
         attachmentExists: (id) => {
           try { return fs.existsSync(attachmentFile(id)); } catch { return false; }
         },
+        /**
+         * 附件可解密性抽样：改主密码时如果没重加密附件，文件还在但 AES-GCM 认证失败，
+         * 界面统一显示「附件不存在或已损坏」。只查「文件存在」的自检对这种情况完全无感。
+         * 抽样 20 个（auditVault 内部默认值）：几百个附件全解密会让自检卡十几秒。
+         */
+        attachmentDecryptable: (id) => {
+          try {
+            const file = attachmentFile(id);
+            if (!fs.existsSync(file)) return false;
+            const raw = fs.readFileSync(file, 'utf8').trim();
+            if (!raw) return false;
+            return decrypt(raw, pw) !== null;
+          } catch { return false; }
+        },
       });
+      /**
+       * 目录模式笔记（.md 文件）不在密码库里，auditVault 看不到它们的图片引用。
+       * 附件页已经会扫这些文件，自检这里补齐同一口径，避免「附件页说没丢、自检说丢了」。
+       */
+      try {
+        const s = typeof loadSettings === 'function' ? loadSettings() : null;
+        const nd = String((s && s.notesDir) || '').trim();
+        if (nd && fs.existsSync(nd)) {
+          const missing = [];
+          for (const name of fs.readdirSync(nd)) {
+            if (!/\.(md|markdown|txt)$/i.test(name)) continue;
+            let body = '';
+            try { body = fs.readFileSync(path.join(nd, name), 'utf8'); } catch { continue; }
+            const re = /!\[[^\]]*\]\(pm-att:([a-zA-Z0-9-]+)\)/g;
+            let m;
+            while ((m = re.exec(body)) !== null) {
+              let exists = false;
+              try { exists = fs.existsSync(attachmentFile(m[1])); } catch { /* 目录不可用按丢失处理 */ }
+              if (!exists) missing.push(`${name} → ${m[1]}`);
+            }
+          }
+          if (missing.length) {
+            report.issues.push({
+              level: 'error',
+              code: 'dir-note-attachment-missing',
+              message: `${missing.length} 张目录笔记（.md）里的图片文件已丢失`,
+              count: missing.length,
+              samples: missing.slice(0, 5),
+            });
+            report.counts.error += 1;
+            report.ok = false;
+          }
+        }
+      } catch { /* 目录读不到就不检查，不影响库本身 */ }
       return { success: true, data: report };
     } catch (e) {
       return { success: false, error: e.message };
@@ -365,7 +432,9 @@ function registerDataIpc(deps) {
         isCustom: path.resolve(DATA_DIR) !== path.resolve(USER_DATA_DIR),
         vaultFile: DATA_FILE,
         backupDir: BACKUP_DIR,
-        attachDir: ATTACH_DIR,
+        attachDir: getAttachDir(),
+        attachDefaultDir: DEFAULT_ATTACH_DIR,
+        attachIsCustom: path.resolve(getAttachDir()) !== path.resolve(DEFAULT_ATTACH_DIR),
         backupCount: listBackups().length,
         vault: stat(DATA_FILE),
         bak: stat(`${DATA_FILE}.bak`),
@@ -410,6 +479,19 @@ function registerDataIpc(deps) {
           copied.push(`${d}/`);
         }
       }
+      // 自定义附件目录若落在被迁移的数据目录里，跟着改到新位置（否则重启后会指向旧盘）
+      try {
+        const settingsPath = path.join(target, 'settings.json');
+        if (fs.existsSync(settingsPath)) {
+          const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+          const cur = String(s.attachDir || '').trim();
+          const rel = cur ? path.relative(DATA_DIR, cur) : '';
+          if (cur && rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+            s.attachDir = path.join(target, rel);
+            fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf8');
+          }
+        }
+      } catch { /* 改不了 settings 不影响迁移本身 */ }
       fs.writeFileSync(LOCATION_FILE, JSON.stringify({ dir: target, from: DATA_DIR, at: new Date().toISOString() }, null, 2), 'utf8');
       appendAudit({ action: 'data-migrate', entry: target });
       return { success: true, data: { dir: target, copied } };

@@ -1,9 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Icons } from '../components/ui';
+import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/confirm';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { copyPlain } from '../utils/clipboard';
+import { callIpc } from '../utils/ipc';
+import { newId } from '../utils/id';
+import { formatRecent, localDay } from '../utils/time';
 import { generateData, deduplicate } from '../utils/tdg';
 import { exportData } from '../utils/tdg/export';
 import { GENERATORS, GROUPS } from '../utils/tdg/catalog';
@@ -14,6 +19,7 @@ import type {
   BankCardParams, MacAddressParams, ImagePlaceholderParams, LoremIpsumParams,
 } from '../utils/tdg/types';
 import type { PlateType } from '../utils/tdg/licensePlate';
+import type { TdgDataset } from '../types';
 
 /**
  * 测试数据生成器。
@@ -87,6 +93,29 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
   /** 手机号后 N 位（身份证的放在 idCard.lastDigits，两个类型共用一个结果列） */
   const [phoneLastDigits, setPhoneLastDigits] = useState(4);
 
+  /* ---- 1.25.0：SQL 导出的表名 / 列名（只对 SQL 格式生效） ---- */
+  const [sqlTable, setSqlTable] = useState('test_data');
+  const [sqlColumn, setSqlColumn] = useState('value');
+
+  /* ---- 1.25.0：数据集（存的是配置，不是生成结果） ---- */
+  const [datasets, setDatasets] = useState<TdgDataset[]>([]);
+  const [dsOpen, setDsOpen] = useState(false);
+  const [dsName, setDsName] = useState('');
+  const [dsBusy, setDsBusy] = useState(false);
+  const { ask, confirmNode } = useConfirm();
+
+  /** 读数据集：未解锁 / 读失败就当空列表，页面不因此报错 */
+  const loadDatasets = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.wsGet('tdgDatasets');
+      setDatasets(r && r.success && Array.isArray(r.data) ? (r.data as TdgDataset[]) : []);
+    } catch {
+      setDatasets([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadDatasets(); }, [loadDatasets]);
+
   const active = GENERATORS.find(g => g.id === type)!;
 
   /** Ctrl+K / Ctrl+空格 里选中某个数据类型 → 打开页面时直接预选它 */
@@ -150,6 +179,90 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
     }
   };
 
+  /* ---------------- 数据集（1.25.0） ----------------
+   * 存的是 GenerateConfig，不是生成结果：结果可能上万条，存进 vault 会让每次保存都变慢，
+   * 而且下次要的往往是「同样的参数再来一批」而不是「上次那批一模一样的数据」。
+   */
+
+  /** 把一份配置回填到所有参数控件上（载入数据集时用） */
+  const applyConfig = (cfg: GenerateConfig) => {
+    if (!cfg || !GENERATORS.some(g => g.id === cfg.id)) return false;
+    setType(cfg.id);
+    setCount(Math.max(1, Math.min(MAX_COUNT, Number(cfg.count) || 50)));
+    if (cfg.idCard) {
+      setIdCard({
+        gender: cfg.idCard.gender || 'random',
+        idType: cfg.idCard.idType || 'mainland',
+        // 0 是合法值（表示不要「后 N 位」这一列），所以用 ?? 而不是 ||
+        lastDigits: cfg.idCardLastDigits ?? 6,
+        birthYearMin: cfg.idCard.birthYearMin ?? 1980,
+        birthYearMax: cfg.idCard.birthYearMax ?? 2005,
+      });
+    }
+    if (cfg.nameWithPinyin !== undefined || cfg.nameEthnicity) {
+      setNameOpt(prev => ({
+        pinyin: cfg.nameWithPinyin ?? prev.pinyin,
+        ethnicity: cfg.nameEthnicity || prev.ethnicity,
+      }));
+    }
+    if (cfg.email) {
+      setEmail({
+        domains: (cfg.email.domains || []).join(', '),
+        special: cfg.email.allowSpecialChars !== false,
+      });
+    }
+    if (cfg.longText) setLongText(cfg.longText);
+    if (cfg.date) setDate(cfg.date);
+    if (cfg.ip) setIp(cfg.ip);
+    if (cfg.boundary) setBoundary(cfg.boundary);
+    if (cfg.bankCard) setBank(cfg.bankCard);
+    if (cfg.licensePlate) setPlate(cfg.licensePlate);
+    if (cfg.macAddress) setMac(cfg.macAddress);
+    if (cfg.imagePlaceholder) setImg(cfg.imagePlaceholder);
+    if (cfg.loremIpsum) setLorem(cfg.loremIpsum);
+    if (cfg.regexPattern !== undefined) {
+      setRegex({ pattern: cfg.regexPattern, flags: cfg.regexFlags || '' });
+    }
+    if (cfg.lastDigits !== undefined) setPhoneLastDigits(cfg.lastDigits);
+    return true;
+  };
+
+  /** 存为数据集：同名覆盖（用户改完参数再存一次，不该出现两条同名数据集） */
+  const saveDataset = async () => {
+    const name = dsName.trim();
+    if (!name) { addToast('给数据集起个名字', 'error'); return; }
+    setDsBusy(true);
+    const now = new Date().toISOString();
+    const cfg = buildConfig();
+    const exist = datasets.find(d => d.name === name);
+    const next: TdgDataset[] = exist
+      ? datasets.map(d => (d.id === exist.id ? { ...d, config: cfg, updatedAt: now } : d))
+      : [...datasets, { id: newId('ds-'), name, config: cfg, createdAt: now, updatedAt: now }];
+    const r = await callIpc(() => window.electronAPI.wsSet('tdgDatasets', next));
+    setDsBusy(false);
+    if (!r.ok) { addToast(`保存数据集失败：${r.error}`, 'error'); return; }
+    setDatasets(next);
+    setDsOpen(false);
+    setDsName('');
+    addToast(exist ? `已更新数据集「${name}」` : `已存为数据集「${name}」`, 'success');
+  };
+
+  /** 载入数据集：回填所有参数控件 */
+  const loadDataset = (d: TdgDataset) => {
+    const ok = applyConfig(d.config as GenerateConfig);
+    if (!ok) { addToast('这份数据集里的类型已不存在，无法载入', 'error'); return; }
+    setDsOpen(false);
+    addToast(`已载入数据集「${d.name}」`, 'success');
+  };
+
+  const removeDataset = async (d: TdgDataset) => {
+    const next = datasets.filter(x => x.id !== d.id);
+    const r = await callIpc(() => window.electronAPI.wsSet('tdgDatasets', next));
+    if (!r.ok) { addToast(`删除数据集失败：${r.error}`, 'error'); return; }
+    setDatasets(next);
+    addToast(`已删除数据集「${d.name}」`, 'success');
+  };
+
   const copyAll = async () => {
     if (items.length === 0) return;
     try {
@@ -186,9 +299,10 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
   const doExport = async () => {
     if (items.length === 0) return;
     try {
-      const { content, extension } = await exportData(items, format);
+      // 表名 / 列名只对 SQL 生效，其它格式传了也会被忽略
+      const { content, extension } = await exportData(items, format, { table: sqlTable, column: sqlColumn });
       const pick = await window.electronAPI.dialogSaveFile({
-        defaultName: `测试数据-${new Date().toISOString().slice(0, 10)}.${extension}`,
+        defaultName: `测试数据-${localDay()}.${extension}`,
         filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
       });
       if (pick.canceled || !pick.filePath) return;
@@ -226,6 +340,17 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
           icon={<Icons.db size={16} />}
           title="测试数据"
           desc="批量生成测试用数据：身份证、手机号、银行卡、车牌、边界值、注入载荷等，可直接复制或导出"
+          tools={
+            <>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setDsName(''); setDsOpen(true); }}
+                title="把当前类型与全部参数存成一份数据集，下次一键载入"
+              >
+                <Icons.db size={13} /> 数据集{datasets.length ? ` (${datasets.length})` : ''}
+              </button>
+            </>
+          }
         />
 
         <div className="split tdg-split">
@@ -565,6 +690,9 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                     <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} aria-label="去重" />
                     <span>去重</span>
                   </label>
+                  <button className="btn btn-secondary" onClick={() => { setDsName(''); setDsOpen(true); }} title="把当前参数存成数据集">
+                    存为数据集
+                  </button>
                   <button className="btn btn-primary" onClick={run} disabled={busy}>
                     {busy ? '生成中…' : '生成'}
                   </button>
@@ -587,6 +715,29 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                   <select value={format} onChange={e => setFormat(e.target.value as ExportFormat)} aria-label="导出格式">
                     {FORMATS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </select>
+                  {/* 表名 / 列名只对 SQL 有意义：别的格式显示出来只会让人以为填了有用 */}
+                  {format === 'sql' && (
+                    <>
+                      <input
+                        className="tdg-sql-ident"
+                        value={sqlTable}
+                        onChange={e => setSqlTable(e.target.value)}
+                        placeholder="表名"
+                        title="SQL 导出的表名（只允许字母、数字、下划线）"
+                        aria-label="SQL 表名"
+                        spellCheck={false}
+                      />
+                      <input
+                        className="tdg-sql-ident"
+                        value={sqlColumn}
+                        onChange={e => setSqlColumn(e.target.value)}
+                        placeholder="值列名"
+                        title="SQL 导出的值列列名（只允许字母、数字、下划线）"
+                        aria-label="SQL 值列名"
+                        spellCheck={false}
+                      />
+                    </>
+                  )}
                   <button className="btn btn-secondary btn-sm" onClick={() => void doExport()}>导出</button>
                 </div>
               ) : null}
@@ -628,6 +779,76 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
           </div>
         </div>
       </Page>
+
+      {/* 数据集：存 / 载入 / 删除。用 Modal（内置 Esc + 焦点陷阱 + 叠放栈） */}
+      <Modal
+        open={dsOpen}
+        onClose={() => setDsOpen(false)}
+        title="测试数据集"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setDsOpen(false)}>关闭</button>
+            <button className="btn btn-primary" onClick={() => void saveDataset()} disabled={dsBusy || !dsName.trim()}>
+              {dsBusy ? '保存中…' : '存为数据集'}
+            </button>
+          </>
+        }
+      >
+        <div className="form-group">
+          <label>数据集名称 *</label>
+          <input
+            value={dsName}
+            onChange={e => setDsName(e.target.value)}
+            placeholder={`例如：${active.label} · ${count} 条`}
+            data-autofocus="1"
+            aria-label="数据集名称"
+          />
+          <div className="input-hint">
+            存的是「类型 + 数量 + 各类型参数」，不含生成结果 —— 载入后点「生成」即可再来一批。
+            同名会覆盖。
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>已保存的数据集（{datasets.length}）</label>
+          {datasets.length === 0 ? (
+            <div className="input-hint">还没有数据集。调好参数后在上面起个名字，点「存为数据集」。</div>
+          ) : (
+            <div className="tdg-ds-list">
+              {[...datasets]
+                .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+                .map(d => {
+                  const cfg = d.config as GenerateConfig | undefined;
+                  const meta = GENERATORS.find(g => g.id === cfg?.id);
+                  return (
+                    <div className="tdg-ds-row" key={d.id}>
+                      <div className="tdg-ds-main">
+                        <div className="tdg-ds-name" title={d.name}>{d.name}</div>
+                        <div className="tdg-ds-meta">
+                          {meta ? meta.label : '（未知类型）'}
+                          {cfg?.count ? ` · ${cfg.count} 条` : ''}
+                          {d.updatedAt ? ` · ${formatRecent(d.updatedAt)}` : ''}
+                        </div>
+                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={() => loadDataset(d)}>载入</button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => ask({
+                          title: '删除数据集',
+                          message: `确定删除数据集「${d.name}」？只删这份配置，不影响已生成的数据。`,
+                          confirmText: '删除',
+                          onOk: () => removeDataset(d),
+                        })}
+                      >删除</button>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {confirmNode}
     </div>
   );
 }

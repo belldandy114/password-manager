@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useEnvProbeStore } from '../store/envProbeStore';
+import { useStore } from '../store/useStore';
 import type { EnvEntry, EnvProbeResult } from '../types';
 
 /**
@@ -15,7 +16,21 @@ import type { EnvEntry, EnvProbeResult } from '../types';
 const PREV_KEY = 'pm.env.prevProbe';
 /** 变慢的判定门槛：至少 2 秒，且比上次慢一倍 */
 const SLOW_FLOOR_MS = 2000;
+/**
+ * 巡检超时的兜底值（毫秒）。
+ *
+ * 1.25.0 起超时由用户在环境矩阵页选、存进 `settings.envProbeTimeoutMs`：
+ * 以前这里写死 8000，页面上那个下拉只影响手动巡检，定时巡检永远 8 秒 ——
+ * 慢环境（内网跳板机、冷启动的测试服）每次都被判成不可达。
+ * 这个常量只在设置里没有值时兜底。
+ */
 const DEFAULT_TIMEOUT_MS = 8000;
+
+/** 读当前生效的巡检超时：设置里有合法值就用它，否则 8000 */
+export function probeTimeoutMs(): number {
+  const v = Number(useStore.getState().settings?.envProbeTimeoutMs);
+  return Number.isFinite(v) && v >= 1000 && v <= 60000 ? v : DEFAULT_TIMEOUT_MS;
+}
 
 export interface EnvFlip {
   id: string;
@@ -107,7 +122,7 @@ export async function runEnvProbeOnce(notifyOnFlip: boolean): Promise<ProbeRunRe
     });
 
     const prev = readPrev();
-    const runOk = await useEnvProbeStore.getState().run(targets, DEFAULT_TIMEOUT_MS, `auto:${Date.now()}`);
+    const runOk = await useEnvProbeStore.getState().run(targets, probeTimeoutMs(), `auto:${Date.now()}`);
     if (!runOk) {
       return { ok: false, total: targets.length, flips: [], error: useEnvProbeStore.getState().lastError || '巡检失败' };
     }

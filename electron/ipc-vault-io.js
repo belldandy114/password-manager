@@ -11,13 +11,33 @@ const path = require('path');
 const crypto = require('crypto');
 const { ipcMain } = require('electron');
 const { decodeTextBuffer } = require('./text-encoding');
+// 字段清单与序列化规则放在 csv.js（纯函数、无 Electron 依赖）：导出端与导入端共用同一份，
+// 新增字段时不可能只改一边 —— 以前 CSV_FIELDS 在导出端、别名表在导入端，两边各写各的，
+// 结果 totp/favorite 导入认得、导出不写，导出再导入直接丢数据。
+const {
+  CSV_FIELDS, CSV_HEADERS, serializeField, stripSecrets,
+} = require('./csv');
 
-/** CSV 表头（导出用，顺序即列顺序） */
-const CSV_FIELDS = ['name', 'envType', 'url', 'username', 'password', 'notes', 'tags', 'createdAt', 'updatedAt'];
-const CSV_HEADERS = {
-  name: '名称', envType: '环境类型', url: '网址', username: '账号',
-  password: '密码', notes: '备注', tags: '标签', createdAt: '创建时间', updatedAt: '修改时间',
-};
+/**
+ * Markdown 是给人看的清单，结构化字段压成一行短文本，不塞 JSON。
+ * （MD 不在导入格式里，不需要可逆；塞 JSON 会让表格完全没法读。）
+ */
+function mdField(key, v) {
+  if (key === 'customFields') {
+    return (Array.isArray(v) ? v : [])
+      .map(f => `${f.name || ''}=${f.value || ''}`).join('; ');
+  }
+  if (key === 'accounts') {
+    return (Array.isArray(v) ? v : [])
+      .map(a => `${a.role || ''}/${a.username || ''}`).join('; ');
+  }
+  if (key === 'attachments') {
+    return (Array.isArray(v) ? v : [])
+      .map(a => a.name || a.id || '').filter(Boolean).join('; ');
+  }
+  if (key === 'favorite') return v ? '★' : '';
+  return serializeField(key, v);
+}
 
 /** Markdown 表格里必须转义的字符：竖线会截断单元格，换行会截断行 */
 function mdCell(v) {
@@ -35,18 +55,27 @@ function buildPlainExport(entries, format, XLSX) {
 
   if (format === 'md') {
     // 给人看的清单：表格列与 CSV 一致，但去掉创建/修改时间（Markdown 里太吵）
-    const cols = ['name', 'envType', 'url', 'username', 'password', 'notes', 'tags'];
+    const cols = [
+      'name', 'envType', 'url', 'username', 'password', 'notes', 'tags',
+      'totpSecret', 'favorite', 'customFields', 'accounts', 'attachments',
+    ];
     const head = `| ${cols.map(k => CSV_HEADERS[k] || k).join(' | ')} |`;
     const sep = `| ${cols.map(() => '---').join(' | ')} |`;
-    const rows = entries.map(e => `| ${cols.map(k => mdCell(e[k])).join(' | ')} |`);
+    const rows = entries.map(e => `| ${cols.map(k => mdCell(mdField(k, e[k]))).join(' | ')} |`);
     return [`# 密码库导出（${entries.length} 条）`, '', head, sep, ...rows, ''].join('\n');
   }
 
   if (format === 'xlsx') {
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(entries);
-    const colWidths = Object.keys(entries[0] || {}).map(k => ({ wch: Math.max(k.length * 2, 15) }));
-    ws['!cols'] = colWidths;
+    // 不能直接 json_to_sheet(entries)：customFields/accounts/attachments 是对象数组，
+    // SheetJS 会把它们写成 "[object Object]" 之类的垃圾。先按 CSV 同一套规则拍平。
+    const flat = entries.map(e => {
+      const row = {};
+      CSV_FIELDS.forEach(k => { row[CSV_HEADERS[k] || k] = serializeField(k, e[k]); });
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(flat, { header: CSV_FIELDS.map(k => CSV_HEADERS[k] || k) });
+    ws['!cols'] = CSV_FIELDS.map(k => ({ wch: Math.max((CSV_HEADERS[k] || k).length * 2, 15) }));
     XLSX.utils.book_append_sheet(wb, ws, '密码网址');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     return buf.toString('base64');
@@ -55,9 +84,8 @@ function buildPlainExport(entries, format, XLSX) {
   let output = CSV_FIELDS.map(k => CSV_HEADERS[k] || k).join(',') + '\n';
   entries.forEach(e => {
     output += CSV_FIELDS.map(k => {
-      const v = e[k];
-      if (Array.isArray(v)) return `"${v.join(';')}"`;
-      return `"${(v || '').toString().replace(/"/g, '""')}"`;
+      const s = serializeField(k, e[k]);
+      return `"${s.replace(/"/g, '""')}"`;
     }).join(',') + '\n';
   });
   return output;
@@ -271,7 +299,7 @@ function registerVaultIoIpc(deps) {
     const vault = loadVault(pw);
     if (!vault) return { success: false, error: '数据损坏' };
     let entries = filterEntries(vault.entries, filter);
-    if (!includePasswords) entries = entries.map(e => ({ ...e, password: undefined }));
+    if (!includePasswords) entries = entries.map(stripSecrets);
     return { success: true, data: buildPlainExport(entries, format, XLSX), count: entries.length };
   });
 
@@ -293,9 +321,11 @@ function registerVaultIoIpc(deps) {
     const vault = loadVault(pw);
     if (!vault) return { success: false, error: '数据损坏' };
     let entries = vault.entries.filter(e => ids.includes(e.id));
-    if (!includePasswords) entries = entries.map(e => ({ ...e, password: undefined }));
+    if (!includePasswords) entries = entries.map(stripSecrets);
     return { success: true, data: buildPlainExport(entries, format, XLSX), count: entries.length };
   });
 }
 
-module.exports = { registerVaultIoIpc, buildPlainExport, filterEntries, dupKey };
+module.exports = {
+  registerVaultIoIpc, buildPlainExport, filterEntries, dupKey,
+};

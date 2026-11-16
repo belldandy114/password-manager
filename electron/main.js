@@ -179,13 +179,40 @@ function deriveKey(password, salt) {
 
 let keyCache = null; // { password, saltHex, salt, key }
 
+/**
+ * 多盐键备忘（password + salt → key），只给 getKey 做查表用。
+ *
+ * 单槽 keyCache 够用是因为「一次会话只有一个 salt」：vault/trash/附件落盘时都复用
+ * 同一个 salt。但**改主密码要重加密整个附件目录**，那里会同时出现多个 salt
+ * （历史版本留下的附件、跨会话写入的附件），单槽缓存会让每个不同 salt 都重跑一次
+ * 600k 次 PBKDF2（~400ms）—— 100 个附件就是 40 秒的假死。
+ * 上限 64 条（每条 32B，共 2KB），超出按插入顺序淘汰最旧的。
+ */
+const KEY_MEMO_MAX = 64;
+const keyMemo = new Map();
+
+function memoKey(password, saltHex) {
+  return `${password}\u0000${saltHex}`;
+}
+
 function getKey(password, salt) {
   const saltHex = salt.toString('hex');
   if (keyCache && keyCache.password === password && keyCache.saltHex === saltHex) {
     return keyCache.key;
   }
+  const mk = memoKey(password, saltHex);
+  const memo = keyMemo.get(mk);
+  if (memo) {
+    keyCache = { password, saltHex, salt: Buffer.from(salt), key: memo };
+    return memo;
+  }
   const key = deriveKey(password, salt);
   keyCache = { password, saltHex, salt: Buffer.from(salt), key };
+  if (keyMemo.size >= KEY_MEMO_MAX) {
+    const oldest = keyMemo.keys().next();
+    if (!oldest.done) keyMemo.delete(oldest.value);
+  }
+  keyMemo.set(mk, key);
   return key;
 }
 
@@ -196,6 +223,7 @@ let trashCache = { password: null, data: null };
 // Drops every in-memory secret: derived key plus decrypted vault/trash.
 function clearCaches() {
   keyCache = null;
+  keyMemo.clear();
   vaultCache = { password: null, data: null };
   trashCache = { password: null, data: null };
   clearApiJar();
@@ -255,6 +283,23 @@ function writeFileAtomic(file, content) {
     try { fs.copyFileSync(file, `${file}.bak`); } catch { /* 备份失败不影响写入 */ }
   }
   fs.renameSync(tmp, file);
+}
+
+/**
+ * 写一个文件并 fsync（**不 rename、不留 .bak**）。
+ *
+ * 给「先写 .new、全部成功后再统一 rename」的两阶段场景用：`.new` 本身就是临时文件，
+ * 再套一层 writeFileAtomic 只会多一次 rename 和一份 .bak（附件动辄几十 MB，
+ * 一份 .bak 就是让附件目录体积翻倍，而 readAttachment 并没有 .bak 回退，留着纯属浪费）。
+ */
+function writeFileSynced(file, content) {
+  const fd = fs.openSync(file, 'w');
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+    try { fs.fsyncSync(fd); } catch { /* 部分文件系统/网络盘不支持 fsync */ }
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** 读取并解密；解不开时尝试 <file>.bak，成功则自动把 .bak 提升回正式文件 */
@@ -329,6 +374,115 @@ function loadVault(password) {
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const BACKUP_KEEP_DEFAULT = 7;
 
+/** 备份里的附件目录：和 vault-YYYY-MM-DD.enc 同一天，单独一个文件夹 */
+function attachmentsBackupDir(day) {
+  return path.join(BACKUP_DIR, `attachments-${day}`);
+}
+
+/**
+ * 复制 .enc 文件：优先硬链接（同盘零拷贝），跨盘/权限不允许时退回真复制。
+ * 附件一天一份全量备份，几百张图时硬链接能省下大量空间。
+ */
+function copyOrLink(from, to) {
+  try {
+    fs.linkSync(from, to);
+    return 'link';
+  } catch {
+    fs.copyFileSync(from, to);
+    return 'copy';
+  }
+}
+
+/** 把 srcDir 里的 .enc 补进 dstDir（已存在的不覆盖）；返回补了多少 */
+function copyEncFiles(srcDir, dstDir) {
+  let copied = 0;
+  let skipped = 0;
+  if (!srcDir || !fs.existsSync(srcDir)) return { copied, skipped };
+  fs.mkdirSync(dstDir, { recursive: true });
+  for (const name of fs.readdirSync(srcDir)) {
+    if (!name.endsWith('.enc')) continue;
+    const from = path.join(srcDir, name);
+    const to = path.join(dstDir, name);
+    try {
+      if (fs.existsSync(to)) { skipped += 1; continue; }
+      copyOrLink(from, to);
+      copied += 1;
+    } catch { /* 单个附件失败不影响其它 */ }
+  }
+  return { copied, skipped };
+}
+
+/**
+ * 附件备份是否落后于源目录：只在新增过附件时才需要再补一次。
+ * 1.25.1：笔记附件目录（`<笔记目录>/attachments`）也算源目录之一，任一落后就要补。
+ */
+function attachmentsBackupStale(day) {
+  const dst = attachmentsBackupDir(day);
+  try {
+    if (!fs.existsSync(dst)) return true;
+    const dstMs = fs.statSync(dst).mtimeMs;
+    for (const src of attachmentDirs()) {
+      if (!fs.existsSync(src)) continue;
+      // 附件文件不可变（id 唯一），目录 mtime 只会在新增文件时更新，一次 stat 就够
+      if (fs.statSync(src).mtimeMs > dstMs) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 把当前附件目录补进今天的备份。
+ * 1.25.1：全局目录 + 笔记目录都补（附件 id 是 uuid，两个目录不会撞名）。
+ */
+function backupAttachments(day) {
+  try {
+    const dst = attachmentsBackupDir(day);
+    let copied = 0;
+    let skipped = 0;
+    let found = false;
+    for (const src of attachmentDirs()) {
+      if (!fs.existsSync(src)) continue;
+      found = true;
+      const one = copyEncFiles(src, dst);
+      copied += one.copied;
+      skipped += one.skipped;
+    }
+    if (!found) return { copied: 0, skipped: 0, dir: dst };
+    return { copied, skipped, dir: dst };
+  } catch (e) {
+    return { copied: 0, skipped: 0, error: e.message };
+  }
+}
+
+/**
+ * 恢复备份时把附件合并回当前附件目录（绝不覆盖现有文件）。
+ *
+ * 备份里两个目录的 .enc 是混在一起的（id 唯一，不会冲突），统一补回**全局**目录：
+ * 读取顺序是「笔记目录 → 全局」，补到全局仍然能被找到，不会出现「恢复了却显示图片失效」。
+ */
+function restoreAttachments(day) {
+  try {
+    const src = attachmentsBackupDir(day);
+    if (!fs.existsSync(src)) return { copied: 0, skipped: 0, found: false };
+    return { ...copyEncFiles(src, currentAttachDir()), found: true };
+  } catch (e) {
+    return { copied: 0, skipped: 0, found: true, error: e.message };
+  }
+}
+
+function removeAttachmentBackup(day) {
+  try { fs.rmSync(attachmentsBackupDir(day), { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+/** 从 vault-YYYY-MM-DD.enc 取出日期部分 */
+function dayOfBackup(name) {
+  const m = /^vault-(\d{4}-\d{2}-\d{2})\.enc$/.exec(String(name || ''));
+  return m ? m[1] : '';
+}
+
+
 /** 保留份数来自设置（1~60），设置读不到就用默认 7 */
 function backupKeepCount() {
   try {
@@ -361,13 +515,19 @@ function mirrorBackupFile(srcFile, day) {
     fs.mkdirSync(dir, { recursive: true });
     const target = path.join(dir, `vault-${day}.enc`);
     fs.copyFileSync(srcFile, target);
+    // 附件跟着走：异地备份是为了「换机器能恢复」，只搬 vault 会让所有图片引用失效
+    // 1.25.1：笔记附件目录（<笔记目录>/attachments）也要搬，否则换机器后目录笔记的截图全丢
+    const mirrorAttachDir = path.join(dir, `attachments-${day}`);
+    for (const src of attachmentDirs()) copyEncFiles(src, mirrorAttachDir);
     // 与本地用同一套保留份数
     const keep = backupKeepCount();
     const files = fs.readdirSync(dir)
       .filter(f => /^vault-\d{4}-\d{2}-\d{2}\.enc$/.test(f))
       .sort();
     while (files.length > keep) {
-      try { fs.unlinkSync(path.join(dir, files.shift())); } catch { /* ignore */ }
+      const oldest = files.shift();
+      try { fs.unlinkSync(path.join(dir, oldest)); } catch { /* ignore */ }
+      try { fs.rmSync(path.join(dir, `attachments-${dayOfBackup(oldest)}`), { recursive: true, force: true }); } catch { /* ignore */ }
     }
     return { ok: true, dir, path: target };
   } catch (e) {
@@ -381,13 +541,16 @@ function backupVaultOncePerDay() {
     const day = new Date().toISOString().slice(0, 10);
     const target = path.join(BACKUP_DIR, `vault-${day}.enc`);
     if (fs.existsSync(target)) {
-      // 本地今天已有：只补齐异地（用户可能是今天才配的第二目录）
+      // 本地今天已有：只补齐异地（用户可能是今天才配的第二目录）与新增的附件
       const dir = backupMirrorDir();
       if (dir && !fs.existsSync(path.join(dir, `vault-${day}.enc`))) mirrorBackupFile(target, day);
+      // 这里在每次 saveVault 的热路径上：附件没变就别遍历目录（几百个附件会明显拖慢保存）
+      if (attachmentsBackupStale(day)) backupAttachments(day);
       return false; // already backed up today
     }
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     fs.copyFileSync(DATA_FILE, target);
+    backupAttachments(day);
     mirrorBackupFile(target, day);
 
     const keep = backupKeepCount();
@@ -397,6 +560,7 @@ function backupVaultOncePerDay() {
     while (files.length > keep) {
       const oldest = files.shift();
       try { fs.unlinkSync(path.join(BACKUP_DIR, oldest)); } catch { /* ignore */ }
+      removeAttachmentBackup(dayOfBackup(oldest));
     }
     return true;
   } catch {
@@ -516,6 +680,110 @@ function loadSettings() {
   return null;
 }
 
+/**
+ * 读设置并**区分「没有」和「坏了」**。
+ *
+ * `loadSettings()` 把「文件不存在」「读不出来」「JSON 坏了」统统返回 null，
+ * 启动清理逻辑据此判断就会把「设置文件损坏」误当成「从未初始化」——
+ * 2026-11 实测：settings.json 被写坏一次，下次启动直接把 vault.enc / trash.enc
+ * 一起 unlink，整个密码库凭空消失，且没有任何提示。
+ *
+ * @returns {{ state: 'ok'|'missing'|'corrupt'|'unreadable', settings: any, error: string }}
+ */
+function loadSettingsState() {
+  if (!fs.existsSync(SETTINGS_FILE)) return { state: 'missing', settings: null, error: '' };
+  let raw = '';
+  try {
+    raw = fs.readFileSync(SETTINGS_FILE, 'utf8');
+  } catch (e) {
+    return { state: 'unreadable', settings: null, error: e.message };
+  }
+  if (!raw.trim()) return { state: 'corrupt', settings: null, error: '文件为空' };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { state: 'corrupt', settings: null, error: '内容不是 JSON 对象' };
+    }
+    return { state: 'ok', settings: parsed, error: '' };
+  } catch (e) {
+    return { state: 'corrupt', settings: null, error: e.message };
+  }
+}
+
+/**
+ * 启动期清理：**只在确实从未初始化时**动文件，绝不因为「设置读不出来」就删密码库。
+ *
+ * 判定口径（按危险程度从高到低）：
+ *   1. 三个文件都不存在 → 全新安装，无事可做；
+ *   2. settings 存在但解析失败 → 改名成 `settings.json.corrupt-<时间戳>` 留证 + 审计，
+ *      **vault.enc / trash.enc 原样保留**（用户还能用旧密码打开，或从备份恢复）；
+ *   3. settings 正常但没有 masterPasswordHash 而 vault 存在 → 保留库，只记日志
+ *      （设置文件被外部改过 / 旧格式，库本身是真的）；
+ *   4. settings 缺失但 vault 存在 → 保留库，只记日志（用户手动删了 settings，或写盘失败）；
+ *   5. 只有一份没初始化的 settings、没有库 → 删掉这份设置（它没有任何价值）。
+ *
+ * 必须放模块作用域：`app.whenReady()` 里要调用它，写在 setupIpcHandlers 内部会 ReferenceError。
+ *
+ * @returns {{ action: string, file?: string, reason?: string, error?: string }}
+ */
+function cleanupStaleVaultOnBoot() {
+  const hasVault = fs.existsSync(DATA_FILE);
+  const hasTrash = fs.existsSync(BIN_FILE);
+  const hasSettings = fs.existsSync(SETTINGS_FILE);
+
+  // 1) 全新安装：没有任何文件需要处理
+  if (!hasVault && !hasTrash && !hasSettings) return { action: 'none' };
+
+  const st = loadSettingsState();
+
+  // 2) 设置文件损坏：隔离留证，密码库一个字节都不动
+  if (st.state === 'corrupt' || st.state === 'unreadable') {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const quarantine = `${SETTINGS_FILE}.corrupt-${ts}`;
+    let moved = false;
+    try {
+      fs.renameSync(SETTINGS_FILE, quarantine);
+      moved = true;
+    } catch (e) {
+      console.warn(`[boot] settings.json 损坏且无法改名：${e.message}`);
+    }
+    appendAudit({
+      action: 'settings-corrupt',
+      entry: moved ? path.basename(quarantine) : '',
+      detail: st.error,
+    });
+    console.warn(
+      `[boot] settings.json 解析失败（${st.error}），已${moved ? `改名保留为 ${path.basename(quarantine)}` : '无法改名'}；` +
+      `密码库原样保留（vault.enc ${hasVault ? '存在' : '不存在'}）`
+    );
+    return { action: 'quarantine', file: moved ? quarantine : '', error: st.error };
+  }
+
+  // 3) 设置正常但没有主密码哈希
+  if (st.state === 'ok' && !st.settings.masterPasswordHash) {
+    if (hasVault) {
+      appendAudit({ action: 'settings-no-master-hash', detail: 'vault 保留' });
+      console.warn('[boot] settings.json 里没有 masterPasswordHash，但 vault.enc 存在：保留密码库，不删除');
+      return { action: 'keep', reason: 'no-master-hash' };
+    }
+    // 没有库、只有一份没初始化的设置 → 这份设置没有任何价值，清掉让用户重新初始化
+    try {
+      fs.unlinkSync(SETTINGS_FILE);
+      console.log('[boot] 清理未初始化的 settings.json（无密码库）');
+    } catch { /* 删不掉也不影响启动 */ }
+    return { action: 'clean-settings' };
+  }
+
+  // 4) 设置缺失但库存在：保留库
+  if (st.state === 'missing' && (hasVault || hasTrash)) {
+    appendAudit({ action: 'settings-missing', detail: 'vault 保留' });
+    console.warn('[boot] settings.json 不存在但 vault.enc 存在：保留密码库，不删除');
+    return { action: 'keep', reason: 'settings-missing' };
+  }
+
+  return { action: 'none' };
+}
+
 function saveSettings(settings) {
   // 与密码库一样走原子写：直接覆盖时崩溃/断电会留下半截 JSON，用户设置就全丢了。
   writeFileAtomic(SETTINGS_FILE, JSON.stringify(settings, null, 2));
@@ -546,7 +814,16 @@ const DEFAULT_SETTINGS = {
   // 环境巡检定时执行（分钟，0 = 关）；只在状态翻转时弹通知
   envProbeInterval: 0,
   envProbeNotifyOnFlip: true,
+  /** 环境巡检超时（毫秒）；1.25.0 起落盘，定时巡检也读它 */
+  envProbeTimeoutMs: 8000,
   backupKeep: 7,
+  // ---- 自定义存储位置（空 = 用数据目录下的默认路径）----
+  /** 附件（截图 / 证书 / 密钥）目录：所有图片与文件附件都存这里，含随手记粘贴的图 */
+  attachDir: '',
+  /** 目录模式测试笔记的存放目录（.md 一篇一个文件） */
+  notesDir: '',
+  /** 周报目录 */
+  weeklyDir: '',
   // 应用内更新：自定义国内直链前缀（空 = 只走 GitHub）；周期检查小时数（0 = 仅启动查一次）
   updateMirrorUrl: '',
   updateCheckIntervalHours: 0,
@@ -1394,10 +1671,110 @@ const {
 // ----------------------------------------------------------------
 // Attachments (encrypted at rest with the session key)
 // ----------------------------------------------------------------
-const ATTACH_DIR = path.join(DATA_DIR, 'attachments');
+/** 附件目录默认位置（数据目录下） */
+const DEFAULT_ATTACH_DIR = path.join(DATA_DIR, 'attachments');
 
+/**
+ * 自定义附件目录（settings.attachDir）。
+ *
+ * 1.24.7：原来这里是模块级常量，改目录只能靠「整库迁移 + 重启」；现在抽成
+ * 运行时可变的函数，设置页改完立刻生效，随手记/笔记粘贴的图片也跟着走。
+ * 目录不可用（移动硬盘没插）时**不回退默认** —— 回退会让用户以为附件全丢了，
+ * 保持原路径至少能在界面上看到「目录不存在」。
+ */
+let attachDirOverride = '';
+try {
+  const s = loadSettings() || {};
+  const custom = String(s.attachDir || '').trim();
+  if (custom && path.isAbsolute(custom)) attachDirOverride = custom;
+} catch { /* 设置读不到就用默认 */ }
+
+function currentAttachDir() {
+  return attachDirOverride || DEFAULT_ATTACH_DIR;
+}
+
+function setAttachDirOverride(dir) {
+  attachDirOverride = String(dir || '').trim();
+}
+
+/**
+ * 笔记附件目录：`<笔记目录>/attachments`（1.25.1）。
+ *
+ * 用户反馈「切到目录模式后附件和 .md 混在一起」——他期望的是**笔记的截图跟着笔记目录走**，
+ * 而不是把全局附件目录也搬过去（那会让网址条目的附件一起消失）。
+ * 所以这里只派生一个**额外的**目录，全局 `currentAttachDir()` 保持原样：
+ *   - 写入：`attachment:save-image` 带 `scope: 'note'` 时写这里；
+ *   - 读取：先找这里，找不到再回退全局（老附件还在全局，不能破坏）。
+ *
+ * 目录不存在时返回空串（未启用目录模式 / 设置里没选目录），调用方回退全局。
+ * 路径来自设置（用户选的绝对路径），仍然做一次「必须是绝对路径」的校验。
+ *
+ * 性能：这个函数在「按 id 找附件」的热路径上（自检/导出会按附件数量调用几百次），
+ * 每次都 `loadSettings()` 等于几百次读盘 + JSON.parse。用 settings.json 的
+ * mtime+size 做缓存键：设置一改（settings:save 走 writeFileAtomic）键就变，自动失效。
+ */
+let notesAttachCache = { key: '\u0000', dir: '' };
+function notesAttachDir() {
+  let key = 'missing';
+  try {
+    const st = fs.statSync(SETTINGS_FILE);
+    key = `${st.mtimeMs}:${st.size}`;
+  } catch { /* 设置文件不存在：按「未启用目录模式」处理 */ }
+  if (notesAttachCache.key === key) return notesAttachCache.dir;
+  let dir = '';
+  try {
+    const s = loadSettings() || {};
+    const nd = String(s.notesDir || '').trim();
+    if (nd && path.isAbsolute(nd)) dir = path.join(nd, 'attachments');
+  } catch { /* 设置读不到就当没启用 */ }
+  notesAttachCache = { key, dir };
+  return dir;
+}
+
+/** 附件查找顺序：笔记目录 → 全局目录（去重，笔记目录未启用时只有全局） */
+function attachmentDirs() {
+  const out = [];
+  const seen = new Set();
+  for (const dir of [notesAttachDir(), currentAttachDir()]) {
+    if (!dir) continue;
+    let key = dir;
+    try { key = path.resolve(dir).toLowerCase(); } catch { /* 用原串去重 */ }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(dir);
+  }
+  return out;
+}
+
+/**
+ * 按 id 找到**实际存在**的 .enc 文件：先笔记目录，再全局目录。
+ * 找不到返回空串（调用方自己决定是「不存在」还是「按写入路径处理」）。
+ */
+function resolveAttachmentFile(id) {
+  const safe = String(id || '').replace(/[^a-zA-Z0-9-]/g, '');
+  if (!safe) return '';
+  for (const dir of attachmentDirs()) {
+    const file = path.join(dir, `${safe}.enc`);
+    try {
+      if (fs.existsSync(file)) return file;
+    } catch { /* 目录不可用（移动硬盘没插）就试下一个 */ }
+  }
+  return '';
+}
+
+/**
+ * 附件的「规范路径」。
+ *
+ * 语义是「这个 id 的附件在哪」：已存在就返回它实际所在的目录（笔记目录或全局），
+ * 不存在就返回全局目录下的写入路径。这样：
+ *   - `attachment:pick` 写入（新 uuid，必然不存在）→ 全局目录，行为不变；
+ *   - `attachment:delete` / `attachment:reveal` / 自检的存在性判断 → 自动命中笔记目录；
+ *   - 老的全局附件 → 仍然命中全局目录，一个字节都不动。
+ */
 function attachmentFile(id) {
-  return path.join(ATTACH_DIR, `${String(id).replace(/[^a-zA-Z0-9-]/g, '')}.enc`);
+  const found = resolveAttachmentFile(id);
+  if (found) return found;
+  return path.join(currentAttachDir(), `${String(id || '').replace(/[^a-zA-Z0-9-]/g, '')}.enc`);
 }
 
 function readAttachment(id, password) {
@@ -1406,6 +1783,131 @@ function readAttachment(id, password) {
   const raw = fs.readFileSync(file, 'utf8').trim();
   if (!raw) return null;
   return decrypt(raw, password);
+}
+
+/**
+ * 改主密码后把附件目录里的 `.enc` 全部用新密码重新加密。
+ *
+ * 为什么必须有这一步：附件是用**会话主密码**加密落盘的（`attachment:pick` /
+ * `attachment:save-image`），而改密只重写了 vault / trash / recoveryData / 剪贴板历史。
+ * 结果就是改密之后所有附件都解不开，界面统一显示「附件不存在或已损坏」——
+ * 文件还在、大小也对，但 AES-GCM 认证失败，等于永久失效。
+ *
+ * 三阶段，任何一步失败都不留半新半旧的库：
+ *   1. **全部解密**（只读）：任何一个解不开就整体放弃，一个文件都不动；
+ *   2. **全部写成 `<file>.new`**：此时正式文件仍未改动，失败就删掉临时文件退出；
+ *   3. **逐个 rename 覆盖**：rename 是原子的，单个失败只影响那一个。
+ *
+ * 用 `.new` + rename 而不是 writeFileAtomic：附件动辄几十 MB，writeFileAtomic 会额外
+ * 留一份 `.bak`（附件目录体积翻倍），而 `readAttachment` 并没有 `.bak` 回退，留着没用。
+ *
+ * 性能：解密阶段全用旧密码、加密阶段全用新密码，且加密前先预热 keyCache 定一个 salt，
+ * 所以整批附件只多两次 PBKDF2（~800ms），不会变成「每个附件 400ms」。
+ * 历史遗留的附件可能带着不同的 salt（不同会话写入），那部分靠 keyMemo 查表，
+ * 最多 64 个不同 salt 各派生一次，不会随附件数量线性增长。
+ *
+ * @param {string} oldPassword 旧主密码
+ * @param {string} newPassword 新主密码
+ * @returns {{ total: number, ok: number, failed: number, errors: string[] }}
+ */
+function reencryptAttachments(oldPassword, newPassword) {
+  const result = { total: 0, ok: 0, failed: 0, errors: [] };
+  if (!oldPassword || !newPassword) return result;
+  // 1.25.1：笔记附件在 `<笔记目录>/attachments`，**必须一起重加密** ——
+  // 只处理全局目录的话，改密后目录模式笔记里的截图会全部永久失效（文件在、解不开）。
+  // 两个目录各自独立走「全解密 → 全写 .new → 逐个 rename」，一个目录失败不影响另一个。
+  for (const dir of attachmentDirs()) {
+    const one = reencryptAttachDir(dir, oldPassword, newPassword);
+    result.total += one.total;
+    result.ok += one.ok;
+    result.failed += one.failed;
+    for (const e of one.errors) {
+      if (result.errors.length < 10) result.errors.push(one.dir ? `${path.basename(path.dirname(one.dir))}/${path.basename(one.dir)}: ${e}` : e);
+    }
+  }
+  return result;
+}
+
+/**
+ * 单个附件目录的重加密（三阶段，见 reencryptAttachments 的说明）。
+ * @param {string} dir
+ * @param {string} oldPassword
+ * @param {string} newPassword
+ */
+function reencryptAttachDir(dir, oldPassword, newPassword) {
+  const result = { dir, total: 0, ok: 0, failed: 0, errors: [] };
+  let names = [];
+  try {
+    if (!dir || !fs.existsSync(dir)) return result;
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.enc'));
+    // 上一次改密中途崩溃留下的临时文件：正式文件没动过，直接清掉
+    for (const n of fs.readdirSync(dir)) {
+      if (n.endsWith('.enc.new')) { try { fs.unlinkSync(path.join(dir, n)); } catch { /* 忽略 */ } }
+    }
+  } catch (e) {
+    result.errors.push(`读取附件目录失败：${e.message}`);
+    return result;
+  }
+  result.total = names.length;
+  if (!names.length) return result;
+
+  // ---- 阶段一：全部解密（只读，不动任何文件）----
+  const plain = [];
+  const bad = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let raw = '';
+    try {
+      raw = fs.readFileSync(file, 'utf8').trim();
+    } catch (e) {
+      bad.push(`${name}（读取失败：${e.message}）`);
+      continue;
+    }
+    if (!raw) { bad.push(`${name}（空文件）`); continue; }
+    const text = decrypt(raw, oldPassword);
+    if (text === null) { bad.push(name); continue; }
+    plain.push({ name, file, text });
+  }
+  if (bad.length) {
+    // 整体放弃：宁可一个都不改，也不要留下「一半新密码一半旧密码」的附件目录
+    result.failed = bad.length;
+    result.errors = bad.slice(0, 10);
+    return result;
+  }
+
+  // ---- 阶段二：全部写成 .new（正式文件仍未改动）----
+  // 预热 keyCache：encrypt() 只在 keyCache.password 匹配时复用 salt/key，不预热的话
+  // 每个附件都会生成新 salt → 每个都重跑一次 600k PBKDF2（100 个附件 = 40 秒假死）。
+  // 改密流程里 saveVault/saveTrash 已经用新密码写过一次，这里通常直接命中、零额外开销。
+  if (!keyCache || keyCache.password !== newPassword) {
+    getKey(newPassword, crypto.randomBytes(SALT_LENGTH));
+  }
+  const staged = [];
+  try {
+    for (const item of plain) {
+      const tmp = `${item.file}.new`;
+      writeFileSynced(tmp, encrypt(item.text, newPassword));
+      staged.push({ ...item, tmp });
+    }
+  } catch (e) {
+    for (const s of staged) { try { fs.unlinkSync(s.tmp); } catch { /* 忽略 */ } }
+    result.failed = plain.length;
+    result.errors.push(`写入临时文件失败，已放弃（原附件未改动）：${e.message}`);
+    return result;
+  }
+
+  // ---- 阶段三：逐个 rename 覆盖 ----
+  for (const s of staged) {
+    try {
+      fs.renameSync(s.tmp, s.file);
+      result.ok += 1;
+    } catch (e) {
+      result.failed += 1;
+      if (result.errors.length < 10) result.errors.push(`${s.name}（替换失败：${e.message}）`);
+      try { fs.unlinkSync(s.tmp); } catch { /* 忽略 */ }
+    }
+  }
+  return result;
 }
 
 // ----------------------------------------------------------------
@@ -1588,6 +2090,7 @@ function setupIpcHandlers() {
   // ---- 主密码 / 安全词 / 找回密码（实现见 electron/ipc-auth.js）----
   registerAuthIpc({
     DATA_DIR,
+    DATA_FILE,
     KEY_ITERATIONS,
     migrateLegacyInto,
     clearCaches,
@@ -1604,6 +2107,8 @@ function setupIpcHandlers() {
     setUnlocked: (v) => { appUnlocked = v; },
     repersistClipHistory: (pw) => clipHistory.repersist(pw),
     wipeClipHistory: () => clipHistory.wipe(),
+    // 改密/重置密码时必须把附件一起重加密，否则改密后所有附件永久失效
+    reencryptAttachments,
   });
 
   // ---- 搜索小窗的会话纪元（palette:epoch）----
@@ -1618,7 +2123,11 @@ function setupIpcHandlers() {
     USER_DATA_DIR,
     DATA_FILE,
     BACKUP_DIR,
-    ATTACH_DIR,
+    getAttachDir: currentAttachDir,
+    DEFAULT_ATTACH_DIR,
+    backupAttachments,
+    restoreAttachments,
+    attachmentFile,
     AUDIT_FILE,
     LOCATION_FILE,
     listBackups,
@@ -1632,6 +2141,7 @@ function setupIpcHandlers() {
     getMainWindow: () => mainWindow,
     loadVault,
     getPassword: () => currentPassword,
+    loadSettings,
     attachmentFile,
     decrypt,
   });
@@ -1652,7 +2162,7 @@ function setupIpcHandlers() {
     encrypt,
     readAttachment,
     attachmentFile,
-    attachDir: ATTACH_DIR,
+    getAttachDir: currentAttachDir,
     vaultCollections: VAULT_COLLECTIONS,
   });
 
@@ -1716,10 +2226,21 @@ function setupIpcHandlers() {
   // 粘贴截图 → 加密附件（#5）：与会话密钥共用同一套加解密与目录
   registerAttachIpc({
     getPassword: () => currentPassword,
-    attachDir: ATTACH_DIR,
+    getAttachDir: currentAttachDir,
+    defaultAttachDir: DEFAULT_ATTACH_DIR,
+    setAttachDirOverride,
+    loadSettings,
+    saveSettings,
     fileOf: attachmentFile,
     encrypt,
     readAttachment,
+    // 1.25.1：笔记附件单独目录（<笔记目录>/attachments），通过 scope:'note' 区分；
+    // 读取时先笔记目录再回退全局，老附件不受影响。
+    getNotesAttachDir: notesAttachDir,
+    resolveFile: resolveAttachmentFile,
+    // 批量导出要还原附件原名（原名只存在 vault 的 entry.attachments[].name 里，
+    // 磁盘上只有 <uuid>.enc）。不注入也能跑，但导出文件名会退化成 <uuid>.bin。
+    loadVault,
   });
   registerBrowserIpc({ loadSettings });
   // 环境巡检（#3）：用 Chromium 网络栈探地址，尊重系统代理与证书
@@ -1739,12 +2260,16 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.passwordmanager.app');
   }
-  // Clean up stale vault data on fresh install (no master password set up)
-  const existingSettings = loadSettings();
-  if (!existingSettings || !existingSettings.masterPasswordHash) {
-    [DATA_FILE, BIN_FILE, SETTINGS_FILE].forEach(f => {
-      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
-    });
+  // 启动期清理：只在「确实从未初始化」时删文件。
+  // ⚠️ 以前这里是 `if (!existingSettings || !existingSettings.masterPasswordHash)` 就
+  // unlink vault.enc / trash.enc / settings.json —— settings.json 一旦损坏（半截 JSON、
+  // 磁盘满、杀软改写），loadSettings() 返回 null，整个密码库就被当成「残留数据」删掉。
+  // 现在判定逻辑在 cleanupStaleVaultOnBoot()（模块作用域，带审计与隔离留证）。
+  try {
+    const boot = cleanupStaleVaultOnBoot();
+    if (boot.action !== 'none') console.log(`[boot] 启动清理：${boot.action}${boot.reason ? ` (${boot.reason})` : ''}`);
+  } catch (e) {
+    console.warn(`[boot] 启动清理失败（不影响启动）：${e.message}`);
   }
   setupIpcHandlers();
   createWindow();

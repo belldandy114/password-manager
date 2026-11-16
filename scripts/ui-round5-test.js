@@ -255,19 +255,30 @@ const check = (name, ok, extra = '') => {
     }
     await sleep(600);
 
-    const pagerInfo = await ev(`(() => { const p = document.querySelector('.pager-info'); return p ? p.textContent : ''; })()`);
+    // 1.25.1：网址管理页也用了 <Pager>，全局 .pager-info 会抓到它。
+    // 这里限定在禅道页的容器里找，避免「明明在禅道页却断言到网址管理的分页器」。
+    const pagerInfo = await ev(`(() => {
+      const scope = document.querySelector('.zt-page, .zt-list, .pg') || document;
+      const p = scope.querySelector('.pager-info');
+      return p ? p.textContent : '';
+    })()`);
     check('禅道：分页器显示条数范围', /第 \d+–\d+ 条，共 \d+ 条/.test(String(pagerInfo)), String(pagerInfo));
     const rows1 = await ev(`(() => { const t = document.querySelectorAll('.tbl'); return t.length ? t[t.length - 1].querySelectorAll('tbody tr').length : 0; })()`);
     check('禅道：单页最多 100 行', rows1 <= 100, `${rows1} 行`);
 
     const nextOk = await ev(`(() => {
-      const b = [...document.querySelectorAll('.pager-btn')].find(x => x.title === '下一页');
+      const scope = document.querySelector('.zt-page, .zt-list, .pg') || document;
+      const b = [...scope.querySelectorAll('.pager-btn')].find(x => x.title === '下一页');
       if (!b) return 'no-btn';
       b.click();
       return b.disabled ? 'disabled' : 'clicked';
     })()`);
     await sleep(500);
-    const pagerCur = await ev(`(() => { const p = document.querySelector('.pager-cur'); return p ? p.textContent : ''; })()`);
+    const pagerCur = await ev(`(() => {
+      const scope = document.querySelector('.zt-page, .zt-list, .pg') || document;
+      const p = scope.querySelector('.pager-cur');
+      return p ? p.textContent : '';
+    })()`);
     check('禅道：翻页生效', nextOk === 'clicked' || /2 \/ \d+/.test(String(pagerCur)), `${nextOk} · ${pagerCur}`);
 
     const trend = await ev(`(() => {

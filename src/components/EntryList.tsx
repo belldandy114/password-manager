@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { PasswordEntry } from '../types';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { PasswordEntry, SortField } from '../types';
 import { useStore } from '../store/useStore';
-import { BrowserMenu } from './BrowserMenu';
 import { useConfirm } from './confirm';
 import { getTagHue } from '../utils/tagColors';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { recordEntryUse } from '../utils/recent';
+import { TotpBadge } from './EntryExtras';
 
 interface Props {
   entries: PasswordEntry[];
@@ -119,8 +119,18 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
   }, [openDropdown, hoverTagEntry]);
 
   const [recentCopy, setRecentCopy] = useState<{ id: string; field: string } | null>(null);
-  const [sortField, setSortField] = useState<'name' | 'envType' | 'url' | 'username' | 'updatedAt'>('updatedAt');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  /**
+   * 排序状态**只从 store 读**，不再在组件内部维护一套。
+   *
+   * 以前这里有自己的 `sortField/sortOrder` + `sortedEntries`，而 Dashboard 是
+   * `filteredEntries.slice(0, visibleLimit)` 之后才传进来的 —— 点表头只对已渲染的
+   * 120 条重排，第 121 条以后完全不受影响（用户看到「排序没生效」）。
+   * 现在排序统一在 store 的 `getFilteredEntries()` 里做，这里只负责显示箭头和改 store。
+   */
+  const sortField = useStore(s => s.sortField);
+  const sortOrder = useStore(s => s.sortOrder);
+  const setSortField = useStore(s => s.setSortField);
+  const setSortOrder = useStore(s => s.setSortOrder);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -186,35 +196,20 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
 
   const allSelected = entries.length > 0 && entries.every(e => selectedIds.has(e.id));
 
-  /** Local sort — clicking column header cycles asc/desc on that field */
-  const handleSort = useCallback((field: typeof sortField) => {
-    setSortField(prev => {
-      if (prev === field) {
-        setSortOrder(o => o === 'asc' ? 'desc' : 'asc');
-        return prev;
-      }
-      setSortOrder('asc');
-      return field;
-    });
-  }, []);
+  /**
+   * 点表头：改 store 的排序字段/方向（真正的排序在 store 里对**全量**做）。
+   * 点同一列切换升降序；点新列默认升序（时间列默认降序，符合「最新在前」的直觉）。
+   */
+  const handleSort = useCallback((field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortField(field);
+    setSortOrder(field === 'updatedAt' || field === 'createdAt' ? 'desc' : 'asc');
+  }, [sortField, sortOrder, setSortField, setSortOrder]);
 
-  const sortedEntries = useMemo(() => {
-    const copy = [...entries];
-    copy.sort((a, b) => {
-      let cmp = 0;
-      switch (sortField) {
-        case 'name': cmp = a.name.localeCompare(b.name); break;
-        case 'envType': cmp = (a.envType || '').localeCompare(b.envType || ''); break;
-        case 'url': cmp = (a.url || '').localeCompare(b.url || ''); break;
-        case 'username': cmp = (a.username || '').localeCompare(b.username || ''); break;
-        case 'updatedAt': cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(); break;
-      }
-      return sortOrder === 'asc' ? cmp : -cmp;
-    });
-    return copy;
-  }, [entries, sortField, sortOrder]);
-
-  const sortArrow = (field: typeof sortField): React.ReactNode => {
+  const sortArrow = (field: SortField): React.ReactNode => {
     if (sortField !== field) return null;
     return <span className="sort-arrow">{sortOrder === 'asc' ? '\u2191' : '\u2193'}</span>;
   };
@@ -236,13 +231,15 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
           <th className="col-url" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('url')}>URL{sortArrow('url')}</th>
           <th className="col-username" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('username')}>账号{sortArrow('username')}</th>
           <th className="col-password">密码</th>
+          <th className="col-totp">动态码</th>
           <th className="col-tags">标签</th>
+          <th className="col-attach">附件</th>
           <th className="col-updated" role="button" tabIndex={0} onKeyDown={onKeyClick} onClick={() => handleSort('updatedAt')}>修改时间{sortArrow('updatedAt')}</th>
           <th className="col-actions">操作</th>
         </tr>
       </thead>
       <tbody>
-        {sortedEntries.map(entry => {
+        {entries.map(entry => {
           const isSelected = selectedIds.has(entry.id);
           const showPwd = visiblePasswords.has(entry.id);
           const showMore = openDropdown === entry.id;
@@ -353,6 +350,13 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                 </div>
               </td>
 
+              {/* TOTP 动态码：列表视图以前完全没有，切到列表就取不到验证码 */}
+              <td className="col-totp" onClick={e => e.stopPropagation()}>
+                {entry.totpSecret
+                  ? <TotpBadge secret={entry.totpSecret} onCopy={code => handleCopyWithFeedback(code, '两步验证码', entry.id, 'totp')} />
+                  : <span className="cell-empty">-</span>}
+              </td>
+
               {/* Tags: max 2 + N hover popover */}
               <td className="col-tags">
                 <div className="tags-cell"
@@ -376,6 +380,22 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                     </span>
                   )}
                 </div>
+              </td>
+
+              {/* 附件数量：0 时显示 -，有附件时点一下定位到附件管理页 */}
+              <td className="col-attach">
+                {(entry.attachments?.length || 0) > 0 ? (
+                  <button
+                    type="button"
+                    className="attach-count-btn"
+                    title={`${entry.attachments!.length} 个附件：${entry.attachments!.map(a => a.name).join('、')}`}
+                    onClick={e => { e.stopPropagation(); useStore.getState().requestNavigate('attachments'); }}
+                  >
+                    {'\u{1F4CE}'}{entry.attachments!.length}
+                  </button>
+                ) : (
+                  <span className="cell-empty">-</span>
+                )}
               </td>
 
               {/* Time: relative format + full on hover */}

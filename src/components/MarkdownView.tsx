@@ -3,24 +3,47 @@ import { renderMarkdown } from '../utils/markdown';
 import { ImageLightbox } from './ImageLightbox';
 
 /** 单张加密图片：挂载后解密成 dataURL。列表缩略图与正文图片共用。 */
-export function AttImage({ id, alt, className }: { id: string; alt?: string; className?: string }) {
+export function AttImage({
+  id, alt, className, onBroken,
+}: {
+  id: string;
+  alt?: string;
+  className?: string;
+  /** 读取失败时回传原因：missing=文件没了，not-image=不是图片（证书/密钥等） */
+  onBroken?: (code: 'missing' | 'not-image') => void;
+}) {
   const [src, setSrc] = useState('');
-  const [broken, setBroken] = useState(false);
+  const [broken, setBroken] = useState<'' | 'missing' | 'not-image'>('');
+  // 回调每次渲染都是新函数：用 ref 存，避免把它塞进 effect 依赖导致重复解密
+  const onBrokenRef = useRef(onBroken);
+  onBrokenRef.current = onBroken;
 
   useEffect(() => {
     let alive = true;
     setSrc('');
-    setBroken(false);
+    setBroken('');
     void window.electronAPI.attachmentReadImage({ id }).then(r => {
       if (!alive) return;
-      if (!r.success || !r.data?.dataUrl) { setBroken(true); return; }
+      if (!r.success || !r.data?.dataUrl) {
+        const code = r.code === 'not-image' ? 'not-image' : 'missing';
+        setBroken(code);
+        onBrokenRef.current?.(code);
+        return;
+      }
       setSrc(r.data.dataUrl);
     });
     return () => { alive = false; };
   }, [id]);
 
   if (broken) {
-    return <span className={`att-thumb is-broken${className ? ` ${className}` : ''}`} title="图片无法读取">图片已失效</span>;
+    return (
+      <span
+        className={`att-thumb is-broken${broken === 'not-image' ? ' is-file' : ''}${className ? ` ${className}` : ''}`}
+        title={broken === 'not-image' ? '加密文件（非图片），可预览或导出' : '图片无法读取'}
+      >
+        {broken === 'not-image' ? '文件' : '图片已失效'}
+      </span>
+    );
   }
   return (
     <img

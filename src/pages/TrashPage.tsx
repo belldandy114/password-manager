@@ -4,6 +4,8 @@ import { useStore } from '../store/useStore';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
+import { callIpc } from '../utils/ipc';
+import { formatDateTime } from '../utils/time';
 
 export function TrashPage() {
   const trash = useStore(s => s.trash);
@@ -12,41 +14,75 @@ export function TrashPage() {
   const [items, setItems] = useState<PasswordEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showEmptyConfirm, setShowEmptyConfirm] = useState(false);
+  /** 「彻底删除所选」的二次确认（不可恢复，必须单独一个确认框） */
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
 
   useEffect(() => {
     loadTrash();
   }, []);
 
   const loadTrash = async () => {
-    const result = await window.electronAPI.trashGetAll();
-    if (result.success && result.data) {
-      setItems(result.data);
-      setTrash(result.data);
-    }
+    const r = await callIpc<PasswordEntry[]>(() => window.electronAPI.trashGetAll());
+    if (!r.ok) { addToast(`读取回收站失败：${r.error}`, 'error'); return; }
+    const list = r.data || [];
+    setItems(list);
+    setTrash(list);
+    // 列表变了就把选中项收敛到仍然存在的那些，避免「选中了已消失的条目」
+    setSelectedIds(prev => {
+      const alive = new Set(list.map(i => i.id));
+      const next = new Set(Array.from(prev).filter(id => alive.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
   };
 
   const handleRestore = async (ids: string[]) => {
-    const result = await window.electronAPI.trashRestore(ids);
-    if (result.success) {
-      addToast(`已恢复 ${ids.length} 个网址`, 'success');
-      loadTrash();
-      // Refresh main entries too
-      const entriesResult = await window.electronAPI.entriesGetAll();
-      if (entriesResult.success && entriesResult.data) {
-        useStore.getState().setVaultData(entriesResult.data);
-      }
-    } else {
-      addToast('恢复失败', 'error');
+    if (ids.length === 0) return;
+    const r = await callIpc(() => window.electronAPI.trashRestore(ids));
+    if (!r.ok) { addToast(`恢复失败：${r.error}`, 'error'); return; }
+    addToast(`已恢复 ${ids.length} 个网址`, 'success');
+    await loadTrash();
+    // Refresh main entries too
+    const entriesResult = await window.electronAPI.entriesGetAll();
+    if (entriesResult.success && entriesResult.data) {
+      useStore.getState().setVaultData(entriesResult.data);
     }
   };
 
-  const handleEmptyTrash = async () => {
-    const result = await window.electronAPI.trashEmpty();
-    if (result.success) {
-      setItems([]);
-      setTrash([]);
-      addToast('回收站已清空', 'success');
+  /**
+   * 彻底删除所选（不是「清空回收站」）。
+   *
+   * 以前回收站只有「整站清空」和「恢复」两条路 —— 想删掉其中 3 条只能先全清空，
+   * 或者一条条恢复再删。现在支持多选后精确删除。
+   */
+  const handlePurgeSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { setShowPurgeConfirm(false); return; }
+    const r = await callIpc<PasswordEntry[]>(() => window.electronAPI.trashDelete(ids));
+    if (!r.ok) {
+      // 写盘失败必须报错，且不能假装删掉了
+      addToast(`彻底删除失败：${r.error}`, 'error');
+      setShowPurgeConfirm(false);
+      return;
     }
+    const remaining = r.data || [];
+    setItems(remaining);
+    setTrash(remaining);
+    setSelectedIds(new Set());
+    setShowPurgeConfirm(false);
+    addToast(`已彻底删除 ${ids.length} 个网址`, 'success');
+  };
+
+  const handleEmptyTrash = async () => {
+    const r = await callIpc(() => window.electronAPI.trashEmpty());
+    if (!r.ok) {
+      addToast(`清空回收站失败：${r.error}`, 'error');
+      setShowEmptyConfirm(false);
+      return;
+    }
+    setItems([]);
+    setTrash([]);
+    setSelectedIds(new Set());
+    addToast('回收站已清空', 'success');
     setShowEmptyConfirm(false);
   };
 
@@ -57,6 +93,8 @@ export function TrashPage() {
       return next;
     });
   };
+
+  const allSelected = items.length > 0 && selectedIds.size === items.length;
 
   const envLabel: Record<string, string> = {
     production: '正式', testing: '测试', development: '开发', staging: '预发布',
@@ -72,6 +110,10 @@ export function TrashPage() {
           <>
             <button className="btn btn-sm btn-secondary" onClick={() => handleRestore(Array.from(selectedIds))} disabled={selectedIds.size === 0}>
               恢复所选
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={() => setShowPurgeConfirm(true)} disabled={selectedIds.size === 0}
+              title="彻底删除选中的网址，不可恢复">
+              彻底删除所选{selectedIds.size > 0 ? `（${selectedIds.size}）` : ''}
             </button>
             <button className="btn btn-sm btn-danger" onClick={() => setShowEmptyConfirm(true)}>清空回收站</button>
           </>
@@ -91,12 +133,14 @@ export function TrashPage() {
         ) : (
           <>
             <div className="flex items-center justify-between mb-16">
-              <span className="text-sm text-muted">共 {items.length} 个网址</span>
+              <span className="text-sm text-muted">
+                共 {items.length} 个网址{selectedIds.size > 0 ? ` · 已选 ${selectedIds.size} 个` : ''}
+              </span>
               <button className="btn btn-sm btn-ghost" onClick={() => {
-                if (selectedIds.size === items.length) setSelectedIds(new Set());
+                if (allSelected) setSelectedIds(new Set());
                 else setSelectedIds(new Set(items.map(i => i.id)));
               }}>
-                {selectedIds.size === items.length ? '取消全选' : '全选'}
+                {allSelected ? '取消全选' : '全选'}
               </button>
             </div>
             {items.map(item => (
@@ -110,7 +154,7 @@ export function TrashPage() {
                     </span>
                   </div>
                   <div className="trash-meta">
-                    {item.url} · 删除于 {item.deletedAt ? new Date(item.deletedAt).toLocaleString('zh-CN') : ''}
+                    {item.url} · 删除于 {item.deletedAt ? formatDateTime(item.deletedAt) : ''}
                     {item.deletedAt && (() => {
                       const daysLeft = Math.ceil(30 - (Date.now() - new Date(item.deletedAt).getTime()) / (24*60*60*1000));
                       return ` · ${daysLeft > 0 ? `${daysLeft}天后自动清除` : '即将清除'}`;
@@ -134,6 +178,16 @@ export function TrashPage() {
         variant="danger"
         onConfirm={handleEmptyTrash}
         onCancel={() => setShowEmptyConfirm(false)}
+      />
+
+      <ConfirmDialog
+        open={showPurgeConfirm}
+        title="彻底删除所选网址"
+        message={`确定要彻底删除选中的 ${selectedIds.size} 个网址吗？此操作不可恢复，删除后无法再从回收站找回。`}
+        confirmText="彻底删除"
+        variant="danger"
+        onConfirm={handlePurgeSelected}
+        onCancel={() => setShowPurgeConfirm(false)}
       />
     </>
   );

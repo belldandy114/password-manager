@@ -5,7 +5,7 @@ import { useZentaoStore } from '../store/zentaoStore';
 import { Panel, Empty, Icons, SearchBox, IconBtn, Pill } from './ui';
 import { Modal } from './Modal';
 import { PersonPicker } from './PersonPicker';
-import { formatHm } from '../utils/time';
+import { formatHm, localDay } from '../utils/time';
 import {
   summarize, summaryTo, projectToText, personsToText, severityRows, personOf, creatorOf,
   daysAgoDay, dailyNew, parseCutoff, fmtCutoff, statWindowOf,
@@ -402,7 +402,7 @@ export function ZentaoSummary({
     setCopyOpen(false);
     const r = await window.electronAPI.saveText(
       buildText('csv'),
-      `缺陷汇总-${new Date().toISOString().slice(0, 10)}.csv`,
+      `缺陷汇总-${localDay()}.csv`,
       [{ name: 'CSV', extensions: ['csv'] }],
     );
     if (r.success) flash('已导出 CSV');
@@ -461,7 +461,7 @@ export function ZentaoSummary({
     ].map(esc).join(','));
     const r = await window.electronAPI.saveText(
       [head.map(esc).join(','), ...rows].join('\r\n'),
-      `安全问题-${new Date().toISOString().slice(0, 10)}.csv`,
+      `安全问题-${localDay()}.csv`,
       [{ name: 'CSV', extensions: ['csv'] }],
     );
     if (r.success) flash(`已导出 ${secBugs.length} 条`);

@@ -10,7 +10,8 @@ import { GENERATORS } from '../utils/tdg/catalog';
 import { detectPaste, PASTE_ACTION, PASTE_KIND_LABEL, type PasteIntent } from '../utils/pasteIntent';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 
-export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data';
+export type Kind = 'page' | 'action' | 'entry' | 'snippet' | 'note' | 'account' | 'request' | 'checklist' | 'env' | 'history' | 'code' | 'data'
+  | 'integration' | 'ztpreset' | 'apienv' | 'regression';
 
 interface Cmd {
   id: string;
@@ -36,6 +37,7 @@ interface Cmd {
 export const KIND_LABEL: Record<Kind, string> = {
   page: '页面', action: '操作', entry: '网址', snippet: '片段', note: '笔记', account: '账号',
   request: '请求', checklist: '用例', env: '环境', history: '历史', code: '代码', data: '测试数据',
+  integration: '禅道', ztpreset: '筛选', apienv: '接口环境', regression: '回归',
 };
 
 export const PAGES: { page: string; label: string }[] = [
@@ -115,7 +117,13 @@ export function CommandPalette({
     snippets: any[]; notes: any[];
     apiRequests: any[]; checklists: any[]; environments: any[];
     apiHistory: any[]; codeSnippets: any[];
-  }>({ snippets: [], notes: [], apiRequests: [], checklists: [], environments: [], apiHistory: [], codeSnippets: [] });
+    integrations: any[]; ztPresets: any[]; apiEnvs: any[];
+    regressionSets: any[]; regressionRuns: any[];
+  }>({
+    snippets: [], notes: [], apiRequests: [], checklists: [], environments: [],
+    apiHistory: [], codeSnippets: [], integrations: [], ztPresets: [], apiEnvs: [],
+    regressionSets: [], regressionRuns: [],
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -125,7 +133,7 @@ export function CommandPalette({
     setIdx(0);
     setTimeout(() => inputRef.current?.focus(), 30);
     (async () => {
-      const [sn, nt, rq, ck, ev, hs, cs] = await Promise.all([
+      const [sn, nt, rq, ck, ev, hs, cs, ig, zp, ae, rs, rr] = await Promise.all([
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
         window.electronAPI.wsGet('apiRequests'),
@@ -133,6 +141,13 @@ export function CommandPalette({
         window.electronAPI.wsGet('environments'),
         window.electronAPI.wsGet('apiHistory'),
         window.electronAPI.wsGet('codeSnippets'),
+        // 1.24.7：补齐库里剩下的集合（以前只搜 7 类，环境矩阵/禅道/回归集都搜不到）
+        window.electronAPI.wsGet('integrations'),
+        window.electronAPI.wsGet('ztPresets'),
+        window.electronAPI.wsGet('apiEnvs'),
+        window.electronAPI.wsGet('regressionSets'),
+        window.electronAPI.wsGet('regressionRuns'),
+        window.electronAPI.wsGet('accounts'),
       ]);
       const pick = (r: any) => (r && r.success ? r.data || [] : []);
       const allNotes = pick(nt);
@@ -146,6 +161,11 @@ export function CommandPalette({
         environments: pick(ev),
         apiHistory: pick(hs),
         codeSnippets: pick(cs),
+        integrations: pick(ig),
+        ztPresets: pick(zp),
+        apiEnvs: pick(ae),
+        regressionSets: pick(rs),
+        regressionRuns: pick(rr),
       });
     })();
   }, [open]);
@@ -322,6 +342,55 @@ export function CommandPalette({
       run: () => { onNavigate('codeLab'); signalCmd(`code:open:${s.id}`); },
     }));
 
+    // 禅道配置（多套实例）：公司 / 地址 / 账号都能搜
+    const fromIntegrations: Cmd[] = extra.integrations.slice(0, 50).map((z: any) => ({
+      id: `integration:${z.id}`,
+      title: z.company || z.baseUrl || '禅道配置',
+      sub: ['禅道配置', z.account, z.baseUrl].filter(Boolean).join(' · '),
+      kind: 'integration' as Kind,
+      url: z.baseUrl,
+      user: z.account,
+      run: () => onNavigate('zentao'),
+    }));
+
+    const fromZtPresets: Cmd[] = extra.ztPresets.slice(0, 100).map((p: any) => ({
+      id: `ztpreset:${p.id}`,
+      title: p.name || '（未命名筛选）',
+      sub: ['禅道筛选预设', p.project].filter(Boolean).join(' · '),
+      kind: 'ztpreset' as Kind,
+      run: () => onNavigate('zentao'),
+    }));
+
+    const fromApiEnvs: Cmd[] = extra.apiEnvs.slice(0, 100).map((e: any) => ({
+      id: `apienv:${e.id}`,
+      title: e.name || '（未命名环境）',
+      sub: '接口环境 · 变量组',
+      kind: 'apienv' as Kind,
+      run: () => onNavigate('apiClient'),
+    }));
+
+    // 接口回归：回归集与最近几次运行结果都能搜到
+    const fromRegressions: Cmd[] = [
+      ...extra.regressionSets.slice(0, 100).map((r: any) => ({
+        id: `regression:${r.id}`,
+        title: r.name || '（未命名回归集）',
+        sub: `接口回归集 · ${r.intervalMin ? `每 ${r.intervalMin} 分钟` : '仅手动'}`,
+        kind: 'regression' as Kind,
+        run: () => onNavigate('apiClient'),
+      })),
+      ...extra.regressionRuns.slice(0, 60).map((r: any) => {
+        const steps = Array.isArray(r.steps) ? r.steps : [];
+        const pass = steps.filter((s: any) => s && s.ok).length;
+        return {
+          id: `regrun:${r.id}`,
+          title: `回归结果 · ${r.setName || '未命名'}`,
+          sub: `${pass}/${steps.length} 通过 · ${r.at ? new Date(r.at).toLocaleString() : ''}`,
+          kind: 'regression' as Kind,
+          run: () => onNavigate('apiClient'),
+        };
+      }),
+    ];
+
     // 测试数据里的每一种数据类型都能单独搜到：回车直接跳过去并预选好类型
     const fromData: Cmd[] = GENERATORS.map(d => ({
       id: `data:${d.id}`,
@@ -335,7 +404,7 @@ export function CommandPalette({
     return [
       ...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts,
       ...fromRequests, ...fromChecklists, ...fromEnvs, ...fromHistory, ...fromCode,
-      ...fromData,
+      ...fromData, ...fromIntegrations, ...fromZtPresets, ...fromApiEnvs, ...fromRegressions,
     ];
   }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, seedDataGenerator, settings.theme, updateSettings]);
 

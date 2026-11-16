@@ -1,12 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { WeeklyFile } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Note, WeeklyFile } from '../types';
 import { Modal } from '../components/Modal';
 import { ZentaoDigestDialog } from '../components/ZentaoDigestDialog';
 import { Page, PageHead, Panel, Empty, SearchBox, Icons, Pill } from '../components/ui';
 import { renderMarkdown, dateFromName, weekdayOf, weekNoOf } from '../utils/markdown';
 import { useStore } from '../store/useStore';
+import { callIpc } from '../utils/ipc';
+import { newId } from '../utils/id';
+import { formatRecent } from '../utils/time';
 
 let lastCmdAt = 0;
+
+/** 判断一条笔记是不是周报片段（老数据没有 kind 字段） */
+const isWeeklyNote = (n: Note): n is Note & { kind: 'weekly' } => n.kind === 'weekly';
 
 // 不内置任何本机路径：老版本把某台机器的周报目录写死在这里，等于把使用者目录结构
 // 一起提交进了公开仓库。现在的默认值就是「没选」，由用户在界面上挑一次后存进 localStorage。
@@ -23,7 +29,10 @@ const today = () => {
 
 
 export function WeeklyReport() {
-  const [dir, setDir] = useState(() => localStorage.getItem(LS_KEY) || DEFAULT_DIR);
+  const settings = useStore(s => s.settings);
+  const updateSettings = useStore(s => s.updateSettings);
+  /** 目录优先读设置（设置页也能改），旧版本只在 localStorage 里存 */
+  const [dir, setDir] = useState(() => settings.weeklyDir || localStorage.getItem(LS_KEY) || DEFAULT_DIR);
   // 周次已固定为「本周」（1.9.3 去掉周次下拉与「本周 vs 上周」对比）
   const [files, setFiles] = useState<WeeklyFile[]>([]);
   const [current, setCurrent] = useState<string>('');
@@ -66,7 +75,117 @@ export function WeeklyReport() {
   // 命令面板「生成周报草稿」
   const cmdSignal = useStore(s => s.cmdSignal);
 
+  /* ---------------- 句式片段库（1.25.0） ----------------
+   * 「下周工作计划」「本周总结」这类段落每周都要重写一遍，实际只是换几个数字。
+   * 片段存在 notes 集合里（kind: 'weekly'），跟着加密库走，不额外建集合。
+   *
+   * ⚠️ 插入片段时**原样插入**，不自动加 `**一、标题**` 之类的小节标题：
+   * weeklyDigest.ts 的 mergeDigest 靠 `**一、标题**` 与「本周完成 / 下周工作计划 /
+   * 统计范围：」认边界，自动加标题会让合并逻辑认错章节。
+   */
+  const [snippets, setSnippets] = useState<Note[]>([]);
+  const [snipOpen, setSnipOpen] = useState(false);
+  const [snipName, setSnipName] = useState('');
+  const [snipBusy, setSnipBusy] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const loadSnippets = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.wsGet('notes');
+      const list = r && r.success && Array.isArray(r.data) ? (r.data as Note[]) : [];
+      setSnippets(list.filter(isWeeklyNote));
+    } catch {
+      setSnippets([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadSnippets(); }, [loadSnippets]);
+
+  /** 把片段插到光标处；没有光标位置就追加到末尾（简单可靠，不会把正文搞乱） */
+  const insertSnippet = (text: string) => {
+    if (!draft) return;
+    const ta = taRef.current;
+    const body = String(text || '');
+    if (!body) return;
+    if (ta && typeof ta.selectionStart === 'number') {
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const before = draft.text.slice(0, start);
+      const after = draft.text.slice(end);
+      // 前后各补一个换行：片段紧贴上一行会粘成一句
+      const pad = before && !before.endsWith('\n') ? '\n' : '';
+      const next = `${before}${pad}${body}${after}`;
+      setDraft({ ...draft, text: next });
+      // 光标落到插入内容之后，方便接着写
+      const caret = start + pad.length + body.length;
+      requestAnimationFrame(() => {
+        try { ta.focus(); ta.setSelectionRange(caret, caret); } catch { /* 元素可能已卸载 */ }
+      });
+    } else {
+      const pad = draft.text && !draft.text.endsWith('\n') ? '\n' : '';
+      setDraft({ ...draft, text: `${draft.text}${pad}${body}` });
+    }
+    setSnipOpen(false);
+  };
+
+  /** 存为片段：优先存选中的那段文字，没选就存整篇 */
+  const saveSnippet = async () => {
+    const name = snipName.trim();
+    if (!name) return;
+    if (!draft) return;
+    const ta = taRef.current;
+    const selected = ta && ta.selectionStart !== ta.selectionEnd
+      ? draft.text.slice(ta.selectionStart, ta.selectionEnd)
+      : '';
+    const body = (selected || draft.text).trim();
+    if (!body) { setError('正文是空的，没有可存的片段'); return; }
+    setSnipBusy(true);
+    const now = new Date().toISOString();
+    const note: Note = {
+      id: newId('wk-'),
+      title: name,
+      content: body,
+      tags: ['周报片段'],
+      kind: 'weekly',
+      updatedAt: now,
+    };
+    // 重新读一次再写：笔记页可能同时在改，别把它的改动覆盖掉
+    let all: Note[] = [];
+    try {
+      const r = await window.electronAPI.wsGet('notes');
+      all = r && r.success && Array.isArray(r.data) ? (r.data as Note[]) : [];
+    } catch { all = []; }
+    const r = await callIpc(() => window.electronAPI.wsSet('notes', [...all, note]));
+    setSnipBusy(false);
+    if (!r.ok) { setError(`保存片段失败：${r.error}`); return; }
+    setSnippets([...all.filter(isWeeklyNote), note]);
+    setSnipOpen(false);
+    setSnipName('');
+    setNotice(`已存为片段「${name}」${selected ? '（只存了选中的文字）' : '（存了整篇）'}`);
+  };
+
+  const removeSnippet = async (id: string) => {
+    let all: Note[] = [];
+    try {
+      const r = await window.electronAPI.wsGet('notes');
+      all = r && r.success && Array.isArray(r.data) ? (r.data as Note[]) : [];
+    } catch { all = []; }
+    const next = all.filter(n => n.id !== id);
+    const r = await callIpc(() => window.electronAPI.wsSet('notes', next));
+    if (!r.ok) { setError(`删除片段失败：${r.error}`); return; }
+    setSnippets(next.filter(isWeeklyNote));
+  };
+
   useEffect(() => { setDirDraft(dir); }, [dir]);
+
+  /** 旧版本目录只存在 localStorage：迁进设置，设置页才看得到 */
+  useEffect(() => {
+    const legacy = localStorage.getItem(LS_KEY) || '';
+    if (legacy && !settings.weeklyDir) {
+      updateSettings({ weeklyDir: legacy });
+      void window.electronAPI.settingsSave({ weeklyDir: legacy });
+    }
+  }, [settings.weeklyDir, updateSettings]);
 
   const load = useCallback(async (target: string) => {
     setError('');
@@ -117,6 +236,9 @@ export function WeeklyReport() {
     {
       setDir(res.data);
       localStorage.setItem(LS_KEY, res.data);
+      // 双写：设置页也指向同一个目录
+      updateSettings({ weeklyDir: res.data });
+      void window.electronAPI.settingsSave({ weeklyDir: res.data });
       setCurrent('');
       setBodyIndex({});
     }
@@ -127,6 +249,8 @@ export function WeeklyReport() {
     if (!next || next === dir) return;
     setDir(next);
     localStorage.setItem(LS_KEY, next);
+    updateSettings({ weeklyDir: next });
+    void window.electronAPI.settingsSave({ weeklyDir: next });
     setCurrent('');
     setBodyIndex({});
   };
@@ -406,6 +530,13 @@ export function WeeklyReport() {
             meta={!editing && current ? `${current}${mtime ? ` · 更新于 ${mtime.slice(0, 10)}` : ''}` : undefined}
             tools={editing ? (
               <>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setSnipOpen(true)}
+                  title="把常用句式（下周计划 / 本周总结）插到光标处"
+                >
+                  <Icons.note size={12} /> 插入片段{snippets.length ? ` (${snippets.length})` : ''}
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => setShowPreview(v => !v)}>
                   {showPreview ? '继续编辑' : '预览'}
                 </button>
@@ -446,6 +577,7 @@ export function WeeklyReport() {
                 ) : (
                   <textarea
                     className="wk-md-input"
+                    ref={taRef}
                     value={draft.text}
                     onChange={e => setDraft({ ...draft, text: e.target.value })}
                     spellCheck={false}
@@ -456,6 +588,13 @@ export function WeeklyReport() {
                   <span className="pg-sub" style={{ margin: 0 }}>
                     支持 Markdown：<code>**小节**</code>、<code>1.</code>、<code>-</code>、<code>（1）</code>、<code># 标题</code>
                   </span>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setSnipName(''); setSnipOpen(true); }}
+                    title="把选中的文字（没选就整篇）存成可复用的片段"
+                  >
+                    存为片段
+                  </button>
                   <span className="pg-sub" style={{ margin: 0 }}>{draft.text.length} 字</span>
                 </div>
               </div>
@@ -527,6 +666,74 @@ export function WeeklyReport() {
           <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
             想保留旧文件的话，点「取消」，然后在左侧点「新建周报」改个文件名再保存。
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={snipOpen}
+        onClose={() => setSnipOpen(false)}
+        title="周报片段"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setSnipOpen(false)}>关闭</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => void saveSnippet()}
+              disabled={snipBusy || !snipName.trim() || !draft}
+              title={draft ? '把选中的文字（没选就整篇）存成片段' : '先进入编辑态才能存片段'}
+            >
+              {snipBusy ? '保存中…' : '存为片段'}
+            </button>
+          </>
+        }
+      >
+        <div className="form-group">
+          <label>片段名称 *</label>
+          <input
+            value={snipName}
+            onChange={e => setSnipName(e.target.value)}
+            placeholder="例如：下周工作计划（通用）"
+            data-autofocus="1"
+            aria-label="片段名称"
+          />
+          <div className="input-hint">
+            存的是编辑器里<strong>选中的那段文字</strong>；没选中就存整篇。
+            片段存在加密库里（笔记集合，类型「周报片段」），插入时原样插入，不会自动加小节标题。
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>已有片段（{snippets.length}）</label>
+          {snippets.length === 0 ? (
+            <div className="input-hint">还没有片段。写一段常用的「下周工作计划」，选中它，起个名字存下来。</div>
+          ) : (
+            <div className="wk-snip-list">
+              {[...snippets]
+                .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+                .map(s => (
+                  <div className="wk-snip-row" key={s.id}>
+                    <div className="wk-snip-main">
+                      <div className="wk-snip-name" title={s.title}>{s.title || '（未命名片段）'}</div>
+                      <div className="wk-snip-preview" title={s.content}>
+                        {String(s.content || '').replace(/\s+/g, ' ').slice(0, 80) || '（空片段）'}
+                      </div>
+                      <div className="wk-snip-meta">{formatRecent(s.updatedAt)}</div>
+                    </div>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={!draft}
+                      title={draft ? '插到光标处' : '先进入编辑态'}
+                      onClick={() => insertSnippet(s.content)}
+                    >插入</button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => void removeSnippet(s.id)}
+                      title="删除这个片段（只删片段，不影响周报文件）"
+                    >删除</button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       </Modal>
 

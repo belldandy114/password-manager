@@ -120,3 +120,25 @@ describe('scoreTarget', () => {
     expect(scoreTarget(phone, parseQuery('@data'))).toBe(0);
   });
 });
+
+describe('1.24.7 补齐集合的搜索语法', () => {
+  it('@zt / @zentao / @integration 指向禅道配置', () => {
+    for (const raw of ['@zt', '@zentao', '@integration']) {
+      expect(parseQuery(raw).kinds).toEqual(['integration']);
+    }
+  });
+
+  it('@preset / @apienv / @reg 各自指向对应类别', () => {
+    expect(parseQuery('@preset').kinds).toEqual(['ztpreset']);
+    expect(parseQuery('@ztpreset').kinds).toEqual(['ztpreset']);
+    expect(parseQuery('@apienv').kinds).toEqual(['apienv']);
+    expect(parseQuery('@reg').kinds).toEqual(['regression']);
+    expect(parseQuery('@regression').kinds).toEqual(['regression']);
+  });
+
+  it('类别过滤会淘汰其它类型', () => {
+    const zt = { kind: 'integration' as const, title: '南博科技 · 禅道', sub: 'hytest' };
+    expect(scoreTarget(zt, parseQuery('@zt 南博'))).toBeGreaterThan(0);
+    expect(scoreTarget(zt, parseQuery('@note 南博'))).toBe(-1);
+  });
+});

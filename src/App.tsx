@@ -16,6 +16,7 @@ import { useRegressionScheduler } from './hooks/useRegressionScheduler';
  * 点哪个页面才去拉哪个页面的 chunk（否则主 bundle 700KB+，冷启动要等）。
  * 登录页保持同步引入——它是启动必经之路，拆出去只会多一次往返。
  */
+const Home = lazy(() => import('./pages/Home').then(m => ({ default: m.Home })));
 const PasswordManagerPage = lazy(() => import('./pages/PasswordManagerPage').then(m => ({ default: m.PasswordManagerPage })));
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ default: m.DataGenerator })));
@@ -37,7 +38,7 @@ function App() {
   const setIsSetup = useStore(s => s.setIsSetup);
   const setSettings = useStore(s => s.setSettings);
   const setPmSubPage = useStore(s => s.setPmSubPage);
-  const [currentPage, setCurrentPage] = useState('passwordManager');
+  const [currentPage, setCurrentPage] = useState('home');
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -84,7 +85,8 @@ function App() {
     st.clearSelected();
     setLocked(true);
     skipLastPageSaveRef.current = true;
-    setCurrentPage('passwordManager');
+    // 锁定时回到今日工作台（1.25.0 起的落地页），下次解锁也从这里开始
+    setCurrentPage('home');
   }, []);
 
   // Ref to always call the latest handleLock from intervals
@@ -308,7 +310,22 @@ function App() {
   useEffect(() => {
     if (isLocked) return;
     const saved = useStore.getState().settings.lastPage;
-    if (saved && saved !== 'passwordManager') setCurrentPage(saved);
+    /**
+     * 1.25.0 落地页从「网址管理」换成「今日工作台」。
+     *
+     * 老用户的 lastPage 里存的是 'passwordManager'（那是旧版本的默认值，不是他主动选的），
+     * 直接沿用会让人永远看不到新首页。所以做**一次性**迁移：第一次解锁时若 lastPage
+     * 还是 'passwordManager'，落到 home 并记下标记；之后完全尊重用户的真实选择
+     * （包括他后来又主动选回网址管理的情况）。
+     */
+    const LANDING_MIGRATED = 'pm.landing.home-v1';
+    let migrated = false;
+    try { migrated = localStorage.getItem(LANDING_MIGRATED) === '1'; } catch { /* 隐私模式 */ }
+    if (!migrated) {
+      try { localStorage.setItem(LANDING_MIGRATED, '1'); } catch { /* 忽略 */ }
+      if (!saved || saved === 'passwordManager') return; // 留在 home
+    }
+    if (saved && saved !== 'home') setCurrentPage(saved);
   }, [isLocked]);
 
   // 记住当前页面（600ms 节流）
@@ -355,6 +372,12 @@ function App() {
         case 'request': setCurrentPage('apiClient'); st.signalCmd(`api:open:${arg}`); break;
         case 'checklist': setCurrentPage('checklists'); break;
         case 'env': setCurrentPage('environments'); break;
+        // 1.24.7：搜索小窗补齐的集合
+        case 'integration':
+        case 'ztpreset': setCurrentPage('zentao'); break;
+        case 'apienv':
+        case 'regression':
+        case 'regrun': setCurrentPage('apiClient'); break;
         case 'paste':
           // 快速搜索小窗里粘贴后的动作：原文经 item.text 带过来，这里落到对应页面
           if (arg === 'sql') { setCurrentPage('notes'); st.seedSnippet(String(item.text || '')); }
@@ -421,6 +444,8 @@ function App() {
   // Main app layout
   const renderPage = () => {
     switch (currentPage) {
+      // 1.25.0：今日工作台是新的落地页（聚合缺陷/环境/回归/备份/笔记，只读）
+      case 'home': return <Home />;
       case 'passwordManager': return <PasswordManagerPage />;
       case 'settings': return <Settings />;
       // 1.11.0：JSON 转化已并入工具箱，老用户上次停在这一页也能平滑落到工具箱

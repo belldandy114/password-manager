@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { PasswordEntry } from '../types';
+import type { PasswordEntry, EntryAccount } from '../types';
 import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { TotpBadge } from './EntryExtras';
+import { Modal } from './Modal';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { recordEntryUse } from '../utils/recent';
 /** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
@@ -34,8 +35,97 @@ const envLabel: Record<string, string> = {
   staging: '\u9884\u53D1\u5E03', // 预发布
 };
 
+/**
+ * 多角色账号面板。
+ *
+ * 以前卡片上的 `+N` 只在 `title` 里拼了一串角色名 —— 鼠标悬停能看到，但**复制不了**，
+ * 用户还得点进编辑弹窗翻。这里把每个角色的账号/密码都摆出来，各自带复制按钮。
+ *
+ * 用 `Modal` 而不是手写 popover：项目硬约束「Esc 必须能关掉一切浮层」，
+ * Modal 已内置 Esc + 焦点陷阱 + 叠放栈（内层先关）。
+ */
+function AccountsModal({
+  open, onClose, entry, onCopy,
+}: {
+  open: boolean;
+  onClose: () => void;
+  entry: PasswordEntry;
+  onCopy: (text: string, label: string, entryName?: string) => void;
+}) {
+  const accounts = entry.accounts || [];
+  /** 按账号 id 记录「密码已显示」，默认全部打码 */
+  const [shown, setShown] = useState<Set<string>>(new Set());
+
+  // 每次重新打开都复位成打码状态，避免上次点开的密码一直露着
+  useEffect(() => {
+    if (open) setShown(new Set());
+  }, [open]);
+
+  const toggle = (id: string) => {
+    setShown(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`「${entry.name}」的其他角色账号（${accounts.length}）`}
+      footer={<button className="btn btn-secondary" onClick={onClose}>关闭</button>}
+    >
+      <div className="role-acc-list">
+        {accounts.map((a: EntryAccount, i) => {
+          const role = a.role || `角色 ${i + 1}`;
+          const visible = shown.has(a.id);
+          return (
+            <div className="role-acc-row" key={a.id || `${role}-${i}`}>
+              <div className="role-acc-head">
+                <span className="role-acc-role">{role}</span>
+                {a.note && <span className="role-acc-note" title={a.note}>{a.note}</span>}
+              </div>
+              <div className="role-acc-line">
+                <span className="role-acc-label">账号</span>
+                <span className="role-acc-value" title={a.username}>{a.username || '--'}</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={!a.username}
+                  // label 用「角色-账号」，审计日志里能区分是哪个角色被复制
+                  onClick={() => onCopy(a.username, `${role}-账号`, entry.name)}
+                >复制</button>
+              </div>
+              <div className="role-acc-line">
+                <span className="role-acc-label">密码</span>
+                <span className="role-acc-value role-acc-pwd">
+                  {visible ? (a.password || '--') : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => toggle(a.id)}
+                  title={visible ? '隐藏密码' : '显示密码'}
+                >{visible ? '隐藏' : '显示'}</button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={!a.password}
+                  onClick={() => onCopy(a.password, `${role}-密码`, entry.name)}
+                >复制</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
 export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFavorite }: Props) {
   const [showPassword, setShowPassword] = useState(false);
+  const [showAccounts, setShowAccounts] = useState(false);
   const selected = useStore(s => s.selectedIds.has(entry.id));
   const toggleSelected = useStore(s => s.toggleSelected);
   const settings = useStore(s => s.settings);
@@ -49,7 +139,14 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [showPassword, settings.passwordAutoHideDelay]);
 
+  const attachments = entry.attachments || [];
+  const customFields = entry.customFields || [];
+  const notes = String(entry.notes || '').trim();
+  /** 备注悬浮提示：前 80 字，太长会撑爆 tooltip */
+  const notesTitle = notes ? (notes.length > 80 ? `${notes.slice(0, 80)}…` : notes) : '';
+
   return (
+    <>
     <div
       className={`entry-card ${selected ? 'selected' : ''}`}
       onClick={() => { recordEntryUse(entry.id); toggleSelected(entry.id); }}
@@ -118,17 +215,47 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
         </div>
       )}
 
+      {/* Row 3.6: 附件 / 自定义字段 / 备注 —— 一行小字，不撑高卡片。
+          以前这三样在卡片上完全不可见，用户不知道条目里还挂着证书、API Key 或备注。 */}
+      {(attachments.length > 0 || customFields.length > 0 || notes) && (
+        <div className="card-meta-row">
+          {attachments.length > 0 && (
+            <span className="card-meta-item" title={attachments.map(a => a.name).join('、')}>
+              {'\u{1F4CE}'}{attachments.length}
+            </span>
+          )}
+          {customFields.length > 0 && (
+            <span
+              className="card-meta-item"
+              title={customFields.map(f => `${f.name}${f.secret ? '（保密）' : ''}`).join('、')}
+            >
+              {'\u{1F516}'}
+              {customFields.slice(0, 2).map(f => f.name || '未命名字段').join('、')}
+              {customFields.length > 2 ? ` +${customFields.length - 2}` : ''}
+            </span>
+          )}
+          {notes && (
+            <span className="card-meta-item card-meta-notes" title={notesTitle}>
+              {'\u{1F4DD}'}{notesTitle}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Row 4: Account + Password — icon-only prefixes, eye next to password */}
       <div className="card-credential-row">
         <span className="cred-account">
           {'\u{1F464}'} {entry.username || '--'}
           {(entry.accounts?.length || 0) > 0 && (
-            <span
+            <button
+              type="button"
               className="cred-more"
-              title={`还有 ${entry.accounts!.length} 个角色账号：${entry.accounts!.map(a => a.role || a.username).join('、')}`}
+              title={`还有 ${entry.accounts!.length} 个角色账号，点击查看并复制`}
+              aria-label={`查看 ${entry.accounts!.length} 个其他角色账号`}
+              onClick={e => { e.stopPropagation(); setShowAccounts(true); }}
             >
               +{entry.accounts!.length}
-            </span>
+            </button>
           )}
         </span>
         <span className="cred-gap">{'  '}</span>
@@ -159,6 +286,17 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
           aria-label="钉成小窗"
         >{'\u{1F4CC}'}</button>
       </div>
+
+      {/* 多角色账号面板：Esc 由 Modal 内置处理。
+          放在卡片 div 外面 —— Modal 是 fixed 全屏遮罩，嵌在卡片里点遮罩会冒泡到卡片的
+          onClick（选中/取消选中），关个弹窗顺手把条目选中状态也翻了。 */}
     </div>
+    <AccountsModal
+      open={showAccounts}
+      onClose={() => setShowAccounts(false)}
+      entry={entry}
+      onCopy={onCopy}
+    />
+    </>
   );
 }

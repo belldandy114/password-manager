@@ -95,13 +95,19 @@ export function PaletteApp() {
         return;
       }
 
-      const [er, sn, nt, rq, ck, ev] = await Promise.all([
+      const [er, sn, nt, rq, ck, ev, ig, zp, ae, rs, rr] = await Promise.all([
         window.electronAPI.entriesGetAll?.(),
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
         window.electronAPI.wsGet('apiRequests'),
         window.electronAPI.wsGet('checklists'),
         window.electronAPI.wsGet('environments'),
+        // 1.24.7：与主面板对齐，禅道/接口环境/回归集也能在小窗里搜到
+        window.electronAPI.wsGet('integrations'),
+        window.electronAPI.wsGet('ztPresets'),
+        window.electronAPI.wsGet('apiEnvs'),
+        window.electronAPI.wsGet('regressionSets'),
+        window.electronAPI.wsGet('regressionRuns'),
       ]);
       if (!er || !er.success || !er.data) {
         if (meta) paletteCache = { epoch: meta.epoch, cmds: [], locked: true };
@@ -178,6 +184,28 @@ export function PaletteApp() {
           id: `env:${e.id}`, title: `${e.system || '未命名'} · ${e.env || ''}`.trim(), sub: String(e.url || '').slice(0, 70), kind: 'env' as Kind,
           env: String(e.envType || e.env || ''),
         })),
+        ...pick(ig).slice(0, 50).map((z: any) => ({
+          id: `integration:${z.id}`, title: String(z.company || z.baseUrl || '禅道配置'),
+          sub: ['禅道配置', z.account].filter(Boolean).join(' · '), kind: 'integration' as Kind,
+          url: String(z.baseUrl || ''), user: String(z.account || ''),
+        })),
+        ...pick(zp).slice(0, 100).map((p: any) => ({
+          id: `ztpreset:${p.id}`, title: String(p.name || '（未命名筛选）'), sub: '禅道筛选预设', kind: 'ztpreset' as Kind,
+        })),
+        ...pick(ae).slice(0, 100).map((e: any) => ({
+          id: `apienv:${e.id}`, title: String(e.name || '（未命名环境）'), sub: '接口环境 · 变量组', kind: 'apienv' as Kind,
+        })),
+        ...pick(rs).slice(0, 100).map((r: any) => ({
+          id: `regression:${r.id}`, title: String(r.name || '（未命名回归集）'),
+          sub: `接口回归集 · ${r.intervalMin ? `每 ${r.intervalMin} 分钟` : '仅手动'}`, kind: 'regression' as Kind,
+        })),
+        ...pick(rr).slice(0, 60).map((r: any) => {
+          const steps = Array.isArray(r.steps) ? r.steps : [];
+          return {
+            id: `regrun:${r.id}`, title: `回归结果 · ${String(r.setName || '未命名')}`,
+            sub: `${steps.filter((s: any) => s && s.ok).length}/${steps.length} 通过`, kind: 'regression' as Kind,
+          };
+        }),
       ];
       // 按 id 去重：重复 key 会让 React 在结果变化时留下上一屏的残留行
       const seen = new Set<string>();

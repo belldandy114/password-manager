@@ -18,7 +18,18 @@ const fs = require('fs');
 const path = require('path');
 
 const dir = path.join(__dirname, '..', 'src', 'styles');
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.css')).sort();
+// ⚠️ 顺序必须与 src/main.tsx 的 import 顺序一致：tokens → global → pages → redesign。
+// 以前这里是 readdirSync().sort()，得到的是 [global, pages, redesign, tokens] ——
+// 字母序把 tokens 排到最后，于是「保留最后加载的那条」这个判断在 tokens 上完全反了
+// （tokens 其实最先加载，它的声明最容易被后面覆盖）。
+// 现在直接复用 css-cascade-audit.js 的 FILES 常量，避免两处各写一份再漂移。
+const { FILES } = require('./css-cascade-audit');
+const files = FILES.filter((f) => fs.existsSync(path.join(dir, f)));
+const missing = FILES.filter((f) => !files.includes(f));
+if (missing.length) {
+  console.error(`✗ 缺少样式表：${missing.join(', ')}（请检查 src/styles/ 与 css-cascade-audit.js 的 FILES）`);
+  process.exit(1);
+}
 
 /** 去掉注释，但保留换行以便行号准确 */
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));

@@ -24,5 +24,15 @@ export interface AuditReport {
 
 export declare function auditVault(
   vault: unknown,
-  opts?: { attachmentExists?: (id: string) => boolean },
+  opts?: {
+    /** 附件文件是否存在；不传就跳过「文件丢失」检查 */
+    attachmentExists?: (id: string) => boolean;
+    /**
+     * 附件能否用**当前主密码**解开；不传就跳过「可解密性」检查。
+     * 需要与 attachmentExists 一起传，否则分不清「文件丢了」和「文件在但解不开」。
+     */
+    attachmentDecryptable?: (id: string) => boolean;
+    /** 最多抽样解密几个附件（默认 20）；0 = 不抽样 */
+    attachmentDecryptSample?: number;
+  },
 ): AuditReport;

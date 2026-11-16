@@ -106,6 +106,9 @@ export const sortFieldLabels: Record<SortField, string> = {
   updatedAt: '修改时间',
   createdAt: '创建时间',
   name: '名称',
+  envType: '环境',
+  url: 'URL',
+  username: '账号',
 };
 
 // 排序方向标签
@@ -282,7 +285,10 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Sort using field + order
-    const sf: SortField = (['updatedAt', 'createdAt', 'name'].includes(state.sortField) ? state.sortField : 'updatedAt');
+    // 1.25.0：新增 envType / url / username 三列。以前这三列靠 EntryList 内部本地排序，
+    // 但 Dashboard 是先 slice(0,120) 再传进去的，点表头只对已渲染的 120 条生效。
+    const SORT_FIELDS: SortField[] = ['updatedAt', 'createdAt', 'name', 'envType', 'url', 'username'];
+    const sf: SortField = (SORT_FIELDS.includes(state.sortField) ? state.sortField : 'updatedAt');
     const so: SortOrder = (['asc', 'desc'].includes(state.sortOrder) ? state.sortOrder : 'desc');
     result.sort((a, b) => {
       // 收藏条目始终置顶，不受排序方向影响
@@ -291,6 +297,15 @@ export const useStore = create<AppState>((set, get) => ({
       if (sf === 'name') cmp = a.name.localeCompare(b.name);
       else if (sf === 'updatedAt') cmp = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       else if (sf === 'createdAt') cmp = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      // 文本列：空值统一排到最后（不受升降序影响），避免「没填 URL 的条目」占满第一屏
+      else if (sf === 'envType' || sf === 'url' || sf === 'username') {
+        const av = String(a[sf] || '').trim();
+        const bv = String(b[sf] || '').trim();
+        if (!av && !bv) cmp = 0;
+        else if (!av) return 1;
+        else if (!bv) return -1;
+        else cmp = av.localeCompare(bv);
+      }
       return so === 'asc' ? -cmp : cmp;
     });
 

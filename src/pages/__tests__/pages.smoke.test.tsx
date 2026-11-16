@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// 19 个页面此前 0 单测：这里只做「挂载不炸」的烟雾测试，防止页面在空数据/空权限下崩溃。
+// 17 个页面此前 0 单测：这里只做「挂载不炸」的烟雾测试，防止页面在空数据/空权限下崩溃。
 // 不测交互（交互由各工具层单测与打包版 UI 探针覆盖），所以刻意保持极简。
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
@@ -12,6 +12,7 @@ import { Dashboard } from '../../pages/Dashboard';
 import { DataGenerator } from '../../pages/DataGenerator';
 import { Environments } from '../../pages/Environments';
 import { ExportPage } from '../../pages/ExportPage';
+import { Home } from '../../pages/Home';
 import { ImportPage } from '../../pages/ImportPage';
 import { Notes } from '../../pages/Notes';
 import { PasswordManagerPage } from '../../pages/PasswordManagerPage';
@@ -30,6 +31,8 @@ const PAGES: Array<[string, () => ReactElement]> = [
   ['DataGenerator', () => <DataGenerator onNavigate={() => {}} />],
   ['Environments', Environments],
   ['ExportPage', ExportPage],
+  // 1.25.0：今日工作台是新的落地页，聚合 5 个数据源，最容易在「全空」时崩
+  ['Home', Home],
   ['ImportPage', ImportPage],
   ['Notes', Notes],
   ['PasswordManagerPage', PasswordManagerPage],

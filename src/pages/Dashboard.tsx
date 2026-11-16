@@ -3,6 +3,7 @@ import type { PasswordEntry, SearchField } from '../types';
 import { useStore, sortFieldLabels, sortOrderLabels, searchFieldLabels } from '../store/useStore';
 import { EntryCard } from '../components/EntryCard';
 import { EntryList } from '../components/EntryList';
+import { Pager } from '../components/Pager';
 import { EntryForm } from '../components/EntryForm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useToast } from '../hooks/useToast';
@@ -16,6 +17,38 @@ import { isPinyinReady, onPinyinReady } from '../utils/search';
 import { getRecentEntries } from '../utils/recent';
 import { OrphanAccounts } from '../components/OrphanAccounts';
 import { systemOfEntryName } from '../utils/systemGroups';
+import { localDay } from '../utils/time';
+
+/* ---------------- 分页常量 / 小工具（1.26.0） ----------------
+ * 以前这里是「滚动增量加载」：一次渲染 120 条，滚到底部再追加 120 条。
+ * 用户要的是标准分页，所以改成页码 + 页大小。页码属于**页面级 UI 状态**，
+ * 放 useState 是对的（跨页共享的筛选 / 排序仍在 store 里，不要搬过去）。
+ */
+const PAGE_SIZES = [10, 20, 50, 100];
+const DEFAULT_PAGE_SIZE = 10;
+/** 页大小持久化：下次打开记住上次选的（页面级偏好，不进 store） */
+const PAGE_SIZE_KEY = 'pm.dashboard.pageSize';
+
+/** 读回上次的页大小；localStorage 不可用（隐私模式）或值非法时回默认 10 */
+function readPageSize(): number {
+  try {
+    const n = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return PAGE_SIZES.includes(n) ? n : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+}
+
+/** 按 key 分组，保持首次出现顺序（卡片视图 / 按系统视图共用） */
+function groupBy<T>(list: T[], key: (item: T) => string): Record<string, T[]> {
+  const acc: Record<string, T[]> = {};
+  for (const item of list) {
+    const k = key(item);
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(item);
+  }
+  return acc;
+}
 
 export function Dashboard() {
   const store = useStore();
@@ -45,22 +78,30 @@ export function Dashboard() {
     if (result.success && result.data) store.setVaultData(result.data);
   }, [store]);
 
-  // 增量渲染：一次最多渲染 visibleLimit 条，滚动到底部再追加
-  const PAGE_SIZE = 120;
-  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+  // 标准分页：页码 + 页大小（页大小从 localStorage 恢复，默认 10 条/页）
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(readPageSize);
 
   const securityReport = useMemo(() => buildSecurityReport(store.entries), [store.entries]);
   const securityFlags = useMemo(() => entrySecurityFlags(store.entries), [store.entries]);
   const riskCount = securityReport.weak.length + securityReport.duplicates.length;
 
-  useEffect(() => { setVisibleLimit(PAGE_SIZE); }, [store.searchQuery, store.filterEnv, store.filterTag, store.viewMode]);
+  /**
+   * 筛选 / 搜索 / 排序 / 视图 / 页大小 任一变化都回到第 1 页。
+   * 不重置的话：在第 5 页搜一个只有 3 条结果的关键词，会看到一片空白（页码越界）。
+   */
+  useEffect(() => {
+    setPage(1);
+  }, [
+    store.searchQuery, store.searchField, store.filterEnv, store.filterTag, store.filterTags,
+    store.sortField, store.sortOrder, store.viewMode, pageSize,
+  ]);
 
-  const handleContentScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
-      setVisibleLimit(prev => (prev < filteredEntries.length ? prev + PAGE_SIZE : prev));
-    }
-  };
+  /** 页大小变化：写回 localStorage，下次打开记住 */
+  const handlePageSize = useCallback((n: number) => {
+    setPageSize(n);
+    try { localStorage.setItem(PAGE_SIZE_KEY, String(n)); } catch { /* 隐私模式忽略 */ }
+  }, []);
 
   const toggleEnvCollapse = useCallback((env: string) => {
     setCollapsedEnvs(prev => {
@@ -92,23 +133,33 @@ export function Dashboard() {
   }, []);
 
   // Group entries by env type for card view
-  const groupedEntries = filteredEntries.reduce<Record<string, PasswordEntry[]>>((acc, e) => {
-    if (!acc[e.envType]) acc[e.envType] = [];
-    acc[e.envType].push(e);
-    return acc;
-  }, {});
+  const groupedEntries = groupBy(filteredEntries, (e) => e.envType);
 
   /**
    * 按系统分组：`合同管理系统-测试` 与 `合同管理系统-正式` 归到「合同管理系统」下。
    * 用的就是各条目自己的名字，不去跨「测试账号 / 环境矩阵」取数 —— 那部分在各自页面看，
    * 放进来只会和网址管理重复。
    */
-  const groupedBySystem = filteredEntries.reduce<Record<string, PasswordEntry[]>>((acc, e) => {
-    const key = systemOfEntryName(e.name) || '未命名';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(e);
-    return acc;
-  }, {});
+  const groupedBySystem = groupBy(filteredEntries, (e) => systemOfEntryName(e.name) || '未命名');
+
+  /* ---------------- 分页切片（1.26.0） ----------------
+   * 三种视图（卡片 / 列表 / 按系统）都只渲染**当前页**的数据。
+   * 页码越界时（比如删到只剩 1 页）夹到最后一页，避免出现「空白页 + 页码 5/2」。
+   */
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
+  const curPage = Math.min(Math.max(1, page), totalPages);
+  const pagedEntries = useMemo(
+    () => filteredEntries.slice((curPage - 1) * pageSize, curPage * pageSize),
+    [filteredEntries, curPage, pageSize],
+  );
+  /** 当前页的分组（卡片 / 按系统视图用；组头计数 = 本页条数，总数看底部 Pager） */
+  const pagedGroupedEntries = useMemo(() => groupBy(pagedEntries, (e) => e.envType), [pagedEntries]);
+  const pagedGroupedBySystem = useMemo(
+    () => groupBy(pagedEntries, (e) => systemOfEntryName(e.name) || '未命名'),
+    [pagedEntries],
+  );
+  /** 只有超过一页才显示分页器（单页 / 空态不占地方） */
+  const showPager = filteredEntries.length > pageSize;
 
   const envOrder = ['production', 'testing', 'development', 'staging'];
   const envLabel: Record<string, string> = { production: '正式', testing: '测试', development: '开发', staging: '预发布' };
@@ -188,8 +239,11 @@ export function Dashboard() {
       store.setVaultData(result.data);
       store.clearSelected();
       addToast(`已永久删除 ${ids.length} 个网址`, 'success');
+      setShowDeleteConfirm(false);
+    } else {
+      // 删除是写盘操作：失败必须报错并保留弹窗，不能「点了没反应」
+      addToast(result.error || '删除失败', 'error');
     }
-    setShowDeleteConfirm(false);
   };
 
   // Batch export — open modal
@@ -205,32 +259,30 @@ export function Dashboard() {
     if (result.success && result.data) {
       store.setVaultData(result.data);
       addToast(`已更新 ${ids.length} 个网址的环境为 ${batchEnvType}`, 'success');
+      setShowBatchEnvModal(false);
+    } else {
+      // 写盘失败必须报错：以前不管结果都关弹窗，用户以为改好了
+      addToast(result.error || '批量修改环境失败', 'error');
     }
-    setShowBatchEnvModal(false);
   };
 
-  // Batch move tag
+  // Batch add tag
+  //
+  // 以前发的是 `entriesBatchUpdate({ changes: { tags: [batchTag] } })`，主进程用
+  // `Object.assign` 整体替换 tags —— 「添加标签」实际是**覆盖**：['重要','生产'] → ['新标签']。
+  // 现在走 entriesAddTag（主进程做并集），并且失败要报错，不能静默。
   const handleBatchAddTag = async () => {
     const ids = Array.from(store.selectedIds);
-    if (ids.length === 0 || !batchTag) return;
-    // Add tag to each selected entry
-    const updatedEntries = store.entries.map(e => {
-      if (ids.includes(e.id)) {
-        if (!e.tags.includes(batchTag)) {
-          return { ...e, tags: [...e.tags, batchTag] };
-        }
-      }
-      return e;
-    });
-    const allTags = [...new Set([...store.tags, batchTag])];
-    // Save via updating first entry (triggers vault save)
-    const result = await window.electronAPI.entriesBatchUpdate({ ids, changes: { tags: [batchTag] } });
-    // Actually we need to update tags properly - just update the entries data
+    const tag = batchTag.trim();
+    if (ids.length === 0 || !tag) return;
+    const result = await window.electronAPI.entriesAddTag({ ids, tag });
     if (result.success && result.data) {
       store.setVaultData(result.data);
-      addToast(`已为 ${ids.length} 个网址添加标签「${batchTag}」`, 'success');
+      addToast(`已为 ${ids.length} 个网址添加标签「${tag}」`, 'success');
+      setShowBatchTagModal(false);
+    } else {
+      addToast(result.error || '添加标签失败', 'error');
     }
-    setShowBatchTagModal(false);
   };
 
   // Export selected entries
@@ -248,7 +300,7 @@ export function Dashboard() {
         const result = await window.electronAPI.exportSelectedEncrypted({ ids, exportPassword });
         if (result.success && result.data) {
           const saveResult = await window.electronAPI.dialogSaveFile({
-            defaultName: `password-manager-selected-${new Date().toISOString().slice(0, 10)}.enc`,
+            defaultName: `password-manager-selected-${localDay()}.enc`,
             filters: [{ name: '加密备份', extensions: ['enc'] }],
           });
           if (!saveResult.canceled && saveResult.filePath) {
@@ -271,7 +323,7 @@ export function Dashboard() {
         if (result.success && result.data) {
           const ext = exportFormat === 'xlsx' ? 'xlsx' : exportFormat;
           const saveResult = await window.electronAPI.dialogSaveFile({
-            defaultName: `password-manager-selected-${new Date().toISOString().slice(0, 10)}.${ext}`,
+            defaultName: `password-manager-selected-${localDay()}.${ext}`,
             filters: [{ name: formatLabel, extensions: [ext] }],
           });
           if (!saveResult.canceled && saveResult.filePath) {
@@ -295,12 +347,18 @@ export function Dashboard() {
     setShowExportModal(false);
   };
 
-  // Select all / deselect all
+  /**
+   * 全选 / 取消全选 —— **只作用于当前页**（1.26.0）。
+   *
+   * 分页后「全选」有两种语义：全部筛选结果 vs 当前页。这里选当前页：
+   * 用户眼前只有这一页，勾上几百条看不见的条目再点「批量删除」是不可解释的。
+   * 按钮 title 已写明「全选本页」，避免歧义。
+   */
   const handleSelectAll = () => {
-    if (filteredEntries.length > 0 && filteredEntries.every(e => store.selectedIds.has(e.id))) {
+    if (pagedEntries.length > 0 && pagedEntries.every(e => store.selectedIds.has(e.id))) {
       store.clearSelected();
     } else {
-      store.selectAll(filteredEntries.map(e => e.id));
+      store.selectAll(pagedEntries.map(e => e.id));
     }
   };
 
@@ -312,7 +370,8 @@ export function Dashboard() {
     return cleanup;
   }, []);
 
-  const allSelected = filteredEntries.length > 0 && filteredEntries.every(e => store.selectedIds.has(e.id));
+  /** 当前页是否已全选（决定按钮显示「全选本页」还是「取消全选」） */
+  const allSelected = pagedEntries.length > 0 && pagedEntries.every(e => store.selectedIds.has(e.id));
 
   return (
     <>
@@ -367,7 +426,12 @@ export function Dashboard() {
           <input
             type="text"
             aria-label={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL、账号、标签' : searchFieldLabels[store.searchField]}`}
-            placeholder={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL、账号、标签' : searchFieldLabels[store.searchField]}...`}
+            /* 1.25.0：占位符从「搜索名称、URL、账号、标签…」缩短为「搜索名称、URL…」。
+               工具栏在 1384px 窗口下只有 854px，完整占位符需要 181px + 内边距，
+               而搜索区被三组控件挤到 243px（含「全部」范围按钮 63px），必然截断。
+               完整说明放 title + aria-label，鼠标悬停可见，不牺牲可发现性。 */
+            title={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL、账号、标签' : searchFieldLabels[store.searchField]}`}
+            placeholder={`搜索${searchFieldLabels[store.searchField] === '全部' ? '名称、URL…' : searchFieldLabels[store.searchField]}…`}
             value={store.searchQuery}
             onChange={e => store.setSearchQuery(e.target.value)}
           />
@@ -452,7 +516,11 @@ export function Dashboard() {
           <span className="batch-count">{store.selectedIds.size}</span>
           <span className="batch-label"> 个</span>
           <div className="batch-actions">
-            <button className="batch-btn" onClick={handleSelectAll} title={allSelected ? '取消全选' : '全选'}>
+            <button
+              className="batch-btn"
+              onClick={handleSelectAll}
+              title={allSelected ? '取消全选本页' : `全选本页（${pagedEntries.length} 条）`}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 {allSelected ? (
                   <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>
@@ -460,7 +528,7 @@ export function Dashboard() {
                   <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></>
                 )}
               </svg>
-              {allSelected ? '取消全选' : '全选'}
+              {allSelected ? '取消全选' : '全选本页'}
             </button>
 
             <button className="batch-btn" onClick={() => setShowBatchEnvModal(true)}>
@@ -511,7 +579,8 @@ export function Dashboard() {
       )}
 
       {/* Content */}
-      <div className="content-area" onScroll={handleContentScroll}>
+      {/* 1.26.0：滚动不再加载更多（改标准分页），所以去掉了 onScroll */}
+      <div className="content-area">
         {/* 最近用过：点一下等价于按名称搜它，省得在几百条里翻 */}
         {recentEntries.length > 0 && (
           <div className="recent-strip">
@@ -569,26 +638,30 @@ export function Dashboard() {
             )}
           </div>
         ) : store.viewMode === 'card' ? (
-          // Card view - grouped by env
+          // Card view - grouped by env（只渲染当前页）
           <>
-          {(() => {
-            // 只渲染前 visibleLimit 条，避免几百条时首屏卡顿
-            let budget = visibleLimit;
-            const limited = Object.entries(groupedEntries).map(([env, list]) => {
-              const take = Math.max(0, Math.min(list.length, budget));
-              budget -= take;
-              return [env, list.slice(0, take), list.length] as const;
-            }).filter(([, list]) => list.length > 0);
-            return limited.map(([env, entries, total]) => {
+          {envOrder
+            .filter((env) => (pagedGroupedEntries[env] || []).length > 0)
+            .concat(
+              Object.keys(pagedGroupedEntries).filter((env) => !envOrder.includes(env)),
+            )
+            .map((env) => {
+              const entries = pagedGroupedEntries[env] || [];
+              const total = (groupedEntries[env] || []).length;
               const isCollapsed = collapsedEnvs.has(env);
               return (
                 <div key={env}>
-                  <div className="env-section-header" onClick={() => toggleEnvCollapse(env)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                  <div
+                    className="env-section-header"
+                    onClick={() => toggleEnvCollapse(env)}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                    title={`本页 ${entries.length} 条，共 ${total} 条`}
+                  >
                     <span className="env-collapse-icon" style={{ fontSize: 10, marginRight: 4, color: 'var(--text-muted)', transition: 'transform 0.15s' }}>
                       {isCollapsed ? '▶' : '▼'}
                     </span>
                     <span className={`env-badge env-${env}`}>{envLabel[env] || env}</span>
-                    <span className="count">({total})</span>
+                    <span className="count">(本页 {entries.length})</span>
                   </div>
                   {!isCollapsed && (
                     <div className="entry-grid">
@@ -604,26 +677,18 @@ export function Dashboard() {
                   )}
                 </div>
               );
-            });
-          })()}
-          {filteredEntries.length > visibleLimit && (
-            <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
-          )}
+            })}
           </>
         ) : store.viewMode === 'system' ? (
-          // 按系统视图：同名条目（-测试 / -正式）并到一组，分组头显示系统名与条数
+          // 按系统视图：同名条目（-测试 / -正式）并到一组，分组头显示系统名与本页条数
           <>
-          {(() => {
-            let budget = visibleLimit;
-            const groups = Object.entries(groupedBySystem)
-              .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], 'zh-CN'))
-              .map(([name, list]) => {
-                const take = Math.max(0, Math.min(list.length, budget));
-                budget -= take;
-                return [name, list.slice(0, take), list.length] as const;
-              })
-              .filter(([, list]) => list.length > 0);
-            return groups.map(([name, list, total]) => {
+          {Object.keys(pagedGroupedBySystem)
+            // 组顺序按**全量**条数排（不按本页条数），否则翻页时分组会跳来跳去
+            .sort((a, b) => (groupedBySystem[b] || []).length - (groupedBySystem[a] || []).length
+              || a.localeCompare(b, 'zh-CN'))
+            .map((name) => {
+              const list = pagedGroupedBySystem[name] || [];
+              const total = (groupedBySystem[name] || []).length;
               const key = `sys:${name}`;
               const isCollapsed = collapsedEnvs.has(key);
               return (
@@ -632,12 +697,13 @@ export function Dashboard() {
                     className="env-section-header"
                     onClick={() => toggleEnvCollapse(key)}
                     style={{ cursor: 'pointer', userSelect: 'none' }}
+                    title={`本页 ${list.length} 条，共 ${total} 条`}
                   >
                     <span className="env-collapse-icon" style={{ fontSize: 10, marginRight: 4, color: 'var(--text-muted)', transition: 'transform 0.15s' }}>
                       {isCollapsed ? '▶' : '▼'}
                     </span>
                     <span className="sysview-name">{name}</span>
-                    <span className="count">({total})</span>
+                    <span className="count">(本页 {list.length})</span>
                   </div>
                   {!isCollapsed && (
                     <div className="entry-grid">
@@ -653,24 +719,29 @@ export function Dashboard() {
                   )}
                 </div>
               );
-            });
-          })()}
-          {filteredEntries.length > visibleLimit && (
-            <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
-          )}
+            })}
           </>
         ) : (
-          // List view
-          <>
-            <EntryList entries={filteredEntries.slice(0, visibleLimit)}
-              securityFlags={securityFlags}
-              onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
-              onCopy={handleCopy}
-              onOpen={handleOpenUrl} />
-            {filteredEntries.length > visibleLimit && (
-              <div className="load-more-hint">已显示 {visibleLimit} / {filteredEntries.length} 条，继续滚动加载更多</div>
-            )}
-          </>
+          // List view（只渲染当前页）
+          <EntryList entries={pagedEntries}
+            securityFlags={securityFlags}
+            onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
+            onCopy={handleCopy}
+            onOpen={handleOpenUrl} />
+        )}
+
+        {/* 分页器：三种视图共用，单页 / 空态时不显示 */}
+        {showPager && (
+          <div className="pm-pager-wrap">
+            <Pager
+              total={filteredEntries.length}
+              page={curPage}
+              pageSize={pageSize}
+              onPage={setPage}
+              onPageSize={handlePageSize}
+              pageSizes={PAGE_SIZES}
+            />
+          </div>
         )}
       </div>
 

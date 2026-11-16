@@ -4,7 +4,7 @@ import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, Pill , SearchBox } from '../components/ui';
 import { Modal } from '../components/Modal';
-import { formatRecent } from '../utils/time';
+import { formatRecent, localDay } from '../utils/time';
 import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule, ASSERT_OPS, type AssertResult } from '../utils/apiAssert';
 import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema';
 import { codegenFromBody } from '../utils/apiCodegen';
@@ -724,7 +724,7 @@ export function ApiClient() {
 
   const saveBatchReport = async () => {
     const pick = await window.electronAPI.dialogSaveFile({
-      defaultName: `接口回归-${new Date().toISOString().slice(0, 10)}.md`,
+      defaultName: `接口回归-${localDay()}.md`,
       filters: [{ name: 'Markdown', extensions: ['md'] }],
     });
     if (pick.canceled || !pick.filePath) return;

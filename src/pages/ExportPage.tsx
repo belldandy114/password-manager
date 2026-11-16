@@ -4,6 +4,7 @@ import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { callIpc } from '../utils/ipc';
+import { localDay } from '../utils/time';
 
 /** 明文导出的格式显示名（保存对话框的过滤器名与按钮文案共用） */
 const FORMAT_LABEL: Record<string, string> = {
@@ -33,7 +34,7 @@ export function ExportPage() {
     });
     if (result.success && result.data) {
       const saveResult = await window.electronAPI.dialogSaveFile({
-        defaultName: `password-manager-backup-${new Date().toISOString().slice(0, 10)}.enc`,
+        defaultName: `password-manager-backup-${localDay()}.enc`,
         filters: [{ name: '加密备份', extensions: ['enc'] }],
       });
       if (!saveResult.canceled && saveResult.filePath) {
@@ -70,7 +71,7 @@ export function ExportPage() {
     if (result.success && result.data) {
       const ext = format === 'xlsx' ? 'xlsx' : format;
       const saveResult = await window.electronAPI.dialogSaveFile({
-        defaultName: `password-manager-export-${new Date().toISOString().slice(0, 10)}.${ext}`,
+        defaultName: `password-manager-export-${localDay()}.${ext}`,
         filters: [
           { name: FORMAT_LABEL[format], extensions: [ext] },
         ],

@@ -126,10 +126,12 @@ async function targets() {
   await navTo('设置');
   await clickBtn('定时任务');
   await sleep(700);
+  // 1.25.1：设置页重分类后，「更新」移到「关于与更新」、「备份」移到「数据与备份」，
+  // 定时任务只剩 3 张卡（环境巡检 / 禅道检查 / 接口回归）。
   const taskCards = await M.ev(`document.querySelectorAll('.task-card').length`);
-  check('设置 › 定时任务：四张任务卡都在', taskCards === 4, `cards=${taskCards}`);
+  check('设置 › 定时任务：三张任务卡都在', taskCards === 3, `cards=${taskCards}`);
   const taskNames = await M.ev(`[...document.querySelectorAll('.task-name')].map(x => x.textContent.trim()).join(' | ')`);
-  check('四张卡分别对应巡检 / 禅道 / 更新 / 备份', /巡检/.test(taskNames) && /禅道/.test(taskNames) && /更新/.test(taskNames) && /备份/.test(taskNames), taskNames);
+  check('三张卡分别对应巡检 / 禅道 / 回归', /巡检/.test(taskNames) && /禅道/.test(taskNames) && /回归/.test(taskNames), taskNames);
   const envInterval = await M.ev(`(() => { const c = document.querySelector('.task-card'); const i = c && c.querySelector('input[type=number]'); return i ? i.value : null; })()`);
   check('环境巡检有间隔输入（默认 0 = 关）', envInterval === '0', `value=${envInterval}`);
   const immediate = await M.ev(`[...document.querySelectorAll('.task-card button')].some(b => b.textContent.includes('立即'))`);

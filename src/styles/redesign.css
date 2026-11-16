@@ -206,7 +206,7 @@ input[type='radio']:not(.switch input):checked::after {
   font-size: 10px;
 }
 
-.sidebar-system { padding: 8px 10px 10px; border-top: 1px solid var(--line); }
+.sidebar-system { border-top: 1px solid var(--line); }
 
 /* ---------------- 4. 页面骨架 ---------------- */
 
@@ -458,7 +458,6 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%238b959c'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
-  padding-right: 28px;
 }
 [data-theme='light'] select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%23656e76'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
@@ -5821,3 +5820,1511 @@ input[type='radio']:not(.switch input):focus-visible {
   color: var(--text-3);
 }
 .att-card-dir svg { flex: 0 0 auto; opacity: 0.7; }
+
+/* ---- 附件：非图片文件与文本预览（1.24.7）---- */
+.att-card-thumb .att-thumb.is-broken.is-file {
+  border-style: solid;
+  border-color: var(--line-strong, var(--line));
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.att-preview-modal {
+  width: min(760px, calc(100vw - 80px));
+}
+.att-text-view {
+  max-height: min(60vh, 520px);
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.att-dir-warn {
+  color: var(--warning);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* ============================================================================
+   1.25.0 渲染层缺陷修复：新增元素样式
+   ----------------------------------------------------------------------------
+   为什么加在 redesign.css 末尾：三份样式表按 global → pages → redesign 加载，
+   同名选择器重复很多（见 AGENTS.md「样式类改动怎么验」）。新样式一律追加在最后，
+   不靠改前面的文件「猜」优先级。全部用 var(--*) token，不硬编码颜色。
+   ============================================================================ */
+
+/* ---- 列表视图：动态码 / 附件 两列（1.25.0）----
+   以前列表视图既没有 TOTP 也没有附件数量，切到列表就取不到验证码、看不到附件。 */
+.entry-table .col-totp {
+  width: 110px;
+  min-width: 96px;
+  white-space: nowrap;
+}
+.entry-table .col-attach {
+  width: 72px;
+  min-width: 64px;
+  text-align: center;
+}
+.entry-table .cell-empty {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+.entry-table .attach-count-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+.entry-table .attach-count-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---- 卡片：附件 / 自定义字段 / 备注 一行小字（1.25.0）----
+   密度对齐 .card-totp-row：一行、小字、不撑高卡片。 */
+.entry-card .card-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 3px 0 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.entry-card .card-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.entry-card .card-meta-notes {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+/* ---- 卡片：+N 角色账号改成可点按钮（1.25.0）----
+   以前只是个带 title 的 span，鼠标悬停能看到角色名但复制不了。 */
+.entry-card .cred-more {
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+  transition: color var(--transition), border-color var(--transition);
+}
+.entry-card .cred-more:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---- 多角色账号面板（1.25.0）---- */
+.role-acc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(56vh, 480px);
+  overflow: auto;
+}
+.role-acc-row {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.role-acc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.role-acc-role {
+  font-weight: 600;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+}
+.role-acc-note {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.role-acc-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.role-acc-label {
+  flex: 0 0 34px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.role-acc-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.role-acc-pwd {
+  letter-spacing: 0.08em;
+}
+
+/* ---- 附件管理：批量导出多选（1.25.0）---- */
+.att-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.att-bulk-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.att-bulk-all input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.att-bulk-count {
+  color: var(--accent);
+  font-weight: 600;
+}
+.att-card {
+  position: relative;
+}
+.att-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.att-card-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-xs);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.att-card-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ---- 孤儿账号：挂到条目下拉（1.25.0）---- */
+.orphan-attach-select {
+  width: 100%;
+  max-width: 210px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--input-line, var(--line));
+  border-radius: var(--r-xs);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.orphan-attach-select:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ============================================================
+   今日工作台（1.25.0）
+   ------------------------------------------------------------
+   为什么写在 redesign.css 末尾：三份样式表按 global → pages → redesign
+   顺序加载，同名选择器重复很多（见 AGENTS.md「CSS 级联」章节）。
+   新页面的样式一律追加在最后，避免被前面更早加载的规则覆盖，
+   也不去改前面文件里已有的声明。
+   ============================================================ */
+.nav-item-home {
+  margin-bottom: 6px;
+}
+
+
+/* ---- 笔记关联（1.25.0）----
+   写在末尾的原因同上：三份样式表级联顺序 global → pages → redesign，
+   新组件样式一律追加，不改前面文件里已有的声明。 */
+.note-link-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.note-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-inset);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+.note-link-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+}
+.note-link-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+.note-link-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.note-link-x:hover {
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+.note-link-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.note-link-add select,
+.note-link-add input {
+  min-width: 0;
+}
+.note-link-add select {
+  max-width: 200px;
+}
+.note-link-add input {
+  flex: 1 1 140px;
+}
+.note-link-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* 条目详情里的「相关笔记」 */
+.entry-note-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.entry-note-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.entry-note-link span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-note-link:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* ---- 测试数据：数据集列表 + SQL 表名输入（1.25.0）---- */
+.tdg-sql-ident {
+  width: 108px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--input-line, var(--line));
+  border-radius: var(--r-sm);
+  background: var(--input-bg, var(--surface-inset));
+  color: var(--text-1);
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+}
+.tdg-sql-ident:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tdg-ds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(46vh, 380px);
+  overflow: auto;
+}
+.tdg-ds-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+}
+.tdg-ds-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tdg-ds-name {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tdg-ds-meta {
+  margin-top: 2px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* ---- 周报片段库（1.25.0）---- */
+.wk-snip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(46vh, 380px);
+  overflow: auto;
+}
+.wk-snip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+}
+.wk-snip-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wk-snip-name {
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wk-snip-preview {
+  margin-top: 2px;
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wk-snip-meta {
+  margin-top: 2px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* ---- 定时任务 › 接口回归卡（1.25.0）---- */
+.task-reg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 10px;
+}
+.task-reg-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  font-size: var(--fs-xs);
+}
+.task-reg-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+.task-reg-status {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  border: 1px solid var(--line);
+  color: var(--text-3);
+}
+.task-reg-status.is-ok {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+.task-reg-status.is-bad {
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--bad);
+}
+.task-reg-when,
+.task-reg-due {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .task-reg-row { flex-wrap: wrap; }
+  .task-reg-when,
+  .task-reg-due { flex: 1 1 auto; }
+}
+
+/* ================================================================
+ * 44. 样式统一与侧栏溢出修复（1.25.0）
+ *
+ * 起因：2026-11-16 用 CDP 几何量实测 13 个页面，发现三类真实问题：
+ *   1. 侧栏在 761px 高度下 nav.scrollHeight(637) > clientHeight(582)，
+ *      最后 55px 被裁 —— 「测试数据」「工具箱」两个导航项默认看不见，
+ *      而侧栏本身没有可见滚动条，用户根本不会想到去滚它。
+ *   2. 分组标题（26px）+ 4 个分组各 12px 外边距 + 底部系统区（124px）
+ *      把垂直空间吃光；分组标题的 ▾ 箭头与文字基线不齐。
+ *   3. 下拉框 / 输入框 / 按钮在三份样式表里各自定义高度，密度档位切换时
+ *      出现 34px 与 28px 混排（同一行里两个控件不等高）。
+ *
+ * 原则：只动「间距与对齐」，不改配色与字号体系；全部用 var(--*) 令牌。
+ * ================================================================ */
+
+/* ---- 44.1 侧栏：压缩垂直占用，保证 4 组 + 系统区在 720px 高度内放得下 ---- */
+.sidebar-nav-groups {
+  /* 分组之间的呼吸感从 12px 收到 8px：4 个分组省下 16px */
+  gap: 0;
+}
+.sidebar-nav-groups .sidebar-group + .sidebar-group {
+  margin-top: 8px;
+}
+.sidebar-nav-groups .sidebar-group-title {
+  /* 标题行 26px → 22px：4 个分组省 16px */
+  min-height: 22px;
+  padding-block: 2px;
+  /* 箭头与文字垂直居中（原来 baseline 对齐，▾ 会偏上） */
+  align-items: center;
+}
+.sidebar-nav-groups .sidebar-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  line-height: 1;
+  font-size: 9px;
+  flex: none;
+}
+/* 导航项：34px → 32px（4 组共 12 项，省 24px） */
+.sidebar-nav-groups .nav-item {
+  min-height: 32px;
+  padding-block: 6px;
+}
+/* 底部系统区：124px → 108px */
+.sidebar-system {
+  padding: 6px 10px 8px;
+}
+.sidebar-system .nav-item {
+  min-height: 32px;
+  padding-block: 6px;
+}
+/* 兜底：即使窗口再矮，nav 也要有可见的滚动提示（细滚动条 + 两端渐隐） */
+.sidebar-nav-groups {
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+.sidebar-nav-groups::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-nav-groups::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+.sidebar-nav-groups::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+/* ---- 44.2 控件等高：同一行里的按钮 / 输入框 / 下拉框必须一样高 ---- */
+/* 这三类控件在 global.css / pages.css / redesign.css 里各定义过一次，
+   密度档位只覆盖了 min-height，padding 与 line-height 仍是旧值，导致
+   「34px 的按钮 + 28px 的 select」并排时基线错位。这里统一收口。 */
+.btn,
+.btn-sm,
+.ibtn,
+select,
+input[type='text'],
+input[type='password'],
+input[type='number'],
+input[type='search'],
+input[type='date'],
+input[type='time'],
+textarea {
+  box-sizing: border-box;
+}
+.btn,
+.btn-sm,
+.ibtn,
+select,
+.field input,
+.field select,
+.setting-row input,
+.setting-row select,
+.search-box input {
+  /* 统一用密度令牌，三档切换时一起变 */
+  min-height: var(--d-control-h);
+  line-height: 1.4;
+}
+/* select 的原生箭头会挤压文字：右侧留出固定空间，避免长选项被箭头盖住 */
+select {
+  padding-right: 26px;
+  text-overflow: ellipsis;
+}
+/* 数字输入框的上下箭头在 34px 高度里会顶到边框 */
+input[type='number'] {
+  padding-right: 4px;
+}
+
+/* ---- 44.3 文字与 icon 不重叠 ---- */
+/* 侧栏 / 按钮里的 icon 一律 flex:none，文字用 min-width:0 + 省略号，
+   避免长中文名把 icon 挤出去或压到文字上。 */
+.nav-item > svg,
+.btn > svg,
+.ibtn > svg {
+  flex: none;
+}
+.nav-item > span,
+.btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 分组标题同理：标题文字可省略，箭头固定在最右 */
+.sidebar-group-title > span:not(.sidebar-group-chevron) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 44.4 页面头部：标题与副标题的间距统一 ---- */
+/* 实测「网址管理」「设置」等页的 .pg-sub 与 .pg-title 贴得太近（4px），
+   而「缺陷管理」是 8px —— 同一套骨架两种间距。统一到 6px。 */
+.pg-head .pg-sub {
+  margin-top: 6px;
+}
+
+/* ---- 44.5 工具栏：控件换行时不互相挤压 ---- */
+/* 网址管理页的工具栏在 1384px 下已经挤到「搜索框被压缩」，
+   给每个控件一个最小宽度，超出就换行而不是压扁。 */
+.toolbar {
+  row-gap: 8px;
+}
+.toolbar > .search-box,
+.toolbar > .search {
+  min-width: 180px;
+}
+.toolbar > select {
+  min-width: 96px;
+}
+
+/* ---- 44.6 卡片：元信息行（附件/字段/备注）不撑高卡片 ---- */
+/* 1.25.0 新加的 .card-meta-row 在窄卡片里会换行成两行，
+   用 nowrap + 省略号保证始终一行。 */
+.card-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+.card-meta-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-meta-row > .card-meta-sep {
+  flex: none;
+  opacity: 0.5;
+}
+
+/* ---- 44.7 窄窗口：侧栏折叠后不再显示分组标题的空白 ---- */
+@media (max-width: 900px) {
+  .sidebar-nav-groups .sidebar-group + .sidebar-group {
+    margin-top: 6px;
+  }
+  .sidebar-nav-groups .sidebar-group-title {
+    min-height: 16px;
+    padding-block: 0;
+  }
+}
+
+/* ---- 44.8 工具栏搜索区：输入框被「范围下拉」挤到只剩 176px ---- */
+/* 实测（1384px 窗口，网址管理页）：.toolbar-search 总宽 239px，
+   其中「全部」范围按钮占 63px，输入框只剩 176px ——
+   占位符「搜索名称、URL、账号、标签」被截成「搜索名称、URL、账号、标」。
+   根因是 global.css:513 的 max-width:300px 把整个搜索区钉死，
+   而范围按钮是它的子元素，两者抢同一份宽度。
+   这里把上限放宽到 380px，并给输入框一个最小宽度，保证占位符能完整显示。 */
+.toolbar-search {
+  max-width: 380px;
+  min-width: 220px;
+}
+.toolbar-search input {
+  min-width: 150px;
+}
+/* 窄窗口下让搜索区独占一行，而不是被压到看不见 */
+@media (max-width: 1180px) {
+  .toolbar-search {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+}
+
+/* ---- 44.9 工具栏三组控件的间距与换行 ---- */
+/* 三组（搜索 / 筛选 / 操作）在 854px 容器里刚好挤满，
+   组间 gap 从 8px 提到 10px，并允许筛选组内部换行，避免下拉框互相压。 */
+.toolbar-filters {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.toolbar-actions {
+  flex: none;
+  margin-left: auto;
+}
+
+/* ---- 44.10 工具栏搜索区（修正 44.8）---- */
+/* 44.8 只改了 max-width，但 .toolbar-search 的 flex 是 `1 1 0%`（basis 0），
+   在 854px 容器里三组控件按比例分空间，它仍被压到 238px。
+   这里把 basis 改成 auto 并提高优先级，让它按内容宽度优先分配。 */
+/* 范围按钮（「全部」）固定宽度，不参与压缩 */
+.toolbar .toolbar-search .search-scope-btn {
+  flex: none;
+}
+/* 窄窗口：搜索区独占一行 */
+@media (max-width: 1180px) {
+  .toolbar .toolbar-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+
+/* ---- 44.11 工具栏三组保持一行（修正 44.10）---- */
+/* 44.10 把搜索区撑到 380px 后，380+290+276+20(gap) = 966px > 854px 容器，
+   .toolbar-actions 被挤到第二行，右侧留一大块空白，比原来更乱。
+   正确做法：搜索区可弹性收缩（basis auto + shrink 1），筛选与操作组不收缩，
+   三组始终一行；搜索区在 240~380px 之间自适应。 */
+
+/* ---- 44.12 工具栏空间分配（最终版）---- */
+/* 实测 854px 容器：搜索 239 + 筛选 290 + 操作 276 + gap 20 = 825，看似够，
+   但搜索区 flex-basis 是 auto 且可收缩，实际被压到 239px，
+   占位符「搜索名称、URL、账号、标签」需要 181px + 内边距 40px = 221px 才不截断。
+   做法：把筛选组三个下拉各收 10px（100→90 / 94→86 / 80→74），
+   省出 24px 全部给搜索区；同时给搜索区一个「不截断占位符」的硬下限。 */
+.toolbar .toolbar-filters select {
+  max-width: 90px;
+}
+.toolbar .toolbar-filters .sort-select {
+  max-width: 86px;
+}
+.toolbar .toolbar-filters .sort-order-select {
+  max-width: 74px;
+}
+/* 搜索区硬下限：占位符 181px + 左右内边距 40px + 范围按钮 63px = 284px */
+/* 操作组的视图切换按钮收紧（卡片/列表/按系统 三个按钮各减 4px 内边距） */
+.toolbar .toolbar-actions .view-switch {
+  gap: 0;
+}
+.toolbar .toolbar-actions .view-toggle-btn {
+  padding-inline: 8px;
+}
+
+/* ---- 44.13 工具栏：放弃「一行」执念，改成两行网格（最终定稿）---- */
+/* 前几轮反复在「一行」和「占位符完整」之间来回：
+ *   - 一行 → 搜索区被压到 239px，占位符截断成「搜索名称、URL、账号、标」
+ *   - 占位符完整 → 三组总宽 825px 挤不进 854px（含 gap 与 min-width 后溢出），换行
+ * 根本矛盾：854px 容器装不下「完整搜索框 + 3 个下拉 + 3 个视图按钮 + 新增」。
+ *
+ * 定稿方案：**明确两行**，第一行搜索 + 筛选，第二行操作按钮右对齐。
+ * 两行是稳定的（不随窗口宽度抖动），且每行都有充足空间，不会互相压。
+ * 用 grid 而不是 flex-wrap，保证行高与对齐可控。 */
+.toolbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'search filters'
+    'actions actions';
+}
+.toolbar .toolbar-search {
+  grid-area: search;
+  width: 100%;
+}
+.toolbar .toolbar-filters {
+  grid-area: filters;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.toolbar .toolbar-actions {
+  grid-area: actions;
+  justify-self: end;
+}
+/* 搜索框恢复完整宽度：第一行只有搜索 + 筛选，空间充足 */
+.toolbar .toolbar-search input {
+  width: 100%;
+}
+/* 筛选组三个下拉恢复自然宽度（不再需要压缩） */
+.toolbar .toolbar-filters select,
+.toolbar .toolbar-filters .sort-select,
+.toolbar .toolbar-filters .sort-order-select {
+  max-width: none;
+}
+/* 宽窗口（>=1400px）空间够，回到一行 */
+@media (min-width: 1400px) {
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: 'search filters actions';
+  }
+  .toolbar .toolbar-actions {
+    margin-left: 0;
+  }
+}
+
+/* ---- 44.14 设置页「输入框 + 单位文字」重叠 ---- */
+/* 实测（设置 › 安全 › 自动锁定）：
+ *   .setting-control 宽 146px，里面 input 占 120px，
+ *   紧跟的「分钟」文字没有独立空间，被压在 input 右边缘上（截图可见「分钟」叠在输入框里）。
+ * 根因：.setting-control 只设了 flex-shrink:0，没有 display:flex，
+ *   子元素按 inline 流排布，input 的 min-width:120px 把文字挤到它下面/上面。
+ * 修法：让 .setting-control 成为 flex 容器，输入框与单位文字各占一份，gap 8px。 */
+.setting-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.setting-control > input,
+.setting-control > select {
+  flex: none;
+}
+/* 单位文字（分钟 / 份 / 秒）不参与压缩，且不换行 */
+.setting-control > span,
+.setting-control > small,
+.setting-control > label {
+  flex: none;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+/* 输入框在 flex 容器里不再需要 min-width:120px 撑开（那是给 inline 流用的） */
+.setting-control input[type='number'] {
+  min-width: 88px;
+  width: 88px;
+  text-align: right;
+}
+/* 备份份数这类需要稍宽的输入框 */
+.setting-control input[type='number'][max='60'] {
+  min-width: 88px;
+}
+
+/* ---- 44.15 接口调试「请求头」Key 输入框占位符被截断 ---- */
+/* 实测：.kv-row 的 key 列是 minmax(0, 200px)，输入框实宽 200px，
+ *   占位符「Header，如 Authorization / Cookie」需要 209px + 左右内边距 20px = 229px，
+ *   被截成「Header，如 Authorization / C」。
+ * 修法：key 列放宽到 240px（仍可收缩），并给输入框留出足够内边距。 */
+.kv-row {
+  grid-template-columns: minmax(0, 240px) 14px minmax(0, 1fr) 28px;
+}
+.kv-row input {
+  padding-inline: 10px;
+  text-overflow: ellipsis;
+}
+/* 窄窗口下 key 列收回到 180px，优先保证 value 列可用 */
+@media (max-width: 1180px) {
+  .kv-row {
+    grid-template-columns: minmax(0, 180px) 14px minmax(0, 1fr) 28px;
+  }
+}
+
+/* ---- 44.16 控件高度统一到 --d-control-h（34px）---- */
+/* 实测两处不一致：
+ *   - 网址管理工具栏的 3 个 select 是 36px，同行的按钮是 34px（差 2px，视觉上「下拉框比按钮高」）
+ *   - 接口调试的「发送」按钮（.btn-sm）是 30px，同行的 GET 下拉是 34px
+ * 根因：select 的 padding 是 8px 14px + border 1px = 36px；
+ *       .btn-sm 的 padding 更小，min-height 令牌没覆盖到它。
+ * 统一：所有交互控件高度 = var(--d-control-h)，用 padding-block 计算而不是写死 height，
+ *       这样密度档位切换时仍然生效。 */
+.toolbar .toolbar-filters select,
+.toolbar select,
+.field select,
+.setting-row select {
+  padding-block: 0;
+  height: var(--d-control-h);
+  line-height: calc(var(--d-control-h) - 2px);
+}
+/* .btn-sm 也要跟主按钮同高（它只是字号/内边距小，不该矮一截） */
+.btn-sm {
+  min-height: var(--d-control-h);
+  padding-block: 0;
+  display: inline-flex;
+  align-items: center;
+}
+/* 接口调试的发送按钮在 url-bar 里，跟 GET 下拉并排，必须同高 */
+.url-bar .btn,
+.url-bar .btn-sm,
+.url-bar select {
+  height: var(--d-control-h);
+  min-height: var(--d-control-h);
+}
+
+/* ---- 44.17 工具栏第二行左侧空白（修正 44.13）---- */
+/* 44.13 的 grid 两行布局把操作组单独放第二行右对齐，
+ * 结果第二行左侧一大片空白（截图可见），比原来更空。
+ * 改成：第一行 = 搜索 + 筛选，第二行 = 操作组**左对齐**（紧跟筛选组下方），
+ * 或者更简单：把操作组放回第一行右侧，搜索区让出空间。
+ *
+ * 最终选择：三组同在第一行，搜索区弹性（min 200px），
+ * 筛选组与操作组不收缩。搜索框占位符用 title 提示补足（不截断文字本身）。 */
+.toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar .toolbar-search {
+  flex: 1 1 auto;
+  min-width: 200px;
+  max-width: none;
+}
+.toolbar .toolbar-filters {
+  flex: 0 0 auto;
+}
+.toolbar .toolbar-actions {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+/* 搜索框占位符在窄宽度下会截断，这是可接受的（有 title 提示 + 输入后可见全文），
+   但保证至少能看到「搜索名称、URL」这几个字 */
+.toolbar .toolbar-search input {
+  min-width: 0;
+}
+/* 窄窗口才换行 */
+@media (max-width: 1100px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar .toolbar-search {
+    flex: 1 1 100%;
+  }
+}
+
+/* ============================================================
+   今日工作台 v2（1.25.1 重做）
+   ------------------------------------------------------------
+   用户反馈「很丑、内容很空洞」，旧版三个问题：
+     1. auto-fill minmax(320px) 在 1100px 内容区只排 3 列，
+        第一张卡 span 2 后第二行只剩 3 张矮卡，右侧一大块空白；
+     2. 5 张卡都是「标题 + 一两个数字」，下半屏全空；
+     3. 只有数字没有清单 —— 看到「11 个不可达」还得再点进去才知道是哪 11 个。
+   新版：12 栅格两栏（左 8 清单 / 右 4 概览），左栏列具体条目，右栏做汇总。
+   ============================================================ */
+.home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--d-gap);
+}
+@media (max-width: 1180px) {
+  .home-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.home-col-main,
+.home-col-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-gap);
+  min-width: 0;
+}
+
+/* ---- 面板 ---- */
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.home-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px var(--d-card-px);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.home-panel-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+  color: var(--text-2);
+}
+.home-panel-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.home-panel-spacer { flex: 1 1 auto; min-width: 0; }
+.home-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--d-card-py) var(--d-card-px);
+  min-width: 0;
+}
+.home-panel-foot {
+  padding: 0 var(--d-card-px) 10px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* 面板头右侧的文字按钮 */
+.home-link {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.home-link:hover { text-decoration: underline; }
+
+/* ---- 清单 ---- */
+.home-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.home-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.home-item.is-clickable { cursor: pointer; }
+.home-item.is-clickable:hover { background: var(--surface-3); }
+.home-item.is-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.home-item-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.home-item.is-bad .home-item-dot { background: var(--bad); }
+.home-item.is-warn .home-item-dot { background: var(--warn); }
+.home-item.is-info .home-item-dot { background: var(--accent); }
+.home-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+}
+.home-bug-id {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.home-item-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+.home-item-meta {
+  flex: none;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.home-item-go {
+  flex: none;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+.home-item.is-clickable:hover .home-item-go { opacity: 1; }
+
+/* 清单里的「还有 N 个」 */
+.home-more {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.home-more:hover { text-decoration: underline; }
+
+/* 行内小标签（今日新增 / 已超期 / 待验证） */
+.home-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+.home-tag.is-bad {
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+.home-tag.is-warn {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.home-tag.is-info {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---- 空态 ---- */
+.home-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* ---- 右栏：数字概览 ---- */
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.home-stats.is-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.home-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-inset);
+}
+.home-stat b {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.home-stat b.is-bad { color: var(--bad); }
+.home-stat b.is-warn { color: var(--warn); }
+.home-stat b.is-ok { color: var(--ok); }
+.home-stat i {
+  font-style: normal;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 告警条 */
+.home-alert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+.home-alert .home-link { margin-left: auto; color: var(--warn); }
+
+/* 小徽章行 */
+.home-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.home-chip {
+  padding: 2px 8px;
+  border-radius: var(--r-xs);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+.home-chip.is-mute { color: var(--text-3); }
+
+/* ---- 快捷入口 ---- */
+.home-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.home-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.home-shortcut:hover {
+  border-color: var(--line-strong);
+  color: var(--text-1);
+}
+.home-shortcut:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.home-shortcut > svg { flex: none; }
+
+/* ---- 今日工作台 v2 布局收尾（1.25.1）---- */
+/* 实测：左栏 465px / 右栏 683px，左下留 218px 空白。
+ * 原因：左栏三张面板在「空态」时只有一行说明，高度被内容决定；
+ *       右栏四张面板（速览/密码库/笔记/快捷入口）天然更高。
+ * 修法：
+ *   1. 空态面板收紧（少 padding），减少左栏「空卡」的视觉重量；
+ *   2. 左栏最后一张面板 flex:1 撑满剩余高度，让两栏底部对齐，
+ *      而不是留一块裸露的背景。 */
+/* 空态面板：说明文字与面板头同一行高度，不再撑出半屏 */
+.home-panel-body > .home-empty:only-child {
+  padding: 2px 8px;
+}
+/* 左栏面板之间间距略小于右栏，让清单更紧凑 */
+.home-col-main {
+  gap: 10px;
+}
+.home-col-side {
+  gap: 10px;
+}
+
+/* ---- 今日工作台 v2：两栏等高（修正上一条）---- */
+/* 上一条给左栏最后一张面板加 flex:1 没生效 —— 因为 .home-col-main 自身高度
+ * 由内容决定（align-items:start），容器没有多余高度可分。
+ * 正确做法：让 grid 的 align-items 变成 stretch，两栏等高，
+ * 左栏内部再用 flex 把剩余高度分给最后一张面板。 */
+.home-layout {
+  align-items: stretch;
+}
+.home-col-main,
+.home-col-side {
+  height: 100%;
+}
+/* 左栏最后一张面板吃掉剩余高度，底部与右栏对齐 */
+.home-col-main > .home-panel:last-child {
+  min-height: 0;
+}
+/* 右栏同理（右栏通常更高，这条是兜底） */
+.home-col-side > .home-panel:last-child {
+  flex: 0 0 auto;
+}
+@media (max-width: 1180px) {
+  .home-col-main,
+  .home-col-side {
+    height: auto;
+  }
+  .home-col-main > .home-panel:last-child {
+    flex: 0 0 auto;
+  }
+}
+
+/* ---- 今日工作台 v2：空态面板不拉伸（修正上一条）---- */
+/* 上一条让左栏最后一张面板 flex:1 撑满，结果「接口回归」空卡被拉成 200px 高，
+ * 里面只有一行字 —— 比原来更空。
+ * 正确做法：**只有内容多的面板才拉伸**；空态面板保持自然高度，
+ * 剩余空白留在左栏底部（视觉上是一块留白，而不是一张巨大的空卡）。 */
+.home-col-main > .home-panel:last-child {
+  flex: 0 0 auto;
+}
+/* 有清单内容的面板才允许吃掉剩余高度 */
+.home-col-main > .home-panel.has-items:last-child {
+  flex: 1 1 auto;
+}
+/* 面板体在拉伸时内容顶部对齐，不要垂直居中（否则清单会飘到中间） */
+.home-panel-body {
+  justify-content: flex-start;
+}
+
+/* ---- 笔记目录条：路径与按钮的视觉分隔（1.25.1）---- */
+/* 用户截图反馈（浅色主题）：目录路径「E:\截图\笔记」与右侧「打开目录」按钮
+ * 之间没有任何分隔，两个不同性质的东西连在一起，看起来像路径文字压到了按钮上。
+ * 另外路径很长时（C:\Users\...\pm-notes-dir）会顶到按钮前，缺少「这是可复制的路径」的暗示。
+ * 修法：
+ *   1. 路径做成独立的「代码块」样式（内嵌背景 + 圆角），与按钮明确分开；
+ *   2. 路径可点击复制（title 提示），长路径 hover 时显示完整值；
+ *   3. 路径与按钮之间加一条竖直分隔线。 */
+.notes-dirbar {
+  gap: 10px;
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+.notes-dirbar .notes-dirpath {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(52vw, 620px);
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  background: var(--surface-inset);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  cursor: copy;
+}
+.notes-dirbar .notes-dirpath:hover {
+  border-color: var(--line-strong);
+  color: var(--text-1);
+}
+/* 路径与操作按钮之间的分隔线 */
+.notes-dirbar .notes-dirpath + .btn {
+  position: relative;
+  margin-left: 6px;
+}
+.notes-dirbar .notes-dirpath + .btn::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+}
+/* 窄窗口：按钮换行时不显示分隔线 */
+@media (max-width: 1100px) {
+  .notes-dirbar .notes-dirpath + .btn::before { display: none; }
+  .notes-dirbar .notes-dirpath { max-width: 100%; }
+}
+
+/* ============================================================================
+   52. 网址管理：标准分页器（2026-11-16）
+   ----------------------------------------------------------------------------
+   原因：Dashboard 从「滚动增量加载 120 条」改成标准分页（默认 10 条/页，
+   可选 10/20/50/100）。复用的是 components/Pager.tsx 的通用 .pager，
+   它原本只在面板底部（Attachments 等页）用，样式是「上边框 + 半透明底」，
+   直接放进 .content-area 会贴在滚动内容末尾、翻页要滚到底才看得见。
+   这里只做**容器级**微调（不改 .pager 自身声明，避免影响其他页面）：
+   - 吸底：翻到第 1 页也能直接翻页，不用先滚到底；
+   - 圆角 + 卡片底：与网址管理的卡片视觉一致；
+   - 颜色全部走 var(--*)，不硬编码。
+   ========================================================================== */
+.pm-pager-wrap {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 12px;
+  border: 1px solid var(--pm-line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+/* 吸底时 .pager 自带的上边框会和容器边框叠成双线，去掉它 */
+.pm-pager-wrap .pager {
+  border-top: none;
+  background: transparent;
+}
+/* 窄窗口：统计文字与翻页控件换行，避免「第 1–10 条，共 25 条」被压成两行半 */
+@media (max-width: 900px) {
+  .pm-pager-wrap .pager {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+
+/* ================================================================
+   1.25.1 笔记附件跟随笔记目录 + 目录模式类型筛选
+   ----------------------------------------------------------------
+   需求来源（用户截图 + 原话）：
+     1. 「目录模式下无法筛选笔记 / SQL 片段」—— 筛选条被 {!dirMode && ...} 包住，
+        目录模式完全没有类型筛选。现在目录模式也显示，类型由 utils/noteKind.ts 判；
+     2. 「切到目录模式后附件和 .md 混在一起」—— 笔记截图改存 <笔记目录>/attachments，
+        附件页要能同时列出两个来源并标明出处。
+   为什么写在末尾：三份样式表按 global → pages → redesign 顺序加载，同名选择器
+   重复很多（见 AGENTS.md 的 CSS 级联死声明门禁），新样式一律追加在这里。
+   ================================================================ */
+
+/* ---- 附件页：来源筛选条（复用 .notes-kind-bar 的按钮组外观）---- */
+.att-scope-bar {
+  margin-bottom: 12px;
+}
+
+/* ---- 附件页：笔记附件目录那一行（与全局目录行区分开）---- */
+.att-dir-bar-note {
+  border-color: var(--accent-line, var(--line));
+  background: var(--surface-inset);
+}
+.att-dir-bar-note .att-dir-label {
+  color: var(--accent-text, var(--text-1));
+}
+.att-dir-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* ---- 附件卡片：来源徽标 ---- */
+.att-card-scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.att-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-inset);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.att-scope-chip.is-note {
+  border-color: var(--accent-line, var(--line));
+  color: var(--accent-text, var(--text-2));
+}
+
+/* ---- 笔记目录条：路径从 <span> 改成 <button>（点击复制路径）---- */
+/* 用 `button.notes-dirpath` 而不是 `.notes-dirbar .notes-dirpath`：
+ * 上面（本文件末尾那段）已经有 `.notes-dirbar .notes-dirpath` 的视觉规则，
+ * 这里再写一条同选择器就变成「声明冲突」，只能靠加载顺序猜谁生效。
+ * 提高特异性只覆盖按钮特有的默认外观（appearance / 字体继承 / 对齐），
+ * 背景、边框、圆角、cursor 全部沿用上面那条。 */
+button.notes-dirpath {
+  appearance: none;
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.notes-dirpath:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

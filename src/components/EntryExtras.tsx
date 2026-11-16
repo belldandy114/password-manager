@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import type { PasswordEntry, PasswordHistoryItem, CustomField, Attachment } from '../types';
+import type { PasswordEntry, PasswordHistoryItem, CustomField, Attachment, Note } from '../types';
 import { copySensitive } from '../utils/clipboard';
+import { useStore } from '../store/useStore';
 import { Icons } from './ui';
 
 interface Props {
@@ -77,6 +78,71 @@ export function TotpBadge({ secret, onCopy }: { secret: string; onCopy?: (code: 
     >
       🔐 {code}
     </span>
+  );
+}
+
+/**
+ * 条目详情里的「相关笔记」（1.25.0）。
+ *
+ * 反向关联：笔记的 `links` 里存了 `{kind:'entry', id}`，这里按 id 反查 notes 集合。
+ * 只读展示 + 跳转到笔记页，不在条目里编辑笔记（笔记的编辑入口只有笔记页一处，
+ * 避免两处写同一份数据）。
+ *
+ * 未解锁 / 读不到集合时整块不渲染 —— 条目表单不该因为笔记读失败而报错。
+ */
+function RelatedNotes({ entryId }: { entryId: string }) {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!entryId) { setNotes([]); setLoaded(true); return; }
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await window.electronAPI.wsGet('notes');
+        if (!alive) return;
+        const list = r && r.success && Array.isArray(r.data) ? (r.data as Note[]) : [];
+        setNotes(list.filter(n => (n.links || []).some(l => l.kind === 'entry' && l.id === entryId)));
+      } catch {
+        if (alive) setNotes([]);
+      } finally {
+        if (alive) setLoaded(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, [entryId]);
+
+  if (!loaded || notes.length === 0) return null;
+
+  return (
+    <div className="form-group">
+      <div className="field-label-row">
+        <label>相关笔记（{notes.length}）</label>
+        <button
+          type="button"
+          className="entry-mini-btn"
+          onClick={() => useStore.getState().requestNavigate('notes')}
+          title="打开测试笔记页"
+        >
+          去笔记页
+        </button>
+      </div>
+      <div className="entry-note-links">
+        {notes.slice(0, 6).map(n => (
+          <button
+            key={n.id}
+            type="button"
+            className="entry-note-link"
+            title={`${n.title || '（未命名笔记）'} · 点击打开笔记页`}
+            onClick={() => useStore.getState().requestNavigate('notes')}
+          >
+            <Icons.note size={11} />
+            <span>{n.title || '（未命名笔记）'}</span>
+          </button>
+        ))}
+        {notes.length > 6 && <span className="text-sm text-muted">还有 {notes.length - 6} 篇</span>}
+      </div>
+    </div>
   );
 }
 
@@ -178,6 +244,9 @@ export function EntryExtras({ form, onChange, isEditing }: Props) {
           </div>
         ))}
       </div>
+
+      {/* 相关笔记（反向关联）：只在编辑已有条目时显示，新建时还没有 id 可反查 */}
+      {isEditing && form.id && <RelatedNotes entryId={String(form.id)} />}
 
       {/* 密码历史 */}
       {isEditing && history.length > 0 && (

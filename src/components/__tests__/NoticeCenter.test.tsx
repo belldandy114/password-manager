@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { NoticeCenter } from '../NoticeCenter';
 import { useEnvProbeStore } from '../../store/envProbeStore';
 
 /**
- * 提醒中心的一键清除（1.24.4）约定：
+ * 提醒中心的一键清除（1.25.0 重做后的约定）：
  *  1. 有事项时列表带「全部清除」按钮
- *  2. 清除后同一批状态不再显示（空态说明 + 可恢复）
- *  3. 状态集合变化（新事项）→ 自动恢复显示，不会漏掉新提醒
- *  4. 「恢复显示」把这批事项请回来
+ *  2. 清除后消息中心为空（用户要求：清除之后不存在任何内容）
+ *  3. **按单条 key 记已读**：清掉的不再回来
+ *  4. 新出现的事项照常显示（不会因为「签名变了」把清掉的全部复活）
+ *  5. 「恢复已清除的提醒」把清掉的请回来
+ *
+ * 旧实现按「整批签名」判断，任何一条变动都会让清掉的全部复活 —— 那是被否定的行为，
+ * 所以这里第 4 条断言的是「只有新事项显示，老事项仍保持已清除」。
  */
 
 type Api = Record<string, unknown>;
@@ -61,22 +65,31 @@ describe('NoticeCenter 一键清除', () => {
     expect(screen.getByText('全部清除')).toBeTruthy();
   });
 
-  it('清除后不再显示，但可恢复；状态变化自动恢复展示', async () => {
-    const status = makeStatus([{ id: '101', title: '登录偶发 500', days: 5 }]);
-    mockApi(status);
-    const { rerender } = render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
+  it('清除后消息中心为空，且重开仍为空', async () => {
+    mockApi(makeStatus([{ id: '101', title: '登录偶发 500', days: 5 }]));
+    render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText('全部清除')).toBeTruthy());
 
     screen.getByText('全部清除').click();
-    await waitFor(() => expect(screen.getByText(/已清除 1 条提醒/)).toBeTruthy());
-    expect(screen.getByText('恢复显示')).toBeTruthy();
+    // 用户要求：清除之后消息中心为空，不存在任何内容
+    await waitFor(() => expect(screen.getByText('暂无提醒')).toBeTruthy());
+    expect(screen.queryByText('#101 待验证已 5 天')).toBeNull();
 
-    // 状态没变：重新打开仍是已清除空态（重挂 = 全新实例， dismissedSig 从 localStorage 读回）
+    // 重挂（从 localStorage 读回已读集合）仍为空
     cleanup();
     render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/已清除 1 条提醒/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('暂无提醒')).toBeTruthy());
+    expect(screen.queryByText('#101 待验证已 5 天')).toBeNull();
+  });
 
-    // 出现新事项（签名变化）→ 自动恢复显示，且不丢老事项
+  it('新事项照常显示，已清除的老事项不复活', async () => {
+    mockApi(makeStatus([{ id: '101', title: '登录偶发 500', days: 5 }]));
+    render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
+    await waitFor(() => expect(screen.getByText('全部清除')).toBeTruthy());
+    screen.getByText('全部清除').click();
+    await waitFor(() => expect(screen.getByText('暂无提醒')).toBeTruthy());
+
+    // 出现新事项：只有新的显示，老的仍是已清除
     mockApi(makeStatus([
       { id: '101', title: '登录偶发 500', days: 5 },
       { id: '102', title: '导出超时', days: 2 },
@@ -84,27 +97,27 @@ describe('NoticeCenter 一键清除', () => {
     cleanup();
     render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText('#102 待验证已 2 天')).toBeTruthy());
-    expect(screen.getByText('#101 待验证已 5 天')).toBeTruthy();
+    expect(screen.queryByText('#101 待验证已 5 天')).toBeNull();
   });
 
-  it('「恢复显示」把这批事项请回来', async () => {
+  it('「恢复已清除的提醒」把事项请回来', async () => {
     mockApi(makeStatus([{ id: '201', title: '上传失败', days: 9 }]));
     const { rerender } = render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText('全部清除')).toBeTruthy());
 
     screen.getByText('全部清除').click();
-    await waitFor(() => expect(screen.getByText('恢复显示')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('恢复已清除的提醒')).toBeTruthy());
 
-    screen.getByText('恢复显示').click();
+    screen.getByText('恢复已清除的提醒').click();
     await waitFor(() => expect(screen.getByText('#201 待验证已 9 天')).toBeTruthy());
 
-    // 落盘的签名也被清掉：重新打开列表仍在
+    // 落盘的已读集合也被清掉：重新打开列表仍在
     rerender(<NoticeCenter open={false} onClose={() => {}} onNavigate={() => {}} />);
     rerender(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByText('#201 待验证已 9 天')).toBeTruthy());
   });
 
-  it('环境不可达事项同样可被清除（签名覆盖全部分组）', async () => {
+  it('环境不可达事项同样可被清除', async () => {
     useEnvProbeStore.setState({
       results: { e1: { id: 'e1', url: 'http://192.0.2.10:8080', ok: false, error: '超时', ms: 1 } },
       at: Date.now(),
@@ -114,6 +127,21 @@ describe('NoticeCenter 一键清除', () => {
 
     await waitFor(() => expect(screen.getByText('不可达：192.0.2.10:8080')).toBeTruthy());
     screen.getByText('全部清除').click();
-    await waitFor(() => expect(screen.getByText(/已清除 1 条提醒/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('暂无提醒')).toBeTruthy());
+  });
+
+  it('已读集合有上限，不会无限增长', async () => {
+    // 造 600 条事项，清除后落盘集合应被裁到 500 条以内
+    const many = Array.from({ length: 600 }, (_, i) => ({ id: String(1000 + i), title: `t${i}`, days: 1 }));
+    mockApi(makeStatus(many));
+    render(<NoticeCenter open onClose={() => {}} onNavigate={() => {}} />);
+    await waitFor(() => expect(screen.getByText('全部清除')).toBeTruthy());
+    screen.getByText('全部清除').click();
+    await waitFor(() => expect(screen.getByText('暂无提醒')).toBeTruthy());
+
+    const raw = localStorage.getItem('pm.notices.dismissed.v2');
+    expect(raw).toBeTruthy();
+    const keys = Object.keys(JSON.parse(raw as string).keys);
+    expect(keys.length).toBeLessThanOrEqual(500);
   });
 });

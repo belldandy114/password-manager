@@ -49,3 +49,10 @@ coverage/
 
 # 周报生成回归的截图产物（每次跑 ui-digest-test.js 覆盖，仅供人工复核）
 .tmp-digest/
+
+# 审计 / 交接类过程文档：写给本机协作用，含本机路径与内部讨论，不进公开仓库
+AUDIT-*.md
+HANDOFF.md
+# 临时验证脚本（.tmp- 前缀，跑完即删）
+.tmp-*.js
+

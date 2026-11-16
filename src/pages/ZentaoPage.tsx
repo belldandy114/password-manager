@@ -19,7 +19,7 @@ import { ZentaoSummary } from '../components/ZentaoSummary';
 import { ProjectPicker } from '../components/ProjectPicker';
 import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
-import { formatHm } from '../utils/time';
+import { formatHm, localDay } from '../utils/time';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
   active: { label: '激活', tone: 'bad' },
@@ -123,7 +123,9 @@ export function ZentaoPage() {
   /** 今日待办：指派给我未关闭 / 待我验证 / 今日新增致命严重 */
   const todo = useMemo(() => {
     const st = (b: ZentaoBug) => String(b.status || '');
-    const today = new Date().toISOString().slice(0, 10);
+    // 必须用本地日期：openedDate 经主进程 ztApiLocalTime 转成了本地时间，
+    // 用 toISOString().slice(0,10)（UTC）会让北京时间 00:00–08:00 的「今日新增」恒为 0。
+    const today = localDay();
     return {
       open: bugs.filter(b => st(b) !== 'closed').length,
       verify: bugs.filter(b => st(b) === 'resolved').length,
@@ -633,7 +635,7 @@ export function ZentaoPage() {
   /** 导出当前筛选结果为 CSV（不受分页限制） */
   const exportCsv = async (list: ZentaoBug[], tag: string) => {
     if (list.length === 0) { setCopiedTip('没有可导出的数据'); setTimeout(() => setCopiedTip(''), 1600); return; }
-    const res = await window.electronAPI.saveText(bugsToCsv(list, form.baseUrl), `${tag}-${new Date().toISOString().slice(0, 10)}.csv`);
+    const res = await window.electronAPI.saveText(bugsToCsv(list, form.baseUrl), `${tag}-${localDay()}.csv`);
     if (res.success) {
       setCopiedTip(`已导出 ${list.length} 条`);
       setTimeout(() => setCopiedTip(''), 1800);

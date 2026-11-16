@@ -7,6 +7,7 @@ import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 import { newId } from '../utils/id';
 import { copyPlain } from '../utils/clipboard';
+import { callIpc } from '../utils/ipc';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill, type PillTone } from '../components/ui';
 
 const ENVS = [
@@ -17,7 +18,18 @@ const ENVS = [
 ];
 const envOf = (id: string) => ENVS.find(e => e.id === id);
 
-const TIMEOUTS = [3000, 8000, 15000];
+const TIMEOUTS = [3000, 8000, 15000, 30000];
+
+/** 巡检超时的合法区间（毫秒）：太短会把慢环境误判成不可达，太长会让巡检卡住 */
+const TIMEOUT_MIN = 1000;
+const TIMEOUT_MAX = 60000;
+const TIMEOUT_FALLBACK = 8000;
+
+/** 设置里的超时值 → 可用的毫秒数（非法值退回 8000） */
+function normalizeTimeout(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= TIMEOUT_MIN && n <= TIMEOUT_MAX ? n : TIMEOUT_FALLBACK;
+}
 
 const empty = (): EnvEntry => ({
   id: '', system: '', envType: 'testing', url: '', note: '', updatedAt: new Date().toISOString(),
@@ -68,6 +80,8 @@ function hostOf(url: string): string {
 export function Environments() {
   const { items, save, loading } = useCollection<EnvEntry>('environments');
   const pwEntries = useStore(s => s.entries);
+  const settings = useStore(s => s.settings);
+  const updateSettings = useStore(s => s.updateSettings);
 
   const [search, setSearch] = useState('');
   const [envFilter, setEnvFilter] = useState<string>('all');
@@ -75,10 +89,22 @@ export function Environments() {
   const [reportOpen, setReportOpen] = useState(true);
   /** 失败明细下钻（只有出错才有） */
   const [failsOpen, setFailsOpen] = useState(false);
-  const [timeoutMs, setTimeoutMs] = useState(8000);
+  /**
+   * 巡检超时（1.25.0 起落盘）。
+   *
+   * 以前只存在 useState 里：页面上选 15s 只影响这一次手动巡检，
+   * 定时巡检（envSchedule）永远用写死的 8000 —— 慢环境每次都被判成不可达。
+   * 现在初值读 settings，改动即写盘（判错）。
+   */
+  const [timeoutMs, setTimeoutMs] = useState(() => normalizeTimeout(settings.envProbeTimeoutMs));
   const [editing, setEditing] = useState<EnvEntry | null>(null);
   const [hint, setHint] = useState('');
   const { ask, confirmNode } = useConfirm();
+
+  /** 设置里的值变了（例如设置页改过）就同步过来，避免两处显示不一致 */
+  useEffect(() => {
+    setTimeoutMs(normalizeTimeout(settings.envProbeTimeoutMs));
+  }, [settings.envProbeTimeoutMs]);
 
   const results = useEnvProbeStore(s => s.results);
   const summary = useEnvProbeStore(s => s.summary);
@@ -92,6 +118,11 @@ export function Environments() {
   const viewRecord = useEnvProbeStore(s => s.viewRecord);
   const clearProbe = useEnvProbeStore(s => s.clear);
   const clearHistory = useEnvProbeStore(s => s.clearHistory);
+  const loadProbeHistory = useEnvProbeStore(s => s.loadHistory);
+
+  // 历史存在加密库里（1.25.0 从 localStorage 迁过来）：页面挂载时读一次，
+  // 首次还会把 localStorage 里的旧历史搬进库。store 内部有 historyLoaded 去重。
+  useEffect(() => { void loadProbeHistory(); }, [loadProbeHistory]);
 
   /**
    * 页面内的一次性提示。
@@ -106,6 +137,24 @@ export function Environments() {
     hintTimer.current = setTimeout(() => { setHint(''); }, 2600);
   };
   useEffect(() => () => { if (hintTimer.current) clearTimeout(hintTimer.current); }, []);
+
+  /**
+   * 改巡检超时：先更新界面，再落盘。
+   * 写盘失败要明确报错并回滚显示 —— 否则用户以为「下次巡检会用 30s」，
+   * 实际主进程里还是旧值，慢环境继续被判成不可达。
+   */
+  const changeTimeout = async (next: number) => {
+    const v = normalizeTimeout(next);
+    const prev = timeoutMs;
+    setTimeoutMs(v);
+    updateSettings({ envProbeTimeoutMs: v });
+    const r = await callIpc(() => window.electronAPI.settingsSave({ envProbeTimeoutMs: v }));
+    if (!r.ok) {
+      setTimeoutMs(prev);
+      updateSettings({ envProbeTimeoutMs: prev });
+      flash(`超时设置保存失败：${r.error}`);
+    }
+  };
 
   /** 地址指纹：增删改地址后旧结果就未必对应当前这一行了，只提示「可能过期」，不自动清 */
   const sig = useMemo(() => items.map(i => `${i.id}:${i.url}`).join('|'), [items]);
@@ -291,8 +340,8 @@ export function Environments() {
               <select
                 className="env-check-timeout"
                 value={timeoutMs}
-                onChange={e => setTimeoutMs(Number(e.target.value))}
-                title="单条地址的超时时间"
+                onChange={e => void changeTimeout(Number(e.target.value))}
+                title="单条地址的超时时间（会记住，定时巡检也用这个值）"
                 disabled={running}
               >
                 {TIMEOUTS.map(t => <option key={t} value={t}>超时 {t / 1000}s</option>)}

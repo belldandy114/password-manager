@@ -14,6 +14,13 @@ export interface Attachment {
   /** 粘贴进来的图片附件会带 mime 与 kind */
   mime?: string;
   kind?: 'image';
+  /**
+   * 落点（1.25.1）：`note` = 笔记目录下的 attachments（目录模式笔记的截图），
+   * `entry` = 全局附件目录。读取时主进程会先找笔记目录再回退全局，所以老附件不受影响。
+   */
+  scope?: 'note' | 'entry';
+  /** 实际落盘目录（排障 / 界面展示用） */
+  dir?: string;
 }
 
 /** 附件目录里的一个文件（附件集中管理页用；不含内容） */
@@ -25,6 +32,12 @@ export interface AttachmentFileMeta {
   /** 所在目录 / 加密文件的绝对路径（附件管理页展示与定位用） */
   dir?: string;
   file?: string;
+  /**
+   * 附件来源（1.25.1）：
+   * - `note`  = 笔记目录下的 `<笔记目录>/attachments`（目录模式笔记的截图）；
+   * - `entry` = 全局附件目录（网址条目附件 / 随手记 / 老附件）。
+   */
+  scope?: 'note' | 'entry';
 }
 
 /**
@@ -91,12 +104,24 @@ export type Density = 'compact' | 'standard' | 'cozy';
 
 export interface AppSettings {
   clipboardClearDelay: number;
+  /** 附件（截图/证书/密钥）存放目录；空 = 数据目录下的 attachments */
+  attachDir?: string;
+  /** 目录模式测试笔记的存放目录（.md 一篇一个文件）；空 = 未启用目录模式 */
+  notesDir?: string;
+  /** 周报目录；空 = 用默认（未选择） */
+  weeklyDir?: string;
   /** 记录最近 10 条敏感复制（仅内存，锁屏即清空）；默认关闭 */
   clipboardHistory?: boolean;
   /** 全局搜索快捷键（Electron 加速键，如 CommandOrControl+Space）；空 = 用默认 */
   hotkeySearch?: string;
   /** 显示/隐藏窗口的全局快捷键；空 = 用默认 */
   hotkeyToggle?: string;
+  /**
+   * 随手记小窗的全局快捷键（1.25.0 补）。
+   * 主进程一直在写这个键（`main.js` 的 `applyHotkeys`），但 `settings:get` 不返回、
+   * 类型里也没有 —— 任何「按 settings 回填」的路径都拿不到它。
+   */
+  hotkeyQuickNote?: string;
   /** 可选的更新下载源前缀（国内直链）；留空则只走 GitHub */
   updateMirrorUrl?: string;
   /** 周期检查更新间隔（小时）；0 = 仅启动时查一次 */
@@ -143,6 +168,11 @@ export interface AppSettings {
   envProbeInterval: number;
   /** 环境巡检：只在可达性/耗时发生翻转时弹系统通知 */
   envProbeNotifyOnFlip: boolean;
+  /**
+   * 环境巡检超时（毫秒，1.25.0）。
+   * 以前页面上的选择只存在 useState 里，定时巡检写死 8000 —— 慢环境永远超时。
+   */
+  envProbeTimeoutMs?: number;
   /** 多套禅道配置里当前使用哪一套（id；老数据默认 'zentao'） */
   zentaoActiveId?: string;
   /** 自动备份保留份数（1~60） */
@@ -196,6 +226,10 @@ export interface DataLocationInfo {
   vaultFile: string;
   backupDir: string;
   attachDir: string;
+  /** 附件目录的默认位置（数据目录/attachments） */
+  attachDefaultDir?: string;
+  /** 附件目录是否被改到别处 */
+  attachIsCustom?: boolean;
   backupCount: number;
   vault: { size: number; mtime: string } | null;
   bak: { size: number; mtime: string } | null;
@@ -214,7 +248,11 @@ export interface PasswordGenOptions {
 export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'environments' | 'apiRequests' | 'integrations' | 'codeSnippets'
   | 'ztPresets' | 'apiEnvs' | 'apiHistory'
   /** 接口回归：回归集与运行历史（类型见 utils/regression.ts） */
-  | 'regressionSets' | 'regressionRuns';
+  | 'regressionSets' | 'regressionRuns'
+  /** 环境巡检历史（1.25.0：从 localStorage 迁进加密库） */
+  | 'envProbes'
+  /** 测试数据生成器的数据集（1.25.0） */
+  | 'tdgDatasets';
 
 export interface ZentaoConfig {
   id: string;
@@ -444,6 +482,24 @@ export interface Snippet {
   updatedAt: string;
 }
 
+/**
+ * 笔记的关联对象（1.25.0）。
+ *
+ * 用途：踩坑记录往往对应「某个系统的某个地址」「某条缺陷」「某个环境」，
+ * 以前只能在正文里手写「#1234 那个 bug」，靠人肉搜索关联。
+ * 这里只存引用（kind + id），不复制内容 —— 被引用对象改名/删除时笔记不会跟着变脏，
+ * 反查时由界面按 id 去对应集合里取，取不到就显示「已删除」。
+ *
+ * **纯本地**：不写回禅道、不修改禅道任何数据，只是本地笔记上的一个标记。
+ */
+export interface NoteLink {
+  kind: 'entry' | 'bug' | 'env' | 'checklist';
+  /** 对应集合里的 id；bug 用禅道 bug id（纯数字字符串） */
+  id: string;
+  /** 冗余一份标题，被引用对象删了也能看出原来指的是什么 */
+  label?: string;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -456,7 +512,42 @@ export interface Note {
    * 用这个字段区分 SQL 语句（等宽 / 一键复制）和 Markdown 笔记。
    * 老数据没有这个字段，一律按 'note' 处理。
    */
-  kind?: 'note' | 'sql';
+  /**
+   * 1.25.0：新增 'weekly' —— 周报句式片段也存在 notes 集合里（不额外建集合），
+   * 靠这个值区分。笔记页要把 weekly 过滤掉，否则片段会污染笔记列表。
+   */
+  kind?: 'note' | 'sql' | 'weekly';
+  /** 关联的条目 / 缺陷 / 环境 / 用例（1.25.0）；老数据没有 = 无关联 */
+  links?: NoteLink[];
+}
+
+/**
+ * 周报句式片段（1.25.0）。
+ *
+ * 「下周工作计划」「本周总结」这类段落每周都要重写一遍，实际只是换几个数字。
+ * 片段存在 notes 集合里（`kind: 'weekly'`），跟着加密库走，不额外建集合。
+ */
+export interface WeeklySnippet {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt: string;
+}
+
+/**
+ * 测试数据生成器的「数据集」（1.25.0）。
+ *
+ * 每次造数都要把类型、条数、各类型参数重填一遍。数据集把整份 GenerateConfig
+ * 存进加密库，下次一键载入。存的是配置而不是生成结果 —— 结果可能上万条，
+ * 存进 vault 会让每次保存都变慢。
+ */
+export interface TdgDataset {
+  id: string;
+  name: string;
+  /** 生成配置（结构见 utils/tdg/types.ts 的 GenerateConfig，这里用 unknown 避免循环依赖） */
+  config: unknown;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ChecklistItem {
@@ -600,7 +691,15 @@ export interface ApiRequest {
 export type ViewMode = 'card' | 'list' | 'system';
 export type SearchField = 'all' | 'name' | 'url' | 'username' | 'tags';
 /** 排序字段 */
-export type SortField = 'updatedAt' | 'createdAt' | 'name';
+/**
+ * 列表排序字段（1.25.0 扩展）。
+ *
+ * 原来只有 updatedAt / createdAt / name 三个，而列表视图的表头有 环境 / URL / 账号 列。
+ * 那几列以前靠 `EntryList` 内部的本地排序，但 Dashboard 是「先 slice(0,120) 再传进去」，
+ * 所以点表头只对已渲染的 120 条生效 —— 第 121 条起顺序是乱的。
+ * 现在把这几列也纳入 store 的全局排序，表头点击只改 store。
+ */
+export type SortField = 'updatedAt' | 'createdAt' | 'name' | 'envType' | 'url' | 'username';
 /** 排序方向 */
 export type SortOrder = 'desc' | 'asc';
 /** 旧版合并排序，兼容 */
@@ -771,7 +870,18 @@ export interface ElectronAPI {
   authSetup: (data: { password: string; hint: string }) => Promise<{ success: boolean; error?: string }>;
   authVerify: (data: { password: string }) => Promise<{ success: boolean; error?: string; hint?: string; retryAfterMs?: number; code?: 'vault-corrupt' }>;
   authGetHint: () => Promise<string>;
-  authChangePassword: (data: { oldPassword: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * 修改主密码。1.25.0 起主进程会把所有附件用新密码重新加密，
+   * 并回报 `attachments` 统计（有失败时 `warning` 说明原因）。
+   */
+  authChangePassword: (data: { oldPassword: string; newPassword: string }) => Promise<{
+    success: boolean;
+    error?: string;
+    /** 附件重加密统计；total=0 表示没有附件 */
+    attachments?: { total: number; ok: number; failed: number };
+    /** 附件重加密失败时的补充说明 */
+    warning?: string;
+  }>;
   authSetSecurityWord: (data: { password: string; securityWord: string }) => Promise<{ success: boolean; error?: string }>;
   authVerifySecurityWord: (data: { securityWord: string }) => Promise<{ success: boolean; error?: string }>;
   authHasSecurityWord: () => Promise<boolean>;
@@ -789,11 +899,25 @@ export interface ElectronAPI {
   entriesUpdate: (entry: PasswordEntry) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
   entriesDelete: (data: { ids: string[]; permanent?: boolean }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
   entriesBatchUpdate: (data: { ids: string[]; changes: Partial<PasswordEntry> }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
+  /**
+   * 批量「追加」标签（1.25.0）。
+   * 与 entriesBatchUpdate 的区别：那边是 Object.assign 整体替换 tags，
+   * 用「添加标签」的语义去调会把原有标签全冲掉。这里只做并集。
+   */
+  entriesAddTag: (data: { ids: string[]; tag: string }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
+  /** 标签重命名（同时改所有条目上的引用）；1.25.0 起标签操作必须落盘 */
+  entriesRenameTag: (data: { from: string; to: string }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
+  /** 删除标签（同时从所有条目上摘掉） */
+  entriesDeleteTag: (data: { tag: string }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
+  /** 保存标签顺序（拖拽排序后调用） */
+  entriesReorderTags: (data: { tags: string[] }) => Promise<{ success: boolean; data?: VaultData; error?: string }>;
 
   // Trash
   trashGetAll: () => Promise<{ success: boolean; data?: PasswordEntry[]; error?: string }>;
   trashRestore: (ids: string[]) => Promise<{ success: boolean; data?: any; error?: string }>;
   trashEmpty: () => Promise<{ success: boolean; error?: string }>;
+  /** 从回收站里彻底删除指定条目（1.25.0；trashEmpty 是整站清空） */
+  trashDelete: (ids: string[]) => Promise<{ success: boolean; data?: PasswordEntry[]; error?: string }>;
 
   // Clipboard
   clipboardCopy: (data: { text: string; delay: number }) => Promise<{ success: boolean }>;  /** 敏感复制历史（内存级，最多 10 条；锁屏/清空即失效） */
@@ -857,7 +981,7 @@ export interface ElectronAPI {
   // Backups
   backupList: () => Promise<{ success: boolean; data: BackupFile[]; dir: string; keep?: number; lastAt?: string }>;
   backupStatus: () => Promise<{ success: boolean; data?: { local: { dir: string; files: BackupFile[]; keep: number }; mirror: { dir: string; files: BackupFile[]; lastAt: string; error?: string } }; error?: string }>;
-  backupNow: () => Promise<{ success: boolean; data?: { file: string; day: string; mirror: { ok: boolean; skipped?: boolean; dir?: string; path?: string; error?: string } }; error?: string }>;
+  backupNow: () => Promise<{ success: boolean; data?: { file: string; day: string; mirror: { ok: boolean; skipped?: boolean; dir?: string; path?: string; error?: string }; attachments?: { copied: number; skipped: number; dir?: string } }; error?: string }>;
   backupMirrorPick: () => Promise<{ success: boolean; data?: string; canceled?: boolean; error?: string }>;
   /** 写一条审计日志（复制密码/导出等） */
   auditLog: (action: string, detail?: string) => Promise<{ success: boolean }>;
@@ -865,7 +989,7 @@ export interface ElectronAPI {
   auditClear: () => Promise<{ success: boolean; error?: string }>;
   backupOpenFolder: () => Promise<{ success: boolean; error?: string }>;
   /** 用指定备份覆盖当前库；恢复前会自动留一份 pre-restore 快照 */
-  backupRestore: (name: string) => Promise<{ success: boolean; preRestore?: string; error?: string }>;
+  backupRestore: (name: string) => Promise<{ success: boolean; preRestore?: string; attachments?: { copied: number; skipped: number; found: boolean }; error?: string }>;
 
   // 库自检 / 恢复演练 / 诊断包
   /** 只读体检当前库：结构、悬空标签、丢失附件、孤儿历史 */
@@ -897,19 +1021,80 @@ export interface ElectronAPI {
   attachmentOpen: (data: { id: string; name: string }) => Promise<{ success: boolean; error?: string }>;
   attachmentDelete: (data: { id: string }) => Promise<{ success: boolean; error?: string }>;
   /** 粘贴截图：把剪贴板里的 dataURL 加密存成附件，返回元数据 */
-  attachmentSaveImage: (data: { dataUrl: string; name?: string }) =>
+  attachmentSaveImage: (data: { dataUrl: string; name?: string; scope?: 'note' | 'entry' }) =>
     Promise<{ success: boolean; data?: Attachment; error?: string }>;
   /** 读回图片附件（dataURL），给 <img> 直接显示 */
   attachmentReadImage: (data: { id: string }) =>
-    Promise<{ success: boolean; data?: { dataUrl: string; mime?: string }; error?: string }>;
-  /** 附件集中管理：列出附件目录里的全部文件（只有元数据，不含内容） */
-  attachmentList: () => Promise<{ success: boolean; data?: AttachmentFileMeta[]; dir?: string; error?: string }>;
+    Promise<{ success: boolean; code?: 'missing' | 'not-image'; data?: { dataUrl: string; mime?: string }; error?: string }>;
+  /**
+   * 附件集中管理：列出附件目录里的全部文件（只有元数据，不含内容）。
+   * 1.25.1 起同时列「笔记目录 / 全局目录」两个来源，每条带 `scope`。
+   */
+  attachmentList: () => Promise<{
+    success: boolean;
+    data?: AttachmentFileMeta[];
+    dir?: string;
+    dirExists?: boolean;
+    /** 笔记附件目录（`<笔记目录>/attachments`）；未启用目录模式时为空串 */
+    notesDir?: string;
+    notesDirExists?: boolean;
+    error?: string;
+  }>;
   /** 解密后另存到用户选的位置 */
   attachmentExport: (data: { id: string; name?: string }) =>
     Promise<{ success: boolean; data?: { file: string }; canceled?: boolean; error?: string }>;
+  /**
+   * 批量导出到用户选的目录（1.25.0）。
+   * 换机/交接时一个个点太慢；主进程按 id 逐个解密后写到目标目录，
+   * 重名自动加 -2/-3 后缀，绝不覆盖已有文件。
+   */
+  attachmentExportMany: (data: { ids: string[] }) => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    data?: { dir: string; exported: number; skipped: number; failed: number; files: string[] };
+    error?: string;
+  }>;
   /** 在资源管理器里定位附件（不传 id 时打开附件目录） */
   attachmentReveal: (data?: { id?: string }) =>
     Promise<{ success: boolean; data?: { dir: string; file: string }; error?: string }>;
+  /** 当前附件目录：是否自定义 / 默认位置 / 是否存在 */
+  attachmentDirInfo: () => Promise<{
+    success: boolean;
+    data?: {
+      dir: string;
+      defaultDir: string;
+      isCustom: boolean;
+      exists: boolean;
+      /** 笔记附件目录（`<笔记目录>/attachments`）；未启用目录模式时为空串 */
+      notesDir?: string;
+      notesDirExists?: boolean;
+    };
+    error?: string;
+  }>;
+  /** 选一个目录（不立即切换，交给 attachmentSetDir） */
+  attachmentPickDir: () => Promise<{ success: boolean; canceled?: boolean; data?: { dir: string }; error?: string }>;
+  /**
+   * 确保笔记附件目录（`<笔记目录>/attachments`）存在（1.25.1）。
+   * 切换笔记目录后由渲染层调一次，用户去资源管理器就能看到 attachments 文件夹。
+   */
+  attachmentEnsureNoteDir: () => Promise<{
+    success: boolean;
+    data?: { dir: string; created: boolean; reason?: string };
+    error?: string;
+  }>;
+  /** 切换附件目录（空 dir = 改回默认）：先复制已有附件，成功才切换 */
+  attachmentSetDir: (data: { dir?: string }) => Promise<{
+    success: boolean;
+    data?: { dir: string; from: string; copied: number; skipped: number; reset: boolean };
+    error?: string;
+  }>;
+  /** 非图片附件的文本预览（证书 / 密钥 / 配置） */
+  attachmentTextPreview: (data: { id: string }) => Promise<{
+    success: boolean;
+    code?: 'missing' | 'binary';
+    data?: { text: string; size: number; truncated: boolean };
+    error?: string;
+  }>;
 
   // 环境巡检（#3）
   envProbe: (data: { targets: Array<{ id: string; url: string }>; timeoutMs?: number }) =>
@@ -1019,7 +1204,7 @@ export interface ElectronAPI {
   weeklyRead: (dir: string, name: string) =>
     Promise<{ success: boolean; data?: { name: string; content: string; mtime: string; size: number }; error?: string }>;
   weeklyPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
-  weeklyReveal: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  weeklyReveal: (dir: string, name?: string) => Promise<{ success: boolean; error?: string }>;
   weeklySave: (dir: string, name: string, content: string) =>
     Promise<{ success: boolean; data?: WeeklyFile; error?: string }>;
   weeklyRename: (dir: string, name: string, nextName: string) =>

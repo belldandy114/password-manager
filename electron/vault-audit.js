@@ -45,6 +45,10 @@ function badTime(v) {
  * @param {any} vault 已归一化的库（normalizeVault 的返回值）
  * @param {object} [opts]
  * @param {(id: string) => boolean} [opts.attachmentExists] 附件文件是否存在；不传就跳过这项检查
+ * @param {(id: string) => boolean} [opts.attachmentDecryptable] 附件能否用**当前主密码**解开；
+ *   不传就跳过「可解密性」检查（需要 attachmentExists 一起传，否则分不清「丢了」和「解不开」）
+ * @param {number} [opts.attachmentDecryptSample] 最多抽样解密几个附件（默认 20）。
+ *   几百个附件全解密会让自检卡住十几秒，抽样足够发现「改密后整批失效」这类系统性问题。
  * @param {string[]} [opts.noteAttachmentIds] 从笔记正文里抽出的附件 id（主进程抽，渲染层工具函数不共用）
  * @returns {{
  *   ok: boolean, checkedAt: string, schemaVersion: number,
@@ -56,6 +60,10 @@ function badTime(v) {
 function auditVault(vault, opts = {}) {
   const v = vault && typeof vault === 'object' && !Array.isArray(vault) ? vault : {};
   const attachmentExists = typeof opts.attachmentExists === 'function' ? opts.attachmentExists : null;
+  const attachmentDecryptable = typeof opts.attachmentDecryptable === 'function' ? opts.attachmentDecryptable : null;
+  const decryptSample = Number.isFinite(opts.attachmentDecryptSample)
+    ? Math.max(0, Math.floor(opts.attachmentDecryptSample))
+    : 20;
   /** @type {Array<{level:string,code:string,message:string,samples:string[]}>} */
   const issues = [];
   const add = (level, code, message, samples) => {
@@ -77,6 +85,11 @@ function auditVault(vault, opts = {}) {
   const danglingTags = [];
   const missingAttach = [];
   const usedTags = new Set();
+  /**
+   * 存在的附件（id + 归属描述），给「可解密性抽样」用。
+   * 用 Map 去重：同一张图可能被多个条目/笔记引用，重复解密纯属浪费。
+   */
+  const existingAttach = new Map();
 
   for (const e of entries) {
     if (!e || typeof e !== 'object') continue;
@@ -109,7 +122,9 @@ function auditVault(vault, opts = {}) {
     if (attachmentExists && Array.isArray(e.attachments)) {
       for (const a of e.attachments) {
         const aid = String((a && a.id) || '');
-        if (aid && !attachmentExists(aid)) missingAttach.push(`${e.name || id} → ${aid}`);
+        if (!aid) continue;
+        if (!attachmentExists(aid)) missingAttach.push(`${e.name || id} → ${aid}`);
+        else if (!existingAttach.has(aid)) existingAttach.set(aid, `${e.name || id} → ${aid}`);
       }
     }
   }
@@ -140,9 +155,38 @@ function auditVault(vault, opts = {}) {
       let m;
       while ((m = re.exec(md)) !== null) {
         if (!attachmentExists(m[1])) noteMissing.push(`${(n && n.title) || '未命名笔记'} → ${m[1]}`);
+        else if (!existingAttach.has(m[1])) existingAttach.set(m[1], `${(n && n.title) || '未命名笔记'} → ${m[1]}`);
       }
     }
     if (noteMissing.length) add('error', 'note-attachment-missing', `${noteMissing.length} 张笔记图片的文件已丢失`, noteMissing);
+  }
+
+  /**
+   * ---- 附件可解密性（抽样）----
+   *
+   * 为什么必须查：附件是用**会话主密码**加密的，改主密码时如果没重加密，
+   * 文件还在、大小也对，但 AES-GCM 认证失败 → 界面统一显示「附件不存在或已损坏」。
+   * 只查「文件存在」的自检对这种情况完全无感，用户会以为数据没坏。
+   *
+   * 抽样而不是全查：几百个附件全解密要十几秒（每个都要 AES + 一次 base64 解码），
+   * 而「改密后整批失效」是系统性问题，抽 20 个足够发现；真有问题时报告里会写明抽样数。
+   */
+  if (attachmentExists && attachmentDecryptable && decryptSample > 0) {
+    const ids = [...existingAttach.keys()].slice(0, decryptSample);
+    const undecryptable = [];
+    for (const aid of ids) {
+      let ok = false;
+      try { ok = attachmentDecryptable(aid) === true; } catch { ok = false; }
+      if (!ok) undecryptable.push(existingAttach.get(aid) || aid);
+    }
+    if (undecryptable.length) {
+      add(
+        'error',
+        'attachment-undecryptable',
+        `${undecryptable.length} 个附件存在但用当前主密码解不开（通常是改主密码后未重新加密；抽样 ${ids.length} 个）`,
+        undecryptable
+      );
+    }
   }
 
   // ---- 接口调试历史 ----

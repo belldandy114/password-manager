@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { ZentaoBug, ZentaoBugDetail, ZentaoAttachment, ZentaoConfig } from '../types';
 import { Icons, Pill } from './ui';
+import { ImageLightbox } from './ImageLightbox';
 import { bugToText } from '../utils/bugText';
 
 /**
@@ -18,8 +19,8 @@ export function BugDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  // 点缩略图放大查看
-  const [preview, setPreview] = useState<string>('');
+  // 点缩略图放大查看（与笔记/附件共用同一个灯箱：滚轮缩放 / 拖动 / 双击复位）
+  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   // 附件下载状态（同一时刻只处理一个，避免并下发一堆请求）
   const [busyFile, setBusyFile] = useState('');
   const [fileTip, setFileTip] = useState('');
@@ -30,7 +31,7 @@ export function BugDrawer({
     setLoading(true);
     setError('');
     setDetail(null);
-    setPreview('');
+    setPreview(null);
     (async () => {
       const res = await window.electronAPI.zentaoBugDetail(cfg, bug.id);
       if (!alive) return;
@@ -46,7 +47,8 @@ export function BugDrawer({
     if (!bug) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (preview) { setPreview(''); return; }
+      // 大图开着时交给灯箱自己处理 Esc，别把抽屉一起关了
+      if (preview) return;
       onClose();
     };
     document.addEventListener('keydown', onKey);
@@ -135,7 +137,7 @@ export function BugDrawer({
                         <button
                           key={img.src || i}
                           className="shot-thumb"
-                          onClick={() => setPreview(img.dataUrl)}
+                          onClick={() => setPreview({ src: img.dataUrl, alt: `图${i + 1}` })}
                           title={`查看大图（图${i + 1}）`}
                         >
                           <img src={img.dataUrl} alt={`图${i + 1}`} loading="lazy" />
@@ -209,10 +211,7 @@ export function BugDrawer({
       </aside>
 
       {preview && (
-        <div className="shot-viewer" onClick={() => setPreview('')}>
-          <img src={preview} alt="大图" onClick={e => e.stopPropagation()} />
-          <button className="shot-viewer-close" onClick={() => setPreview('')} title="关闭">×</button>
-        </div>
+        <ImageLightbox src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />
       )}
     </>
   );

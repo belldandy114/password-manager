@@ -495,13 +495,6 @@ body {
 }
 
 /* ---- Toolbar (Three-zone layout) ---- */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  flex-wrap: wrap;
-}
 
 /* Zone 1: Search */
 .toolbar-search {
@@ -509,8 +502,6 @@ body {
   align-items: center;
   gap: 0;
   flex: 1;
-  min-width: 140px;
-  max-width: 300px;
   position: relative;
 }
 
@@ -683,7 +674,6 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 
 .toolbar-actions .view-toggle-btn {
@@ -3190,7 +3180,6 @@ mark {
 .sidebar-nav-groups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
   overflow-y: auto;
   padding-bottom: 8px;
 }

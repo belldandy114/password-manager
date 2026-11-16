@@ -101,7 +101,7 @@ function clearApiJar() {
 function registerApiIpc(deps) {
   const {
     getPassword, getMainWindow, loadVault, saveVault, encrypt,
-    readAttachment, attachmentFile, attachDir, vaultCollections,
+    readAttachment, attachmentFile, getAttachDir, vaultCollections,
   } = deps;
   const pw = () => getPassword();
 
@@ -209,7 +209,8 @@ function registerApiIpc(deps) {
       if (st.size > 20 * 1024 * 1024) return { success: false, error: '附件不能超过 20MB' };
       const buf = fs.readFileSync(filePath);
       const id = crypto.randomUUID();
-      fs.mkdirSync(attachDir, { recursive: true });
+      const dir = getAttachDir();
+      fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(attachmentFile(id), encrypt(buf.toString('base64'), pw()), 'utf8');
       return {
         success: true,
@@ -227,6 +228,14 @@ function registerApiIpc(deps) {
       if (!b64) return { success: false, error: '附件不存在或已损坏' };
       const dir = path.join(app.getPath('temp'), 'pm-attachments');
       fs.mkdirSync(dir, { recursive: true });
+      // 明文副本不该长期留在 temp：每次打开前清掉 24 小时前的
+      try {
+        const cutoff = Date.now() - 24 * 3600 * 1000;
+        for (const f of fs.readdirSync(dir)) {
+          const full = path.join(dir, f);
+          if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+        }
+      } catch { /* 清理失败不影响打开 */ }
       const target = path.join(dir, name || `${id}.bin`);
       fs.writeFileSync(target, Buffer.from(b64, 'base64'));
       await shell.openPath(target);
@@ -239,7 +248,14 @@ function registerApiIpc(deps) {
   ipcMain.handle('attachment:delete', async (_event, { id }) => {
     try {
       const file = attachmentFile(id);
-      if (fs.existsSync(file)) fs.unlinkSync(file);
+      if (!fs.existsSync(file)) return { success: true };
+      // 与笔记/周报删除保持一致：走系统回收站，误删还能找回
+      try {
+        await shell.trashItem(file);
+      } catch {
+        // 少数网络盘/精简系统没有回收站，退回直接删（否则用户永远删不掉）
+        fs.unlinkSync(file);
+      }
       return { success: true };
     } catch (e) {
       return { success: false, error: e.message };

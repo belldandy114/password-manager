@@ -25,14 +25,50 @@ interface Item {
 
 const DAY = 86400000;
 
-/** 一键清除的落盘键：记住「清除时看到的那批事项」的签名 */
-const LS_DISMISSED = 'pm.notices.dismissed';
+/**
+ * 一键清除的落盘键（1.25.0 重做）。
+ *
+ * 旧实现按「整批事项的签名」记：清除时存下当时那批 key 拼成的字符串，
+ * 下次打开只有**签名完全相等**才隐藏。问题有两个：
+ *   1. 只要多出/少掉任何一条（比如某个环境恢复可达、禅道多了一个新 Bug），
+ *      签名就变了 → 之前清掉的全部**重新冒出来**，用户以为「清除没生效」；
+ *   2. 反过来，如果事项集合恰好没变，用户永远看不到它们，也没法单独恢复某一条。
+ *
+ * 现在改成**按单条 key 记已读**：清除时把当前所有 key 记进 dismissed 集合，
+ * 之后每条独立判断 —— 清掉的不再回来，新出现的照常显示。
+ * 集合上限 500 条（超出丢最旧的），避免 localStorage 无限增长。
+ */
+const LS_DISMISSED = 'pm.notices.dismissed.v2';
+const DISMISSED_MAX = 500;
 
-function readDismissedSig(): string {
+interface DismissedState {
+  /** 已清除的事项 key → 清除时间戳 */
+  keys: Record<string, number>;
+}
+
+function readDismissed(): DismissedState {
   try {
-    const d = JSON.parse(localStorage.getItem(LS_DISMISSED) || 'null');
-    return (d && typeof d.sig === 'string') ? d.sig : '';
-  } catch { return ''; }
+    const raw = localStorage.getItem(LS_DISMISSED);
+    if (!raw) return { keys: {} };
+    const d = JSON.parse(raw);
+    if (d && typeof d === 'object' && d.keys && typeof d.keys === 'object') {
+      return { keys: d.keys as Record<string, number> };
+    }
+  } catch { /* 损坏就当没清除过 */ }
+  return { keys: {} };
+}
+
+function writeDismissed(state: DismissedState) {
+  try {
+    // 超出上限时按时间戳丢最旧的
+    const entries = Object.entries(state.keys);
+    if (entries.length > DISMISSED_MAX) {
+      entries.sort((a, b) => a[1] - b[1]);
+      const keep = entries.slice(entries.length - DISMISSED_MAX);
+      state = { keys: Object.fromEntries(keep) };
+    }
+    localStorage.setItem(LS_DISMISSED, JSON.stringify(state));
+  } catch { /* 配额满不影响本次会话 */ }
 }
 
 function daysSince(iso: string): number | null {
@@ -153,29 +189,35 @@ export function NoticeCenter({
     return out;
   }, [zt, results, backupAt]);
 
-  /* ---------- 一键清除（1.24.4） ----------
-   * 聚合是实时的，单纯把列表藏起来下次打开又会回来。按「事项集合的签名」记：
-   * 清除时存下当时那批 key，下次打开只要集合没变就不再显示；
-   * 出现任何新事项（签名变了）自动恢复展示，不会漏掉新提醒。
+  /* ---------- 一键清除（1.25.0 重做） ----------
+   * 按单条 key 记已读：清掉的不再回来，新出现的照常显示。
+   * 旧实现按整批签名判断，任何一条变动都会让清掉的全部复活（用户以为清除没生效）。
    */
-  const [dismissedSig, setDismissedSig] = useState(readDismissedSig);
-  const itemsSig = useMemo(() => items.map(i => i.key).join('|'), [items]);
+  const [dismissed, setDismissed] = useState<DismissedState>(readDismissed);
+  /** 当前这批里被清除过的条数（用于空态文案） */
   const clearedCount = useMemo(
-    () => (dismissedSig && dismissedSig === itemsSig ? items.length : 0),
-    [dismissedSig, itemsSig, items.length],
+    () => items.filter(i => dismissed.keys[i.key]).length,
+    [items, dismissed],
   );
   const visible = useMemo(
-    () => (dismissedSig && dismissedSig === itemsSig ? [] : items),
-    [dismissedSig, itemsSig, items],
+    () => items.filter(i => !dismissed.keys[i.key]),
+    [items, dismissed],
   );
 
+  /** 全部清除：把当前所有 key 记进已读集合 */
   const clearAll = () => {
-    try { localStorage.setItem(LS_DISMISSED, JSON.stringify({ sig: itemsSig, at: Date.now() })); } catch { /* 忽略 */ }
-    setDismissedSig(itemsSig);
+    if (!items.length) return;
+    const now = Date.now();
+    const next: DismissedState = { keys: { ...dismissed.keys } };
+    for (const it of items) next.keys[it.key] = now;
+    writeDismissed(next);
+    setDismissed(next);
   };
+
+  /** 恢复显示：清空已读集合（所有清除过的都回来） */
   const restore = () => {
     try { localStorage.removeItem(LS_DISMISSED); } catch { /* 忽略 */ }
-    setDismissedSig('');
+    setDismissed({ keys: {} });
   };
 
   const go = (page?: string) => {
@@ -199,15 +241,15 @@ export function NoticeCenter({
       {loading && !items.length ? (
         <div className="notice-empty">正在汇总…</div>
       ) : visible.length === 0 ? (() => {
-        // 一键清除后的空态：不是「没有提醒」，而是「这批你已经清掉了」
+        // 一键清除后的空态：用户要求「清除之后消息中心为空，不存在任何内容」。
+        // 所以这里只留一句「暂无提醒」+ 一个恢复入口，不再堆「已清除 N 条」的说明文字。
         if (clearedCount > 0) {
           return (
             <div className="notice-empty">
               <Icons.check size={16} />
               <div>
-                <div>已清除 {clearedCount} 条提醒</div>
-                <div className="notice-sub">状态没变化就不再打扰；出现新事项会自动恢复显示</div>
-                <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={restore}>恢复显示</button>
+                <div>暂无提醒</div>
+                <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={restore}>恢复已清除的提醒</button>
               </div>
             </div>
           );
@@ -218,7 +260,7 @@ export function NoticeCenter({
           <div className="notice-empty">
             <Icons.check size={16} />
             <div>
-              <div>{checked ? '暂时没有需要处理的' : off ? '提醒还没开启' : '禅道还没检查过'}</div>
+              <div>{checked ? '暂无提醒' : off ? '提醒还没开启' : '禅道还没检查过'}</div>
               <div className="notice-sub">
                 {checked
                   ? '超期缺陷、不可达环境、久未备份都会出现在这里'
@@ -232,7 +274,7 @@ export function NoticeCenter({
       })() : (
         <div className="notice-list">
           <div className="notice-toolbar">
-            <span className="notice-sub">共 {visible.length} 项 · 清除后状态不变就不再显示</span>
+            <span className="notice-sub">共 {visible.length} 项</span>
             <button className="btn btn-ghost btn-sm" onClick={clearAll}>全部清除</button>
           </div>
           {groups.map(([group, list]) => (

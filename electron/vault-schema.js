@@ -32,6 +32,10 @@ const VAULT_COLLECTIONS = [
   // 接口回归：回归集定义 + 最近若干次运行结果
   'regressionSets',
   'regressionRuns',
+  // 1.25.0：环境巡检历史（原来在 localStorage，换机器带不走且明文存内网地址）
+  'envProbes',
+  // 1.25.0：测试数据生成器的数据集（存配置，不存生成结果）
+  'tdgDatasets',
 ];
 
 /**

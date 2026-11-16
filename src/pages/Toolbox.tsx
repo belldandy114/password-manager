@@ -5,6 +5,7 @@ import { ToastContainer } from '../components/Toast';
 import { Page, PageHead, Panel, Icons } from '../components/ui';
 import { ToolShellProvider, copyText, useToolState, useToolResult } from '../components/toolbox/shell';
 import { parseTimestamp } from '../utils/timeParse';
+import { localDay } from '../utils/time';
 import { diffTexts } from '../utils/textDiff';
 import { cronFromText } from '../utils/cron';
 import { validateIdCard } from '../utils/idCard';
@@ -1456,7 +1457,7 @@ export function Toolbox() {
 
   const exportResult = async () => {
     if (!resultText) return;
-    const r = await window.electronAPI.saveText(resultText, `toolbox-${active}-${new Date().toISOString().slice(0, 10)}.txt`, [{ name: '文本', extensions: ['txt'] }]);
+    const r = await window.electronAPI.saveText(resultText, `toolbox-${active}-${localDay()}.txt`, [{ name: '文本', extensions: ['txt'] }]);
     if (r.success) addToast('已导出', 'success');
     else if (!r.canceled) addToast(`导出失败：${r.error}`, 'error');
   };

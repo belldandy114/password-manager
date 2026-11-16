@@ -46,6 +46,13 @@ export function Modal({ open, onClose, title, children, footer, className, close
   const restoreRef = useRef<HTMLElement | null>(null);
   const stackId = useRef<symbol>(Symbol('modal'));
   const titleId = useId();
+  /**
+   * onClose 几乎都是内联箭头（`() => setEditing(null)`），每次父组件渲染都是新引用。
+   * 直接放进 effect 依赖会让「每敲一个字 → effect 重建 → 焦点被拉回第一个可聚焦元素」，
+   * 表现为编辑笔记时输入一个字符就失焦、像被弹出编辑框。放进 ref 后 effect 只随 open 跑一次。
+   */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // Esc 与「关闭后焦点归还」：焦点不还回去会落到 body 上，键盘用户直接失去位置。
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -54,7 +61,7 @@ export function Modal({ open, onClose, title, children, footer, className, close
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      onCloseRef.current();
       return;
     }
     if (e.key !== 'Tab') return;
@@ -83,7 +90,7 @@ export function Modal({ open, onClose, title, children, footer, className, close
       e.preventDefault();
       first.focus();
     }
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -92,9 +99,18 @@ export function Modal({ open, onClose, title, children, footer, className, close
 
     // 等一帧再聚焦：弹窗内容可能还在挂载（比如刚 setState 出来的表单）
     const raf = requestAnimationFrame(() => {
-      const nodes = focusablesIn(dialogRef.current);
-      if (nodes.length > 0) nodes[0].focus();
-      else dialogRef.current?.focus();
+      const root = dialogRef.current;
+      if (!root) return;
+      // 表单弹窗优先聚焦第一个输入框（编辑笔记时光标直接落在标题），
+      // 没有输入框才退回第一个可聚焦元素（确认框的按钮）。
+      const preferred = root.querySelector<HTMLElement>('[data-autofocus="1"]')
+        || root.querySelector<HTMLElement>('input:not([type="hidden"]):not([disabled]), textarea:not([disabled])');
+      if (preferred) preferred.focus();
+      else {
+        const nodes = focusablesIn(root);
+        if (nodes.length > 0) nodes[0].focus();
+        else root.focus();
+      }
     });
 
     document.addEventListener('keydown', handleKeyDown, true);

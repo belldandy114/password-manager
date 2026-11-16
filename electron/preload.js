@@ -33,11 +33,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   entriesUpdate: (data) => ipcRenderer.invoke('entries:update', data),
   entriesDelete: (data) => ipcRenderer.invoke('entries:delete', data),
   entriesBatchUpdate: (data) => ipcRenderer.invoke('entries:batch-update', data),
+  /** 批量「追加」标签（并集，不覆盖原有标签） */
+  entriesAddTag: (data) => ipcRenderer.invoke('entries:add-tag', data),
+  /** 标签重命名 / 删除 / 排序：1.25.0 起标签操作必须落盘 */
+  entriesRenameTag: (data) => ipcRenderer.invoke('entries:rename-tag', data),
+  entriesDeleteTag: (data) => ipcRenderer.invoke('entries:delete-tag', data),
+  entriesReorderTags: (data) => ipcRenderer.invoke('entries:reorder-tags', data),
 
   // Trash
   trashGetAll: () => ipcRenderer.invoke('trash:get-all'),
   trashRestore: (data) => ipcRenderer.invoke('trash:restore', data),
   trashEmpty: () => ipcRenderer.invoke('trash:empty'),
+  /** 从回收站彻底删除指定条目 */
+  trashDelete: (data) => ipcRenderer.invoke('trash:delete', data),
 
   // Clipboard
   clipboardCopy: (data) => ipcRenderer.invoke('clipboard:copy', data),
@@ -159,8 +167,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   attachmentList: () => ipcRenderer.invoke('attachment:list'),
   /** 解密后另存到用户选的位置 */
   attachmentExport: (data) => ipcRenderer.invoke('attachment:export', data),
+  /** 批量导出到用户选的目录（重名自动加后缀，不覆盖） */
+  attachmentExportMany: (data) => ipcRenderer.invoke('attachment:export-many', data),
   /** 在资源管理器中定位附件文件（不传 id 则只打开附件目录） */
   attachmentReveal: (data) => ipcRenderer.invoke('attachment:reveal', data || {}),
+  /** 当前附件目录信息（是否自定义 / 默认位置 / 目录是否存在） */
+  attachmentDirInfo: () => ipcRenderer.invoke('attachment:dir-info'),
+  /** 确保笔记附件目录（<笔记目录>/attachments）存在：切完笔记目录后自动建出来 */
+  attachmentEnsureNoteDir: () => ipcRenderer.invoke('attachment:ensure-note-dir'),
+  /** 选一个目录（不立即切换） */
+  attachmentPickDir: () => ipcRenderer.invoke('attachment:pick-dir'),
+  /** 切换附件目录：把已有附件复制过去后立即生效 */
+  attachmentSetDir: (data) => ipcRenderer.invoke('attachment:set-dir', data || {}),
+  /** 非图片附件的文本预览（证书 / 密钥 / 配置） */
+  attachmentTextPreview: (data) => ipcRenderer.invoke('attachment:text-preview', data || {}),
 
   // 环境巡检（#3）
   envProbe: (data) => ipcRenderer.invoke('env:probe', data),

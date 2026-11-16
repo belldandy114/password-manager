@@ -151,9 +151,10 @@ function registerEntriesIpc(deps) {
     if (next.tags) {
       next.tags.forEach(t => { if (!vault.tags.includes(t)) vault.tags.push(t); });
     }
-    // Clean up orphaned tags
-    const usedTags = new Set(vault.entries.flatMap(e => e.tags || []));
-    vault.tags = vault.tags.filter(t => usedTags.has(t));
+    // 1.25.0：**不再自动清理「没有条目在用」的标签**。
+    // 标签现在是用户显式管理的对象（可新建 / 重命名 / 删除 / 拖拽排序），
+    // 自动清理会把用户刚建好的空标签在下一次编辑任意条目时静默删掉。
+    // 真要清理走「库自检」里的 tag-unused 提示 + 用户手动删除。
     saveVault(vault, pw());
     return { success: true, data: vault };
   });
@@ -176,9 +177,7 @@ function registerEntriesIpc(deps) {
       saveTrash(trash, pw());
       vault.entries = vault.entries.filter(e => !ids.includes(e.id));
     }
-    // Clean up orphaned tags
-    const usedTags = new Set(vault.entries.flatMap(e => e.tags || []));
-    vault.tags = vault.tags.filter(t => usedTags.has(t));
+    // 1.25.0：不再自动清理孤儿标签（理由同 entries:update —— 会静默删掉用户新建的空标签）
     saveVault(vault, pw());
     return { success: true, data: vault };
   });
@@ -193,9 +192,152 @@ function registerEntriesIpc(deps) {
         e.updatedAt = new Date().toISOString();
       }
     });
-    // Clean up orphaned tags
-    const usedTags = new Set(vault.entries.flatMap(e => e.tags || []));
-    vault.tags = vault.tags.filter(t => usedTags.has(t));
+    // 1.25.0：不再自动清理孤儿标签（理由同 entries:update）
+    saveVault(vault, pw());
+    return { success: true, data: vault };
+  });
+
+  // ---- Tags（1.25.0：标签操作必须落盘）----
+  //
+  // 背景：TagSidebar 以前只调 setVaultData 改内存，重启全部回退；「批量添加标签」走
+  // entries:batch-update 的 Object.assign，把条目原有标签整体冲掉（['重要','生产'] → ['新标签']）。
+  // 这里四个 handler 都是「读 → 改 → saveVault」，并且**参数校验一律返回 error 不抛异常**
+  // （ids.includes / for...of 在非数组入参上会直接抛，渲染层只会看到 rejected promise）。
+
+  /** 标签名归一：非字符串一律当空，去首尾空白，并限制长度（防止渲染层塞超长串把库撑大） */
+  const tagName = (v) => (typeof v === 'string' ? v.trim().slice(0, 100) : '');
+
+  /**
+   * 批量「追加」标签（并集，不覆盖）。
+   * 入参 `{ ids: string[], tag: string }`。
+   */
+  ipcMain.handle('entries:add-tag', (_event, payload) => {
+    if (!pw()) return { success: false, error: '未解锁' };
+    const { ids, tag } = payload || {};
+    if (!Array.isArray(ids) || ids.length === 0) return { success: false, error: '请选择要添加标签的条目' };
+    const name = tagName(tag);
+    if (!name) return { success: false, error: '标签不能为空' };
+    const vault = loadVault(pw());
+    if (!vault) return { success: false, error: '数据损坏' };
+    if (!Array.isArray(vault.tags)) vault.tags = [];
+
+    const hit = new Set(ids.map(String));
+    let changed = false;
+    for (const e of vault.entries || []) {
+      if (!hit.has(String(e.id))) continue;
+      const list = Array.isArray(e.tags) ? e.tags : [];
+      if (list.includes(name)) continue;   // 已有该标签：不动，避免无意义的加密写盘
+      e.tags = Array.from(new Set([...list, name]));
+      changed = true;
+    }
+    // 标签池同步：只有真的有条目在用才加，避免 ids 全部失效时留下一个 0 条目的孤儿标签
+    const used = (vault.entries || []).some(e => Array.isArray(e.tags) && e.tags.includes(name));
+    if (used && !vault.tags.includes(name)) {
+      vault.tags.push(name);
+      changed = true;
+    }
+    if (changed) saveVault(vault, pw());
+    return { success: true, data: vault };
+  });
+
+  /**
+   * 重命名标签：标签池 + 所有条目上的引用一起改。
+   * 入参 `{ from: string, to: string }`。
+   */
+  ipcMain.handle('entries:rename-tag', (_event, payload) => {
+    if (!pw()) return { success: false, error: '未解锁' };
+    const { from, to } = payload || {};
+    const src = tagName(from);
+    const dst = tagName(to);
+    if (!src) return { success: false, error: '原标签不能为空' };
+    if (!dst) return { success: false, error: '新标签不能为空' };
+    if (src === dst) return { success: false, error: '新旧标签相同' };
+    const vault = loadVault(pw());
+    if (!vault) return { success: false, error: '数据损坏' };
+    if (!Array.isArray(vault.tags)) vault.tags = [];
+    // 重名检查放在改动之前：合并语义应该走「删除 + 添加」，不能悄悄把两个标签并成一个
+    if (vault.tags.includes(dst)) return { success: false, error: `标签「${dst}」已存在` };
+
+    let touched = false;
+    for (const e of vault.entries || []) {
+      if (!Array.isArray(e.tags) || !e.tags.includes(src)) continue;
+      // 条目上本来就可能已经有 dst：改名后必须去重，否则同一条目出现两个同名标签
+      e.tags = Array.from(new Set(e.tags.map(t => (t === src ? dst : t))));
+      touched = true;
+    }
+    const idx = vault.tags.indexOf(src);
+    if (idx >= 0) {
+      vault.tags[idx] = dst;
+      touched = true;
+    } else if (touched) {
+      // 标签池里没有但条目上有（历史脏数据）：顺手补进池子，别让新名字只存在于条目上
+      vault.tags.push(dst);
+    }
+    if (!touched) return { success: false, error: '标签不存在' };
+    saveVault(vault, pw());
+    return { success: true, data: vault };
+  });
+
+  /**
+   * 删除标签：标签池 + 所有条目上的引用一起摘掉。
+   * 入参 `{ tag: string }`。标签本来就不存在时按幂等成功处理（不报错）。
+   */
+  ipcMain.handle('entries:delete-tag', (_event, payload) => {
+    if (!pw()) return { success: false, error: '未解锁' };
+    const { tag } = payload || {};
+    const name = tagName(tag);
+    if (!name) return { success: false, error: '标签不能为空' };
+    const vault = loadVault(pw());
+    if (!vault) return { success: false, error: '数据损坏' };
+    if (!Array.isArray(vault.tags)) vault.tags = [];
+
+    const before = vault.tags.length;
+    vault.tags = vault.tags.filter(t => t !== name);
+    let changed = vault.tags.length !== before;
+    for (const e of vault.entries || []) {
+      if (!Array.isArray(e.tags) || !e.tags.includes(name)) continue;
+      e.tags = e.tags.filter(t => t !== name);
+      changed = true;
+    }
+    if (changed) saveVault(vault, pw());
+    return { success: true, data: vault };
+  });
+
+  /**
+   * 保存标签顺序（拖拽排序后调用），**同时承担「新建空标签」**。
+   * 入参 `{ tags: string[] }`。
+   *
+   * 语义 = 按传入顺序重排 + 允许新增 + 未传到的已有标签追加到末尾。
+   * 为什么允许新增：一个还没有任何条目引用的空标签没有别的落盘通道 ——
+   * `entries:add-tag` 要求 ids 非空且只往条目上加，`entries:update` 需要条目本身。
+   * 所以「新建标签」只能走这里（TagSidebar 的 handleCreateTag 就是这么调的）。
+   * 反过来，**没传到的已有标签必须保留**：漏传不能等于删标签。
+   */
+  ipcMain.handle('entries:reorder-tags', (_event, payload) => {
+    if (!pw()) return { success: false, error: '未解锁' };
+    const { tags } = payload || {};
+    if (!Array.isArray(tags) || tags.some(t => typeof t !== 'string')) {
+      return { success: false, error: '标签顺序格式不正确' };
+    }
+    const vault = loadVault(pw());
+    if (!vault) return { success: false, error: '数据损坏' };
+    const existing = Array.isArray(vault.tags) ? vault.tags : [];
+    const seen = new Set();
+    const next = [];
+    for (const raw of tags) {
+      // 只去空、去重；未知标签保留（= 新建）。长度上限防止渲染层塞进超长串把库撑大
+      const t = String(raw || '').trim().slice(0, 100);
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      next.push(t);
+    }
+    // 没传到的已有标签追加到末尾（不能因为漏传就丢标签）
+    for (const t of existing) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      next.push(t);
+    }
+    vault.tags = next;
     saveVault(vault, pw());
     return { success: true, data: vault };
   });
@@ -233,6 +375,23 @@ function registerEntriesIpc(deps) {
     saveTrash(remaining, pw());
     saveVault(vault, pw());
     return { success: true, data: { entries: vault.entries, trash: remaining } };
+  });
+
+  /**
+   * 从回收站里**彻底删除**指定条目（不是「移入回收站」，那是 entries:delete）。
+   * 入参 `ids: string[]`（与 trash:restore 一致，裸数组）。
+   */
+  ipcMain.handle('trash:delete', (_event, ids) => {
+    if (!pw()) return { success: false, error: '未解锁' };
+    if (!Array.isArray(ids) || ids.length === 0) return { success: false, error: '请选择要删除的条目' };
+    const trash = loadTrash(pw());
+    if (!trash) return { success: false, error: '数据损坏' };
+    const hit = new Set(ids.map(String));
+    const remaining = trash.filter(e => !hit.has(String(e.id)));
+    // 一条都没命中就不写盘：避免「点了删除但 id 已过期」时白跑一次加密写盘
+    if (remaining.length !== trash.length) saveTrash(remaining, pw());
+    // 与 trash:get-all 保持同一排序（按删除时间倒序），否则渲染层 setTrash 后顺序会跳变
+    return { success: true, data: sortByDateDesc(remaining) };
   });
 
   ipcMain.handle('trash:empty', () => {
@@ -302,25 +461,62 @@ function registerEntriesIpc(deps) {
       // 渲染层的巡检调度器和设置页草稿永远读到默认值 —— 保存等于没保存。
       envProbeInterval: Math.min(720, Math.max(0, Number(s.envProbeInterval) || 0)),
       envProbeNotifyOnFlip: s.envProbeNotifyOnFlip !== false,
+      // 1.25.0：巡检超时以前只存在页面 useState 里，定时巡检写死 8000 —— 慢环境永远超时。
+      // 这里必须返回，否则设置页保存后重启又回默认（和上面 envProbeInterval 是同一类缺口）。
+      envProbeTimeoutMs: Math.min(60000, Math.max(1000, Number(s.envProbeTimeoutMs) || 8000)),
       // ---- 同类缺口：渲染层会读、重启后回默认的开关与路径 ----
       clipboardHistory: !!s.clipboardHistory,
       updateCheckOnStart: s.updateCheckOnStart !== false,
       hotkeySearch: String(s.hotkeySearch || ''),
       hotkeyToggle: String(s.hotkeyToggle || ''),
+      // 1.25.0：主进程一直在写这个键，但 settings:get 不返回 —— 设置页回填拿不到
+      hotkeyQuickNote: String(s.hotkeyQuickNote || ''),
       jmeterPath: String(s.jmeterPath || ''),
       jmeterOutDir: String(s.jmeterOutDir || ''),
       jmeterLastJmx: String(s.jmeterLastJmx || ''),
       // 更新源与检查周期：设置页要能读回当前值，否则保存时会把已有值覆盖掉
       updateMirrorUrl: String(s.updateMirrorUrl || ''),
       updateCheckIntervalHours: Math.min(168, Math.max(0, Number(s.updateCheckIntervalHours) || 0)),
+      // 自定义存储位置（空 = 用数据目录下的默认路径）
+      attachDir: String(s.attachDir || ''),
+      notesDir: String(s.notesDir || ''),
+      weeklyDir: String(s.weeklyDir || ''),
       browserPaths: s.browserPaths || { ...defaultSettings.browserPaths },
       keybindings: s.keybindings || { ...defaultSettings.keybindings },
     };
   });
 
+  /**
+   * 渲染层允许写的设置键白名单（1.25.0）。
+   *
+   * 以前是 `Object.assign(s, prefs)` 全量合并 —— settings.json 里同时存着
+   * masterPasswordHash / salt / securityWordHash / recoveryData / dataKeyEncrypted，
+   * 渲染层传 `{ masterPasswordHash: <已知密码的哈希>, salt: <对应盐> }` 就能改写认证凭据。
+   * 现在只放行「确实是用户偏好」的键，认证字段一律拒绝。
+   */
+  const SETTINGS_WRITABLE = new Set([
+    'clipboardClearDelay', 'passwordAutoHideDelay', 'autoLockDelay',
+    'defaultViewMode', 'defaultEnvFilter', 'theme', 'accent', 'density',
+    'minimizeToTray', 'closeToTray', 'contentProtection', 'launchAtLogin',
+    'lastPage', 'updateCheckOnStart', 'updateNotifiedVersion',
+    'zentaoNotify', 'zentaoNotifyInterval', 'zentaoStaleOn', 'zentaoStaleDays', 'zentaoActiveId',
+    'envProbeInterval', 'envProbeNotifyOnFlip', 'envProbeTimeoutMs',
+    'backupKeep', 'backupMirrorDir',
+    'attachDir', 'notesDir', 'weeklyDir',
+    'updateMirrorUrl', 'updateCheckIntervalHours',
+    'hotkeySearch', 'hotkeyToggle', 'hotkeyQuickNote',
+    'jmeterPath', 'jmeterOutDir', 'jmeterLastJmx',
+    'clipboardHistory', 'browserPaths', 'keybindings',
+  ]);
+
   ipcMain.handle('settings:save', (_event, prefs) => {
     const s = loadSettings() || {};
-    Object.assign(s, prefs);
+    // 只合并白名单里的键：认证字段（masterPasswordHash / salt / recoveryData …）永远不接受渲染层写入
+    if (prefs && typeof prefs === 'object') {
+      for (const key of Object.keys(prefs)) {
+        if (SETTINGS_WRITABLE.has(key)) s[key] = prefs[key];
+      }
+    }
     saveSettings(s);
     // Keep the tray icon in sync: create it as soon as a tray behaviour is enabled,
     // remove it when both are off so the user is not left with a stray icon.

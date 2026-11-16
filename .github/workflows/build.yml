@@ -1,3 +1,19 @@
+# 构建安装包（CI）
+#
+# 与 release.js 的分工（去掉「双写」）：
+#   - CI：负责「干净 Windows 环境可构建 + 静态质量门禁 + 上传 artifact」
+#   - release.js：唯一负责创建 Release、上传英文资产名附件、写发布说明、核对 latest
+#
+# 为什么不再让 CI 建 Release：旧 workflow 会用硬编码 body 模板建 Release，
+# 而 release.js 第 7 步也建一次，于是两边互相覆盖 —— release.js 第 8 步不得不
+# 删掉 CI 多传的 `Setup.<ver>.exe` 再用本地 notes 回填说明。现在 CI 完全不碰
+# Release，发布链路只剩一条，不再互相打架。
+#
+# 产品名：package.json 的 build.productName 是「测试中台」。旧 workflow 里写的是
+# 「测试工具」，导致 `path: release/测试工具 Setup *.exe` 匹配 0 个文件 ——
+# artifact 上传报 "No files were found"，Release 附件也是空的（2026-11-16 修）。
+# 这里改用 `release/*.exe` 通配，以后再改产品名也不会静默失效。
+
 name: 构建安装包
 
 on:
@@ -8,8 +24,9 @@ on:
     tags:
       - 'v*'
 
+# 不再创建 Release，所以不需要 contents: write（最小权限）
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -22,49 +39,22 @@ jobs:
       - name: 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # vitest 5 要求 ^22.12.0，vite 8 要求 ^20.19.0。
+          # Node 20 虽然勉强能跑 vite，但 vitest 5 在 20 上是静默风险（装得上、跑不对）。
+          node-version: '22'
 
       - name: 安装主应用依赖
         run: npm ci
 
-      - name: 安装子应用依赖
-        run: cd sub-apps/test-data-generator && npm ci
-        shell: cmd
-
-      - name: 构建安装包
+      - name: 构建安装包（内含 ci-gate 质量门禁）
+        # 门禁在 build-installer.js 开头统一跑：隐私 / 类型 / 主进程语法 / 单测 /
+        # IPC 契约（含拆分守卫自测）/ CSS 重复 / CSS 级联死声明 / 静态债预算。
+        # 这样即使 workflow 文件推不上去，现有 CI 也已经受门禁保护。
         run: node scripts/build-installer.js
         shell: cmd
 
-      - name: 上传安装包
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: 测试工具-Setup-${{ github.ref_name }}
-          path: release/测试工具 Setup *.exe
-
-      - name: 创建 Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: 测试工具 ${{ github.ref_name }}
-          body: |
-            ## 测试工具 ${{ github.ref_name }}
-
-            Windows 集成工具：网址密码管理 + 测试数据生成。
-
-            ### 安装方式
-            下载下方的 `.exe` 安装包，运行后按提示安装即可。
-
-            ### 功能特性
-            - AES-256-GCM 加密密码存储
-            - 卡片/列表双视图
-            - 标签管理、回收站
-            - CSV/JSON/XLSX 导入导出
-            - 浏览器检测与一键打开
-            - 自动锁定、剪贴板自动清空
-            - 测试数据生成（SQL注入、身份证、手机号等 17 种类型）
-          files: release/测试工具 Setup *.exe
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: 测试中台-Setup-${{ github.ref_name }}
+          path: release/*.exe
