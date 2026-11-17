@@ -241,7 +241,8 @@ export function ZentaoDigestDialog({ open, onClose, existing, onGenerated }: Pro
     const hit = cacheRef.current;
     if (!force && hit && hit.key === key && Date.now() - hit.at < CACHE_TTL) return hit;
 
-    const r = await window.electronAPI.zentaoSummaryMulti(targets);
+    // 透传 force：否则「重新拉取」永远命中主进程 10 分钟缓存，force 是死代码
+    const r = await window.electronAPI.zentaoSummaryMulti(targets, force);
     if (!r || !r.success) throw new Error((r && r.error) || '拉取失败');
     const data = { key, at: Date.now(), groups: r.groups || [], failed: r.failed || [] };
     cacheRef.current = data;

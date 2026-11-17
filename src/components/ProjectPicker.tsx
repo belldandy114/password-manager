@@ -10,13 +10,15 @@ import { Icons } from './ui';
  * - 支持按项目名 / 项目集名 / 编号搜索，以及全选 / 清空
  */
 export function ProjectPicker({
-  projects, value, onChange, placeholder, disabled,
+  projects, value, onChange, placeholder, disabled, onAddManual,
 }: {
   projects: ZentaoProject[];
   value: string[];
   onChange: (ids: string[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** 手动补项目：接口没返回某个产品时，按编号直接加进来 */
+  onAddManual?: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -41,6 +43,18 @@ export function ProjectPicker({
     () => value.map(id => projects.find(p => idOf(p) === id)).filter(Boolean) as ZentaoProject[],
     [value, projects],
   );
+
+  // 搜索框里填的是编号、且列表里没有这些编号 → 提供「手动添加」。
+  // 禅道 products 接口在部分版本上不返回已关闭/私有产品（用户能打开 bug-browse-69 却选不到 69），
+  // 这时按编号单查一次补进来，不至于彻底没法用。支持 69 / 69,70 / 69 70 一次补多个。
+  const manualId = (() => {
+    if (!onAddManual) return '';
+    const raw = q.trim();
+    if (!/[0-9]/.test(raw)) return '';
+    const ids = raw.split(/[\s,，、;；]+/).map(s => s.trim()).filter(s => /^\d+$/.test(s));
+    const missing = ids.filter(id => !projects.some(p => idOf(p) === id));
+    return missing.length ? missing.join(',') : '';
+  })();
 
   // 触发框恒定单行：最多露出 2 个名字，其余折叠成 "+N"，避免选得越多越高
   const visible = selected.slice(0, 2);
@@ -153,7 +167,21 @@ export function ProjectPicker({
             <span>已选 {value.length} 个</span>
           </div>
           <div className="person-picker-list">
-            {list.length === 0 && <div className="person-picker-none">没有匹配的项目</div>}
+            {manualId && (
+              <button
+                type="button"
+                className="person-picker-item person-picker-manual"
+                onClick={() => { onAddManual?.(manualId); setQ(''); }}
+                title={`按编号 ${manualId} 单查并加进列表`}
+              >
+                <span className="person-picker-check">＋</span>
+                <span className="project-picker-id">#{manualId}</span>
+                <span className="person-picker-name">
+                  {manualId.includes(',') ? '添加这些编号的项目（接口未返回时使用）' : '添加该项目（接口未返回时使用）'}
+                </span>
+              </button>
+            )}
+            {list.length === 0 && !manualId && <div className="person-picker-none">没有匹配的项目</div>}
             {list.map(p => {
               const on = value.includes(idOf(p));
               return (
@@ -169,7 +197,17 @@ export function ProjectPicker({
                   <span className="person-picker-check">{on ? <Icons.check size={11} /> : null}</span>
                   <span className="project-picker-id">#{p.id}</span>
                   <span className="person-picker-name">{labelOf(p)}</span>
+                  {String(p.status || '').toLowerCase() === 'closed' && (
+                    <span className="person-picker-tag" title="禅道里这个产品已关闭，只能看历史 Bug">
+                      已关闭
+                    </span>
+                  )}
                   {on && <span className="person-picker-tag">已选</span>}
+                  {p.manual && (
+                    <span className="person-picker-tag" title="products 列表接口没返回它，是按编号单查补全的">
+                      补
+                    </span>
+                  )}
                 </button>
               );
             })}

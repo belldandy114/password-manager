@@ -3,6 +3,257 @@
 > 这些内容从 `AGENTS.md` 搬出，原文未改。AGENTS.md 里保留摘要与指针，
 > 目的是让 AGENTS.md 回到工作区指令预算（65,536 B）以内，否则后半部分会被截断。
 
+## ⚠️ 禅道项目/Bug 拉取不全：必须以 total 翻页（1.24.8，别改回去）
+
+**现象**：项目下拉列表少一批、或某项目 Bug 比网页版少（「后面拉取的没拉到」）。
+
+**根因**：`products` / `programs` / `bugs` 都是分页接口，响应带 `total`。旧代码有两种错法：
+① `ztApiProducts`/`ztApiPrograms` 只发一次 `?limit=1000`，无 `page` 循环；
+② `ztLoadMyBugsScoped` 写死 `page=1`。
+禅道服务端会**压低 limit**（同源框架默认 20），「返回条数 < limit 就到尾」的判断不成立，
+于是第一页之后的项目/Bug 被静默丢弃，界面还以为拿到了全部。
+
+**现在的约定（改禅道分页前务必遵守）**：
+
+| 项 | 做法 |
+|---|---|
+| 统一分页 | 走 `electron/zentao-pager.js` 的 `ztPageAll(fetchPage, opts)`：**以 total 驱动翻页**，按 id 去重，整页无新增（服务端忽略 page）立即停，`maxPages` 兜底；不要自己写 `for(page=2..5)` 的硬上限 |
+| 调用点 | `ipc-zentao.js` 的 `ztApiPaged(cfg, pathOf, listKey)` 封装了 `ztApiGet` + `ztPageAll`；`products`/`programs`/`my-bugs` 全部改走它 |
+| 不得静默截断 | `zentao:projects` handler 返回 `{data, total, warning}`；撞到页数上限没拉满时 `warning` 非空，`ZentaoPage.loadProjects` 会显示告警。`.filter(p => p.name)` 已去掉（空名产品保留为「产品 id」），别再加回来 |
+| 测试 | 单测 `src/utils/__tests__/zentaoPager.test.ts`（8 条，覆盖 limit 被压到 20 / 重复页 / 无 total / maxPages）；桩 `scripts/zt-stub.js` 的 products/programs 已支持 limit/page 分页 |
+
+**验证**：`npm run test:unit`（1014 条绿）、端到端模拟「服务端每页 20 条、共 55 个项目」→ 翻 3 页全部拉全。
+
+## ⚠️ 分页修好后仍缺项目：products 的过滤参数因版本而异（1.24.9 → 1.24.10）
+
+**现象**：分页已修，但个别项目（如产品 69）**整条不在**项目下拉列表里；网页 `bug-browse-69-*.html`
+却能正常打开、能看到该项目下的 Bug。
+
+**1.24.9 的错判**：以为是「缺 status=all」，于是给 products 加上 `&status=all`。
+**1.24.10 实测推翻**：用户跑完新包后，日志是
+
+```
+[zentao] products total=31 got=31 ids=4,49,30,...,67,68,40,39,57,58,59,28,42,32,50
+```
+
+最大 id 只到 68，69 不在；而且 **total 一点没变**（还是 31）——
+说明这个版本的禅道**静默忽略**了 `status=all`。所以「加了参数就以为修好了」不成立：
+**必须用 total 有没有变大来验证参数是否真的被识别**，不能只看有没有报错。
+
+**1.24.10 在真实环境跑出来的日志**（这就是结论，别再重复试）：
+
+```
+[zentao] html products via product-all.html: 20
+[zentao] products variants: status=all=31/31 | browseType=all=31/31 | default=31/31
+[zentao] products merged total=31 got=31 ids=4,49,30,...,67,68,40,39,57,58,59,28,42,32,50
+[zentao] products programs={"71":11,"72":6,"73":13,"119":1}
+```
+
+逐条读出来的结论：
+
+1. **三种参数 total 全是 31** → 该版本禅道把这些过滤参数**全部静默忽略**，靠换参数永远拿不到 69。
+2. **网页兜底只解析出 20 个，合并后仍是 31** → 那 20 个是接口结果的子集；网页 `product-all.html` 同样不显示 69
+   （它默认也只列未关闭产品）。**网页兜底对本例无效，别再指望它**。
+3. **programs 分布是 `{71:11, 72:6, 73:13, 119:1}`，没有任何一个 program=0** → 不存在「只返回不属于项目集的产品」这种可能，
+   按项目集逐个拉也不会多出 69。
+
+**现在的做法（1.24.11）：手动补项目 + 持久化**
+
+既然接口侧拿不到，就把「按编号补」做成一等公民，而不是一次性补丁：
+
+| 项 | 做法 |
+|---|---|
+| 补的项目带 `manual: true` | `zentao:product-probe`（`GET products/{id}`）单查成功或失败都标 `manual: true` |
+| 跨「拉取项目」存活 | `loadProjects` 里 `setProjects(接口结果 + 之前 manual 的项)`；判断选中项是否失效也用合并后的列表，否则 69 会被当成「已删除项目」踢出选中列表 |
+| 跨重启存活 | `projects` 本来就进 `partialize` → IndexedDB，manual 标记一起落盘 |
+| 批量补 | 搜索框可输入 `69` / `69,70` / `69 70`，一次补多个 |
+| 界面可辨 | 列表里 manual 项带「补」角标，title 说明「接口没返回这个产品，是手动按编号补进来的」 |
+| 根因线索 | probe 成功时打 `[zentao] product probe 69 ok: status=.. acl=.. program=.. deleted=..` —— 单查能拿到说明 REST 有权限，list 少它只可能是 status/acl/program 在过滤 |
+
+**1.24.12：不再靠手动，改成按 id 空档自动补漏**
+
+关键推理：用户**手动添加 69 能成功**，说明 `GET api.php/v1/products/69` 单查是通的 ——
+被过滤的只是**列表**接口。那就反过来用：拿列表结果的 id 集合算空档，逐个单查，存在的就补进列表。
+
+| 项 | 做法 |
+|---|---|
+| 纯逻辑 | 新增 `electron/zentao-probe.js`：`buildProbeCandidates`（生成候选 id）+ `probeByIds`（并发探测），抽出来才好单测 |
+| 扫描顺序 | **先扫 `maxId+1 .. maxId+30`**（新产品总是最大 id，69 就在 maxId+1），再扫中间断档。顺序不能反：断档多时会被 cap 截断，尾部必须优先 |
+| 上限保护 | 候选总数封顶 120、并发 6、断档超过 200 个就只扫尾部（大实例不被拖慢）；索引 10 分钟 |
+| 结果标记 | 补进来的项带 `manual: true` 并**在 handler 返回值里透传**（漏传则前端落盘后丢标记，下次照样被覆盖） |
+| 日志 | `[zentao] probe missing: scanned=67 (tail 69..98, gaps=37) found=1 #69[status=normal,program=71]`；带 `denied=N` 说明是 403 权限问题而非不存在 |
+| 实测 | 用真实 id 集合做端到端模拟：67 个候选、82ms 找回 69；单测 13 条覆盖尾部优先/断档/封顶/capped/403 计数 |
+
+**1.24.12 线上跑出来的真实结果（2026-11-17 09:41，这就是最终答案）**
+
+```
+[zentao] probe missing: scanned=67 (tail 69..98, gaps=37) found=11
+  #44[closed,72] #45[closed,71] #46[closed,72] #48[closed,73]
+  #51[closed,71] #52[closed,71] #53[closed,71] #54[normal,73] #55[closed,71]
+  #56[closed,73] #69[normal,71]
+[zentao] products variants: ... | probe+11
+[zentao] products merged total=31 got=42
+[zentao] products programs={"71":17,"72":8,"73":16,"119":1}
+```
+
+31 → **42 个产品**，找回 11 个。由此可以确定三件事：
+
+1. **不是「已关闭」在过滤**：找回的 11 个里 9 个 `closed`、2 个 `normal`（54、69），
+   而列表里的 31 个也有各种状态。**69 是 `status=normal`** —— 之前 1.24.9 猜「因为产品已关闭」是错的。
+2. **不是项目集在过滤**：11 个分散在 71/72/73 三个集，列表里同样三个集都有。
+3. 合理解释：**列表接口只返回「我参与的产品」**，单查不做这个限制。所以「列表 + 按 id 单查」取并集
+   才是这个接口的正确用法，靠调参数没用。
+
+**1.24.13：性能 + 可读性**
+
+首次扫描实测 **5.9 秒**（67 个候选 / 并发 6 / 内网 RTT 约 500ms），用户每次重启后第一次拉取都得等。
+10 分钟内存缓存内的后续请求只要 1ms。
+
+| 项 | 做法 |
+|---|---|
+| 磁盘缓存 6 小时 | `%APPDATA%\测试中台\zentao-probe-cache.json`，key = `baseUrl\|account`。重启后直接命中，**不再重扫** |
+| 并发 6 → 10 | 首次扫描从 5.9 秒降到约 3 秒 |
+| program 维度优先 | 先按项目集逐个拉 `products?program=X`（4 次请求）。**若带来新增就说明该版本认 program 参数、按集拉是全的，直接跳过 id 扫描**；不认则静默忽略，无副作用 |
+| 已关闭可辨 | 选择器里 closed 产品带「已关闭」标记，且同组内排到后面（补漏会把 9 个历史产品捞出来，别混在常用项目中间） |
+
+**已知未解**：`resetProjectScope()`（切换禅道实例时调用）会清掉 `projects`，manual 项随之丢失；
+换实例后需要重补（或等下一次自动扫描）。单实例场景无影响。
+
+**1.24.14：删掉 1.24.13 里「以为有用、实测没用」的几层**
+
+1.24.13 的日志：
+
+```
+[zentao] products variants: status=all=31/31 | browseType=all=31/31 | default=31/31
+  | program=71=11/11 | program=72=6/6 | program=73=13/13 | program=78=13/13 | program=97=6/6
+  | program=108=ERR | program=119=ERR | program=122=13/13 | ...（共 16 个）| probe+11
+[zentao] products merged total=31 got=42
+```
+
+- **program 维度 0 新增**：16 个项目集逐个拉，没有一个新产品被带进来，其中 5 个还报错。
+  纯耗时（首次拉取 4.2 秒里大头就是它，还是串行的）。**已整段删除**。
+- **三种过滤参数完全一致**：`status=all` / `browseType=all` / 不传 都是 31/31 —— 这个版本对不认识的参数
+  一律静默忽略。逐个跑只是 3 倍请求。**合并成一次 `status=all`**（旧版回 4xx 时退回不带参数）。
+- **网页兜底只解析 20 条且全是 REST 子集**（列表默认每页 20），补不进任何东西，
+  每次拉取白等一次往返。**降级为「REST 一条都没返回」时的最后手段**。
+
+缓存从「整体缓存一份结果」改成 **按 id 记账**：
+
+| 项 | 做法 |
+|---|---|
+| 结构 | `{ "<实例key>": { ids: { "<产品id>": {at, p} } } }`，`p: null` 表示确定不存在 |
+| 为什么 | 整体缓存会把「后来新建的产品」一起挡住 6 小时；按 id 记账后**新 id 天然不在缓存里 → 必被请求** |
+| 只缓存确定结论 | 404 → 记 `null`；超时 / 403 / 5xx → **不写缓存**（否则一次网络抖动就会把某产品误判成"不存在"6 小时） |
+| 并发 10 → 12 | 首次约 2~3 秒，之后 0 请求。实测：第 1 次 67 个请求、第 2 次 **0 个请求**，两次找回结果完全一致 |
+
+**顺带去掉 Bug 侧的 5 页硬上限（这是真 bug，不只是保守）**
+
+`project-bugs` / `all-bugs` / `summary` 原来都是：
+
+```js
+const pages = Math.min(5, Math.ceil(total / 1000));   // total=44 → ceil(44/1000)=1，只请求 1 页
+if (arr.length < 1000) break;
+```
+
+`total=44` 时只请求第 1 页。一旦服务端把 limit 压到 20（同源框架默认值），44 条 Bug 只拿到 20 条，
+而 `total` 仍是 44 —— 界面看不出来。现在三处统一走 `ztApiPaged`（按 total 翻页 + id 去重 + 无进展保护）。
+`all-bugs` 里单个项目失败也不再拖垮整个「全部」视图：记入 `failed` 并写 `[zentao] all-bugs: N/M 个项目拉取失败`。
+
+**日志位置**：`%APPDATA%\测试中台\logs\app.log`。
+
+**1.24.15：产品清单加 60 秒短时缓存 + 并发合并（`electron/ttl-cache.js`）**
+
+1.24.14 的日志暴露一个成本问题：同一个进程里 **10:09:51 与 10:09:53 两次调用都 `requested=56`**，
+也就是说 60 多个 id 被完整扫了两遍。
+
+```
+[zentao] probe missing: candidates=67 ... requested=56 reused=11 found=11
+[zentao] products: total=31 got=42 | probe+11 (requested=56 reused=11)
+   ← 1.3 秒后又来一遍，requested 还是 56
+```
+
+原因不是缓存没生效，而是**第一次扫描（2~4 秒）还没结束**，第二次调用进来时缓存里什么都没有。
+所以真正的解法是 **single-flight**：同一 key 正在跑的 Promise 直接复用，后来者等它，不再开第二份。
+
+| 层 | 位置 | TTL | 作用 |
+|---|---|---|---|
+| 产品清单 | `ztProductsCache` | 60 秒 | 进页面/登录/兜底重试这类自动调用不重复拉 |
+| 补漏扫描 | `ztMissingCache` | 10 分钟 | 同一次拉取里多处调用只扫一遍（原裸 Map 换成带 single-flight 的实现） |
+| 单 id 结论 | `zentao-probe-cache.json` | 6 小时 | 重启后 `requested` 直接变 0 |
+
+- **`fresh` 通道**：`zentao:projects` 的 payload 可带 `fresh:true`（「拉取项目」按钮、快捷键、
+  「列表过期」兜底重试、登录成功都走它），绕过清单缓存**也**绕过补漏结果缓存，
+  确保禅道刚建的产品立刻可见；`all-bugs` 的 `force` 同样会透传下来。
+- **固定 TTL，不滑动**：滑动窗口会让「一直有人点」的 key 永不刷新，反而看不见新产品。
+- **失败不缓存**：`fn` 抛错时不写值、并清掉 inflight，下一次调用立刻重试（否则一次抖动会缓存 60 秒的空结果）。
+- 单测：`src/utils/__tests__/ttlCache.test.ts`（10 条，含并发合并、边界 TTL、LRU 淘汰、抛错重试）。
+
+**1.24.16：缓存要「看得见」——UI 反馈 + 防连点**
+
+1.24.15 交付后用户反馈「没有提示」。查日志（10:22）发现两件事：
+
+1. `requested=0 reused=67` —— **磁盘缓存已全部命中**，补漏扫描一次请求都不发了（之前 56 个）。
+2. 但 20 秒内出现了 **13 次完整拉取**（间隔 0.2~0.5 秒），全部是 `fresh`（日志里每次都打 `probe missing`）。
+   说明用户在反复点「刷新项目列表」找反馈 —— 因为点了之后界面上什么都不变。
+
+我的说明也有问题：让用户「60 秒内再点一次」验证缓存，可**「刷新项目列表」按钮本身就是 `fresh=true`**，
+永远不会命中缓存，日志自然没有 `cache hit` 那一行。
+
+| 改动 | 位置 |
+|---|---|
+| `zentao:projects` 返回 `cached / ageMs / probedAdded / reportedTotal` | `electron/ipc-zentao.js` |
+| 拉完在页头下方显示一行结果：`已更新 · 42 个项目，接口只报 31 个、按编号补回 11 个 · 10:31` | `src/pages/ZentaoPage.tsx` |
+| 命中缓存时显示 `缓存结果 · N 个项目 · 12 秒前拉的（点「刷新项目列表」可强制重拉）` | 同上 |
+| 3 秒内连点刷新：直接提示「刚刚已更新（N 秒前），这次直接复用结果」，**不打禅道** | 同上（`projectsAtRef`） |
+| 并发保护：一次只允许一个拉取在飞（`projectsBusyRef`） | 同上 |
+
+教训：**加缓存就必须同时加可见反馈**，否则用户唯一的感受是「点了没反应」，只会点得更频繁。
+
+**1.24.17：三个 tab 的口径统一（一个按钮、一份筛选）**
+
+用户截图指出三处不一致：`我的 Bug` 顶部没有「刷新项目列表」；`项目 Bug` 是蓝色主按钮、`汇总` 是灰色次按钮；
+`我的 Bug` 还有自己一套项目选择（`mineProductIds`），和「当前项目」不是同一批。
+
+| 约定 | 做法 |
+|---|---|
+| 页头只放一个「刷新项目列表」 | 提到 tab 判断外面，三个 tab 同一位置、同一 `btn-secondary btn-sm`，动作都是 `loadProjects(true)`（重读全部项目列表，约 6~8 秒） |
+| 「我的 Bug」只认「当前项目」 | `loadMine` 的 id 来源改为 `idsOverride → scopeProjectIds → ensureMineProjects()`，不再看 `mineAllProjects`；`mineProjectLabel` 也跟着 scope 走 |
+| 汇总页的项目 chip | 数据取 `scopeIds`，chip 也必须取 `scopeIds`（`scopeChips`），否则出现「数字是 A 项目、名字是 B 项目」 |
+| 验证脚本 | 新增 `scripts/shot-audit-zentao-header.js`：CDP 连打包产物，逐 tab 输出 `.pg-tools` 里每个按钮的 `text/cls/bg/right`，可直接断言三个 tab 是否一致 |
+
+**1.24.18 / 1.24.19：「重新拉取」搬到「当前项目」旁边**
+
+用户要求 `项目 Bug`、`汇总` 在当前项目旁边也能重拉。做法：在 `.zt-global-scope` 里（`ProjectPicker` 之后）
+放唯一的「重新拉取」（`refreshScope` → 按筛选项目 force 重拉，三个标签共享），
+并**删掉**三处旧的同功能按钮 —— `我的 Bug` 子行、`项目 Bug` 状态行、`汇总` 工具条，
+一个 tab 只留一个，免得同一屏出现两个一模一样的「重新拉取」（用审计脚本的 `refreshCount` 断言 = 1）。
+汇总空状态里那个 CTA 保留（没有数据时的引导，走 `onRefresh`）。
+
+**1.24.20：删掉「拉取「指派给我」」**
+
+用户实测发现页头的「拉取「指派给我」」和「重新拉取」是同一件事：
+`loadMine` 在已有 `pBugs` 时只是 `deriveMine(pBugs)`（**零请求**，本地按账号过滤），
+和 `refreshScope` 重拉一遍再过滤的结果一样，只是入口不同。于是删掉该按钮，
+**页头三个 tab 彻底只剩 `登录并保存` + `刷新项目列表`**，拉数据统一走「当前项目」右边的「重新拉取」。
+`loadMine` 仍保留（`switchScope` 在 `pBugs` 为空时兜底，`?idsOverride` 供项目弹窗用），别再往页头加回来。
+
+**1.24.21：页头别随滚动条横跳（`scrollbar-gutter: stable`）**
+
+删完按钮用审计脚本对比三个 tab 才发现：`我的 Bug` 的 `.content-area` 恰好 910px > 900px，
+多出一条 10px 竖滚动条，**页头按钮整体左移 10px**，切 tab 会看到按钮「抖一下」。
+给 `.content-area` 加 `scrollbar-gutter: stable` 常驻留位后，三个 tab 的 `headRight` 都是 `[1277, 1402]`。
+以后再加长的内容也不会有这种跳动。
+
+## ⚠️ 别在项目根目录跑 `asar extract-file`（会覆盖源码）
+
+1.24.9 排查时执行 `npx asar extract-file <app.asar> package.json`，把 asar 里那份**被 electron-builder 精简过**的
+`package.json`（`scripts`/`devDependencies`/`build` 全没了）覆盖到了工作区根目录，差点把项目配置写废。
+`asar extract-file` 的第二个参数是该文件**在包内的路径**，输出就落在**当前工作目录的同名路径**。
+
+- 只用 `npx asar list` 检查内容；确需解包就 `cd` 到临时目录再执行；
+- 已覆盖用 `git checkout -- <file>` 恢复，并删掉根目录多出来的同名文件；
+- 本项目源码里 `main.js` 根目录副本同样是**过时副本**，真正入口是 `electron/main.js`。
+
 ## ⚠️ 应用内下载：不要把安装包拼到 %TEMP%（2026-10-29 杀软误报）
 
 **现象**：应用内「下载并安装」下到一半被 360 删除，报 `Trojan/Injector.avv`：

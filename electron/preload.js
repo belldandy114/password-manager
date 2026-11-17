@@ -202,7 +202,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   zentaoLogin: (cfg) => ipcRenderer.invoke('zentao:login', cfg),
   zentaoMyBugs: (cfg, scope, productIds) => ipcRenderer.invoke('zentao:my-bugs', cfg, scope, productIds),
-  zentaoProjects: (cfg) => ipcRenderer.invoke('zentao:projects', cfg),
+  // fresh=true 绕过主进程 60 秒短时缓存（用户主动点「拉取项目」/快捷键刷新时用）
+  zentaoProjects: (cfg, fresh) => ipcRenderer.invoke('zentao:projects', { ...cfg, fresh: !!fresh }),
+  // 手动补项目：产品缺失时（接口不返回已关闭/私有产品）按 id 单查一次
+  zentaoProductProbe: (cfg, productId) => ipcRenderer.invoke('zentao:product-probe', { cfg, productId }),
   zentaoProjectBugs: (cfg, productId, force) => ipcRenderer.invoke('zentao:project-bugs', { cfg, productId, force: !!force }),
   zentaoAllBugs: (cfg, force) => ipcRenderer.invoke('zentao:all-bugs', cfg, { force: !!force }),
   zentaoSummary: (cfg, productIds, force) =>

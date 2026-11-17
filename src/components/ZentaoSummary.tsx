@@ -251,6 +251,13 @@ export function ZentaoSummary({
     [productIds, projects],
   );
 
+  // 三个 tab 共用「当前项目」筛选时，项目 chip 也必须跟着它走：
+  // 数据取的是 scopeIds，chip 却来自 sumProductIds，会出现「数字是 A 项目、名字是 B 项目」的错位
+  const scopeChips = scopeIds.map(id => {
+    const hit = projects.find(p => String(p.id) === String(id));
+    return { id: String(id), name: hit ? hit.name : `#${id}` };
+  });
+
   const stale = dataIds.length > 0
     && (dataIds.slice().sort().join(',') !== productIds.slice().sort().join(','));
 
@@ -615,7 +622,7 @@ export function ZentaoSummary({
             <span className="zt-sumbar-label">项目</span>
             {scopeIds.length ? (
               <>
-                {selectedProjects.map(p => (
+                {scopeChips.map(p => (
                   <span key={p.id} className="zt-sum-chip">
                     <span className="zt-sum-chip-name" title={`#${p.id}`}>{p.name}</span>
                   </span>
@@ -662,14 +669,6 @@ export function ZentaoSummary({
                 onChange={e => setDayCutoff(e.target.value || '17:30')}
               />
             </label>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => onRefresh ? onRefresh() : pull(true)}
-              disabled={busy || !scopeIds.length}
-              title="忽略 10 分钟缓存，按当前项目重新拉取最新缺陷，三个标签同步更新"
-            >
-              <Icons.refresh size={12} /> {busy ? '拉取中…' : '重新拉取'}
-            </button>
           </div>
         </div>
 

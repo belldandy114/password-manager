@@ -12,6 +12,9 @@ const crypto = require('crypto');
 const { app, ipcMain, dialog, shell, Notification } = require('electron');
 const { ztStripTags, ztTableRows } = require('./zentao-parse');
 const { filterMineBugs } = require('./zentao-filter');
+const { buildProbeCandidates, probeByIds } = require('./zentao-probe');
+const { ztPageAll } = require('./zentao-pager');
+const { createTtlCache } = require('./ttl-cache');
 
 /**
  * @param {object} deps
@@ -435,14 +438,14 @@ async function ztLoadMyBugs(cfg) {
       // 一次拉满：复用页面里的分页链接模板，每页 100 条
       if (total > rows.length) {
         const perPage = 100;
-        const pages = Math.min(5, Math.ceil(total / perPage));
         const collected = [];
-        for (let p = 1; p <= pages; p++) {
+        // 以 total 为终止条件翻页（原来写死 5 页 = 500 条，Bug 多的人会被静默截断）；
+        // 50 页 = 5000 条只是防死循环的保险
+        for (let p = 1; p <= 50 && collected.length < total; p++) {
           const r = await ztFetch(cfg, `my-work-bug-assignedTo-0-id_desc-${total}-${perPage}-${p}.html`);
           const pageRows = ztTableRows(r.text);
           if (pageRows.length === 0) break;
           collected.push(...pageRows);
-          if (pageRows.length < perPage) break;
         }
         if (collected.length > rows.length) rows = collected;
       }
@@ -502,10 +505,10 @@ async function ztLoadMyBugsScoped(cfg, scope, productIds) {
     const nameMap = {};
     for (const p of products) nameMap[String(p.id)] = p.name;
 
+    // 1.24.8：以前这里写死 page=1，单产品超过一页的 Bug 直接丢。
+    // 现在 limit/page 交给 ztPageAll 按 total 翻页，filter 只负责筛选条件。
     const filter = () => {
       const params = new URLSearchParams();
-      params.set('limit', '1000');
-      params.set('page', '1');
       // 服务端对 openedBy / assignedTo / status 都可能静默忽略，所以这里只当「缩小范围」用，
       // 真正的过滤在 filterMineBugs 里按账号 + 状态做（status 统一取 all，避免漏数据）。
       params.set('status', 'all');
@@ -530,17 +533,20 @@ async function ztLoadMyBugsScoped(cfg, scope, productIds) {
       for (;;) {
         const p = queue.shift();
         if (!p) return;
-        const params = filter();
-        params.set('product', String(p.id));
-        let json = null;
-        try {
-          json = await ztApiGet(cfg, `api.php/v1/bugs?${params.toString()}`);
-          okCount++;
-        } catch (e) {
-          lastError = e.message || String(e);
-          continue;
-        }
-        for (const b of (Array.isArray(json && json.bugs) ? json.bugs : [])) {
+        const result = await ztApiPaged(
+          cfg,
+          (page, n) => {
+            const params = filter();
+            params.set('product', String(p.id));
+            params.set('limit', String(n));
+            params.set('page', String(page));
+            return `api.php/v1/bugs?${params.toString()}`;
+          },
+          'bugs',
+        ).catch(e => { lastError = e.message || String(e); return null; });
+        if (!result) continue;
+        okCount++;
+        for (const b of result.items) {
           // ⚠️ 这里必须留原始行：ztMapApiBug 之后 openedBy/assignedTo 变成了**显示名**，
           // 拿去跟账号比较会把所有人的数据都滤掉（1.7.4 就是这么错的）。
           const rawId = String((b && b.id) || '');
@@ -938,6 +944,19 @@ ipcMain.handle('zentao:notify-status', () => {
 const ztApiTokens = new Map();
 const ztProductCache = new Map();   // base|account → { [productId]: name }
 
+/**
+ * 产品清单（用户口中的「项目」）短时缓存。
+ *
+ * 一次「拉取项目」其实很贵：programs + products 列表 1~2 次请求，**再加上补漏扫描**
+ * （首次 56 个 id 单查，约 2~4 秒）。而自动触发点很多：进页面、登录成功、切回窗口、
+ * 「我的 Bug」兜底重试、快捷键刷新 —— 用户连点两下就是双倍开销，日志里 10:09:51 与
+ * 10:09:53 两次全量扫描就是这么来的（第一次要 2 秒才结束，第二次来不及命中结果缓存）。
+ *
+ * 所以两层：① 60 秒内复用上次结果（只对自动调用生效）；② 并发同名请求合并成一次
+ * （见 ttl-cache.js 的 single-flight）。显式点「拉取项目」/快捷键刷新走 fresh=true 绕过缓存。
+ */
+const ztProductsCache = createTtlCache({ ttl: 60 * 1000, max: 8 });
+
 const ztApiCacheKey = (cfg) => `${String(cfg.baseUrl || '').replace(/\/+$/, '')}|${cfg.account || ''}`;
 
 async function ztApiTokenGet(cfg, force = false) {
@@ -1007,6 +1026,26 @@ const ztUserAccount = (v) => {
 };
 
 /** 拉产品清单（禅道里「产品」就是大家口中的项目，如「某业务系统-管理后台 V2.0」） */
+/**
+ * 按 total 翻页拉取 REST 列表。禅道服务端可能把 limit 压到很小（同源框架默认 20），
+ * 单发一次 products?limit=1000 只拿第一页 → 后面的项目永久丢失（1.24.8 修的「拉取不全」）。
+ * 统一走 ztPageAll：以 total 驱动翻页、按 id 去重、服务端忽略 page 时不会死循环。
+ */
+function ztApiPaged(cfg, pathOf, listKey, opts = {}) {
+  const run = (withStatusAll) => ztPageAll(
+    (page, perPage) => ztApiGet(cfg, pathOf(page, perPage, withStatusAll)).then(json => ({
+      list: Array.isArray(json && json[listKey]) ? json[listKey] : [],
+      total: Number(json && json.total) || 0,
+    })),
+    { getId: (row) => row && row.id },
+  );
+  if (!opts.statusAll) return run(false);
+  // ⚠️ 与 bugs 接口同源的坑：products 不带 status=all 时 REST 只返回「未关闭」的产品，
+  // 已关闭的产品（如产品 69）整条消失，界面看起来就是「项目拉不全」。1.24.9 修复。
+  // 旧版禅道不认这个参数会返回 4xx，此时退回原请求，不能因为加了参数反而全拉不到。
+  return run(true).catch(() => run(false));
+}
+
 /** 项目集（programs）：产品只给 program id，重名项目靠项目集名区分 */
 async function ztApiPrograms(cfg) {
   const key = 'programs|' + ztApiCacheKey(cfg);
@@ -1014,29 +1053,325 @@ async function ztApiPrograms(cfg) {
   if (hit && hit.map && Date.now() - hit.at < 10 * 60 * 1000) return hit.map;
   const map = {};
   try {
-    const json = await ztApiGet(cfg, 'api.php/v1/programs?limit=1000');
-    const list = Array.isArray(json.programs) ? json.programs : [];
-    for (const pr of list) map[String(pr.id)] = ztStripTags(pr.name || '');
+    const { items } = await ztApiPaged(cfg, (page, n) => `api.php/v1/programs?limit=${n}&page=${page}`, 'programs');
+    for (const pr of items) map[String(pr.id)] = ztStripTags(pr.name || '');
   } catch { /* 旧版禅道/无项目集权限：降级为只显示项目名 */ }
   ztProductCache.set(key, { at: Date.now(), map });
   return map;
 }
 
-async function ztApiProducts(cfg) {
+/**
+ * 网页「全部产品」兜底（1.24.10）。
+ *
+ * 实测（2026-11-17）：REST `/products` 返回 total=31 且实到 31，但用户能通过
+ * `bug-browse-69-*.html` 打开的产品 69 不在响应里 —— 说明接口按 status/acl/program
+ * 过滤了，而 `status=all` 被这个版本**静默忽略**（total 一点没变）。
+ * 网页列表是登录用户的完整视图，用它补齐；解析失败一律返回空，绝不能影响主流程。
+ */
+async function ztHtmlProducts(cfg) {
+  const found = new Map();
+  const trace = [];
+  try {
+    const login = await ztEnsureLogin(cfg);
+    if (!login.ok) {
+      console.log(`[zentao] html products: login failed (${login.error || ''})`);
+      return found;
+    }
+    for (const p of ['product-all.html', 'product-browse.html', 'product-index.html']) {
+      const page = await ztFetch(cfg, p).catch(() => null);
+      if (!page) { trace.push(`${p}:null`); continue; }
+      if (page.status !== 200) { trace.push(`${p}:${page.status}`); continue; }
+      const rows = ztTableRows(page.text);
+      trace.push(`${p}:len=${page.text.length}/rows=${rows.length}`);
+      for (const r of rows) {
+        if (!r || typeof r !== 'object') continue;
+        const id = r.id != null ? r.id : r.product;
+        const name = r.name || r.title || r.productName;
+        if (id != null && name) found.set(String(id), { id: String(id), name: ztStripTags(name) });
+      }
+      if (found.size) {
+        console.log(`[zentao] html products via ${p}: ${found.size}`);
+        break;
+      }
+    }
+  } catch (e) {
+    console.log(`[zentao] html products failed: ${e.message}`);
+  }
+  // 一个都没拿到时把探测过程写下来：是 404 / 登录失败 / 还是解析不出行，一看便知
+  if (!found.size) console.log(`[zentao] html products none (${trace.join(' | ')})`);
+  return found;
+}
+
+/**
+ * 补漏扫描结果缓存：同一实例 10 分钟内只扫一遍，避免一次「拉取项目」里重复扫。
+ * 用 ttl-cache 而不是裸 Map，是为了带上 single-flight —— 并发两次调用时第二次直接等第一次，
+ * 不会出现两份扫描同时跑（2026-11-17 日志里相隔 1.3 秒的两次 requested=56）。
+ */
+const ztMissingCache = createTtlCache({ ttl: 10 * 60 * 1000, max: 8 });
+/** 按 id 的探测结论缓存 6 小时（存在/不存在都记），新 id 不在缓存里所以永远会被重新请求 */
+const ZT_PROBE_TTL = 6 * 60 * 60 * 1000;
+/** 探测并发：实测内网单个 404 约 300~500ms，10 并发扫 67 个约 2~3 秒，12 更快且不至于被限流 */
+const ZT_PROBE_CONC = 12;
+let ztMissingDisk = null;
+
+function ztMissingCacheFile() {
+  return path.join(app.getPath('userData'), 'zentao-probe-cache.json');
+}
+
+function ztMissingDiskLoad() {
+  if (ztMissingDisk) return ztMissingDisk;
+  ztMissingDisk = {};
+  try {
+    const json = JSON.parse(fs.readFileSync(ztMissingCacheFile(), 'utf8'));
+    if (json && typeof json === 'object' && !Array.isArray(json)) ztMissingDisk = json;
+  } catch { /* 首次运行 / 文件损坏：当空缓存，不影响功能 */ }
+  return ztMissingDisk;
+}
+
+function ztMissingDiskSave(key, entry) {
+  const all = ztMissingDiskLoad();
+  all[key] = entry;
+  try {
+    fs.writeFileSync(ztMissingCacheFile(), JSON.stringify(all), 'utf8');
+  } catch { /* 写失败不影响本次返回 */ }
+}
+
+/**
+ * 探测缓存改成「按 id 记账」：`{ at, ids: { "<产品id>": {at, p} } }`，`p: null` 表示确定不存在。
+ *
+ * 为什么不整体缓存一份结果：整体缓存会把「后来新建的产品」一起挡住（6 小时内看不见新项目）。
+ * 按 id 记账后，新 id 天然不在缓存里 → 必被请求；老 id 的结论（存在/不存在）可放心复用。
+ *
+ * 兼容 1.24.13 的旧格式 `{at, list}`：读到时自动迁移成按 id 的形式。
+ */
+function ztProbeBucket(key) {
+  const all = ztMissingDiskLoad();
+  const cur = all[key];
+  if (cur && cur.ids && typeof cur.ids === 'object' && !Array.isArray(cur.ids)) return cur;
+  const ids = {};
+  if (cur && Array.isArray(cur.list)) {
+    for (const p of cur.list) {
+      if (p && p.id != null) ids[String(p.id)] = { at: cur.at || 0, p };
+    }
+  }
+  const next = { at: Date.now(), ids };
+  all[key] = next;
+  return next;
+}
+
+/**
+ * 把列表接口漏掉的产品按 id 找回来。
+ *
+ * 为什么需要（2026-11-17 实测结论）：该实例 `products` 列表只回 31 个，
+ * 而 `GET products/{id}` 单查能拿到另外 11 个 —— **列表接口在过滤，单查不过滤**。
+ * 找回来的 11 个里 9 个 `status=closed`、2 个 `status=normal`（54、69），
+ * 且分散在 71/72/73 三个项目集 —— 所以**不是状态过滤、也不是项目集过滤**，
+ * 更像「列表只返回我参与的产品」。`status=all` / `browseType=all` 都被静默忽略，换参数没戏。
+ *
+ * 扫描顺序有讲究：**先扫 maxId 之后的新 id**（新产品总是最大 id；69 就在 maxId+1），
+ * 再扫中间断档。总量封顶 120、并发 12；已探测过的 id 结论（存在/不存在）按 id 缓存 6 小时，
+ * 所以第一次约 2~3 秒，之后基本 0 请求（新产品的 id 不在缓存里，仍会被立刻发现）。
+ */
+async function ztProbeMissingProducts(cfg, items, opts = {}) {
   const key = ztApiCacheKey(cfg);
+  const { candidates, maxId, gaps, capped } = buildProbeCandidates(items.map(p => p.id));
+  if (!candidates.length) return { list: [], requested: 0, reused: 0 };
+
+  // 10 分钟结果缓存 + 并发合并：同一次「拉取项目」里多次调用（列表/统计/汇总）只扫一遍；
+  // 显式刷新（fresh）绕过结果缓存，但仍和正在跑的那次合并。
+  const r = await ztMissingCache.wrap(
+    key,
+    () => ztProbeScan(cfg, key, candidates, { maxId, gaps, capped }),
+    { fresh: !!opts.fresh },
+  );
+  if (r.cached) {
+    console.log(`[zentao] probe cache hit age=${Math.round(r.age / 1000)}s`
+      + `（10 分钟内不重复扫描，共 ${candidates.length} 个候选）`);
+    return { list: r.value.list, requested: 0, reused: candidates.length };
+  }
+  if (r.shared) {
+    console.log('[zentao] probe cache: 合并并发请求（未重复扫描）');
+    return { list: r.value.list, requested: 0, reused: candidates.length };
+  }
+  return r.value;
+}
+
+/** 真正的扫描体：按 id 记账 + 并发单查。结果由 ztProbeMissingProducts 缓存 */
+async function ztProbeScan(cfg, key, candidates, meta) {
+  const { maxId, gaps, capped } = meta;
+  const bucket = ztProbeBucket(key);
+  const now = Date.now();
+  const found = [];
+  const pending = [];
+  for (const id of candidates) {
+    const c = bucket.ids[id];
+    // 只复用「结论明确」的缓存：存在 → 直接收；不存在 → 跳过。网络错误的 id 不会被写进来。
+    if (c && now - (c.at || 0) < ZT_PROBE_TTL) { if (c.p) found.push(c.p); }
+    else pending.push(id);
+  }
+
+  let denied = 0;
+  if (pending.length) {
+    const r = await probeByIds(pending, async (id) => {
+      try {
+        const json = await ztApiGet(cfg, `api.php/v1/products/${id}`);
+        if (!json || json.id == null) return null;
+        // 已删除的产品不要（有些版本 deleted 是 '1' 或时间戳字符串）
+        const del = String(json.deleted || '');
+        if (del && del !== '0') return null;
+        return {
+          id: String(json.id),
+          name: ztStripTags(json.name || '') || `产品 ${json.id}`,
+          status: String(json.status || ''),
+          program: String(json.program || ''),
+          // manual 标记让 loadProjects 每次都保留它，不会被下一次接口结果冲掉
+          manual: true,
+        };
+      } catch (e) {
+        // 404 = 确定不存在，可以缓存；其它错误（超时/403）不能当成「不存在」，否则会被长期误判
+        if (/\b404\b/.test(String((e && e.message) || ''))) return null;
+        throw e;
+      }
+    }, { concurrency: ZT_PROBE_CONC });
+
+    denied = r.denied;
+    for (const p of r.found) {
+      found.push(p);
+      bucket.ids[p.id] = { at: now, p };
+    }
+    for (const id of r.misses || []) bucket.ids[id] = { at: now, p: null };
+
+    // 上限保护：只留最近的 1200 条，避免缓存文件随实例变大而无限膨胀
+    const keys = Object.keys(bucket.ids);
+    if (keys.length > 1200) {
+      keys.sort((a, b) => (bucket.ids[a].at || 0) - (bucket.ids[b].at || 0));
+      for (const k of keys.slice(0, keys.length - 1200)) delete bucket.ids[k];
+    }
+    bucket.at = now;
+    ztMissingDiskSave(key, bucket);
+  }
+
+  found.sort((a, b) => Number(a.id) - Number(b.id));
+  // 这行日志一次性回答「漏掉的产品到底是什么状态」：status / program 直接写出来
+  console.log(`[zentao] probe missing: candidates=${candidates.length}`
+    + ` (tail ${maxId + 1}..${maxId + 30}, gaps=${gaps}${capped ? ' 已超限跳过' : ''})`
+    + ` requested=${pending.length} reused=${candidates.length - pending.length}`
+    + ` found=${found.length}${denied ? ` denied=${denied}` : ''}`
+    + found.map(p => ` #${p.id}[status=${p.status},program=${p.program}]`).join(''));
+  return { list: found, requested: pending.length, reused: candidates.length - pending.length };
+}
+
+/**
+ * 产品清单 = 大家口中的「项目」。返回带 total/truncated，供 handler 提示是否拉全。
+ *
+ * 外层加了 60 秒短时缓存 + 并发合并（见 ztProductsCache）。`fresh: true` 给「拉取项目」按钮
+ * 和快捷键用：绕过缓存（也绕过补漏的 10 分钟结果缓存），确保能看到禅道刚建的产品。
+ */
+async function ztApiProductsDetailed(cfg, opts = {}) {
+  const key = ztApiCacheKey(cfg);
+  const r = await ztProductsCache.wrap(
+    key,
+    () => ztApiProductsFetch(cfg, opts),
+    { fresh: !!opts.fresh },
+  );
+  if (r.cached) {
+    console.log(`[zentao] products cache hit age=${Math.round(r.age / 1000)}s（60 秒内复用，不发请求）`);
+  } else if (r.shared) {
+    console.log('[zentao] products cache: 合并并发请求（未重复拉取）');
+  }
+  // cached/ageMs 要传回渲染层：界面得能显示「这是缓存 / 刚拉的」，
+  // 否则用户点了刷新看不出区别，只能去翻日志（1.24.16 加的）
+  return { ...r.value, cached: !!r.cached, ageMs: r.age || 0 };
+}
+
+async function ztApiProductsFetch(cfg, opts = {}) {
   const programs = await ztApiPrograms(cfg).catch(() => ({}));
-  const json = await ztApiGet(cfg, 'api.php/v1/products?limit=1000');
-  const list = Array.isArray(json.products) ? json.products : [];
+  const byId = new Map();
+  const fetchList = (qs) => ztApiPaged(
+    cfg,
+    (page, n) => `api.php/v1/products?limit=${n}&page=${page}${qs}`,
+    'products',
+  );
+
+  // 只发一种参数。
+  // 1.24.13 实测：status=all / browseType=all / 不传 三者返回完全一致（31/31），
+  // 说明这个版本对不认识的参数是**静默忽略** —— 逐个跑只是白打 3 倍请求、多等两轮往返。
+  // 保留 `status=all` 是因为它语义最全（认它的版本能多拿已关闭产品）；
+  // 旧版禅道若对未知参数回 4xx，退回不带参数的请求。
+  let total = 0;
+  let truncated = false;
+  const take = (r) => {
+    total = Math.max(total, r.total || 0);
+    if (r.truncated) truncated = true;
+    for (const p of r.items) {
+      if (p && p.id != null && !byId.has(String(p.id))) byId.set(String(p.id), p);
+    }
+  };
+  try {
+    take(await fetchList('&status=all'));
+  } catch {
+    take(await fetchList(''));
+  }
+
+  // 网页兜底：只在 REST **一条都没返回**时才用（权限异常/接口改版的极端情况）。
+  // 1.24.13 实测它只解析出 20 条（列表默认每页 20）且全是 REST 的子集，补不进任何东西；
+  // 每次拉取都跑一遍等于白等一次往返，所以降级为「REST 空手而归」时的最后手段。
+  let htmlAdded = 0;
+  if (byId.size === 0) {
+    for (const [id, p] of await ztHtmlProducts(cfg)) {
+      if (!byId.has(id)) { byId.set(id, p); htmlAdded++; }
+    }
+  }
+
+  // 真正的补全手段：按 id 单查。
+  // 实测该实例列表只回 31 个、单查能拿到另外 11 个（含 69）；按项目集拉（program=N）
+  // 也试过 16 个项目集、0 个新增，说明列表接口的过滤与项目集无关 —— 单查是唯一可靠来源。
+  // 已试点 id 的结论缓存 6 小时，第二次拉取几乎不发请求。
+  let probedAdded = 0;
+  const probe = await ztProbeMissingProducts(cfg, [...byId.values()], { fresh: !!opts.fresh })
+    .catch(() => ({ list: [] }));
+  for (const p of probe.list) {
+    if (!byId.has(p.id)) { byId.set(p.id, p); probedAdded++; }
+  }
+  console.log(`[zentao] products: total=${total} got=${byId.size}`
+    + ` | probe+${probedAdded}${htmlAdded ? ` html+${htmlAdded}` : ''}`
+    + ` (requested=${probe.requested || 0} reused=${probe.reused || 0})`);
+
+  const items = [...byId.values()];
   const map = {};
-  for (const p of list) map[String(p.id)] = ztStripTags(p.name || '');
-  ztProductCache.set(key, map);
-  return list.map(p => ({
+  for (const p of items) map[String(p.id)] = ztStripTags(p.name || '');
+  ztProductCache.set(ztApiCacheKey(cfg), { at: Date.now(), map });
+
+  const data = items.map(p => ({
     id: String(p.id),
-    name: ztStripTags(p.name || ''),
+    // 名称被清洗为空也保留条目（以前 .filter(p => p.name) 会静默丢项目）
+    name: ztStripTags(p.name || '') || `产品 ${p.id}`,
     status: String(p.status || ''),
     program: String(p.program || ''),
     programName: programs[String(p.program || '')] || '',
-  })).filter(p => p.name);
+    // 必须透传：前端靠它决定「下次拉取时要不要保留这一条」（漏传的话 69 补了也会被冲掉）
+    ...(p.manual ? { manual: true } : {}),
+  }));
+  console.log(`[zentao] products merged total=${total} got=${data.length}`
+    + ` ids=${data.map(p => p.id).join(',').slice(0, 400)}`);
+  // 若 program 全是 0，说明接口只给「不属于任何项目集」的产品——那样挂在项目集下的
+  // 产品（如 69）会整批消失，需要改成按项目集逐个拉。
+  const progDist = {};
+  for (const p of data) { const k = p.program || '0'; progDist[k] = (progDist[k] || 0) + 1; }
+  console.log(`[zentao] products programs=${JSON.stringify(progDist)}`);
+  return {
+    data,
+    total: Math.max(total, data.length),
+    truncated: truncated || data.length < total,
+    // 界面提示用：这次补回几个、接口报的总数和实际拿到多少
+    probedAdded,
+    reportedTotal: total,
+  };
+}
+
+/** 兼容原有调用点（my-bugs / all-bugs / project-bugs 都要数组） */
+async function ztApiProducts(cfg, opts = {}) {
+  return (await ztApiProductsDetailed(cfg, opts)).data;
 }
 
 /**
@@ -1101,16 +1436,72 @@ async function ztFetchModuleNames(cfg, productId) {
   return out;
 }
 
-ipcMain.handle('zentao:projects', async (_event, cfg) => {
+ipcMain.handle('zentao:projects', async (_event, payload) => {
+  // 兼容两种调用：直接传 cfg（老脚本/渲染层），或 { ...cfg, fresh } —— fresh 表示用户主动刷新
+  const { fresh, ...cfgIn } = payload || {};
+  let cfg = cfgIn;
   if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
     return { success: false, error: '请先填写地址、账号和密码' };
   }
   cfg = ztNormalizeCfg(cfg);
   try {
-    const data = await ztApiProducts(cfg);
-    return { success: true, data };
+    const { data, total, truncated, cached, ageMs, probedAdded, reportedTotal } =
+      await ztApiProductsDetailed(cfg, { fresh: !!fresh });
+    return {
+      success: true,
+      data,
+      total,
+      // 界面据此显示「来自缓存（N 秒前）」还是「刚更新」，不然点了刷新看不出任何区别
+      cached: !!cached,
+      ageMs: Number(ageMs) || 0,
+      probedAdded: Number(probedAdded) || 0,
+      reportedTotal: Number(reportedTotal) || 0,
+      // 翻到上限仍没拉满时显式告警，避免像以前那样静默少项目还以为是全部
+      warning: truncated ? `项目列表可能不完整：禅道报告共 ${total} 个，已拉取 ${data.length} 个` : undefined,
+    };
   } catch (e) {
     return { success: false, error: e.message };
+  }
+});
+
+/**
+ * 单查一个产品（「手动补项目」用）。
+ * 有的禅道版本 products 列表接口不返回已关闭/私有产品，但单查详情能拿到真名；
+ * 单查也失败时返回仅带 id 的占位条目 —— 用户既然手动填了编号，说明他确认这个项目存在，
+ * 至少要能拿它的 Bug。
+ */
+ipcMain.handle('zentao:product-probe', async (_event, payload = {}) => {
+  let { cfg, productId } = payload || {};
+  const id = String(productId || '').trim();
+  if (!id) return { success: false, error: '请填写产品编号' };
+  if (!cfg || !cfg.baseUrl || !cfg.account || !cfg.password) {
+    return { success: false, error: '请先填写地址、账号和密码' };
+  }
+  cfg = ztNormalizeCfg(cfg);
+  // 手动补进来的项目一律标 manual=true：优先展示、且下次「拉取项目」时不被列表覆盖掉。
+  try {
+    const json = await ztApiGet(cfg, `api.php/v1/products/${encodeURIComponent(id)}`);
+    // 这段日志是定位「list 接口为什么不返回它」的唯一线索：
+    // 单查能拿到说明 REST 层有权限，那 list 少它只可能是状态/项目集/删除标记在过滤。
+    console.log(`[zentao] product probe ${id} ok: status=${json.status || ''}`
+      + ` acl=${json.acl || ''} program=${json.program || ''} deleted=${json.deleted || ''}`);
+    return {
+      success: true,
+      data: {
+        id: String(json.id || id),
+        name: ztStripTags(json.name || '') || `产品 ${id}`,
+        status: String(json.status || ''),
+        program: String(json.program || ''),
+        programName: '',
+        manual: true,
+      },
+    };
+  } catch (e) {
+    console.log(`[zentao] product probe ${id} failed: ${e.message}`);
+    return {
+      success: true,
+      data: { id, name: `产品 ${id}`, status: '', program: '', programName: '', manual: true },
+    };
   }
 });
 
@@ -1146,23 +1537,21 @@ ipcMain.handle('zentao:project-bugs', async (_event, payload = {}) => {
     // 模块名与 Bug 并行取：模块接口要 HTML 会话，失败只影响「模块」列显示
     const modPromise = ztFetchModuleNames(cfg, productId);
     // ⚠️ 不带 status=all 时 REST 只返回「未关闭」的，含已关闭必须显式传 all
-    const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&status=all&limit=1000&page=1`);
-    let bugs = Array.isArray(first.bugs) ? first.bugs.slice() : [];
-    const total = Number(first.total || bugs.length);
-    // 超过 1000 条时继续翻页（最多 5 页，够用且不至于把内存打爆）
-    if (total > bugs.length) {
-      const pages = Math.min(5, Math.ceil(total / 1000));
-      for (let p = 2; p <= pages; p++) {
-        const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(productId)}&status=all&limit=1000&page=${p}`);
-        const arr = Array.isArray(more.bugs) ? more.bugs : [];
-        if (arr.length === 0) break;
-        bugs = bugs.concat(arr);
-        if (arr.length < 1000) break;
-      }
-    }
+    // 分页走通用聚合器（1.24.14）：以前是 `ceil(total/1000)` 算页数 + 写死 5 页上限，
+    // 一旦服务端把 limit 压到 20，44 条 Bug 只会请求 1 页、拿到 20 条还「看起来正常」。
+    const paged = await ztApiPaged(
+      cfg,
+      (page, n) => `api.php/v1/bugs?product=${encodeURIComponent(productId)}&status=all&limit=${n}&page=${page}`,
+      'bugs',
+    );
+    const bugs = paged.items;
+    const total = paged.total;
     const modules = await modPromise;
     const data = bugs.map(b => ztMapApiBug(b, nameMap, modules)).filter(b => b.id);
-    const value = { data, total, fetchedAt: new Date().toISOString() };
+    const value = {
+      data, total, fetchedAt: new Date().toISOString(),
+      ...(paged.truncated ? { truncated: true, got: data.length } : {}),
+    };
     ztProjectBugsCache.set(cacheKey, { at: Date.now(), value });
     // 项目多时缓存会攒不少，只留最近 6 份
     if (ztProjectBugsCache.size > 6) {
@@ -1192,37 +1581,35 @@ ipcMain.handle('zentao:all-bugs', async (_event, cfg, opts = {}) => {
   }
   try {
     const key = ztApiCacheKey(cfg);
-    const products = await ztApiProducts(cfg);
+    // 强制刷新时连产品清单也重拉：否则 60 秒缓存里没有的新产品会漏掉其 Bug
+    const products = await ztApiProducts(cfg, { fresh: !!opts.force });
     const nameMap = ztProductCache.get(key) || {};
-    const perPage = 1000;
-    // 与 zentao:project-bugs 保持一致（都 5 页 = 5000 条），否则「全部项目」视图
-    // 会在大项目上悄悄少数据，而单项目视图是全的
-    const maxPages = 5;
     const queue = products.slice();
     const collected = [];
     let reported = 0;
+    const failed = [];
 
     const worker = async () => {
       for (;;) {
         const p = queue.shift();
         if (!p) return;
-        const first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&status=all&limit=${perPage}&page=1`);
-        const total = Number(first.total || 0);
-        reported += total;
-        let bugs = Array.isArray(first.bugs) ? first.bugs : [];
-        const pages = Math.min(maxPages, Math.ceil(total / perPage));
-        for (let pg = 2; pg <= pages; pg++) {
-          const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&status=all&limit=${perPage}&page=${pg}`);
-          const arr = Array.isArray(more.bugs) ? more.bugs : [];
-          if (!arr.length) break;
-          bugs = bugs.concat(arr);
-          if (arr.length < perPage) break;
+        try {
+          // 分页交给通用聚合器：按 total 翻页，不受服务端压低 limit 影响（原来写死 5 页）
+          const r = await ztApiPaged(
+            cfg,
+            (page, n) => `api.php/v1/bugs?product=${encodeURIComponent(p.id)}&status=all&limit=${n}&page=${page}`,
+            'bugs',
+          );
+          reported += r.total;
+          for (const b of r.items) collected.push(b);
+        } catch (e) {
+          // 单个项目失败不该让整个「全部」视图挂掉，但要留下痕迹供排查
+          failed.push(`${p.id}: ${e.message}`);
         }
-        for (const b of bugs) collected.push(b);
       }
     };
-    // 6 个并发：31 个产品大约 3~5 秒
-    await Promise.all(Array.from({ length: 6 }, worker));
+    // 8 个并发：42 个项目（含 9 个已关闭）大约 3~5 秒
+    await Promise.all(Array.from({ length: 8 }, worker));
 
     const seen = new Map();
     for (const b of collected) {
@@ -1236,8 +1623,12 @@ ipcMain.handle('zentao:all-bugs', async (_event, cfg, opts = {}) => {
     // total 用去重后的实际条数，避免和表格行数不一致（reported 仅作参考）
     const value = {
       data, total: data.length, reported, products: products.length,
+      ...(failed.length ? { failed } : {}),
       fetchedAt: new Date().toISOString(),
     };
+    if (failed.length) {
+      console.log(`[zentao] all-bugs: ${failed.length}/${products.length} 个项目拉取失败 → ${failed.slice(0, 5).join(' | ')}`);
+    }
     ztAllBugsCache.set(cacheKey, { at: Date.now(), value });
     return { success: true, ...value, cached: false, ageMs: 0 };
   } catch (e) {
@@ -1298,8 +1689,6 @@ async function ztSummaryOf(cfg, productIds, opts = {}) {
     const queue = ids.slice();
     const collected = [];
     const modules = {};
-    const perPage = 1000;
-    const maxPages = 5;
     const errors = [];
 
     const worker = async () => {
@@ -1311,19 +1700,15 @@ async function ztSummaryOf(cfg, productIds, opts = {}) {
         try {
           // 模块名与 Bug 并行取：模块接口失败不影响 Bug
           const modPromise = ztFetchModuleNames(cfg, pid);
-          let first = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(pid)}&status=all&limit=${perPage}&page=1`);
-          let bugs = Array.isArray(first.bugs) ? first.bugs.slice() : [];
-          const total = Number(first.total || bugs.length);
-          const pages = Math.min(maxPages, Math.ceil(total / perPage));
-          for (let pg = 2; pg <= pages; pg++) {
-            const more = await ztApiGet(cfg, `api.php/v1/bugs?product=${encodeURIComponent(pid)}&status=all&limit=${perPage}&page=${pg}`);
-            const arr = Array.isArray(more.bugs) ? more.bugs : [];
-            if (!arr.length) break;
-            bugs = bugs.concat(arr);
-            if (arr.length < perPage) break;
-          }
+          // 按 total 翻页（原来写死 5 页 = 5000 条）；服务端压 limit 时也不会少拿
+          const r = await ztApiPaged(
+            cfg,
+            (page, n) => `api.php/v1/bugs?product=${encodeURIComponent(pid)}&status=all&limit=${n}&page=${page}`,
+            'bugs',
+          );
           modules[pid] = await modPromise;
-          for (const b of bugs) collected.push(b);
+          for (const b of r.items) collected.push(b);
+          if (r.truncated) errors.push(`${pid}: 只拉到 ${r.items.length}/${r.total} 条`);
           break;
         } catch (e) {
           if (attempt === 0) {

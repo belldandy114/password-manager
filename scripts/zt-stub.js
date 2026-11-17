@@ -50,8 +50,22 @@ async function ensureZt(port = 9840) {
     }
     if (/\/user-login\.html$/.test(url)) return send(200, '<html><body><form></form></body></html>', 'text/html; charset=utf-8');
     if (/\/api\.php\/v1\/tokens$/.test(url) && (req.method || 'GET').toUpperCase() === 'POST') return send(201, { token: 'stub-token' });
-    if (/\/api\.php\/v1\/programs/.test(url)) return send(200, { total: PROGRAMS.length, programs: PROGRAMS });
-    if (/\/api\.php\/v1\/products/.test(url)) return send(200, { total: PRODUCTS.length, products: PRODUCTS });
+    // 分页通用处理：尊重 limit/page（模拟禅道按 total 翻页），不传则全量返回
+    const paginate = (rows) => {
+      const q = new URL(url, 'http://x').searchParams;
+      const limit = Number(q.get('limit')) || 0;
+      const page = Number(q.get('page')) || 1;
+      const slice = limit > 0 ? rows.slice((page - 1) * limit, page * limit) : rows;
+      return { total: rows.length, limit, page, list: slice };
+    };
+    if (/\/api\.php\/v1\/programs/.test(url)) {
+      const p = paginate(PROGRAMS);
+      return send(200, { total: p.total, limit: p.limit, page: p.page, programs: p.list });
+    }
+    if (/\/api\.php\/v1\/products/.test(url)) {
+      const p = paginate(PRODUCTS);
+      return send(200, { total: p.total, limit: p.limit, page: p.page, products: p.list });
+    }
     if (/\/api\.php\/v1\/bugs/.test(url)) {
       const q = new URL(url, 'http://x').searchParams;
       // 禅道 20.x 真实行为：不带 product 直接报 "Need product id."

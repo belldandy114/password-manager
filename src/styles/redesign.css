@@ -1025,6 +1025,8 @@ select {
 .zt-global-scope { flex: none; align-self: center; }
 .tabs .zt-global-scope { margin-left: auto; }
 .zt-global-scope .project-picker { width: 280px; min-width: 220px; max-width: 280px; flex: none; }
+/* 「当前项目」右边的重新拉取：三个 tab 同一位置，永远不会换行 */
+.zt-global-refresh { flex: none; white-space: nowrap; }
 
 /* 标签文字与正文用同一套字体，消除最后一点旧版 Fira Sans 残留 */
 .tab2 { font-family: var(--font-sans); font-size: var(--fs-sm); font-weight: 500; }
@@ -7328,3 +7330,15 @@ button.notes-dirpath:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+/* 项目选择器「手动添加」项：禅道 products 接口不返回已关闭/私有产品时（1.24.10）的兜底入口。
+   与普通选项用分隔线 + 主题色区分，避免用户误以为是已有项目。 */
+.person-picker-item.person-picker-manual {
+  border-top: 1px dashed var(--border);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 竖向滚动条常驻留位：内容区宽 10px 的差别会让页头按钮在切 tab / 切数据时横向跳一下
+   （实测「我的 Bug」910px > 900px 时多出滚动条，页头整体左移 10px）。
+   代价是所有页面右侧固定留出 10px，比按钮抖动值。 */
+.content-area { scrollbar-gutter: stable; }

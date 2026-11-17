@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { ZentaoBug, ZentaoConfig, MyBugScope } from '../types';
+import type { ZentaoBug, ZentaoConfig, ZentaoProject, MyBugScope } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useZentaoStore } from '../store/zentaoStore';
 
@@ -19,7 +19,7 @@ import { ZentaoSummary } from '../components/ZentaoSummary';
 import { ProjectPicker } from '../components/ProjectPicker';
 import { useStore } from '../store/useStore';
 import { useConfirm } from '../components/confirm';
-import { formatHm, localDay } from '../utils/time';
+import { formatHm, formatRecent, localDay } from '../utils/time';
 
 const STATUS: Record<string, { label: string; tone: PillTone }> = {
   active: { label: '激活', tone: 'bad' },
@@ -166,6 +166,12 @@ export function ZentaoPage() {
   const [pageSize, setPageSize] = useState(100);
   // 全量 Bug 缓存状态（命中时显示「缓存 · N 分钟前」）
   const [cacheInfo, setCacheInfo] = useState('');
+  // 项目列表最近一次拉取的结果说明（缓存 / 刚更新、多少个、补回几个）
+  const [projectsTip, setProjectsTip] = useState('');
+  // 项目列表是否正在拉：连点/并发时只放行一次（主进程也会合并，这里省掉排队）
+  const projectsBusyRef = useRef(false);
+  // 上一次「真的拉到」的时间：3 秒内再点刷新就直接复用，避免连点把补漏扫描跑两遍
+  const projectsAtRef = useRef(0);
   // 命令面板「刷新我的 Bug」
   const cmdSignal = useStore(s => s.cmdSignal);
 
@@ -239,8 +245,9 @@ export function ZentaoPage() {
     if (!cmdSignal || cmdSignal.at === lastCmdAt) return;
     if (cmdSignal.kind !== 'zentao:refresh-mine') return;
     lastCmdAt = cmdSignal.at;
+    // 快捷键刷新 = 用户主动要求最新数据，绕过 60 秒短时缓存
     if (scopeProjectIds.length) void loadScopeData(scopeProjectIds, true);
-    else void loadProjects();
+    else void loadProjects(true);
   }, [cmdSignal]);
 
   // 筛选条件变了就回到第一页
@@ -271,6 +278,33 @@ export function ZentaoPage() {
     return true;
   };
 
+  /**
+   * 手动补项目：禅道 products 接口在部分版本上不返回已关闭/私有产品
+   * （实测：能打开 bug-browse-69，但接口只回 31 个、没有 69），
+   * 这里按编号单查一次补进列表，保证那种项目仍然能拉 Bug。
+   */
+  const addManualProject = async (id: string) => {
+    if (!ready()) return;
+    // 支持一次补多个编号：69 / 69,70 / 69 70 —— 接口漏掉的产品往往不止一个
+    const ids = String(id).split(/[\s,，、;；]+/).map(s => s.trim()).filter(s => /^\d+$/.test(s));
+    if (!ids.length) return;
+    setBusy('projects');
+    const added: ZentaoProject[] = [];
+    const failed: string[] = [];
+    for (const pid of ids) {
+      if (projects.some(x => String(x.id) === pid) || added.some(x => x.id === pid)) continue;
+      try {
+        const res = await window.electronAPI.zentaoProductProbe(currentCfg(), pid);
+        if (res.success && res.data) added.push({ ...res.data, manual: true });
+        else failed.push(pid);
+      } catch { failed.push(pid); }
+    }
+    setBusy('');
+    // manual 标记让它们在下次「拉取项目」时不被接口结果覆盖（见 loadProjects）
+    if (added.length) setProjects([...added, ...projects]);
+    setError(failed.length ? `项目 ${failed.join('、')} 添加失败，请确认编号是否正确` : '');
+  };
+
   const login = async () => {
     setError('');
     if (!ready()) return;
@@ -280,8 +314,9 @@ export function ZentaoPage() {
     if (res.success) {
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
       // 登录成功就把项目列表拉一遍：换配置后项目作用域会被清，落地后立刻重建，
-      // 免得接着点「我提交的」时列表为空（报「请重新载入项目」/显示未选择项目）
-      void loadProjects();
+      // 免得接着点「我提交的」时列表为空（报「请重新载入项目」/显示未选择项目）。
+      // 登录是显式动作（还可能换了账号），走 fresh 确保用的是新身份拉到的列表。
+      void loadProjects(true);
     } else {
       setError(res.error || '登录失败');
     }
@@ -337,6 +372,12 @@ export function ZentaoPage() {
   };
 
   const mineProjectLabel = (() => {
+    // 拉取范围 = 上方「当前项目」，这里显示的就是实际要拉的那几个项目
+    if (scopeProjectIds.length) {
+      if (scopeProjectIds.length > 1) return `${scopeProjectIds.length} 个项目`;
+      const hit = projects.find(p => String(p.id) === scopeProjectIds[0]);
+      return hit ? hit.name : scopeProjectIds[0];
+    }
     if (mineAllProjects) return `全部 ${projects.length} 个项目`;
     if (!mineProductIds.length) return "未选择项目";
     if (mineProductIds.length > 1) return `${mineProductIds.length} 个项目`;
@@ -353,13 +394,13 @@ export function ZentaoPage() {
       return;
     }
     setBusy('mine');
-    // 「全部项目」以前只改了标签，实际还是查选中的项目 —— 这里真的用全部 id
-    const useAll = allOverride === undefined ? mineAllProjects : allOverride;
+    // 「我的 Bug」不再自己另选一套项目：有「当前项目」筛选就只拉筛选后的那几个，
+    // 三个 tab 的口径保持一致（1.24.17）。没筛选时才退回单项目兜底。
     // 弹窗点「确定」时直接传入选中的 ids：那一瞬间 store 里的 mineProductIds 还是旧值
     const ids = idsOverride && idsOverride.length
       ? idsOverride
-      : useAll && projects.length
-        ? projects.map(p => String(p.id))
+      : scopeProjectIds.length
+        ? scopeProjectIds
         : await ensureMineProjects();
     if (!ids.length) { setBusy(''); setError('请先选择要查询的项目'); return; }
     let res = await window.electronAPI.zentaoMyBugs(currentCfg(), scope, ids);
@@ -367,7 +408,8 @@ export function ZentaoPage() {
     // 兜底：项目列表过期（切了另一套地址/换了账号）时，服务端会说「所选项目不在项目列表里」。
     // 这时重新拉一次项目、用新列表里有效的 id 重试，而不是把错误甩给用户。
     if (!res.success && /不在项目列表里/.test(String(res.error || ''))) {
-      const fresh = await window.electronAPI.zentaoProjects(currentCfg());
+      // 已经被判定为「列表过期」，必须真的重拉，不能又拿到同一份短时缓存
+      const fresh = await window.electronAPI.zentaoProjects(currentCfg(), true);
       if (fresh.success && fresh.data && fresh.data.length) {
         setProjects(fresh.data);
         const valid = fresh.data
@@ -396,24 +438,62 @@ export function ZentaoPage() {
     }
   };
 
-  const loadProjects = async () => {
+  /**
+   * 拉项目列表。
+   * fresh=false（默认）：走主进程 60 秒短时缓存 —— 进页面、登录后自动补拉、兜底重试这类
+   *   「用户没主动要求刷新」的调用，不该每次都重新扫 67 个产品 id。
+   * fresh=true：用户点了「拉取项目」或按快捷键 —— 绕过缓存，禅道刚建的产品立刻可见。
+   */
+  const loadProjects = async (fresh = false) => {
+    // 连点/并发保护：主进程会把并发请求合并，但界面没必要排一队重复的 loading
+    if (projectsBusyRef.current) return;
     setError('');
     if (!ready()) return;
+    // 3 秒内连点「刷新」：直接说清楚在复用刚才的结果，不再打一轮禅道
+    // （一次拉取 = 列表 + 最多 60 多个 id 的补漏扫描，连点两下就是双倍开销）
+    if (fresh && projectsAtRef.current && Date.now() - projectsAtRef.current < 3000) {
+      setProjectsTip(`刚刚已更新（${Math.max(1, Math.round((Date.now() - projectsAtRef.current) / 1000))} 秒前），这次直接复用结果，没有再请求禅道`);
+      return;
+    }
+    projectsBusyRef.current = true;
     setBusy('projects');
-    const res = await window.electronAPI.zentaoProjects(currentCfg());
+    const res = await window.electronAPI.zentaoProjects(currentCfg(), fresh);
+    projectsBusyRef.current = false;
     setBusy('');
     if (res.success && res.data) {
+      projectsAtRef.current = Date.now();
+      // 主进程按 total 翻页仍没拉满时（例如撞到页数上限）给出显式告警，不再静默少项目
+      if (res.warning) setError(res.warning);
+      // 拉完必须给一句人话：命中缓存还是刚更新的、多少个项目、补回几个。
+      // 只写日志的话用户点完「刷新」看不出任何变化（1.24.16）
+      const n = res.data.length;
+      const added = Number(res.probedAdded) || 0;
+      const reported = Number(res.reportedTotal) || 0;
+      const extra = added && reported && reported < n ? `，接口只报 ${reported} 个、按编号补回 ${added} 个` : '';
+      setProjectsTip(res.cached
+        ? `缓存结果 · ${n} 个项目${extra} · ${Math.max(1, Math.round((Number(res.ageMs) || 0) / 1000))} 秒前拉的（点「刷新项目列表」可强制重拉）`
+        : `已更新 · ${n} 个项目${extra} · ${formatRecent(new Date().toISOString())}`);
       // 把「我有 Bug 的项目」排到前面：默认选中的就是自己实际在测的那个
       const mineNames = new Set(bugs.map(b => b.productName).filter(Boolean));
+      const isClosed = (p: ZentaoProject) => String(p.status || '').toLowerCase() === 'closed';
       const sorted = res.data.slice().sort((a, b) => {
         const an = mineNames.has(a.name) ? 0 : 1;
         const bn = mineNames.has(b.name) ? 0 : 1;
-        return an - bn;
+        if (an !== bn) return an - bn;
+        // 同组内已关闭的往后放：补漏会把 9 个历史产品也捞出来，别让它们混在常用项目中间
+        return (isClosed(a) ? 1 : 0) - (isClosed(b) ? 1 : 0);
       });
-      setProjects(sorted);
+      // 手动补进来的项目（接口永远不返回的那些）必须保住：projects 是持久化的，
+      // 但这里如果直接 setProjects(接口结果) 就会把它们冲掉，用户得每次重加一遍（1.24.11 修）。
+      const keptManual = projects.filter(
+        p => p.manual && !sorted.some(x => String(x.id) === String(p.id)),
+      );
+      const merged = sorted.concat(keptManual);
+      setProjects(merged);
       projectsOwnerModule = cfgIdentity;
       // 只拉项目列表，不自动选、不自动拉数据；由用户在上方选择后才加载
-      const stillValid = scopeProjectIds.filter(id => sorted.some(p => String(p.id) === String(id)));
+      // 判存活要用 merged（含手动补的项目），否则 69 这种会被当成"已失效"踢出选中列表
+      const stillValid = scopeProjectIds.filter(id => merged.some(p => String(p.id) === String(id)));
       if (stillValid.length !== scopeProjectIds.length) setScopeProjects(stillValid);
       await persist({ company: (form.company || '').trim(), baseUrl: form.baseUrl.trim(), account: form.account.trim(), password: form.password });
       // 「先点刷新、配置才第一次落库」时，configIdentity 会从空值变成真实地址，
@@ -724,26 +804,18 @@ export function ZentaoPage() {
               <button className="btn btn-secondary btn-sm" onClick={login} disabled={busy === 'login'}>
                 <Icons.lock size={13} /> {busy === 'login' ? '登录中…' : '登录并保存'}
               </button>
-              {tab === 'mine' && (
-                <button className="btn btn-primary btn-sm" onClick={() => loadMine()} disabled={busy === 'mine'}>
-                  <Icons.refresh size={13} /> {busy === 'mine' ? '拉取中…' : `拉取「${scopeLabel}」`}
-                </button>
-              )}
-              {tab === 'project' && (
-                <>
-                  {activeProject === ALL_PROJECT && (
-                    <button className="btn btn-ghost btn-sm" onClick={() => loadProjectBugs(ALL_PROJECT, true)} disabled={busy === 'pb'} title="忽略缓存，重新拉全部项目">
-                      <Icons.refresh size={13} /> 强制刷新
-                    </button>
-                  )}
-                  <button className="btn btn-primary btn-sm" onClick={loadProjects} disabled={busy === 'projects'}>
-                    <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
-                  </button>
-                </>
-              )}
-              {tab === 'summary' && (
-                <button className="btn btn-secondary btn-sm" onClick={loadProjects} disabled={busy === 'projects'}>
-                  <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
+              {/* 三个 tab 共用同一个「刷新项目列表」：同一位置、同一底色、同一动作 */}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => loadProjects(true)}
+                disabled={busy === 'projects'}
+                title="重新读取禅道里你能看到的全部产品/项目（含补漏扫描，约 6~8 秒）；三个标签共用这一份列表"
+              >
+                <Icons.refresh size={13} /> {busy === 'projects' ? '读取中…' : '刷新项目列表'}
+              </button>
+              {tab === 'project' && activeProject === ALL_PROJECT && (
+                <button className="btn btn-ghost btn-sm" onClick={() => loadProjectBugs(ALL_PROJECT, true)} disabled={busy === 'pb'} title="忽略缓存，重新拉全部项目">
+                  <Icons.refresh size={13} /> 强制刷新
                 </button>
               )}
             </>
@@ -753,6 +825,12 @@ export function ZentaoPage() {
         {error && (
           <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', whiteSpace: 'pre-wrap', fontWeight: 400 }}>
             {error}
+          </div>
+        )}
+        {/* 拉完项目列表的结果说明：让「点了刷新」有明确反馈（缓存 / 刚更新、数量、补回几个） */}
+        {!error && projectsTip && (
+          <div className="pill pill-info" style={{ padding: '6px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
+            {projectsTip}
           </div>
         )}
 
@@ -859,9 +937,21 @@ export function ZentaoPage() {
               projects={projects}
               value={scopeProjectIds}
               onChange={ids => void changeScopeProjects(ids)}
+              onAddManual={id => void addManualProject(id)}
               placeholder={projects.length ? `从 ${projects.length} 个项目中选择` : '请先读取项目列表'}
-              disabled={busy === 'pb' || projects.length === 0}
+              disabled={busy === 'pb'}
             />
+            {/* 紧挨「当前项目」：三个 tab 同一位置、同一动作，点了就按这几个项目重拉最新动态 */}
+            <button
+              className="btn btn-secondary btn-sm zt-global-refresh"
+              onClick={refreshScope}
+              disabled={busy === 'pb' || !scopeProjectIds.length}
+              title={scopeProjectIds.length
+                ? `按「当前项目」重新从禅道拉取最新缺陷（${scopeProjectIds.length} 个项目），三个标签同步更新`
+                : '先从左侧「当前项目」选好项目'}
+            >
+              <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
+            </button>
           </div>
         </div>
 
@@ -892,14 +982,6 @@ export function ZentaoPage() {
               </button>
             ))}
           </div>
-            <button
-              className="btn btn-secondary btn-sm zt-tab-refresh"
-              onClick={refreshScope}
-              disabled={busy === 'pb' || !scopeProjectIds.length}
-              title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
-            >
-              <Icons.refresh size={12} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
-            </button>
           </div>
         )}
 
@@ -907,7 +989,7 @@ export function ZentaoPage() {
           <div className="zt-mine-proj">
             <span className="zt-mine-proj-label">项目</span>
             <Pill tone="info">{mineProjectLabel}</Pill>
-            <span className="zt-mine-proj-hint">与上方「当前项目」一致，切换项目只需操作一次</span>
+            <span className="zt-mine-proj-hint">与上方「当前项目」一致：只拉筛选后的项目，三个标签同一份数据</span>
             {mineMeta && (() => {
               // 0 条时不报「未按账号复核」：那是「没有数据」，不是「无法复核」
               const empty = bugs.length === 0;
@@ -1018,7 +1100,7 @@ export function ZentaoPage() {
                 )}
                 {visibleMine.length === 0 ? (
                   <Empty icon={<Icons.bug size={22} />} title="没有符合条件的 Bug" desc="点上面的「清除筛选」看全部"
-                    hint={<>也可以按 <kbd>Ctrl+K</kbd> 全局搜索，或用上方「刷新」重新拉取</>} />
+                    hint={<>也可以按 <kbd>Ctrl+K</kbd> 全局搜索，或点「当前项目」右侧的「重新拉取」</>} />
                 ) : (
                   <>
                     <BugTable
@@ -1049,7 +1131,7 @@ export function ZentaoPage() {
                   desc={
                     mineMeta
                       ? `已按账号 ${mineMeta.account} 过滤本项目${mineScope === 'verify' ? '（仅统计「已解决」且未关闭的 Bug）' : ''}。如果确认应该有，检查项目是否选对，或在禅道网页端核对一下状态。`
-                      : `选「${scopeLabel}」后点右上角「拉取」，结果会一直保留，切换页面也不会丢`
+                      : `选「${scopeLabel}」后点「当前项目」右侧的「重新拉取」，结果会一直保留，切换页面也不会丢`
                   }
                 />
               </Panel>
@@ -1065,7 +1147,7 @@ export function ZentaoPage() {
                   icon={<Icons.db size={22} />}
                   title="还没有项目列表"
                   desc="点右上角「刷新项目列表」，会读取禅道里你能看到的全部产品/项目"
-                  action={<button className="btn btn-primary btn-sm" onClick={loadProjects}>读取项目列表</button>}
+                  action={<button className="btn btn-primary btn-sm" onClick={() => loadProjects(true)}>读取项目列表</button>}
                 />
               </Panel>
             ) : (
@@ -1079,14 +1161,6 @@ export function ZentaoPage() {
                     </span>
                   )}
                   <span className="pg-sub" style={{ margin: 0 }}>换项目请用上方「当前项目」，可按名称搜索定位</span>
-                  <button
-                    className="btn btn-secondary btn-sm zt-tab-refresh"
-                    onClick={refreshScope}
-                    disabled={busy === 'pb' || !scopeProjectIds.length}
-                    title="按当前项目重新从禅道拉取最新缺陷，三个标签同步更新"
-                  >
-                    <Icons.refresh size={13} /> {busy === 'pb' ? '拉取中…' : '重新拉取'}
-                  </button>
                 </div>
 
                 {pBugs.length > 0 && (

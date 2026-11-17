@@ -437,6 +437,8 @@ export interface ZentaoProject {
   program?: string;
   /** 项目集名称（重名项目靠它区分） */
   programName?: string;
+  /** 用户手动补进来的项目（接口没返回，靠 id 单查或占位） */
+  manual?: boolean;
 }
 
 export interface ApiResponseData {
@@ -1129,7 +1131,16 @@ export interface ElectronAPI {
     /** 服务端未按账号过滤时，主进程会再做一次本地过滤 */
     account?: string; filteredByAccount?: boolean; dropped?: number; scanned?: number; withAccount?: number;
   }>;
-  zentaoProjects: (cfg: ZentaoConfig) => Promise<{ success: boolean; data?: ZentaoProject[]; error?: string }>;
+  /** fresh=true 绕过主进程 60 秒短时缓存（用户主动刷新时用），并让补漏扫描重扫一次 */
+  zentaoProjects: (cfg: ZentaoConfig, fresh?: boolean) => Promise<{
+    success: boolean; data?: ZentaoProject[]; total?: number; warning?: string; error?: string;
+    /** 命中 60 秒短时缓存时为 true（自动调用才会有）；ageMs = 缓存有多旧 */
+    cached?: boolean; ageMs?: number;
+    /** 本次通过「按 id 单查」补回来的项目数；reportedTotal = 禅道列表接口自己报的 total */
+    probedAdded?: number; reportedTotal?: number;
+  }>;
+  /** 手动补项目：按编号单查产品（接口没返回已关闭/私有产品时用） */
+  zentaoProductProbe: (cfg: ZentaoConfig, productId: string) => Promise<{ success: boolean; data?: ZentaoProject; error?: string }>;
   zentaoProjectBugs: (cfg: ZentaoConfig, productId: string, force?: boolean) =>
     Promise<{
       success: boolean;
