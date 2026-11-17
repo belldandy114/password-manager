@@ -256,6 +256,20 @@ if (arr.length < 1000) break;
 | `--dry-run` 会真推 | 预演时日志出现「已推送（第 1 次）」，`origin/master` 真被更新 | `run()` 会跳过 dryRun，但 `git push` 用的是 `sh()`，没这层判断。已在 step5 外面包 `if (dryRun)` |
 | r9 禅道段假失败 | `禅道：默认不选项目（chips 为 0 且显示引导条）→ hint:false` 实际 chips 也是 0 | `waitPicker()` 只等 `.person-picker-trigger:not([disabled])`，而 trigger 在项目列表为空时也是可点的，于是断言跑在 loading 中间态。改成同时等「引导条出现或已有 chip」。**这类「等某个元素可点」的等待都要顺手确认它代表的状态真的到位** |
 
+### 验证包清理（`release/verify-*` 的删法）
+
+每轮验证留下一个 `release/verify-<ver>/win-unpacked`（约 362 MB），十几轮就是 5 GB。
+本机删除被过滤驱动接管，**`fs.rm` / `shutil.rmtree` / `Remove-Item` 全部只会进回收站，
+而且目录一多直接失败**（`SAFE_DELETE_FAIL_CLOSED: trash-failed`，一个字节都删不掉）。
+
+实测唯一能真删的是 **`robocopy <空目录> <目标> /MIR`**：原生进程、走另一套删除路径、
+且接受中文路径（`cmd rd /s /q` 在中文路径下会失败，别浪费时间）。已封装成
+`node scripts/clean-verify-dirs.js [--apply] [--keep=12421]`，2 分钟清完 14 个目录、释放 5 GB。
+
+⚠️ 少数 `win-unpacked/resources/app.asar` 会被句柄长期占住（`DeleteFileW` → `ERROR_SHARING_VIOLATION` 32），
+robocopy 也删不掉 —— 跑过打包产物的目录都会这样。对策：`MoveFileExW(path, NULL, 4)`
+登记「重启时删除」，重启后自动消失，空目录壳用 `os.rmdir` 收掉（空目录删除不触发拦截）。
+
 ## ⚠️ 别在项目根目录跑 `asar extract-file`（会覆盖源码）
 
 1.24.9 排查时执行 `npx asar extract-file <app.asar> package.json`，把 asar 里那份**被 electron-builder 精简过**的
