@@ -244,6 +244,18 @@ if (arr.length < 1000) break;
 给 `.content-area` 加 `scrollbar-gutter: stable` 常驻留位后，三个 tab 的 `headRight` 都是 `[1277, 1402]`。
 以后再加长的内容也不会有这种跳动。
 
+**1.24.22：正式发版（这批 1.24.8~1.24.21 的收口）**
+
+`node scripts/release.js 1.24.22`，安装包 94.7 MB，CI 通过，Release 与本地 digest 一致
+（`sha256:b3fb3052…`），说明用的是本地 `release-notes-1.24.22.md`，没被 CI 模板覆盖。
+发版过程踩了三个坑，都已修或写进文档：
+
+| 坑 | 现象 | 处理 |
+|---|---|---|
+| vitest 缓存残留 | `npm run dist` 卡在「单测门禁」，报 `SAFE_DELETE_BULK_CONFIRM_REQUIRED count=303` | vitest 启动要清 `node_modules/.vitest-cache.tmp-*`，被删除守卫按「本轮 >50 个文件」拦下。这两个 tmp 是被中断的运行留下的（正常结束会合并掉）。用 python 逐文件删干净后即恢复；**别再强杀 vitest** |
+| `--dry-run` 会真推 | 预演时日志出现「已推送（第 1 次）」，`origin/master` 真被更新 | `run()` 会跳过 dryRun，但 `git push` 用的是 `sh()`，没这层判断。已在 step5 外面包 `if (dryRun)` |
+| r9 禅道段假失败 | `禅道：默认不选项目（chips 为 0 且显示引导条）→ hint:false` 实际 chips 也是 0 | `waitPicker()` 只等 `.person-picker-trigger:not([disabled])`，而 trigger 在项目列表为空时也是可点的，于是断言跑在 loading 中间态。改成同时等「引导条出现或已有 chip」。**这类「等某个元素可点」的等待都要顺手确认它代表的状态真的到位** |
+
 ## ⚠️ 别在项目根目录跑 `asar extract-file`（会覆盖源码）
 
 1.24.9 排查时执行 `npx asar extract-file <app.asar> package.json`，把 asar 里那份**被 electron-builder 精简过**的
