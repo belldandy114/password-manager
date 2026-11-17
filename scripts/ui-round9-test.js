@@ -666,8 +666,19 @@ const echo = http.createServer((req, res) => {
     const bugReqs = () => zt.log.filter(l => /\/api\.php\/v1\/bugs/.test(l.url));
     const waitPicker = async () => {
       for (let i = 0; i < 48; i++) {
-        const ok = await ev(`(() => !!document.querySelector('.project-picker .person-picker-trigger:not([disabled])'))()`);
-        if (ok) return true;
+        // 「登录并保存」会顺带拉一次项目列表，而 trigger 在列表为空时也是可点的。
+        // 只等 trigger 可点会跑在 loading 中间态上（断言「显示引导条」时 projects 还是空 → 假失败）。
+        // 所以要等到列表真的到位：引导条出现，或已经有选中项。
+        const st = await ev(`(() => {
+          const t = document.querySelector('.project-picker .person-picker-trigger:not([disabled])');
+          if (!t) return { ready: false, loaded: false };
+          return {
+            ready: true,
+            loaded: !!document.querySelector('.zt-scope-hint')
+              || document.querySelectorAll('.project-picker .person-picker-chip').length > 0,
+          };
+        })()`);
+        if (st && st.ready && st.loaded) return true;
         await sleep(250);
       }
       return false;
