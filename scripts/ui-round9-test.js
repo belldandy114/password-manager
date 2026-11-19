@@ -230,6 +230,17 @@ const echo = http.createServer((req, res) => {
   await clickHas('设置主密码');
   await sleep(2400);
 
+  // 首次启动会弹「先设置用例库目录」引导（模态遮挡整个界面）：
+  // 这里不测用例库，直接点「稍后」，否则后面用真实鼠标悬停时会打在遮罩上。
+  await ev(`(() => {
+    const m = document.querySelector('.modal');
+    if (!m || !/用例库/.test(m.textContent || '')) return false;
+    const b = [...m.querySelectorAll('button')].find(x => /稍后/.test(x.textContent || ''));
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(500);
+
   /* ================= A. cURL 互转 ================= */
   if (want('curl')) {
   await navTo('接口调试');
