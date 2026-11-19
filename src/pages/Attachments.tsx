@@ -348,14 +348,19 @@ export function Attachments() {
           desc="截图与文件都加密存在本地；这里能看到每个附件被谁引用，也能清理没人用的"
           tools={
             <>
-              <SearchBox value={search} onChange={v => { setSearch(v); setPage(1); }} placeholder="搜索附件 id / 引用它的条目" />
-              <button
-                className={`btn btn-sm ${onlyOrphan ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => { setOnlyOrphan(v => !v); setPage(1); }}
-                title="只显示没有被任何条目或笔记引用的附件"
-              >
-                仅未引用{orphanCount ? ` (${orphanCount})` : ''}
-              </button>
+              {/* 空库时「搜索 / 仅未引用」没有意义，只留刷新与导出 */}
+              {files.length > 0 && (
+                <>
+                  <SearchBox value={search} onChange={v => { setSearch(v); setPage(1); }} placeholder="搜索附件 id / 引用它的条目" />
+                  <button
+                    className={`btn btn-sm ${onlyOrphan ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => { setOnlyOrphan(v => !v); setPage(1); }}
+                    title="只显示没有被任何条目或笔记引用的附件"
+                  >
+                    仅未引用{orphanCount ? ` (${orphanCount})` : ''}
+                  </button>
+                </>
+              )}
               <button className="btn btn-secondary btn-sm" onClick={() => void load()} title="重新扫描附件目录">
                 <Icons.refresh size={13} /> 刷新
               </button>

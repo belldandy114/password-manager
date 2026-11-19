@@ -1,9 +1,12 @@
 import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from './store/useStore';
 import { Login } from './pages/Login';
+import { PAGE_LOADERS } from './pages/loaders';
+import { PageSkeleton } from './components/PageSkeleton';
 import { Sidebar } from './components/Sidebar';
 import { CommandPalette } from './components/CommandPalette';
 import { NoticeCenter } from './components/NoticeCenter';
+import { Modal } from './components/Modal';
 import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
 import { guessUrlFromInput } from './utils/urlInput';
@@ -16,19 +19,20 @@ import { useRegressionScheduler } from './hooks/useRegressionScheduler';
  * 点哪个页面才去拉哪个页面的 chunk（否则主 bundle 700KB+，冷启动要等）。
  * 登录页保持同步引入——它是启动必经之路，拆出去只会多一次往返。
  */
-const Home = lazy(() => import('./pages/Home').then(m => ({ default: m.Home })));
-const PasswordManagerPage = lazy(() => import('./pages/PasswordManagerPage').then(m => ({ default: m.PasswordManagerPage })));
-const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
-const DataGenerator = lazy(() => import('./pages/DataGenerator').then(m => ({ default: m.DataGenerator })));
-const Toolbox = lazy(() => import('./pages/Toolbox').then(m => ({ default: m.Toolbox })));
-const Environments = lazy(() => import('./pages/Environments').then(m => ({ default: m.Environments })));
-const WeeklyReport = lazy(() => import('./pages/WeeklyReport').then(m => ({ default: m.WeeklyReport })));
-const Notes = lazy(() => import('./pages/Notes').then(m => ({ default: m.Notes })));
-const Attachments = lazy(() => import('./pages/Attachments').then(m => ({ default: m.Attachments })));
-const ZentaoPage = lazy(() => import('./pages/ZentaoPage').then(m => ({ default: m.ZentaoPage })));
-const ApiClient = lazy(() => import('./pages/ApiClient').then(m => ({ default: m.ApiClient })));
-const PerfTest = lazy(() => import('./pages/PerfTest').then(m => ({ default: m.PerfTest })));
-const CodeLab = lazy(() => import('./pages/CodeLab').then(m => ({ default: m.CodeLab })));
+const Home = lazy(PAGE_LOADERS.home);
+const PasswordManagerPage = lazy(PAGE_LOADERS.passwordManager);
+const Settings = lazy(PAGE_LOADERS.settings);
+const DataGenerator = lazy(PAGE_LOADERS.dataGenerator);
+const Toolbox = lazy(PAGE_LOADERS.toolbox);
+const Environments = lazy(PAGE_LOADERS.environments);
+const WeeklyReport = lazy(PAGE_LOADERS.weeklyReport);
+const Notes = lazy(PAGE_LOADERS.notes);
+const Attachments = lazy(PAGE_LOADERS.attachments);
+const ZentaoPage = lazy(PAGE_LOADERS.zentao);
+const ApiClient = lazy(PAGE_LOADERS.apiClient);
+const PerfTest = lazy(PAGE_LOADERS.perfTest);
+const CodeLab = lazy(PAGE_LOADERS.codeLab);
+const Cases = lazy(PAGE_LOADERS.cases);
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -41,6 +45,8 @@ function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  /** 首次启动用例库引导：没配置过就弹一次，可「稍后再说」 */
+  const [casesSetup, setCasesSetup] = useState(false);
   const autoLockRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const lastActivityRef = useRef(Date.now());
   // 锁定时会把页面切回主页，那次切换不应该覆盖「上次停留页面」
@@ -53,6 +59,22 @@ function App() {
     setCurrentPage(navigateTo);
     consumeNavigate();
   }, [navigateTo, consumeNavigate]);
+
+  // 解锁后检查一次用例库配置：没配过就引导选目录（本次运行只问一次，用户可稍后再说）
+  const casesPromptedRef = useRef(false);
+  useEffect(() => {
+    if (isLocked || casesPromptedRef.current) return;
+    casesPromptedRef.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.electronAPI.casesConfig();
+        if (!alive || !r.success || !r.data) return;
+        if (!r.data.configured) setCasesSetup(true);
+      } catch { /* 主进程没起来时静默，不影响登录 */ }
+    })();
+    return () => { alive = false; };
+  }, [isLocked]);
 
   // Handle login success
   const handleLogin = useCallback(async () => {
@@ -370,7 +392,8 @@ function App() {
           break;
         }
         case 'request': setCurrentPage('apiClient'); st.signalCmd(`api:open:${arg}`); break;
-        case 'checklist': setCurrentPage('checklists'); break;
+        // 「用例」没有页面（vault 的 checklists 无写入方）：直接忽略，别再跳到不存在的路由
+        case 'checklist': break;
         case 'env': setCurrentPage('environments'); break;
         // 1.24.7：搜索小窗补齐的集合
         case 'integration':
@@ -444,7 +467,7 @@ function App() {
   // Main app layout
   const renderPage = () => {
     switch (currentPage) {
-      // 1.25.0：今日工作台是新的落地页（聚合缺陷/环境/回归/备份/笔记，只读）
+      // 1.25.0：工作台是新的落地页（聚合缺陷/环境/回归/备份/笔记，只读）
       case 'home': return <Home />;
       case 'passwordManager': return <PasswordManagerPage />;
       case 'settings': return <Settings />;
@@ -465,6 +488,7 @@ function App() {
       case 'apiClient': return <ApiClient />;
       case 'perfTest': return <PerfTest />;
     case 'codeLab': return <CodeLab />;
+      case 'cases': return <Cases />;
       default: return <PasswordManagerPage />;
     }
   };
@@ -485,6 +509,41 @@ function App() {
       </a>
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} onLock={handleLock} onNotices={() => setNoticeOpen(true)} />
       <NoticeCenter open={noticeOpen} onClose={() => setNoticeOpen(false)} onNavigate={setCurrentPage} />
+      {/* 首次启动：用例库目录引导（只弹一次，之后可在用例库页「更改目录」） */}
+      <Modal
+        open={casesSetup}
+        onClose={() => setCasesSetup(false)}
+        title="先设置用例库目录"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setCasesSetup(false)}>稍后再说</button>
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                const r = await window.electronAPI.casesChooseRoot();
+                if (r.success) {
+                  setCasesSetup(false);
+                  setCurrentPage('cases');
+                }
+              }}
+            >
+              选择目录
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm" style={{ lineHeight: 1.7, marginTop: 0 }}>
+          用例库用来按「系统 / 模块」收纳 xmind、Excel、Markdown 用例文件，
+          双击就用系统默认应用打开，应用内不编辑。
+        </p>
+        <p className="text-sm" style={{ lineHeight: 1.7 }}>
+          建议选一个固定目录（例如 <code>D:\Test_Cases</code> 或云盘目录）。之后可以随时在
+          「用例库 → 更改目录」里改，改的时候会自动迁移已有文件。
+        </p>
+        <p className="text-sm text-muted" style={{ lineHeight: 1.7, marginBottom: 0 }}>
+          注意：用例库是明文目录，不像密码库那样加密。
+        </p>
+      </Modal>
       <CommandPalette
         open={cmdkOpen}
         onClose={() => setCmdkOpen(false)}
@@ -521,7 +580,7 @@ function App() {
           </div>
         )}
         {/* 每个页面自己是独立 chunk：切换时只挂一个局部 loading，不牵连其他页面 */}
-        <Suspense fallback={<div className="page-loading">正在加载…</div>}>
+        <Suspense fallback={<PageSkeleton />}>
           {renderPage()}
         </Suspense>
       </div>
@@ -530,3 +589,8 @@ function App() {
 }
 
 export default App;
+
+
+
+
+

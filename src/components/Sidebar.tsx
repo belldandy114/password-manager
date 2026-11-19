@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { prefetchPage } from '../pages/loaders';
 import {
   IconFileText, IconCalendarStats, IconClipboardCheck,
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
-  IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell,
+  IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
   IconHome2,
 } from '@tabler/icons-react';
 
@@ -66,7 +67,7 @@ export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
       </div>
 
       <nav className="sidebar-nav sidebar-nav-groups">
-        {/* 今日工作台：不放进任何分组，固定在最上面 —— 它是落地页，
+        {/* 工作台：不放进任何分组，固定在最上面 —— 它是落地页，
             收进「测试工作」组里一旦折叠就点不到了 */}
         <div
           className={`nav-item nav-item-home ${currentPage === 'home' ? 'active' : ''}`}
@@ -74,11 +75,13 @@ export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
           tabIndex={0}
           aria-current={currentPage === 'home' ? 'page' : undefined}
           onClick={() => onNavigate('home')}
+          onMouseEnter={() => prefetchPage('home')}
+          onFocus={() => prefetchPage('home')}
           onKeyDown={navKey(() => onNavigate('home'))}
-          title="今日工作台：缺陷待办 / 环境不可达 / 接口回归 / 备份 / 今日笔记"
+          title="工作台：缺陷待办 / 环境不可达 / 接口回归 / 备份 / 今日笔记"
         >
           {homeIcon}
-          <span>今日工作台</span>
+          <span>工作台</span>
         </div>
         {GROUPS.map(group => (
           <div key={group.title} className={`sidebar-group${collapsedGroups[group.title] ? ' is-collapsed' : ''}`}>
@@ -100,6 +103,8 @@ export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
                 tabIndex={0}
                 aria-current={currentPage === item.id ? 'page' : undefined}
                 onClick={() => onNavigate(item.id)}
+                onMouseEnter={() => prefetchPage(item.id)}
+                onFocus={() => prefetchPage(item.id)}
                 onKeyDown={navKey(() => onNavigate(item.id))}
                 title={item.label}
               >
@@ -159,6 +164,7 @@ const pmIcon = nav(IconFileText);
 const homeIcon = nav(IconHome2);
 const envIcon = nav(IconServer);
 const attachIcon = nav(IconPhoto);
+const casesIcon = nav(IconFolder);
 const reportIcon = nav(IconCalendarStats);
 const checkIcon = nav(IconClipboardCheck);
 const noteIcon = nav(IconPencil);
@@ -185,6 +191,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
       { id: 'notes', label: '测试笔记', icon: noteIcon },
       { id: 'attachments', label: '附件管理', icon: attachIcon },
+      { id: 'cases', label: '用例库', icon: casesIcon },
       { id: 'zentao', label: '缺陷管理', icon: bugIcon },
     ],
   },
@@ -206,3 +213,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+
+

@@ -162,3 +162,28 @@ npx vitest run src/utils/__tests__/csv.test.ts   # 单跑一个
 - 正则快捷预设复用 `utils/tdg/regexGenerator.ts` 的 `REGEX_PRESETS`（16 个），
   点击只回填输入框、之后仍可手改；别用 lookahead `(?=)`，randexp 不支持。
 
+
+### CSS 死规则审计（2026-11-19）
+
+删旧样式前先证明「没人用」，三步缺一不可：
+
+1. **静态**：解析三份 CSS 的每条规则，取选择器里的类名，检查是否出现在 `src/**/*.{ts,tsx}` 与 `index.html`；
+2. **动态前缀保护**：`env-${type}`、`is-${tone}`、`m-${method}` 这类拼出来的类名**不能算死**——先从源码里抽出
+   `([A-Za-z][\w-]*)\$\{` 的前缀集合，命中前缀一律保留；
+3. **运行时交叉验证**：逐页 `document.querySelectorAll(rule.selectorText)`，各页累计 0 匹配才算候选。
+
+只删「选择器里**每个** class 都属于旧功能白名单」的规则（避免误删 `.live .dead` 这种复合写法）。本次删 160 条 / 19.8 KB：
+`.envx`（旧环境矩阵表格）、`.wk-cmp*`（1.9.3 去掉的周对比）、`.pm-tab*` / `.settings-tab/group`（旧设置页签）、
+`.api-layout/.api-sidebar/.api-url*`（旧接口页布局）、`.project-combo*` / `.sys-*`（旧项目选择器与系统视图）、
+`.shot-viewer*`、`.tool-tabs`、`.page-loading`（已换骨架屏）等。产物 CSS 308.8 → 297.2 KB。
+
+**剩下的 246 组同名选择器冲突不要碰**：同特异性、不同声明，删哪条都会改级联。要动就用
+`scripts/css-cascade-audit.js`：它只清理「同选择器、被后面规则完全覆盖」的单条声明（当前 0 条），
+`fix` 前会做最终声明等价的断言。
+
+### CI 端到端冒烟（1.26.4）
+
+`build-installer.js` 的第 4.2 步会跑 `scripts/smoke-test.js`（连接 win-unpacked 的远程调试端口，用真实 IPC
+初始化密码 → 解锁 → 增删改查 → 回收站 → 设置 → 密码生成 → 锁定，13 条）。失败即中止，不会产出安装包；
+排查构建本身的问题时用 `SKIP_SMOKE=1 npm run dist` 跳过。为什么放在这里而不是 `ci-gate.js`：
+门禁在打包前跑，那时还没有 win-unpacked；而「打包产物能不能跑」只有产物出来才能验。

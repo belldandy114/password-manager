@@ -10,6 +10,7 @@ import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema'
 import { codegenFromBody } from '../utils/apiCodegen';
 import { useConfirm } from '../components/confirm';
 import { parseCurl, buildCurl } from '../utils/curl';
+import { parsePostmanCollection, mergeRequests, type PostmanImportResult, type MergeStrategy } from '../utils/collectionImport';
 import { filterHistory, groupByDay, matchesQuery } from '../utils/apiHistory';
 import { callIpc } from '../utils/ipc';
 import { responseSaveTarget } from '../utils/apiResponse';
@@ -180,6 +181,10 @@ export function ApiClient() {
   const [nameDlg, setNameDlg] = useState<{ open: boolean; mode: 'save' | 'rename'; id?: string; value: string }>({ open: false, mode: 'save', value: '' });
   // 侧栏搜索：历史/已保存共用同一个关键字（切换页签时保留，方便对照）
   const [sideQuery, setSideQuery] = useState('');
+  // 已保存列表按「分组」折叠（分组来自 Postman/Apifox 导入的文件夹）
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('pm.api.collapsedGroups') || '[]') as string[]); } catch { return new Set(); }
+  });
   const [activeEnvId, setActiveEnvId] = useState('');
   const [envOpen, setEnvOpen] = useState(false);
   const [envDraft, setEnvDraft] = useState<ApiEnv | null>(null);
@@ -207,6 +212,15 @@ export function ApiClient() {
     method: string; url: string; headers: string; body: string; bodyType: string;
     rawContentType: string; warnings: string[];
   } | null>(null);
+  // 从 Postman / Apifox 导入集合（v2.1 格式，文件夹保留成分组）
+  const [impOpen, setImpOpen] = useState(false);
+  const [impText, setImpText] = useState('');
+  const [impErr, setImpErr] = useState('');
+  const [impFile, setImpFile] = useState('');
+  const [impPreview, setImpPreview] = useState<PostmanImportResult | null>(null);
+  const [impStrategy, setImpStrategy] = useState<MergeStrategy>('skip');
+  const [impAsEnv, setImpAsEnv] = useState(true);
+  const [impBusy, setImpBusy] = useState(false);
   const headerLineCount = String(req.headers || '').split('\n').filter(l => l.trim()).length;
   const [showVars, setShowVars] = useState(false);
   const [respTab, setRespTab] = useState<'body' | 'headers' | 'ts' | 'md'>('body');
@@ -434,6 +448,39 @@ export function ApiClient() {
     () => (sideQuery.trim() ? items.filter(i => matchesQuery(sideQuery, i.name, i.url, i.method)) : items),
     [items, sideQuery],
   );
+
+  /* ---------------- 已保存列表分组（导入的集合会带 group） ---------------- */
+
+  /** 分组 → 请求；有分组的按名称排，未分组固定放最后 */
+  const savedGroups = useMemo(() => {
+    const map = new Map<string, ApiRequest[]>();
+    for (const it of savedFiltered) {
+      const g = it.group || '';
+      const arr = map.get(g);
+      if (arr) arr.push(it); else map.set(g, [it]);
+    }
+    const keys = [...map.keys()].sort((a, b) => {
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.localeCompare(b, 'zh');
+    });
+    return keys.map(k => [k, map.get(k) as ApiRequest[]] as [string, ApiRequest[]]);
+  }, [savedFiltered]);
+
+  /** 只有真的存在分组时才渲染分组头，纯手工保存的请求看起来和以前一样 */
+  const groupHeadersVisible = savedGroups.some(([g]) => g !== '');
+
+  const toggleSavedGroup = (g: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g); else next.add(g);
+      try { localStorage.setItem('pm.api.collapsedGroups', JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  /** 搜索时强制展开：否则「搜到了但在折叠的分组里」看起来像没结果 */
+  const isGroupCollapsed = (g: string) => !sideQuery.trim() && collapsedGroups.has(g);
 
   /** 选环境：把环境变量合并进变量表（同名覆盖） */
   const applyEnv = (id: string) => {
@@ -868,6 +915,106 @@ export function ApiClient() {
     }
   };
 
+  /* ---------------- 从 Postman / Apifox 导入集合 ---------------- */
+  const openImport = () => {
+    setImpOpen(true);
+    setImpText('');
+    setImpErr('');
+    setImpFile('');
+    setImpPreview(null);
+    setImpStrategy('skip');
+  };
+
+  const pickCollectionFile = async () => {
+    const pickedFile = await callIpc(() => window.electronAPI.pickFile(
+      '选择 Postman / Apifox 导出的 JSON',
+      [{ name: 'JSON', extensions: ['json'] }],
+    ));
+    if (!pickedFile.ok) { setImpErr(`选择文件失败：${pickedFile.error}`); return; }
+    const meta = pickedFile.data as { file: string; name: string } | undefined;
+    if (!meta?.file) return; // 用户取消
+    const read = await callIpc(() => window.electronAPI.readTextFile(meta.file));
+    if (!read.ok) { setImpErr(`读取文件失败：${read.error}`); return; }
+    setImpText(String(read.data ?? ''));
+    setImpFile(meta.name || meta.file);
+    setImpErr('');
+    setImpPreview(null);
+  };
+
+  const parseImport = () => {
+    const r = parsePostmanCollection(impText);
+    if (!r.ok) { setImpErr(r.error); setImpPreview(null); return; }
+    setImpErr('');
+    setImpPreview(r);
+  };
+
+  const doImport = async () => {
+    if (!impPreview || !impPreview.ok) return;
+    setImpBusy(true);
+    try {
+      const now = new Date().toISOString();
+      const incoming: ApiRequest[] = impPreview.requests.map(r => ({
+        id: crypto.randomUUID(),
+        name: r.name,
+        group: r.group || undefined,
+        method: r.method,
+        url: r.url,
+        headers: r.headers,
+        body: r.body,
+        bodyType: r.bodyType,
+        rawContentType: r.rawContentType,
+        updatedAt: now,
+      }));
+      const merged = mergeRequests(items, incoming, impStrategy);
+      const saved = await save(merged.next);
+      if (saved && saved.success === false) {
+        setImpErr(`保存失败：${saved.error || '请稍后再试'}`);
+        return;
+      }
+      const asEnv = !!(impAsEnv && impPreview.variables.trim());
+      if (asEnv) {
+        const base = `${impPreview.collectionName}（导入）`;
+        let name = base;
+        let n = 2;
+        const names = new Set(envs.map(e => e.name));
+        while (names.has(name)) { name = `${base} ${n}`; n += 1; }
+        await saveEnvs([...envs, { id: crypto.randomUUID(), name, vars: impPreview.variables, updatedAt: now }]);
+      }
+      setImpOpen(false);
+      setImpPreview(null);
+      setImpText('');
+      setImpFile('');
+      const parts = [`已导入 ${merged.added} 个请求`];
+      if (merged.replaced) parts.push(`覆盖 ${merged.replaced} 个`);
+      if (merged.skipped) parts.push(`跳过 ${merged.skipped} 个重复`);
+      if (asEnv) parts.push('集合变量已存为环境');
+      flashNotice(parts.join('，'));
+    } finally {
+      setImpBusy(false);
+    }
+  };
+
+  const savedGroupCount = useMemo(
+    () => new Set(items.map(i => i.group).filter((g): g is string => !!g)).size,
+    [items],
+  );
+  const weekNewCount = useMemo(() => {
+    const cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return items.filter(i => {
+      const t = Date.parse(i.updatedAt);
+      return Number.isFinite(t) && t >= cut;
+    }).length;
+  }, [items]);
+  const impGroupRows = useMemo(() => {
+    if (!impPreview || !impPreview.ok) return [] as [string, number][];
+    const map = new Map<string, number>();
+    for (const r of impPreview.requests) {
+      const key = r.group || '';
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return [...map.entries()];
+  }, [impPreview]);
+
   const removeRequest = async (id: string) => {
     await save(items.filter(i => i.id !== id));
     if (req.id === id) { setReq(emptyReq()); setSchemaDiff(null); }
@@ -879,7 +1026,7 @@ export function ApiClient() {
         <PageHead
           icon={<Icons.terminal size={16} />}
           title="接口调试"
-          desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存"
+          desc="直接发 HTTP 请求（不受 CORS 限制），支持 {{变量}} 替换与请求保存；可从 Postman / Apifox 导入整个集合"
           tools={
             <>
               <button className="btn btn-secondary btn-sm" onClick={() => setRegOpen(true)} title="把一组请求存成回归集：定时自动跑，并与上次结果逐条比对">
@@ -891,6 +1038,9 @@ export function ApiClient() {
               <button className="btn btn-secondary btn-sm" onClick={() => { setCurlText(''); setCurlError(''); setCurlOpen(true); }} title="粘贴同事/文档里的 curl 命令，自动拆成方法、地址、请求头、请求体">
                 <Icons.download size={13} /> 从 cURL 导入
               </button>
+              <button className="btn btn-secondary btn-sm" onClick={openImport} title="导入 Postman Collection v2.1 / Apifox 导出的 JSON，批量进「已保存」，文件夹会保留成分组">
+                <Icons.upload size={13} /> 导入集合
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={() => { setReq(emptyReq()); setSchemaDiff(null); setResponse(null); }}>
                 <Icons.plus size={13} /> 新建请求
               </button>
@@ -898,6 +1048,25 @@ export function ApiClient() {
             </>
           }
         />
+
+        {/* 概览：先给三个数字，再进列表（空库时也能看出「导入了多少 / 记了多少」） */}
+        <div className="api-stats">
+          <div className="api-stat">
+            <div className="api-stat-n">{items.length}</div>
+            <div className="api-stat-l">已保存请求</div>
+            <div className="api-stat-s">{savedGroupCount > 0 ? `${savedGroupCount} 个分组` : '还没有分组'}</div>
+          </div>
+          <div className="api-stat">
+            <div className="api-stat-n">{history.length}</div>
+            <div className="api-stat-l">历史记录</div>
+            <div className="api-stat-s">发送后自动记录，保留最近 50 条</div>
+          </div>
+          <div className="api-stat">
+            <div className="api-stat-n">{weekNewCount}</div>
+            <div className="api-stat-l">近 7 天新增 / 更新</div>
+            <div className="api-stat-s">{activeEnvId ? `当前环境：${envs.find(e => e.id === activeEnvId)?.name || '已删除'}` : '未选择环境变量'}</div>
+          </div>
+        </div>
 
         <div className="split" style={{ gridTemplateColumns: '312px minmax(0, 1fr)' }}>
           <Panel
@@ -1007,13 +1176,39 @@ export function ApiClient() {
               )}
               {sideTab === 'saved' && (<>
               {items.length === 0 ? (
-                <div className="api-side-empty">
-                  还没有保存的请求。<br />填好地址后点右上角「保存请求」。
+                <div className="api-side-empty api-empty-cta">
+                  <Icons.inbox size={22} />
+                  <p className="api-empty-cta-t">还没有保存的请求</p>
+                  <p className="api-empty-cta-d">可以从 Postman / Apifox 导入整个集合，<br />或者新建一条自己填。</p>
+                  <div className="api-empty-cta-actions">
+                    <button className="btn btn-sm btn-primary" onClick={openImport}>导入集合</button>
+                    <button
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => { setReq(emptyReq()); setSchemaDiff(null); setResponse(null); }}
+                    >
+                      新建请求
+                    </button>
+                  </div>
                 </div>
               ) : savedFiltered.length === 0 ? (
                 <div className="api-side-empty">没有匹配「{sideQuery}」的请求</div>
               ) : (
-                savedFiltered.map(i => (
+                savedGroups.map(([g, list]) => (
+                  <div className="api-group" key={g || '__ungrouped'}>
+                    {g !== '' && (
+                      <button
+                        type="button"
+                        className={`api-group-head${isGroupCollapsed(g) ? ' is-collapsed' : ''}`}
+                        onClick={() => toggleSavedGroup(g)}
+                        aria-expanded={!isGroupCollapsed(g)}
+                        title={isGroupCollapsed(g) ? `展开「${g}」（${list.length} 个）` : `收起「${g}」（${list.length} 个）`}
+                      >
+                        <Icons.chevron size={11} className="api-group-chev" />
+                        <span className="api-group-name">{g}</span>
+                        <span className="api-group-n">{list.length}</span>
+                      </button>
+                    )}
+                    {!isGroupCollapsed(g) && list.map(i => (
                   <div
                     key={i.id}
                     className={`api-list-item api-row-2l${req.id === i.id ? ' is-active' : ''}`}
@@ -1037,6 +1232,7 @@ export function ApiClient() {
                     <span className="api-item-main">
                       <span className="api-name api-item-name api-ellipsis" title={i.name || i.url}>{i.name || '未命名'}</span>
                       <span className="api-item-sub">
+                        {i.group && !groupHeadersVisible && <span className="api-item-group" title={`分组：${i.group}`}>{i.group}</span>}
                         <span className="api-item-url api-ellipsis" title={i.url}>
                           {i.url.replace(/^https?:\/\/[^/]+/i, '') || '/'}
                         </span>
@@ -1068,6 +1264,8 @@ export function ApiClient() {
                         <Icons.trash size={12} />
                       </IconBtn>
                     </span>
+                  </div>
+                    ))}
                   </div>
                 ))
               )}
@@ -1907,6 +2105,111 @@ export function ApiClient() {
               )}
               {curlPreview.body && (
                 <pre className="curl-preview-body">{String(curlPreview.body).slice(0, 600)}{String(curlPreview.body).length > 600 ? "\n…（已截断）" : ""}</pre>
+              )}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* 从 Postman / Apifox 导入集合 */}
+      <Modal
+        open={impOpen}
+        onClose={() => setImpOpen(false)}
+        title="从 Postman / Apifox 导入"
+        className="modal-wide"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setImpOpen(false)}>取消</button>
+            {!impPreview && (
+              <button className="btn btn-primary" disabled={!impText.trim() || impBusy} onClick={parseImport}>
+                解析并预览
+              </button>
+            )}
+            {impPreview && (
+              <>
+                <button className="btn btn-secondary" onClick={() => setImpPreview(null)}>返回修改</button>
+                <button className="btn btn-primary" disabled={impBusy} onClick={() => void doImport()}>
+                  {impBusy ? '导入中…' : `导入 ${impPreview.ok ? impPreview.requests.length : 0} 个请求`}
+                </button>
+              </>
+            )}
+          </>
+        }
+      >
+        <div className="coll-import">
+          <div className="form-group">
+            <label>集合 JSON</label>
+            <textarea
+              className="curl-input"
+              value={impText}
+              onChange={e => { setImpText(e.target.value); setImpErr(''); setImpPreview(null); }}
+              rows={9}
+              spellCheck={false}
+              placeholder={'{\n  "info": { "name": "我的接口", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },\n  "item": [ … ]\n}'}
+              autoFocus
+              aria-label="集合 JSON"
+            />
+          </div>
+          <div className="coll-import-file">
+            <button className="btn btn-secondary btn-sm" onClick={() => void pickCollectionFile()}>
+              <Icons.folder size={13} /> 选择文件…
+            </button>
+            {impFile && <span className="text-sm text-muted api-ellipsis" title={impFile}>{impFile}</span>}
+          </div>
+          <div className="input-hint">
+            Postman：Collection v2.1 / v2.0；Apifox：导出选「Postman 格式」。文件夹会保留成「分组」，
+            <code>{'{{变量}}'}</code> 原样保留，集合 / 文件夹变量可以顺便存成环境。
+          </div>
+
+          {impErr && (
+            <div className="pill pill-bad" style={{ padding: '8px 12px', borderRadius: 8, fontWeight: 400, whiteSpace: 'pre-wrap', marginTop: 10 }}>
+              {impErr}
+            </div>
+          )}
+
+          {impPreview && impPreview.ok && (
+            <div className="coll-preview">
+              <div className="coll-preview-head">
+                <span className="pill pill-ok">解析结果</span>
+                <b>{impPreview.collectionName}</b>
+                <span className="text-sm text-muted">
+                  {impPreview.requests.length} 个请求 · {impPreview.groups.length} 个分组
+                </span>
+              </div>
+              <div className="coll-chips">
+                {impGroupRows.map(([g, n]) => (
+                  <span key={g || '(root)'} className="coll-chip">
+                    {g || '未分组'}<em>{n}</em>
+                  </span>
+                ))}
+              </div>
+              {impPreview.variables.trim() !== '' && (
+                <label className="coll-env">
+                  <input type="checkbox" checked={impAsEnv} onChange={e => setImpAsEnv(e.target.checked)} />
+                  <span>
+                    把 {impPreview.variables.split('\n').filter(Boolean).length} 个集合变量存成环境
+                    <span className="text-sm text-muted">（新环境，可在「环境」里继续改）</span>
+                  </span>
+                </label>
+              )}
+              <div className="coll-strategy">
+                <span className="coll-strategy-t">同名接口（方法 + 地址相同）怎么处理：</span>
+                {([
+                  ['skip', '跳过，只导入新的（默认）'],
+                  ['overwrite', '覆盖已有的（保留原勾选状态）'],
+                  ['duplicate', '都保留，加「（导入）」后缀'],
+                ] as [MergeStrategy, string][]).map(([v, t]) => (
+                  <label key={v}>
+                    <input type="radio" name="imp-strategy" checked={impStrategy === v} onChange={() => setImpStrategy(v)} />
+                    {t}
+                  </label>
+                ))}
+              </div>
+              {impPreview.warnings.length > 0 && (
+                <ul className="coll-preview-warn">
+                  {impPreview.warnings.slice(0, 12).map((w, i) => <li key={i}>{w}</li>)}
+                  {impPreview.warnings.length > 12 && <li>…另有 {impPreview.warnings.length - 12} 条提示</li>}
+                </ul>
               )}
             </div>
           )}

@@ -69,6 +69,10 @@ interface AppState {
   consumeDataGeneratorSeed: () => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
+  /** 用例库：从工作台「最近用例」跳过去并直接打开某个文件 */
+  casesIntent: { rel: string; at: number } | null;
+  openCase: (rel: string) => void;
+  consumeCasesIntent: () => void;
   openToolboxTool: (tool: string, text?: string) => void;
   consumeToolboxIntent: () => void;
   /** 跨组件请求跳页（页面内按钮跳别的页面时用；App 监听后切页并清空） */
@@ -147,6 +151,7 @@ export const useStore = create<AppState>((set, get) => ({
   snippetSeed: null,
   dataGeneratorSeed: null,
   toolboxIntent: null,
+  casesIntent: null,
   navigateTo: null,
   pmSubPage: 'dashboard',
   entries: [],
@@ -214,6 +219,8 @@ export const useStore = create<AppState>((set, get) => ({
   consumeDataGeneratorSeed: () => set({ dataGeneratorSeed: null }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),
+  openCase: (rel) => set({ casesIntent: { rel, at: Date.now() } }),
+  consumeCasesIntent: () => set({ casesIntent: null }),
   requestNavigate: (page) => set({ navigateTo: page }),
   consumeNavigate: () => set({ navigateTo: null }),
   setPmSubPage: (page) => set({ pmSubPage: page }),
@@ -312,3 +319,4 @@ export const useStore = create<AppState>((set, get) => ({
     return result;
   },
 }));
+

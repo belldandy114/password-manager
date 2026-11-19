@@ -261,6 +261,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notesPickDir: () => ipcRenderer.invoke('notes:pick-dir'),
   notesReveal: (dir, name) => ipcRenderer.invoke('notes:reveal', { dir, name }),
 
+  // 用例库（文件管家：收纳 / 打开 / 导出，应用内不解析内容）
+  casesConfig: () => ipcRenderer.invoke('cases:config'),
+  casesChooseRoot: () => ipcRenderer.invoke('cases:choose-root'),
+  casesChangeRoot: (next) => ipcRenderer.invoke('cases:change-root', { next }),
+  casesList: (rel) => ipcRenderer.invoke('cases:list', { rel }),
+  casesMkdir: (rel, name) => ipcRenderer.invoke('cases:mkdir', { rel, name }),
+  casesRename: (rel, name) => ipcRenderer.invoke('cases:rename', { rel, name }),
+  casesPickFiles: () => ipcRenderer.invoke('cases:pick-files'),
+  casesImport: (rel, files) => ipcRenderer.invoke('cases:import', { rel, files }),
+  casesMove: (rel, targetRel) => ipcRenderer.invoke('cases:move', { rel, targetRel }),
+  casesPreview: (rel) => ipcRenderer.invoke('cases:preview', { rel }),
+  casesSearch: (q, limit) => ipcRenderer.invoke('cases:search', { q, limit }),
+  casesPickImportDir: () => ipcRenderer.invoke('cases:pick-import-dir'),
+  casesImportFolder: (rel, dir) => ipcRenderer.invoke('cases:import-folder', { rel, dir }),
+  onCasesChanged: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('cases:changed', h);
+    return () => ipcRenderer.removeListener('cases:changed', h);
+  },
+  casesDelete: (rel) => ipcRenderer.invoke('cases:delete', { rel }),
+  casesOpen: (rel) => ipcRenderer.invoke('cases:open', { rel }),
+  casesOpenWith: (rel) => ipcRenderer.invoke('cases:open-with', { rel }),
+  casesReveal: (rel) => ipcRenderer.invoke('cases:reveal', { rel }),
+  casesPickDir: () => ipcRenderer.invoke('cases:pick-dir'),
+  casesPickExportDir: () => ipcRenderer.invoke('cases:pick-export-dir'),
+  casesExport: (rels, dest) => ipcRenderer.invoke('cases:export', { rels, dest }),
+
   // Update check
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: (url, useMirror, opts) => ipcRenderer.invoke('update:download', { url, useMirror, ...(opts || {}) }),
@@ -347,3 +374,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('jmeter:done', handler);
   },
 });
+
+
+
+

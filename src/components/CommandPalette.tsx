@@ -41,6 +41,7 @@ export const KIND_LABEL: Record<Kind, string> = {
 };
 
 export const PAGES: { page: string; label: string }[] = [
+  { page: 'home', label: '工作台' },
   { page: 'passwordManager', label: '网址管理' },
   { page: 'weeklyReport', label: '周报' },
   { page: 'notes', label: '测试笔记' },
@@ -77,6 +78,7 @@ export const TOOLBOX_TOOLS: Array<{ id: string; label: string; kw: string }> = [
 export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'environments', label: '环境矩阵' },
   { page: 'attachments', label: '附件管理' },
+  { page: 'cases', label: '用例库' },
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
@@ -115,14 +117,14 @@ export function CommandPalette({
   const [pasteIntent, setPasteIntent] = useState<PasteIntent | null>(null);
   const [extra, setExtra] = useState<{
     snippets: any[]; notes: any[];
-    apiRequests: any[]; checklists: any[]; environments: any[];
+    apiRequests: any[]; environments: any[];
     apiHistory: any[]; codeSnippets: any[];
     integrations: any[]; ztPresets: any[]; apiEnvs: any[];
-    regressionSets: any[]; regressionRuns: any[];
+    regressionSets: any[]; regressionRuns: any[]; caseFiles: any[];
   }>({
-    snippets: [], notes: [], apiRequests: [], checklists: [], environments: [],
+    snippets: [], notes: [], apiRequests: [], environments: [],
     apiHistory: [], codeSnippets: [], integrations: [], ztPresets: [], apiEnvs: [],
-    regressionSets: [], regressionRuns: [],
+    regressionSets: [], regressionRuns: [], caseFiles: [],
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -133,11 +135,10 @@ export function CommandPalette({
     setIdx(0);
     setTimeout(() => inputRef.current?.focus(), 30);
     (async () => {
-      const [sn, nt, rq, ck, ev, hs, cs, ig, zp, ae, rs, rr] = await Promise.all([
+      const [sn, nt, rq, ev, hs, cs, ig, zp, ae, rs, rr, cf] = await Promise.all([
         window.electronAPI.wsGet('snippets'),
         window.electronAPI.wsGet('notes'),
         window.electronAPI.wsGet('apiRequests'),
-        window.electronAPI.wsGet('checklists'),
         window.electronAPI.wsGet('environments'),
         window.electronAPI.wsGet('apiHistory'),
         window.electronAPI.wsGet('codeSnippets'),
@@ -147,7 +148,10 @@ export function CommandPalette({
         window.electronAPI.wsGet('apiEnvs'),
         window.electronAPI.wsGet('regressionSets'),
         window.electronAPI.wsGet('regressionRuns'),
-        window.electronAPI.wsGet('accounts'),
+        // 1.26.4：用例库文件（xmind/csv/…）也进搜索；空查询返回前 300 个
+        window.electronAPI.casesSearch
+          ? window.electronAPI.casesSearch('', 300)
+          : Promise.resolve({ success: true, data: { hits: [] } }),
       ]);
       const pick = (r: any) => (r && r.success ? r.data || [] : []);
       const allNotes = pick(nt);
@@ -157,7 +161,6 @@ export function CommandPalette({
         snippets: mergeSqlViews(allNotes, pick(sn)),
         notes: plainNotes(allNotes),
         apiRequests: pick(rq),
-        checklists: pick(ck),
         environments: pick(ev),
         apiHistory: pick(hs),
         codeSnippets: pick(cs),
@@ -166,6 +169,7 @@ export function CommandPalette({
         apiEnvs: pick(ae),
         regressionSets: pick(rs),
         regressionRuns: pick(rr),
+        caseFiles: ((cf as any)?.success && (cf as any)?.data?.hits) || [],
       });
     })();
   }, [open]);
@@ -305,13 +309,6 @@ export function CommandPalette({
       run: () => { onNavigate('apiClient'); signalCmd(`api:open:${r.id}`); },
     }));
 
-    const fromChecklists: Cmd[] = extra.checklists.slice(0, 200).map((c: any) => ({
-      id: `checklist:${c.id}`,
-      title: c.title || '（无标题用例）',
-      sub: (c.items || []).length ? `${c.items.length} 项` : '',
-      kind: 'checklist' as Kind,
-      run: () => onNavigate('checklists'),
-    }));
 
     const fromEnvs: Cmd[] = extra.environments.slice(0, 200).map((e: any) => ({
       id: `env:${e.id}`,
@@ -401,9 +398,21 @@ export function CommandPalette({
       run: () => { seedDataGenerator(d.id); onNavigate('dataGenerator'); },
     }));
 
+      // 用例库文件：点一下 = 跳到用例库并直接打开预览
+    const fromCases: Cmd[] = extra.caseFiles.slice(0, 300).map((f: any) => ({
+      id: `case:${f.rel}`,
+      title: f.name || '（未命名文件）',
+      sub: `用例库 · ${f.dir || '根目录'}`,
+      kind: 'checklist' as Kind,
+      run: () => {
+        useStore.getState().openCase(f.rel);
+        onNavigate('cases');
+      },
+    }));
+
     return [
       ...base, ...fromEntries, ...fromSnippets, ...fromNotes, ...fromAccounts,
-      ...fromRequests, ...fromChecklists, ...fromEnvs, ...fromHistory, ...fromCode,
+    ...fromRequests, ...fromEnvs, ...fromHistory, ...fromCode, ...fromCases,
       ...fromData, ...fromIntegrations, ...fromZtPresets, ...fromApiEnvs, ...fromRegressions,
     ];
   }, [entries, extra, onNavigate, onLock, setSearchQuery, setPmSubPage, signalNewEntry, signalCmd, seedDataGenerator, settings.theme, updateSettings]);
@@ -637,3 +646,8 @@ export function CommandPalette({
     </>
   );
 }
+
+
+
+
+

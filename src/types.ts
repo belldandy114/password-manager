@@ -428,6 +428,36 @@ export interface WeeklyFile {
   mtime: string;
 }
 
+/** 用例库：文件夹（一级 = 系统，二级 = 模块） */
+export interface CasesDir {
+  name: string;
+  /** 相对用例库根的路径，POSIX 分隔符 */
+  rel: string;
+  mtime: string;
+  /** 该文件夹顶层文件数（不递归） */
+  fileCount: number;
+  /** 该文件夹下的一级子文件夹数（系统节点用它显示「模块数」） */
+  dirCount: number;
+}
+
+/** 用例库：用例文件（xmind / md / csv / xlsx … 应用内不解析） */
+export interface CasesFile {
+  name: string;
+  rel: string;
+  size: number;
+  mtime: string;
+  ext: string;
+}
+
+/** 用例库：一次目录列表 */
+export interface CasesListing {
+  configured: boolean;
+  root: string;
+  rel: string;
+  dirs: CasesDir[];
+  files: CasesFile[];
+}
+
 /** 禅道「项目」（即产品） */
 export interface ZentaoProject {
   id: string;
@@ -666,6 +696,8 @@ export interface ApiAssertions {
 export interface ApiRequest {
   id: string;
   name: string;
+  /** 来源分组（从 Postman / Apifox 集合导入时保留文件夹路径） */
+  group?: string;
   method: string;
   url: string;
   headers: string;
@@ -1222,6 +1254,40 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: { name: string }; error?: string }>;
   weeklyDelete: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
 
+  // 用例库（文件管家：收纳 / 打开 / 导出）
+  casesConfig: () => Promise<{ success: boolean; data?: { root: string; configured: boolean; exists: boolean }; error?: string }>;
+  casesChooseRoot: () => Promise<{ success: boolean; data?: { root: string }; error?: string; canceled?: boolean }>;
+  casesChangeRoot: (next: string) =>
+    Promise<{ success: boolean; data?: { root: string; moved: number }; error?: string }>;
+  casesList: (rel: string) => Promise<{ success: boolean; data?: CasesListing; error?: string }>;
+  casesMkdir: (rel: string, name: string) =>
+    Promise<{ success: boolean; data?: { name: string }; error?: string }>;
+  casesRename: (rel: string, name: string) =>
+    Promise<{ success: boolean; data?: { rel: string; name: string }; error?: string }>;
+  casesPickFiles: () => Promise<{ success: boolean; data?: string[]; error?: string; canceled?: boolean }>;
+  casesImport: (rel: string, files: string[]) =>
+    Promise<{ success: boolean; data?: { imported: string[]; failed: string[] }; error?: string }>;
+  casesMove: (rel: string, targetRel: string) =>
+    Promise<{ success: boolean; data?: { rel: string; name?: string; unchanged?: boolean }; error?: string }>;
+  casesPreview: (rel: string) => Promise<{ success: boolean; data?: CasesPreview; error?: string }>;
+  casesSearch: (q: string, limit?: number) =>
+    Promise<{ success: boolean; data?: { hits: CasesSearchHit[] }; error?: string }>;
+  casesPickImportDir: () => Promise<{ success: boolean; data?: string; error?: string; canceled?: boolean }>;
+  casesImportFolder: (rel: string, dir: string) =>
+    Promise<{ success: boolean; data?: { name: string; files: number }; error?: string }>;
+  /** 用例库文件变更（外部新增/改名/编辑），返回取消订阅函数 */
+  onCasesChanged: (cb: () => void) => () => void;
+  casesDelete: (rel: string) => Promise<{ success: boolean; error?: string }>;
+  casesOpen: (rel: string) =>
+    Promise<{ success: boolean; data?: { how: 'default' | 'open-with' }; error?: string }>;
+  casesOpenWith: (rel: string) =>
+    Promise<{ success: boolean; data?: { how: 'open-with' }; error?: string }>;
+  casesReveal: (rel: string) => Promise<{ success: boolean; error?: string }>;
+  casesPickDir: () => Promise<{ success: boolean; data?: string; error?: string; canceled?: boolean }>;
+  casesPickExportDir: () => Promise<{ success: boolean; data?: string; error?: string; canceled?: boolean }>;
+  casesExport: (rels: string[], dest: string) =>
+    Promise<{ success: boolean; data?: { exported: string[]; failed: string[]; dest: string }; error?: string }>;
+
   // 测试笔记（可选：存到自己选的目录）
   notesList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
   notesRead: (dir: string, name: string) =>
@@ -1338,3 +1404,28 @@ declare global {
     electronAPI: ElectronAPI;
   }
 }
+
+
+
+/** 用例库：全库搜索结果 */
+export interface CasesSearchHit {
+  name: string;
+  rel: string;
+  size: number;
+  mtime: string;
+  ext: string;
+  /** 所在目录（相对库根） */
+  dir: string;
+}
+
+/** 用例库：预览结果 */
+export type CasesPreview =
+  | { kind: 'text' | 'markdown'; text: string; encoding: string; size: number; name: string }
+  | { kind: 'csv'; text: string; rows: string[][]; encoding: string; size: number; name: string }
+  | { kind: 'table'; sheets: { name: string; rows: string[][]; more: boolean }[]; size: number; name: string }
+  | { kind: 'image'; dataUrl: string; size: number; name: string }
+  | { kind: 'binary'; size: number; ext: string; name: string }
+  | { kind: 'too-large'; size: number; name: string };
+
+
+

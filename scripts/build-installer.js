@@ -13,7 +13,7 @@
  * 重来，堆出 release-1.21.2b / c / build / latest 一堆目录。
  * 现在改成「打到全新的临时目录 + robocopy 就地覆盖」，不需要删任何被锁的文件。
  */
-const { execSync, execFileSync } = require('child_process');
+const { execSync, execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -153,6 +153,24 @@ try {
   process.exit(1);
 }
 
+// 4.2 打包版端到端冒烟：真实 IPC 走一遍核心流程（解锁 → 增删改查 → 回收站 → 设置 → 锁定）。
+//     CI 与本地共用这一步；排查构建问题时可用 SKIP_SMOKE=1 跳过（正式发版不要跳）。
+if (process.env.SKIP_SMOKE === '1') {
+  console.log(`\n${CYAN}▶ 打包版冒烟（SKIP_SMOKE=1，已跳过）${RESET}`);
+} else {
+  console.log(`\n${CYAN}▶ 打包版冒烟${RESET}`);
+  const smoke = spawnSync(process.execPath, [
+    path.join(__dirname, 'smoke-test.js'),
+    path.join(OUT_DIR, 'win-unpacked'),
+  ], { cwd: ROOT, stdio: 'inherit' });
+  if (smoke.status !== 0) {
+    console.error(`${RED}✗ 打包版冒烟失败（exit ${smoke.status}），已中止${RESET}`);
+    patchElectronDist('remove');
+    process.exit(smoke.status || 1);
+  }
+  console.log(`${GREEN}✓ 打包版冒烟通过${RESET}`);
+}
+
 // 5. Build NSIS installer
 //    从已经打好的 win-unpacked 出安装包，输出到临时目录再拷回来：
 //    直接在 release/ 出包会撞上「清空 output 目录」那一步的 EBUSY。
@@ -213,3 +231,4 @@ if (fs.existsSync(installer)) {
 
 // Cleanup: remove electronDist if it was added
 patchElectronDist('remove');
+

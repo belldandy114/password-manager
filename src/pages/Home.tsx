@@ -9,7 +9,7 @@ import { formatRecent, localDay } from '../utils/time';
 import { latestRunOf, summarizeRun, type RegressionRun, type RegressionSet } from '../utils/regression';
 
 /**
- * 今日工作台（1.25.0，1.25.1 重做）。
+ * 工作台（1.25.0，1.25.1 重做）。
  *
  * 为什么要有这一页：以前打开应用落在「网址管理」，而一天里真正要先看的是
  * 「有没有新缺陷压过来 / 环境是不是挂了 / 回归是不是红了 / 备份多久没做 / 今天记了什么」。
@@ -163,6 +163,16 @@ export function Home() {
   const entries = useStore(s => s.entries);
 
   const [envs, setEnvs] = useState<EnvEntry[]>([]);
+  /** 用例库最近打开（localStorage，只存相对路径，不复制文件内容） */
+  const [recentCases, setRecentCases] = useState<{ rel: string; name: string; at: number }[]>([]);
+  useEffect(() => {
+    try {
+      const list = JSON.parse(localStorage.getItem('pm.cases.recent') || '[]');
+      if (Array.isArray(list)) {
+        setRecentCases(list.filter((x: { rel?: string; name?: string }) => x && x.rel && x.name));
+      }
+    } catch { /* 坏数据就当没有 */ }
+  }, []);
   const [notes, setNotes] = useState<Note[]>([]);
   const [regSets, setRegSets] = useState<RegressionSet[]>([]);
   const [regRuns, setRegRuns] = useState<RegressionRun[]>([]);
@@ -332,7 +342,7 @@ export function Home() {
       <Page>
         <PageHead
           icon={<IconHome2 size={16} stroke={1.8} />}
-          title="今日工作台"
+          title="工作台"
           desc={nothingToday
             ? '今天没有需要立刻处理的事，可以安心做手头的活'
             : '一屏看完今天要处理的事：缺陷、环境、回归、备份、笔记'}
@@ -354,14 +364,16 @@ export function Home() {
               badge={bugStats.total > 0
                 ? <Pill tone="bad">{bugStats.total} 个未关闭</Pill>
                 : <Pill tone="ok">无待办</Pill>}
-              action={<button className="home-link" onClick={() => go('zentao')}>去缺陷管理</button>}
+              action={bugList.length > 0
+                ? <button className="home-link" onClick={() => go('zentao')}>去缺陷管理</button>
+                : undefined}
             >
               {bugList.length === 0 ? (
                 <Empty
                   text={bugs.length === 0
                     ? '还没有拉取过缺陷数据 —— 去「缺陷管理」拉一次，这里就会显示待办'
                     : '今天没有待办缺陷'}
-                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('zentao')}>去拉取</button>}
+                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('zentao')}>{bugs.length === 0 ? '去拉取' : '去缺陷管理'}</button>}
                 />
               ) : (
                 <div className="home-items">
@@ -397,7 +409,9 @@ export function Home() {
               badge={downEnvs.length > 0
                 ? <Pill tone="bad">{downEnvs.length} 个</Pill>
                 : <Pill tone="ok">全部可达</Pill>}
-              action={<button className="home-link" onClick={() => go('environments')}>去环境矩阵</button>}
+              action={downEnvs.length > 0
+                ? <button className="home-link" onClick={() => go('environments')}>去环境矩阵</button>
+                : undefined}
             >
               {downEnvs.length === 0 ? (
                 <Empty
@@ -466,7 +480,9 @@ export function Home() {
               icon={<Icons.clock size={14} />}
               title="最近改动"
               hasItems={recentEntries.length > 0}
-              action={<button className="home-link" onClick={() => go('passwordManager')}>去网址管理</button>}
+              action={recentEntries.length > 0
+                ? <button className="home-link" onClick={() => go('passwordManager')}>去网址管理</button>
+                : undefined}
             >
               {recentEntries.length === 0 ? (
                 <Empty
@@ -553,7 +569,9 @@ export function Home() {
               icon={<Icons.note size={14} />}
               title={todayNotes.length > 0 ? '今日笔记' : '最近记录'}
               badge={todayNotes.length > 0 ? <Pill tone="info">{todayNotes.length} 篇</Pill> : undefined}
-              action={<button className="home-link" onClick={() => go('notes')}>去笔记</button>}
+              action={todayNotes.length > 0
+                ? <button className="home-link" onClick={() => go('notes')}>去笔记</button>
+                : undefined}
             >
               {(todayNotes.length > 0 ? todayNotes : recentNotes).length === 0 ? (
                 <Empty
@@ -574,6 +592,30 @@ export function Home() {
               )}
             </Panel>
 
+            {/* ---- 最近用例（用例库打开过的文件，localStorage 里只存相对路径） ---- */}
+            {recentCases.length > 0 && (
+              <Panel
+                icon={<Icons.folder size={14} />}
+                title="最近用例"
+                action={<button className="home-link" onClick={() => go('cases')}>去用例库</button>}
+              >
+                <div className="home-items">
+                  {recentCases.slice(0, 5).map(c => (
+                    <Row
+                      key={c.rel}
+                      onClick={() => {
+                        useStore.getState().openCase(c.rel);
+                        go('cases');
+                      }}
+                      main={c.name}
+                      sub={c.rel.split('/').slice(0, -1).join(' / ') || '用例库根目录'}
+                      meta={formatRecent(new Date(c.at).toISOString())}
+                    />
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             {/* ---- 快捷入口 ---- */}
             <Panel icon={<Icons.tool size={14} />} title="快捷入口">
               <div className="home-shortcuts">
@@ -589,6 +631,12 @@ export function Home() {
                 <button className="home-shortcut" onClick={() => go('attachments')}>
                   <Icons.image size={13} /> 附件管理
                 </button>
+                <button className="home-shortcut" onClick={() => go('cases')}>
+                  <Icons.folder size={13} /> 用例库
+                </button>
+                <button className="home-shortcut" onClick={() => go('apiClient')}>
+                  <Icons.terminal size={13} /> 接口调试
+                </button>
               </div>
             </Panel>
           </div>
@@ -597,3 +645,6 @@ export function Home() {
     </div>
   );
 }
+
+
+

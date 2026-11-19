@@ -574,3 +574,133 @@ npm run dist            # 全量构建：renderer → 子应用 → --dir → NS
 `scripts/smoke-test.js` 用 `--remote-debugging-port` 连渲染进程，覆盖初始化/解锁/增删改查/回收站/设置/密码生成/锁定拒绝访问，
 改动 IPC 契约时要同步更新它。
 
+
+## 接口调试：从 Postman / Apifox 导入集合（2026-11-19）
+
+- 解析器 `src/utils/collectionImport.ts`（纯函数，31 条单测）：Postman Collection **v2.1 / v2.0**
+  （Apifox 导出选「Postman 格式」就是 v2.1）。文件夹路径存进 `ApiRequest.group`；
+  集合 / 文件夹变量合并成 `k=v` 多行，页面可选「存成环境」；bearer / apikey / basic 转成请求头；
+  `Host` / `Content-Length` / `Connection` 等自动头直接丢弃；**multipart / form 的 Content-Type 一律去掉**，
+  交给发送端按实际 boundary / charset 重拼（保留会和服务端校验打架）。
+- 冲突判定用「方法 + 地址」（不是名字），三种策略：`skip`（默认）/ `overwrite`（保留原 id，界面勾选不失效）/
+  `duplicate`（加「（导入）」后缀）。
+- 页面改动：页头多一个「导入集合」按钮 + 三张概览卡（已保存 / 历史 / 近 7 天新增），
+  空状态从「还没有保存的请求」换成带「导入集合 / 新建请求」两个按钮的引导；列表行的来源分组用
+  `.api-item-group` 弱提示。
+- 样式写在 `redesign.css` 末尾（`.api-stats` / `.api-stat` / `.api-empty-cta` / `.coll-*` / `.modal.modal-wide`），
+  只用 token，无新增色值字面量。
+- 回归：`scripts/shot-api-import.js`（12 条断言 + 6 张截图，产物 `_shots-api-import/` 已 gitignore）。
+  跑法：`npm run build:renderer && node scripts/shot-api-import.js`（开发目录 + `PM_USE_DIST=1`，不需要先打包）。
+
+## 1.26.0 体验收口（2026-11-19）
+
+- **「今日工作台」改名「工作台」**：侧栏 / 页头 / 注释；命令面板 `PAGES` 顺带补上 `home`（以前 Ctrl+K 搜不到落地页）。
+- **页面骨架屏**：`components/PageSkeleton.tsx` 替换 Suspense 里那行「正在加载…」，结构 = 页头 + 3 张卡 + 6 行列表；
+  只装饰，`role=status` 播报一次、结构层 `aria-hidden`。样式在 redesign.css 末尾 `.page-skel / .ps-*`。
+- **悬停预取**：`pages/loaders.ts` 是唯一懒加载表，App 的 `lazy()` 与侧栏 `onMouseEnter/onFocus` 共用；
+  实测悬停 900ms 内发出 `Environments-*.js`，对照页 0 请求。
+- **空库工具条**：环境矩阵 / 附件管理在没有数据时不再渲染搜索框与「超时」「仅未引用」这类无效控件。
+- **工作台空态去重**：一张卡只有一个入口 —— 有内容时右上角文字链，空态时卡内按钮（两个并排的写法已去掉）。
+- `checklists`（用例）在命令面板里不再生成结果：`renderPage` 没有该分支，点下去会落到「网址管理」。
+
+## 1.26.0：用例库（2026-11-19）
+
+定位是**文件管家**，不是用例编辑器：xmind / Excel / Markdown 由系统应用负责编辑，应用内不解析内容
+（解析 xmind 版本差异、Excel 合并单元格会变成无底洞，收益也低）。
+
+### 目录与配置
+
+- 库根目录由用户选择，配置存 `<数据目录>/cases.json`（`{ "root": "..." }`），不随库目录走。
+- 结构：`Test_Cases/<系统>/<模块>/<用例文件>`，**最多两级**（再深就成文件管理器了）。
+- 首次启动会弹一次引导（本次运行只问一次，可「稍后再说」，之后在页面里「更改目录」）。
+- 更改位置 = 复制 → 校验文件数 → 旧目录进系统回收站；校验不过就保留旧目录并报错，**绝不先删后拷**。
+
+### 安全与规则（改这里前必读）
+
+| 规则 | 位置 |
+|---|---|
+| 所有相对路径过 `resolveInside()`（拒绝绝对路径 / `../` 穿越） | `electron/cases-paths.js` |
+| 名称清洗（Windows 非法字符、末尾点空格、`.`/`..`） | `safeName()` |
+| 重名自动加后缀 `登录(2).xmind`（大小写不敏感） | `uniqueName()` |
+| 删除走 `shell.trashItem`（可恢复），不 `fs.unlink` | `electron/ipc-cases.js` |
+| 打开：`shell.openPath` 失败 → Windows `rundll32 shell32.dll,OpenAs_RunDLL` 弹「打开方式」 | 同上 |
+
+纯函数带 17 条单测（`src/utils/__tests__/casesPaths.test.ts`）。
+
+### IPC（13 个，注册在 `electron/ipc-cases.js`）
+
+`cases:config` / `choose-root` / `change-root` / `list` / `mkdir` / `rename` / `pick-files` /
+`import` / `delete` / `open` / `reveal` / `pick-dir` / `pick-export-dir` / `export`。
+
+### 界面
+
+侧栏「测试工作」组新增「用例库」；页面 = 左侧系统树 + 右侧文件列表（面包屑、搜索、批量导出/删除）。
+文件行双击 = 用默认应用打开；行内按钮：打开 / 定位 / 重命名 / 导出 / 删除。
+列表底部固定显示「明文目录 + 实际路径」——密码库加密、用例库不加密，这点必须在界面上说清楚。
+
+### 回归
+
+`scripts/ui-cases-test.js`（10 条断言）：首次引导 → 系统树 → 模块与文件 → 新建文件夹 →
+同名导入加 `(2)` → 导出 → 迁移并清理旧目录 → 迁移后仍可读。跑法：
+`npm run build:renderer && node scripts/ui-cases-test.js`（原生目录对话框无法自动化，脚本直接写 `cases.json`）。
+
+- **接口「已保存」按分组折叠**：`ApiRequest.group` 来自 Postman/Apifox 导入；列表按分组渲染、可折叠（记忆在
+  `localStorage['pm.api.collapsedGroups']`），**搜索时强制展开**（否则搜到了但在折叠组里像没结果）；没有分组的请求保持原样。
+- **AGENTS.md 拆分**：65,005 → 32,826 B（预算 65,536，剩余一半余量）。迁出 5 份文档：`vault-modules.md`、
+  `zentao-summary.md`、`release-tools.md`、`code-conventions.md`、`version-conventions.md`，正文原样保留、AGENTS.md 只留指针与硬约束。
+- **CSS 死规则清理**：静态类名扫描 + 动态前缀保护 + 逐页运行时 `querySelectorAll` 交叉验证后删除 160 条旧功能规则
+  （约 19.8 KB 源码；dist CSS 308.8 → 297.2 KB）。方法见 `docs/agents/testing.md` 的「CSS 死规则审计」。
+
+### 1.26.1：用例库交互补全 + 全局动效（2026-11-19）
+
+**左树两级 / 右键菜单**
+- 左侧树现在显示两级：系统（一级）展开后是模块（二级），两级封顶（`MAX_FOLDER_DEPTH = 2`）。
+- 右键系统/模块节点：新建子文件夹（仅一级节点）、重命名、在资源管理器中显示、导出、删除（进回收站）；
+  树空白处右键：新建系统文件夹 / 刷新。菜单支持 Esc 关闭、点击遮罩关闭。
+- ⚠️ 右键菜单必须 `createPortal(..., document.body)`：挂在 `.pg` 里时 `position: fixed` 会以
+  `.content-area` 为包含块，坐标整体偏 232px（侧栏宽度）。
+
+**拖拽**
+- 列表行 `draggable` → 拖到左侧任意目录 = 移动（`cases:move`，目标重名自动加后缀）。
+  文件可进任意一级；**文件夹只能放根/系统**，放进模块会拒绝（否则出现第三级）。
+- 外部文件拖进列表区 = 导入到当前目录（`filePathFor` → `cases:import`），拖到树节点 = 导入到那个目录。
+
+**全局动效（1.26.1）**
+- 新增「动效层」写在 `redesign.css` 末尾：页面进入 `pg-enter` 220ms、按钮 hover 微抬 / 按下回弹、
+  侧栏 hover 右移 2px、列表行渐入（前 8 行错峰 18ms）、面板边框/阴影与统计数字颜色过渡。
+- 全部包在 `@media (prefers-reduced-motion: no-preference)` 里，系统开启「减少动态效果」时整体关闭。
+- 断言方式不是看图：回归脚本读 `getComputedStyle(.pg).animationName === 'pg-enter'` 与
+  `.btn` 的 `transitionProperty` 是否包含 `transform`。
+
+回归：`scripts/ui-cases-test.js` 扩到 18 条（右键菜单坐标 / 二级树 / 真实拖拽 / 动效 computed style）。
+
+### 1.26.3：用例库预览 / 全库搜索 / 排序 / 整目录导入 / 自动刷新（2026-11-19）
+
+| 能力 | 实现 | 关键约定 |
+|---|---|---|
+| 应用内预览 | `cases:preview`（主进程解析） | md / csv / xlsx / 图片 / 文本；`xlsx` 用 SheetJS 在主进程解析（最多 6 sheet × 200 行 × 30 列），文本用 `decodeTextBuffer` 自动识别 GBK；> 8 MB 或 xmind/pdf/zip 退回「用默认应用打开」 |
+| 全库搜索 | `cases:search` + 面板上的「当前目录 / 全库」开关 | 输入停下 260ms 再扫盘；结果行显示所在系统/模块，双击预览、可一键定位到目录 |
+| 列表排序 | 面板下拉「最近修改 / 名称 / 大小」 | 排序方式记在 `localStorage['pm.cases.sort']` / `pm.cases.sortAsc` |
+| 整目录导入 | `cases:pick-import-dir` + `cases:import-folder` | 复制进当前目录并保留内部结构，重名加后缀；**模块里不允许**（会出现第三级） |
+| 变更自动刷新 | `fs.watch(recursive)` + `cases:changed` 事件 | 防抖 500ms；某些盘符不支持递归监听时静默降级为手动刷新 |
+| 工作台「最近用例」 | `openPreview` 时写 `localStorage['pm.cases.recent']`（最多 20 条，只存相对路径） | 点击 → `openCase(rel)` intent → `App` 切到用例库 → 定位目录并打开预览 |
+
+顺带清理：命令面板不再取 vault 的 `checklists`（没有写入方，点了会跳错页）；快捷入口补「用例库 / 接口调试」。
+
+回归：`scripts/ui-cases-test.js` 扩到 **26 条**（新增 csv/xlsx 预览、全库搜索、排序、整目录导入、外部新增自动刷新、工作台最近用例）。
+
+### 1.26.4：统计口径 / 命令面板搜用例 / 打开方式 / CI 冒烟（2026-11-19）
+
+- **左树统计口径**：一级「系统」节点显示 **模块数**（`dirCount`），不再显示顶层文件数 ——
+  之前「系统里有模块但顶层没有文件」会显示 0，看着像空目录。鼠标悬停能看到「N 个模块 · M 个顶层文件」；
+  二级「模块」节点仍然显示文件数。`CasesDir` 新增 `dirCount`（只数一级子目录，不递归）。
+- **Ctrl+K 搜用例文件**：命令面板打开时预热 `cases:search('', 300)`，用例库文件作为 `kind: 'checklist'`（显示「用例」）
+  进结果，回车 = `openCase(rel)` 跳到用例库并直接打开预览。`@case` 限定词因此变成真的能用（之前指向已废弃的 vault 集合）。
+  顺手修了 `Promise.all` 解构少一个变量导致用例数据拿不到的 bug（`accounts` 本来也没人用，一并去掉）。
+- **「用其他应用打开…」**：新 IPC `cases:open-with`，不试默认应用、直接弹 Windows「打开方式」对话框；
+  文件行右键与预览弹窗底部都有入口（xmind 装了两版时用得上）。
+- **CI 端到端冒烟**：`build-installer.js` 在 `--dir` 产物打好、NSIS 之前跑 `scripts/smoke-test.js`（真实 IPC 13 条），
+  失败即中止构建；排查构建问题可 `SKIP_SMOKE=1` 跳过。`npm run regress -- --pack` 的清单里也加上了用例库回归。
+
+回归：`ui-cases-test.js` 28 条（新增「系统节点统计模块数」「Ctrl+K 能搜到用例文件」）。
+

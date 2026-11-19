@@ -3,7 +3,7 @@ import {
   IconSearch, IconPlus, IconPencil, IconTrash, IconCopy, IconEye, IconEyeOff,
   IconLink, IconExternalLink, IconServer, IconKey, IconCheck, IconList,
   IconDatabase, IconFileText, IconBug, IconTool, IconTerminal2, IconLock,
-  IconClock, IconDownload, IconChartBar, IconRefresh, IconX, IconChevronRight,
+  IconClock, IconDownload, IconUpload, IconChartBar, IconRefresh, IconX, IconChevronRight,
   IconTag, IconInbox, IconFolder, IconPhoto, IconPinned,
 } from '@tabler/icons-react';
 
@@ -45,6 +45,7 @@ export const Icons = {
   lock: icon(IconLock),
   clock: icon(IconClock),
   download: icon(IconDownload),
+  upload: icon(IconUpload),
   chart: icon(IconChartBar),
   refresh: icon(IconRefresh),
   close: icon(IconX),

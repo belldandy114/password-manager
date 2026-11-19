@@ -225,13 +225,6 @@
   white-space: nowrap;
 }
 
-.chip-mono {
-  font-family: var(--font-mono);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-  background: var(--accent-light);
-}
-
 /* ----------------------------------------------------------------
    5. 按钮
    ---------------------------------------------------------------- */
@@ -542,94 +535,6 @@
 /* ----------------------------------------------------------------
    11. 环境矩阵
    ---------------------------------------------------------------- */
-.envx {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 12.5px;
-}
-
-.envx th {
-  padding: 9px 16px;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--bg-input) 70%, transparent);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.envx td {
-  padding: 0;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.envx tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.envx .envx-system {
-  padding: 12px 16px;
-  color: var(--text-primary);
-  font-weight: 550;
-  white-space: nowrap;
-}
-
-.envx .envx-op {
-  padding: 0 12px;
-  width: 44px;
-  text-align: right;
-}
-
-.envx-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 10px 16px;
-  cursor: pointer;
-  transition: background 0.14s ease;
-}
-
-.envx-cell:hover {
-  background: var(--bg-hover);
-}
-
-.envx-cell .envx-plus {
-  color: var(--text-muted);
-  opacity: 0;
-  font-size: 13px;
-  transition: opacity 0.14s ease;
-}
-
-.envx-cell:hover .envx-plus {
-  opacity: 1;
-}
-
-.envx-url {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--accent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 220px;
-}
-
-.envx-url:hover {
-  text-decoration: underline;
-}
-
-.envx-note {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* ----------------------------------------------------------------
    12. 接口调试
@@ -865,32 +770,6 @@
   font-size: 12px;
 }
 
-.zt-stats2 {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-input) 45%, transparent);
-}
-
-.zt-stat2 {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-}
-
-.zt-stat2 strong {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
 .zt-row {
   cursor: pointer;
 }
@@ -898,12 +777,6 @@
 /* ----------------------------------------------------------------
    14. 工具箱内部
    ---------------------------------------------------------------- */
-.tool-lead {
-  font-size: 12.5px;
-  color: var(--text-muted);
-  line-height: 1.7;
-  margin-bottom: 14px;
-}
 
 .tool-stack {
   display: flex;
@@ -920,27 +793,6 @@
 .tool-line input {
   flex: 1;
   min-width: 0;
-}
-
-.kv2 {
-  display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  gap: 9px 16px;
-  font-size: 12.5px;
-  align-items: baseline;
-}
-
-.kv2 dt {
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.kv2 dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-primary);
-  word-break: break-all;
 }
 
 /* ----------------------------------------------------------------
@@ -1148,14 +1000,6 @@
 }
 
 /* 环境表头的色点 */
-.envx-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: 1px;
-}
 
 /* ----------------------------------------------------------------
    17. 周报 & 禅道统计
@@ -1163,72 +1007,9 @@
 
 /* --- 周报：目录行 --- */
 /* --- 周报：本周 vs 上周对比 --- */
-.wk-cmp {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-width: 520px;
-}
 
 /* 三个数字列定宽右对齐 + baseline 对齐：
    以前用 1fr 又是不同字号，数字、变化、表头三者各走各的竖线，看着就是「没对齐」 */
-.wk-cmp-head,
-.wk-cmp-row {
-  display: grid;
-  grid-template-columns: minmax(56px, 1fr) 64px 64px 88px;
-  align-items: baseline;
-  column-gap: 12px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.wk-cmp-head {
-  color: var(--text-muted);
-  font-size: 11px;
-  padding-bottom: 2px;
-}
-
-.wk-cmp-head span {
-  text-align: right;
-}
-
-.wk-cmp-head span:first-child {
-  text-align: left;
-}
-
-.wk-cmp-row {
-  background: var(--surface-2);
-  border: 1px solid transparent;
-  transition: border-color var(--transition), background var(--transition);
-}
-
-.wk-cmp-row:hover {
-  border-color: var(--border);
-}
-
-.wk-cmp-label {
-  color: var(--text-secondary);
-}
-
-.wk-cmp-row b,
-.wk-cmp-prev {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.wk-cmp-row b {
-  color: var(--text-primary);
-  font-weight: 650;
-}
-
-.wk-cmp-prev {
-  color: var(--text-muted);
-  font-weight: 500;
-}
 
 /* 变化列：做成小药丸，和数字列共用同一条右边界 */
 .wk-delta {
@@ -1249,14 +1030,6 @@
 .wk-delta.is-flat { color: var(--text-muted); }
 .wk-delta.is-good { color: var(--success); }
 .wk-delta.is-bad { color: var(--danger); }
-
-.wk-cmp-proj {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-  align-items: center;
-}
 
 .wk-dir {
   display: flex;
@@ -1888,14 +1661,6 @@
 .tbl .cell-num {
   font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-.tbl-more {
-  padding: 10px 16px;
-  border-top: 1px solid var(--pm-line);
-  font-size: 11.5px;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--bg-input) 40%, transparent);
 }
 
 /* ---------------- 19.7 标签页 ---------------- */
@@ -2869,46 +2634,6 @@
 }
 
 /* 大图预览 */
-.shot-viewer {
-  position: fixed;
-  inset: 0;
-  z-index: 140;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-  background: rgba(0, 0, 0, 0.78);
-  cursor: zoom-out;
-  animation: fadeIn 0.12s ease;
-}
-
-.shot-viewer img {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 10px;
-  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
-  cursor: default;
-  object-fit: contain;
-}
-
-.shot-viewer-close {
-  position: absolute;
-  top: 18px;
-  right: 22px;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.shot-viewer-close:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
 
 .api-hist-time {
   flex: none;
@@ -3036,35 +2761,8 @@
   font-size: 11.5px;
 }
 
-.assert-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
-  margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--pm-line);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-input) 45%, transparent);
-}
-
-.assert-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 .assert-grid label.span2 {
   grid-column: span 2;
-}
-
-.assert-grid input {
-  height: 30px;
-  min-height: 0;
-  padding: 4px 9px;
-  font-size: 12px;
-  font-family: var(--font-mono);
 }
 
 .assert-hint {
@@ -4259,26 +3957,6 @@
   color: var(--text-muted);
 }
 
-.zt-mine-proj-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--pm-line);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  max-width: 420px;
-}
-
-.zt-mine-proj-btn:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--pm-line));
-  background: var(--bg-hover);
-}
-
 .zt-mine-proj-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4919,22 +4597,6 @@
   flex-wrap: wrap;
 }
 
-.zt-mine-proj-all {
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 7px;
-  border: 1px dashed var(--pm-line);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.zt-mine-proj-all:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
-}
-
 .zt-mine-proj-all.is-on {
   border-style: solid;
   border-color: var(--accent);
@@ -5154,16 +4816,6 @@
 /* ================================================================
    1.11.0 工具箱：页签条 + JSON 转化（并入工具箱）
    ================================================================ */
-.tool-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px;
-  margin-bottom: 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-card);
-}
 
 .tool-tabs .tab2 {
   display: inline-flex;
@@ -6167,24 +5819,6 @@
 .api-side-v2 .api-item-main { flex: 1 1 auto; display: block; }
 
 /* 名称：输入框长得像文本，hover/聚焦才显形 */
-.api-name-input {
-  display: block;
-  width: 100%;
-  height: 20px;
-  padding: 0 3px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  outline: none;
-  text-overflow: ellipsis;
-}
-
-.api-name-input::placeholder { color: var(--text-muted); font-weight: 400; }
-.api-name-input:hover { border-color: var(--border); background: var(--bg-card); }
-.api-name-input:focus { border-color: var(--accent); background: var(--bg-card); box-shadow: 0 0 0 2px var(--accent-light); }
 
 .api-side-v2 .api-item-sub {
   display: block;
@@ -6618,41 +6252,6 @@
   gap: 0;
 }
 
-.api-req-area {
-  flex: 0 0 auto;
-  min-height: 160px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-right: 2px;
-}
-
-.api-vsplit {
-  flex: 0 0 auto;
-  height: 12px;
-  margin: 6px 0;
-  cursor: row-resize;
-  border-radius: 6px;
-  background: transparent;
-  position: relative;
-}
-
-.api-vsplit::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 46px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--border-light);
-  transition: background .12s;
-}
-
-.api-vsplit:hover::after { background: var(--accent); }
-
 .api-resp-area {
   flex: 1 1 auto;
   overflow: auto;
@@ -6663,9 +6262,6 @@
 .api-resp-area > .pnl { margin: 0; }
 
 /* 1.12.1：请求区滚动时不要裁切半行；响应区保证最小可见高度 */
-.api-req-area {
-  scrollbar-gutter: stable;
-}
 
 .api-req-area > .pnl:last-child { margin-bottom: 4px; }
 
@@ -6683,21 +6279,6 @@
 
 /* ② 接口调试：请求区随内容自适应，避免下方面板被裁成半截 */
 .api-right { height: calc(100vh - 200px); }
-
-.api-req-area {
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: thin;
-  padding-bottom: 12px;
-}
-
-.api-req-area::-webkit-scrollbar { width: 10px; }
-.api-req-area::-webkit-scrollbar-thumb {
-  background: var(--border-light);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
 
 /* ================================================================
    1.12.2 修：接口调试回退单栏（分栏已撤），JSON 转化面板底色铺满
@@ -6876,16 +6457,6 @@
   min-width: 210px;
   padding: 6px 10px;
   font-size: 12px;
-}
-
-.zt-sumbar-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px 9px;
-  background: color-mix(in srgb, var(--bg-input) 40%, transparent);
-  font-size: 11px;
-  color: var(--text-muted);
 }
 
 .zt-sumbar-time {

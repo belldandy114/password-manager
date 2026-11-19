@@ -336,16 +336,21 @@ export function Environments() {
           desc="把各系统的开发 / 测试 / 预发 / 正式地址收在一起，点一下全部探活；结果会留下历史，切页面也不会丢"
           tools={
             <>
-              <SearchBox value={search} onChange={setSearch} placeholder="搜索系统 / 地址 / 备注" />
-              <select
-                className="env-check-timeout"
-                value={timeoutMs}
-                onChange={e => void changeTimeout(Number(e.target.value))}
-                title="单条地址的超时时间（会记住，定时巡检也用这个值）"
-                disabled={running}
-              >
-                {TIMEOUTS.map(t => <option key={t} value={t}>超时 {t / 1000}s</option>)}
-              </select>
+              {/* 空库时不摆「搜索 / 超时」这类用不上的控件：技能点全给「新增环境」 */}
+              {items.length > 0 && (
+                <>
+                  <SearchBox value={search} onChange={setSearch} placeholder="搜索系统 / 地址 / 备注" />
+                  <select
+                    className="env-check-timeout"
+                    value={timeoutMs}
+                    onChange={e => void changeTimeout(Number(e.target.value))}
+                    title="单条地址的超时时间（会记住，定时巡检也用这个值）"
+                    disabled={running}
+                  >
+                    {TIMEOUTS.map(t => <option key={t} value={t}>超时 {t / 1000}s</option>)}
+                  </select>
+                </>
+              )}
               <button className="btn btn-secondary btn-sm" onClick={runProbe} disabled={running || !filtered.length}>
                 <Icons.refresh size={13} /> {running ? '巡检中…' : '一键巡检'}
               </button>

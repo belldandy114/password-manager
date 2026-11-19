@@ -1637,6 +1637,7 @@ function clearClipboardAfter(delayMs) {
 const { parseCsv, normalizeImportRecords } = require('./csv');
 const { shouldNotifyUpdate } = require('./update-check');
 const { registerFileIpc } = require('./ipc-files');
+const { registerCasesIpc } = require('./ipc-cases');
 const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
@@ -2222,6 +2223,8 @@ function setupIpcHandlers() {
   registerPreviewIpc();
   // 目录型文件 IPC（周报 / 笔记）已拆到 electron/ipc-files.js
   registerFileIpc({ getWindow: () => mainWindow });
+  // 用例库：只做文件管家（收纳/打开/导出），配置存在 <DATA_DIR>/cases.json
+  registerCasesIpc({ getWindow: () => mainWindow, dataDir: DATA_DIR });
   registerToolsIpc();
   // 粘贴截图 → 加密附件（#5）：与会话密钥共用同一套加解密与目录
   registerAttachIpc({
