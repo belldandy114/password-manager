@@ -17,8 +17,10 @@ export const PAGE_LOADERS = {
   toolbox: () => import('./Toolbox').then(m => ({ default: m.Toolbox })),
   environments: () => import('./Environments').then(m => ({ default: m.Environments })),
   weeklyReport: () => import('./WeeklyReport').then(m => ({ default: m.WeeklyReport })),
-  notes: () => import('./Notes').then(m => ({ default: m.Notes })),
-  attachments: () => import('./Attachments').then(m => ({ default: m.Attachments })),
+  // 1.30.1：「测试笔记」与「附件管理」合并到同一页（NotesAttachments），
+  // 两个 key 指向同一个 chunk —— 旧路由、命令面板、首页快捷入口都不用改。
+  notes: () => import('./NotesAttachments').then(m => ({ default: m.NotesAttachments })),
+  attachments: () => import('./NotesAttachments').then(m => ({ default: m.NotesAttachments })),
   zentao: () => import('./ZentaoPage').then(m => ({ default: m.ZentaoPage })),
   apiClient: () => import('./ApiClient').then(m => ({ default: m.ApiClient })),
   perfTest: () => import('./PerfTest').then(m => ({ default: m.PerfTest })),

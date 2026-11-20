@@ -21,7 +21,7 @@ import { formatRecent } from '../utils/time';
  * - 缩略图按需逐张解密（`AttImage`），一页几百个附件也不会一次性全解；
  * - 「未被引用」单独标出来 —— 删条目时附件不会跟着删，这些就是可以清理的孤儿。
  */
-export function Attachments() {
+export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   // 条目走 store（entries 不在 vaultCollections 里，ws:get 读不到），笔记走通用集合
   const entries = useStore(s => s.entries);
   /** 目录模式笔记的位置：设置页新入口写的是 settings.notesDir，旧版本只在 localStorage */
@@ -340,8 +340,7 @@ export function Attachments() {
   const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
   return (
-    <div className="content-area">
-      <Page>
+    <>
         <PageHead
           icon={<Icons.image size={16} />}
           title="附件管理"
@@ -375,6 +374,8 @@ export function Attachments() {
             </>
           }
         />
+
+        {afterHead}
 
         {dir && (
           <div className="att-dir-bar">
@@ -535,7 +536,6 @@ export function Attachments() {
             </>
           )}
         </Panel>
-      </Page>
       {zoom && <ImageLightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
       <Modal
         open={!!textPreview}
@@ -554,6 +554,21 @@ export function Attachments() {
         )}
       </Modal>
       {confirmNode}
+    </>
+  );
+}
+
+/**
+ * 独立页面外壳。
+ * 侧栏已把「测试笔记 / 附件管理」合并成一项「笔记与附件」（NotesAttachments.tsx），
+ * 这个导出保留给旧路由 / 直达链接使用，行为与合并页里的「附件」页签一致。
+ */
+export function Attachments() {
+  return (
+    <div className="content-area">
+      <Page>
+        <AttachmentsBody />
+      </Page>
     </div>
   );
 }

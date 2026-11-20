@@ -56,3 +56,10 @@ HANDOFF.md
 # 临时验证脚本（.tmp- 前缀，跑完即删）
 .tmp-*.js
 
+
+# 测试数据生成器页面（vite 的 tdg 入口）构建产物：不是源码，不该被隐私检查当成泄露源
+dist-tdg/
+
+# 背景图/玻璃体系实测产物（scripts/ui-bg-glass-test.js 生成，可随时重跑）
+scripts/.tmp-shots/
+scripts/.tmp-bg.png

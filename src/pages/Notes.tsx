@@ -249,7 +249,7 @@ function NoteLinksEditor({
   );
 }
 
-export function Notes() {
+export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   const { items, save, loading, reload } = useCollection<Note>('notes');
   const settings = useStore(s => s.settings);
   const updateSettings = useStore(s => s.updateSettings);
@@ -667,8 +667,7 @@ export function Notes() {
   );
 
   return (
-    <div className="content-area">
-      <Page>
+    <>
         <PageHead
           icon={<Icons.note size={16} />}
           title="测试笔记"
@@ -693,6 +692,8 @@ export function Notes() {
             </>
           }
         />
+
+        {afterHead}
 
         {/* 两个菜单合并后，用类型筛选区分 Markdown 笔记与 SQL 语句。
             1.25.1：目录模式也显示 —— 类型由 utils/noteKind.ts 按「文件名 + 正文特征」判出来，
@@ -907,8 +908,6 @@ export function Notes() {
           )}
           </>
         )}
-      </Page>
-
       {/* 本地库：编辑（Markdown 笔记 / SQL 片段共用，只是渲染方式不同） */}
       <Modal
         open={!!editing}
@@ -1129,6 +1128,21 @@ export function Notes() {
       </Modal>
 
       {confirmNode}
+    </>
+  );
+}
+
+/**
+ * 独立页面外壳。
+ * 侧栏已把「测试笔记 / 附件管理」合并成一项「笔记与附件」（NotesAttachments.tsx），
+ * 这个导出保留给旧路由 / 直达链接使用，行为与合并页里的「笔记」页签一致。
+ */
+export function Notes() {
+  return (
+    <div className="content-area">
+      <Page>
+        <NotesBody />
+      </Page>
     </div>
   );
 }
