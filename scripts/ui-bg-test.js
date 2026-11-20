@@ -33,12 +33,19 @@ const check = (name, ok, detail) => {
     await reloadPage(session, { settleMs: 2400 });
     await ensureUnlocked(session); // 重载后回到登录页，再解锁（模拟重启后加载）
 
+    // ⚠️ data-bg 是异步链写上去的（settingsSave → bg:get 取图 → <img> load → applyBackground），
+    // 探针实测：解锁那一刻读它有时还是 null，8ms 后才变 'image'。只读一次快照会偶发红，而且一红就是
+    // 这条 + 侧栏 + 内容区三条一起红（后两条的玻璃值就挂在 html[data-bg='image'] 下面）。
+    // 这里等到位再读 —— 但「等不到」绝不等于通过：throwOnTimeout:false 只是把失败落回下面那条断言
+    // （超时 → state.dataBg 不是 'image' → 断言红 → 退出码 1），断言条数仍是 15 条。
+    const bgSeen = await session.waitFor({ expr: `document.documentElement.dataset.bg === 'image'` }, { timeout: 10000, throwOnTimeout: false });
+
     // 1) 背景层与半透明
     const state = await ev(`(() => { const img = document.querySelector('.app-bg-img'); const cs = (s) => getComputedStyle(document.querySelector(s) || document.body);
       return { dataBg: document.documentElement.getAttribute('data-bg'), hasImg: !!img, srcOk: !!img && img.src.startsWith('data:image/'),
         imgCover: img ? getComputedStyle(img).objectFit : '', sidebarBg: cs('.sidebar').backgroundColor, contentBg: cs('.content-area').backgroundColor,
         accentAttr: document.documentElement.getAttribute('data-accent'), accentVar: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() }; })()`);
-    check('解锁后 <html data-bg=image>', state.dataBg === 'image', state.dataBg);
+    check('解锁后 <html data-bg=image>', state.dataBg === 'image', bgSeen ? state.dataBg : `等 10000ms 仍未出现 data-bg=image，读到 ${state.dataBg}`);
     check('背景层用 <img> 渲染且是 data URL', state.hasImg && state.srcOk, { hasImg: state.hasImg, srcOk: state.srcOk });
     check('背景图 object-fit: cover（不拉伸）', state.imgCover === 'cover', state.imgCover);
     check('侧栏半透明（alpha < 1）', alpha(state.sidebarBg) < 1, state.sidebarBg);
