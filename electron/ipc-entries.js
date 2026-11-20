@@ -481,6 +481,13 @@ function registerEntriesIpc(deps) {
       attachDir: String(s.attachDir || ''),
       notesDir: String(s.notesDir || ''),
       weeklyDir: String(s.weeklyDir || ''),
+      // 自定义背景图（1.30.0）：渲染层要读回，否则重启后背景丢失
+      backgroundImage: String(s.backgroundImage || ''),
+      backgroundOpacity: Number.isFinite(Number(s.backgroundOpacity)) ? Number(s.backgroundOpacity) : 0.32,
+      backgroundBlur: Number.isFinite(Number(s.backgroundBlur)) ? Number(s.backgroundBlur) : 8,
+      backgroundDim: Number.isFinite(Number(s.backgroundDim)) ? Number(s.backgroundDim) : 0.42,
+      backgroundAccent: String(s.backgroundAccent || ''),
+      backgroundAutoAccent: s.backgroundAutoAccent !== false,
       browserPaths: s.browserPaths || { ...defaultSettings.browserPaths },
       keybindings: s.keybindings || { ...defaultSettings.keybindings },
     };
@@ -507,6 +514,9 @@ function registerEntriesIpc(deps) {
     'hotkeySearch', 'hotkeyToggle', 'hotkeyQuickNote',
     'jmeterPath', 'jmeterOutDir', 'jmeterLastJmx',
     'clipboardHistory', 'browserPaths', 'keybindings',
+    // 1.30.0：自定义背景图（图片文件由 bg:choose 写入，这里只存参数）
+    'backgroundImage', 'backgroundOpacity', 'backgroundBlur', 'backgroundDim',
+    'backgroundAccent', 'backgroundAutoAccent',
   ]);
 
   ipcMain.handle('settings:save', (_event, prefs) => {

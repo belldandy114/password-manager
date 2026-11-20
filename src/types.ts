@@ -156,6 +156,19 @@ export interface AppSettings {
   updateNotifiedVersion?: string;
   /** 上次停留的页面 */
   lastPage: string;
+
+  /** 自定义背景图文件名（存在数据目录 background/ 下） */
+  backgroundImage?: string;
+  /** 背景不透明度 0~0.9 */
+  backgroundOpacity?: number;
+  /** 背景模糊 px */
+  backgroundBlur?: number;
+  /** 压暗遮罩 0~0.9 */
+  backgroundDim?: number;
+  /** 从图片提取的强调色 #rrggbb */
+  backgroundAccent?: string;
+  /** 是否用图片主色替换强调色 */
+  backgroundAutoAccent?: boolean;
   /** 上一次「手动备份」的时间（自动每日备份不更新它，工作台用它算天数） */
   lastBackupAt?: string;
   /** 禅道新 Bug 提醒（后台定时检查） */
@@ -1008,6 +1021,12 @@ export interface ElectronAPI {
   onLockRequest: (cb: () => void) => () => void;
 
   // Settings
+  /** 自定义背景图：读取当前图（base64） */
+  bgGet: () => Promise<{ success: boolean; data?: BgImageInfo; error?: string }>;
+  /** 选择一张图片作为背景（主进程压缩后返回 base64） */
+  bgChoose: () => Promise<{ success: boolean; data?: BgImageInfo; error?: string; canceled?: boolean }>;
+  /** 移除背景图 */
+  bgClear: () => Promise<{ success: boolean; error?: string }>;
   settingsGet: () => Promise<AppSettings>;
   settingsSave: (data: Partial<AppSettings>) => Promise<{ success: boolean }>;
 
@@ -1543,3 +1562,14 @@ export interface JmxInspectResult {
 
 
 
+
+/** 背景图信息（主进程压缩后返回） */
+export interface BgImageInfo {
+  configured: boolean;
+  name?: string;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  bytes?: number;
+  original?: { width: number; height: number };
+}

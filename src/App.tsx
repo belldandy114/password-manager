@@ -9,6 +9,7 @@ import { NoticeCenter } from './components/NoticeCenter';
 import { Modal } from './components/Modal';
 import { UpdateDialog } from './components/UpdateDialog';
 import { applyTheme, watchSystemTheme, applyAccent, applyDensity } from './utils/theme';
+import { BackgroundLayer } from './components/BackgroundLayer';
 import { guessUrlFromInput } from './utils/urlInput';
 import { recordPageUse } from './utils/recent';
 import { useEnvAutoProbe } from './utils/envSchedule';
@@ -482,6 +483,7 @@ function App() {
 
   return (
     <div className="app-layout">
+      <BackgroundLayer />
       {/* 键盘用户从侧栏 13 个导航项跳到主内容不必逐个 Tab 过去；
           用 preventDefault 手动聚焦，纯锚点跳转在 SPA 里不会移走焦点 */}
       <a
@@ -576,6 +578,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

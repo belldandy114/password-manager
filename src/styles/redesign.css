@@ -7761,3 +7761,101 @@ button.notes-dirpath:focus-visible {
 
 /* 控制台行数提示（1.29.0） */
 .perf-console-hint { font-size: 10.5px; color: var(--text-3); margin-right: 4px; }
+
+/* ================================================================
+   自定义背景图（1.30.0）
+   - 图片画在 body::before（z-index:-1，天然在内容下面，不动布局）
+   - 压暗遮罩 body::after；卡片/侧栏/面板在 data-bg='image' 下变半透明 + 背景模糊
+   - 强调色：从图片取色后写 --bg-accent，data-accent='image' 时接管 --accent
+   ================================================================ */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.app-bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  opacity: var(--bg-opacity, 0.32);
+  filter: blur(var(--bg-blur, 8px));
+  transform: scale(1.04);
+  user-select: none;
+}
+.app-bg-dim {
+  position: absolute;
+  inset: 0;
+  background: #05070a;
+  opacity: var(--bg-dim, 0.42);
+}
+html[data-theme='light'] .app-bg-dim { background: #ffffff; }
+/* 背景层是 fixed z-index:0，侧栏/内容区要抬到它上面（否则会被盖住） */
+html[data-bg='image'] .app-layout { position: relative; z-index: 0; }
+html[data-bg='image'] .sidebar,
+html[data-bg='image'] .main-content,
+html[data-bg='image'] .skip-link { position: relative; z-index: 1; }
+
+html[data-bg='image'] body,
+html[data-bg='image'] .app-layout { background: transparent; }
+html[data-bg='image'] .sidebar {
+  background: color-mix(in srgb, var(--surface-1) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.04);
+}
+/* 内容区给一层薄底色：标题/说明文字直接压在图上会花，用 32% 的底色兜住可读性 */
+html[data-bg='image'] .content-area { background: color-mix(in srgb, var(--surface-0) 32%, transparent); }
+html[data-bg='image'] .pnl {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  backdrop-filter: blur(18px) saturate(1.03);
+}
+html[data-bg='image'] .entry-card {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  backdrop-filter: blur(14px);
+}
+html[data-bg='image'] .modal {
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+/* 图片取色接管强调色（data-accent='image'） */
+:root[data-accent='image'] {
+  --accent: var(--bg-accent, #4f9d99);
+  --accent-hover: color-mix(in srgb, var(--bg-accent, #4f9d99) 86%, white);
+  --accent-soft: color-mix(in srgb, var(--bg-accent, #4f9d99) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--bg-accent, #4f9d99) 34%, transparent);
+}
+[data-theme='light'][data-accent='image'] {
+  --accent-hover: color-mix(in srgb, var(--bg-accent, #4f9d99) 86%, black);
+  --accent-soft: color-mix(in srgb, var(--bg-accent, #4f9d99) 12%, transparent);
+}
+
+/* ---------------- 设置：自定义背景（1.30.0） ---------------- */
+.bg-control { display: flex; align-items: center; gap: 10px; }
+.bg-thumb {
+  width: 64px; height: 40px; border-radius: 8px; flex: 0 0 auto;
+  background-size: cover; background-position: center;
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-1);
+}
+.bg-thumb.is-empty {
+  background:
+    linear-gradient(135deg, transparent 45%, var(--line-strong) 45%, var(--line-strong) 55%, transparent 55%),
+    var(--surface-3);
+}
+.bg-slider { display: flex; align-items: center; gap: 10px; }
+.bg-slider input[type='range'] { width: 180px; }
+.bg-value { font-size: 11.5px; color: var(--text-3); min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.bg-accent-ctl { display: flex; align-items: center; gap: 12px; }
+.bg-accent-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 8%, transparent);
+}
+
+
+
+
+.bg-warn { color: var(--warn); }

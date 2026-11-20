@@ -1653,6 +1653,7 @@ const { registerVaultIoIpc } = require('./ipc-vault-io');
 const { registerZentaoIpc } = require('./ipc-zentao');
 const { registerAuthIpc } = require('./ipc-auth');
 const { registerDataIpc } = require('./ipc-data');
+const { registerBgIpc } = require('./ipc-bg');
 const { registerUpdateIpc } = require('./ipc-update');
 const { registerApiIpc, clearApiJar } = require('./ipc-api');
 const { registerWsIpc, closeAll: closeWsConnections } = require('./ipc-ws');
@@ -2149,6 +2150,17 @@ function setupIpcHandlers() {
     decrypt,
   });
 
+  // ---- 自定义背景图（实现见 electron/ipc-bg.js）----
+  registerBgIpc({
+    ipcMain,
+    dialog,
+    nativeImage,
+    dataDir: DATA_DIR,
+    getWindow: () => mainWindow,
+    loadSettings,
+    saveSettings,
+  });
+
   // ---- 应用内更新（实现见 electron/ipc-update.js）----
   registerUpdateIpc({
     loadSettings,
@@ -2338,4 +2350,5 @@ app.on('window-all-closed', () => {
 function sortByDateDesc(arr) {
   return arr.sort((a, b) => new Date(b.deletedAt || b.createdAt) - new Date(a.deletedAt || a.createdAt));
 }
+
 

@@ -811,3 +811,24 @@ npm run dist            # 全量构建：renderer → 子应用 → --dir → NS
 - **图标收尾**：清掉剩余 emoji —— 设置页左侧 tab（🔒💾🎨⏱️ℹ️ → lock/db/tool/clock/note）、
   TOTP 徽标 🔐、安全体检空态 🎉/🔁、导出格式下拉 🔒📄、导入模板 📥、登录提示 💡、JSON 工具 💡🔧。
   `boundaryValues.ts` 里的 emoji 是测试数据（边界值用例），保留。
+
+### 1.30.0：自定义背景图 + 图片取色（2026-11-20）
+
+- **上传图片当背景**：设置 → 外观与交互 → 背景。图片由主进程用 `nativeImage` 读入并压到最长边
+  2560×1600、JPEG 88（透明 PNG 保留 PNG）存到 `<数据目录>/background/`，原图不动；设置里只存文件名。
+- **不变形**：渲染层用 `<img>` + `object-fit: cover`（等比裁剪，窗口拉宽/缩窄只改裁剪范围）。
+  不用 `background-size: 100% 100%`，也不把 data URL 塞进 CSS 变量 —— 实测超长自定义属性会被 Chromium 丢弃，
+  背景直接空白（这就是第一版 `body::before` 方案失败的原因）。
+- **可调参数**：不透明度 0~80%、模糊 0~20px、压暗 0~80%（浅色主题压亮），滑块停下 300ms 才落盘。
+- **图片取色**：Canvas 缩到 48×48，量化投票挑主色（跳过近黑/近白/灰度），再用 `ensureReadableOnWhiteText`
+  压暗到白字对比度 ≥ 4.5，写 `--bg-accent` + `data-accent='image'` 接管强调色；可在设置里关掉。
+- **卡片半透明**：`html[data-bg='image']` 下侧栏 72%、面板/网址卡 70% + `backdrop-filter` 模糊，
+  内容区补 32% 底色兜住标题可读性；弹窗 92%。深色压暗、浅色压亮。
+- **`--accent` 的接管方式**：`:root[data-accent='image']` 里用 `color-mix` 推导 hover/soft/line，
+  不再用 inline style（避免盖掉浅色主题的令牌）。
+- **设置白名单补齐**：`settings:get` 与 `SETTINGS_WRITABLE` 都加上了背景字段 —— 否则保存被静默丢弃、
+  重启后背景消失（回归里专门断言 `settings.json` 里的 `backgroundAccent`）。
+- 低分辨率提示：宽度 < 1400 时提示「铺满窗口会有点糊」；只接受 JPG/PNG（nativeImage 读不了 WebP/BMP）。
+
+回归：`scripts/ui-bg-test.js` 15 条（背景层渲染 / cover / 半透明 / 取色落盘 / 设置区块 / 移除恢复），
+已加入 `regress-all.js`。r9 80、r10 24、用例库 28、脚本库 22 全过。

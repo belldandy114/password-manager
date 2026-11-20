@@ -92,6 +92,65 @@ function fmtEta(seconds: number): string {
 export function Settings() {
   const settings = useStore(s => s.settings);
   const updateSettings = useStore(s => s.updateSettings);
+
+  /* ---- 自定义背景（1.30.0） ---- */
+  const [bgInfo, setBgInfo] = useState<{ dataUrl: string; width: number; height: number; original?: { width: number; height: number } } | null>(null);
+  const [bgBusy, setBgBusy] = useState(false);
+  const bgSaveTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await window.electronAPI.bgGet();
+      if (r.success && r.data && r.data.configured && r.data.dataUrl) {
+        setBgInfo({
+          dataUrl: r.data.dataUrl,
+          width: r.data.width || 0,
+          height: r.data.height || 0,
+          original: r.data.original,
+        });
+      } else {
+        setBgInfo(null);
+      }
+    })();
+  }, []);
+
+  /** 滑块拖动时先更新界面，停 300ms 再落盘 */
+  const patchBg = async (patch: Partial<AppSettings>) => {
+    updateSettings(patch);
+    if (bgSaveTimer.current) window.clearTimeout(bgSaveTimer.current);
+    bgSaveTimer.current = window.setTimeout(() => {
+      void window.electronAPI.settingsSave(patch);
+    }, 300);
+  };
+
+  const chooseBackground = async () => {
+    setBgBusy(true);
+    const r = await window.electronAPI.bgChoose();
+    setBgBusy(false);
+    if (!r.success) {
+      if (!r.canceled) addToast(r.error || '选择失败', 'error');
+      return;
+    }
+    const d = r.data;
+    if (!d || !d.dataUrl) return;
+    setBgInfo({ dataUrl: d.dataUrl, width: d.width || 0, height: d.height || 0, original: d.original });
+    const next: Partial<AppSettings> = { backgroundImage: d.name || '', backgroundAccent: '' };
+    if (settings.backgroundOpacity === undefined) next.backgroundOpacity = 0.32;
+    if (settings.backgroundBlur === undefined) next.backgroundBlur = 8;
+    if (settings.backgroundDim === undefined) next.backgroundDim = 0.42;
+    if (settings.backgroundAutoAccent === undefined) next.backgroundAutoAccent = true;
+    updateSettings(next);
+    addToast('背景已更新', 'success');
+  };
+
+  const clearBackground = async () => {
+    const r = await window.electronAPI.bgClear();
+    if (!r.success) { addToast(r.error || '移除失败', 'error'); return; }
+    setBgInfo(null);
+    updateSettings({ backgroundImage: '', backgroundAccent: '' });
+    addToast('已恢复默认背景', 'success');
+  };
+
   const { toasts, addToast, removeToast } = useToast();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
@@ -1292,6 +1351,125 @@ export function Settings() {
                 </select>
               </div>
             </div>
+            <h3>背景</h3>
+            <div className="setting-row setting-row--bg">
+              <div>
+                <div className="setting-label">背景图片</div>
+                <div className="setting-desc">
+                  选一张图片铺满窗口（等比裁剪，不变形）。会自动压缩到最长边 2560 像素，原图不会被修改。
+                </div>
+                {bgInfo && (
+                  <div className="setting-desc">
+                    {bgInfo.width}×{bgInfo.height}
+                    {bgInfo.original && (bgInfo.original.width !== bgInfo.width || bgInfo.original.height !== bgInfo.height)
+                      ? `（原图 ${bgInfo.original.width}×${bgInfo.original.height}，已压缩）`
+                      : ''}
+                    {bgInfo.width > 0 && bgInfo.width < 1400 && (
+                      <span className="bg-warn"> · 分辨率偏低，铺满窗口会有点糊</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="setting-control bg-control">
+                {bgInfo ? (
+                  <span className="bg-thumb" style={{ backgroundImage: `url("${bgInfo.dataUrl}")` }} title="当前背景" />
+                ) : (
+                  <span className="bg-thumb is-empty" title="还没有设置背景" />
+                )}
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void chooseBackground()}
+                  disabled={bgBusy}
+                >{bgBusy ? '处理中…' : bgInfo ? '更换图片' : '选择图片'}</button>
+                {bgInfo && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => void clearBackground()}>移除</button>
+                )}
+              </div>
+            </div>
+
+            {bgInfo && (
+              <>
+                <div className="setting-row">
+                  <div>
+                    <div className="setting-label">图片不透明度</div>
+                    <div className="setting-desc">调低会让背景更淡，卡片上的字更清楚</div>
+                  </div>
+                  <div className="setting-control bg-slider">
+                    <input
+                      type="range"
+                      min={0}
+                      max={80}
+                      value={Math.round((settings.backgroundOpacity ?? 0.32) * 100)}
+                      onChange={e => void patchBg({ backgroundOpacity: Number(e.target.value) / 100 })}
+                      aria-label="背景不透明度"
+                    />
+                    <span className="bg-value">{Math.round((settings.backgroundOpacity ?? 0.32) * 100)}%</span>
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <div className="setting-label">背景模糊</div>
+                    <div className="setting-desc">模糊一点不容易和文字打架，分辨率低的图也更好看</div>
+                  </div>
+                  <div className="setting-control bg-slider">
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      value={Math.round(settings.backgroundBlur ?? 8)}
+                      onChange={e => void patchBg({ backgroundBlur: Number(e.target.value) })}
+                      aria-label="背景模糊"
+                    />
+                    <span className="bg-value">{Math.round(settings.backgroundBlur ?? 8)}px</span>
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <div className="setting-label">压暗</div>
+                    <div className="setting-desc">深色主题压暗、浅色主题压亮，保证背景上的文字可读</div>
+                  </div>
+                  <div className="setting-control bg-slider">
+                    <input
+                      type="range"
+                      min={0}
+                      max={80}
+                      value={Math.round((settings.backgroundDim ?? 0.42) * 100)}
+                      onChange={e => void patchBg({ backgroundDim: Number(e.target.value) / 100 })}
+                      aria-label="背景压暗"
+                    />
+                    <span className="bg-value">{Math.round((settings.backgroundDim ?? 0.42) * 100)}%</span>
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <div className="setting-label">用图片主色做强调色</div>
+                    <div className="setting-desc">
+                      自动从图片里取主色替换按钮/选中态颜色；取到的颜色会压暗到白字可读
+                    </div>
+                  </div>
+                  <div className="setting-control bg-accent-ctl">
+                    {settings.backgroundAccent && (
+                      <span
+                        className="bg-accent-dot"
+                        style={{ background: settings.backgroundAccent }}
+                        title={settings.backgroundAccent}
+                      />
+                    )}
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={settings.backgroundAutoAccent !== false}
+                        onChange={e => void patchBg({ backgroundAutoAccent: e.target.checked })}
+                        aria-label="用图片主色做强调色"
+                      />
+                      <span className="switch-slider" />
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+
+
             <h3 style={{ marginTop: 24 }}>窗口与启动</h3>
             <div className="setting-row">
               <div>
@@ -2105,3 +2283,6 @@ export function Settings() {
     </div>
   );
 }
+
+
+

@@ -117,6 +117,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeAllListeners('lock-request');
   },
 
+  // 自定义背景图
+  bgGet: () => ipcRenderer.invoke('bg:get'),
+  bgChoose: () => ipcRenderer.invoke('bg:choose'),
+  bgClear: () => ipcRenderer.invoke('bg:clear'),
+
   // Settings
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSave: (data) => ipcRenderer.invoke('settings:save', data),
@@ -391,6 +396,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('jmeter:done', handler);
   },
 });
+
 
 
 
