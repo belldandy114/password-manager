@@ -328,26 +328,13 @@ function App() {
   const density = useStore(s => s.settings.density);
   useEffect(() => { applyDensity(density); }, [density]);
 
-  // 解锁后回到上次停留的页面
+  // 解锁后固定落在「工作台」（1.29.0 起不再恢复上次页面）
   useEffect(() => {
     if (isLocked) return;
-    const saved = useStore.getState().settings.lastPage;
-    /**
-     * 1.25.0 落地页从「网址管理」换成「今日工作台」。
-     *
-     * 老用户的 lastPage 里存的是 'passwordManager'（那是旧版本的默认值，不是他主动选的），
-     * 直接沿用会让人永远看不到新首页。所以做**一次性**迁移：第一次解锁时若 lastPage
-     * 还是 'passwordManager'，落到 home 并记下标记；之后完全尊重用户的真实选择
-     * （包括他后来又主动选回网址管理的情况）。
-     */
-    const LANDING_MIGRATED = 'pm.landing.home-v1';
-    let migrated = false;
-    try { migrated = localStorage.getItem(LANDING_MIGRATED) === '1'; } catch { /* 隐私模式 */ }
-    if (!migrated) {
-      try { localStorage.setItem(LANDING_MIGRATED, '1'); } catch { /* 忽略 */ }
-      if (!saved || saved === 'passwordManager') return; // 留在 home
-    }
-    if (saved && saved !== 'home') setCurrentPage(saved);
+    // 以前会读 settings.lastPage 恢复上次停留的页面，结果是「重启后还在某个二级页」，
+    // 用户反馈每次都要自己点回工作台。现在统一落在工作台；lastPage 仍照常记录，
+    // 只是不再用于启动跳转（以后要做「继续上次」设置项时还有数据）。
+    setCurrentPage('home');
   }, [isLocked]);
 
   // 记住当前页面（600ms 节流）

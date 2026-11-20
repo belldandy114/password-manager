@@ -289,7 +289,9 @@ export function Home() {
   );
 
   /* ---------- 4. 备份 ---------- */
-  const backupDays = backup.at ? daysSince(backup.at) : null;
+  // 优先用手动备份时间；没有就退回最新备份文件的时间（老用户没点过手动备份）
+  const manualBackupAt = useStore(s => s.settings.lastBackupAt);
+  const backupDays = (manualBackupAt || backup.at) ? daysSince(manualBackupAt || backup.at) : null;
   const backupStale = backupDays !== null && backupDays > 3;
 
   /* ---------- 5. 笔记 ---------- */
@@ -523,7 +525,12 @@ export function Home() {
                   <i>回归失败</i>
                 </div>
                 <div className="home-stat">
-                  <b className={backupStale ? 'is-warn' : ''}>{backupDays === null ? '—' : backupDays}</b>
+                  <b
+                    className={backupStale ? 'is-warn' : ''}
+                    title={manualBackupAt
+                      ? `上次手动备份：${new Date(manualBackupAt).toLocaleString()}`
+                      : (backup.at ? `最新备份文件：${new Date(backup.at).toLocaleString()}` : '还没有备份记录')}
+                  >{backupDays === null ? '—' : backupDays}</b>
                   <i>距上次备份（天）</i>
                 </div>
               </div>
@@ -645,6 +652,8 @@ export function Home() {
     </div>
   );
 }
+
+
 
 
 

@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import { useConfirm } from './confirm';
 import { getTagHue } from '../utils/tagColors';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
+import { Icons } from './ui';
 import { recordEntryUse } from '../utils/recent';
 import { TotpBadge } from './EntryExtras';
 
@@ -289,7 +290,7 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                     className={`cell-icon-btn ${isCopyFeedback(entry.id, 'url') ? 'copied' : ''}`}
                     onClick={(e) => { e.stopPropagation(); handleCopyWithFeedback(entry.url, 'URL', entry.id, 'url'); }}
                     title="复制网址（复制的是 URL，不是名称）">
-                    {isCopyFeedback(entry.id, 'url') ? '\u2705' : '\u{1F517}'}
+                    {isCopyFeedback(entry.id, 'url') ? <Icons.check size={13} /> : <Icons.link size={13} />}
                     {isCopyFeedback(entry.id, 'url') && <span className="copy-feedback-text">已复制</span>}
                   </button>
                 </div>
@@ -305,7 +306,7 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                     className={`cell-icon-btn ${isCopyFeedback(entry.id, 'username') ? 'copied' : ''}`}
                     onClick={(e) => { e.stopPropagation(); handleCopyWithFeedback(entry.username, '\u8D26\u53F7', entry.id, 'username'); }}
                     title="复制账号">
-                    {isCopyFeedback(entry.id, 'username') ? '\u2705' : '\u{1F4CB}'}
+                    {isCopyFeedback(entry.id, 'username') ? <Icons.check size={13} /> : <Icons.user size={13} />}
                     {isCopyFeedback(entry.id, 'username') && <span className="copy-feedback-text">已复制</span>}
                   </button>
                 </div>
@@ -320,20 +321,15 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                     <span className="password-dots">{'********'}</span>
                   )}
                   <button className="pwd-icon-btn" onClick={(e) => togglePassword(entry.id, e)}
-                    title={showPwd ? '隐藏密码' : '显示密码'}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-                      {showPwd ? (
-                        <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
-                      ) : (
-                        <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
-                      )}
-                    </svg>
+                    title={showPwd ? '隐藏密码' : '显示密码'}
+                    aria-label={showPwd ? '隐藏密码' : '显示密码'}>
+                    {showPwd ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
                   </button>
                   <button className={`pwd-icon-btn ${isCopyFeedback(entry.id, 'password') ? 'copied' : ''}`}
                     onClick={(e) => { e.stopPropagation(); handleCopyWithFeedback(entry.password, '\u5BC6\u7801', entry.id, 'password'); }}
                     title="复制密码">
                     {isCopyFeedback(entry.id, 'password') ? (
-                      <><span>{'\u2705'}</span><span className="copy-feedback-text">已复制</span></>
+                      <><span><Icons.check size={12} /></span><span className="copy-feedback-text">已复制</span></>
                     ) : (
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -391,7 +387,7 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
                     title={`${entry.attachments!.length} 个附件：${entry.attachments!.map(a => a.name).join('、')}`}
                     onClick={e => { e.stopPropagation(); useStore.getState().requestNavigate('attachments'); }}
                   >
-                    {'\u{1F4CE}'}{entry.attachments!.length}
+                    <Icons.clip size={12} />{entry.attachments!.length}
                   </button>
                 ) : (
                   <span className="cell-empty">-</span>
@@ -480,4 +476,6 @@ export function EntryList({ entries, onEdit, onCopy, onOpen, securityFlags }: Pr
     </div>
   );
 }
+
+
 

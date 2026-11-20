@@ -704,3 +704,110 @@ npm run dist            # 全量构建：renderer → 子应用 → --dir → NS
 
 回归：`ui-cases-test.js` 28 条（新增「系统节点统计模块数」「Ctrl+K 能搜到用例文件」）。
 
+
+### 1.27.0：弹窗定位 / 密码图标统一 / 压测脚本库（2026-11-20）
+
+**弹窗跑到页面底部（修）**
+- 根因：`1.26.1` 的页面进入动画 `.pg { animation: ... both }` 让页面容器在动画结束后仍带 `transform: matrix(1,0,0,1,0,0)`
+  （单位矩阵也算），`position: fixed` 于是以页面为基准而不是视口 —— 页面越长，弹窗越靠下。
+- 修法两层：`Modal` 改成 `createPortal(..., document.body)`（对任何祖先 transform 免疫）；
+  同时把 `.pg` 的 `animation-fill-mode` 从 `both` 改成 `backwards`，动画结束后不再留 transform。
+- 回归：`ui-jmxlib-test.js` 断言 `.modal-overlay` 覆盖整个视口（`top=0 / left=0 / width=innerWidth`）。
+
+**密码显隐图标统一**
+- 之前三处各写各的：`EntryForm` 用 emoji（👁/🙈）、`EntryCard` 用 emoji、`EntryList` 手绘 SVG。
+- 现在统一用 `Icons.eye` / `Icons.eyeOff`（Tabler），14px，带 `title` 与 `aria-label`；
+  样式在 `redesign.css` 末尾（`.password-toggle / .pwd-icon-btn / .cred-eye-btn`）。
+
+**压力测试：脚本库（新）**
+- 库根目录选一次，存 `<数据目录>/jmxlib.json`；两级文件夹封顶（与用例库同一套 `cases-paths` 校验）。
+- 只收 `.jmx`（复制进库，重名加 `(2)`）；导入 / 新建文件夹 / 重命名 / 删除（回收站）/ 定位 / 用默认应用打开。
+- **点一个脚本**就把「运行配置」填好：JMX 路径、输出目录、线程数、循环次数（后三个来自脚本自己的设置）。
+- 每个脚本可存默认参数：输出目录（没设置时用 `<数据目录>/jmeter-reports`，运行仍会建 `report-<时间戳>`）、
+  线程、循环、备注；运行结束后写回「最近运行」（成功/失败 + 时间 + 报告目录），库里直接显示。
+- 「检查脚本」：静态解析 JMX（纯函数 `electron/jmx-script.js` + 7 条单测）——
+  线程组数量、默认线程/循环、`${__P(name,default)}` 可覆盖参数、CSV Data Set 引用的文件是否存在（相对路径按脚本目录解析）。
+- 回归：`scripts/ui-jmxlib-test.js`（11 条，含自动填充、检查、设置弹窗、重复导入、弹窗居中）。
+
+### 1.27.1：脚本库补四项（2026-11-20）
+
+- **参数面板**：脚本里 `${__P(name,default)}` 声明的参数会解析出来（`inspectJmx.params`），
+  运行页多出一组「脚本参数」输入框，运行时拼成 `-Jname=value` 追加到 `extraArgs`；
+  填过的值存进 `meta.params`，下次载入脚本自动带出。脚本设置弹窗里也能改。
+- **数据文件预检**：`jmxlib:validate` 现在会解析 CSV Data Set 的 `filename`（相对路径按脚本所在目录解析），
+  返回 `files[] = { path, abs, exists, bytes, lines }`（只读前 8MB 数行）；
+  行数少于线程数时提示「多线程会重复读同一批数据」，文件不存在直接标红。
+- **模板新建**：`buildJmxTemplate()`（纯函数，4 条单测）生成最小可跑的 HTTP 脚本 ——
+  TestPlan + ThreadGroup（`${__P(threads,N)}`）+ LoopController（`${__P(loops,N)}`）+ HTTPSamplerProxy + HeaderManager，
+  地址里的协议/端口/路径由 `new URL()` 拆好，脚本名做 XML 转义。UI 上是「新建脚本」按钮 + 一个小表单。
+- **历史趋势**：`jmxlib:mark-run` 现在接 `stats` 与 `durationMs`，每次追加一条 `runs[]`（保留最近 20 次：
+  样本数/错误数/错误率/平均 RT/吞吐量）；脚本设置弹窗底部画一张 SVG 走势图（吞吐量折线 + 错误率红点），
+  标注最新 TPS、错误率和「几次有错误」。
+
+注意：`stats.errorPct` 已经是**百分比**（0~100），写入时不要再乘 100（踩过一次，图上显示 600%）。
+
+### 1.28.0：压力测试页改成两栏 + 锁屏图标（2026-11-20）
+
+**布局**
+- 左栏（380px，可折叠卡片）：环境 / 脚本库 / 运行配置；右栏：`实时控制台 · 历史记录` 页签、结果面板、运行历史。
+- 以前是整页纵向平铺：脚本库在上面、控制台在下面，跑起来要来回滚；现在左边定参数、右边看输出。
+- 折叠头是 `SideFold`（本地组件）：整行可点，`aria-expanded`，chevron 旋转；
+  `.perf-split` 在 ≤1200px 降为单列。
+- 执行命令块加了「复制」（`navigator.clipboard`，失败给 toast）。
+- 运行历史改成真正的表格（时间 / 脚本 / 样本 / 错误率 / TPS / 平均 / 操作），
+  页签「历史记录」显示全部，右栏下方只显示最近 5 次。
+
+**锁屏图标**
+- `Login.tsx` 里三处密码显隐（设置主密码 / 解锁 / 修改密码）还是 emoji，现在与其它页面统一成 `Icons.eye / eyeOff`。
+
+**回归**
+- `ui-round10-test.js` 跟着改选择器：面板列表断言改成「环境 / 脚本库 / 运行配置 + 两个页签」，
+  运行历史从 `.perf-hist-row` 改成 `.perf-hist-tbl tbody tr`（23 → 24 条仍全过）。
+
+### 1.28.1：压测页反馈修正（2026-11-20）
+
+- **历史只留一份**：`实时控制台 · 历史记录` 页签与下方「运行历史」表格内容完全一样 —— 去掉页签，
+  控制台固定标题「实时控制台」，历史统一由「运行历史」表格呈现（最近 5 次 + 清空历史）。
+- **环境单行**：JMeter / Java 各一行（值做省略号截断，右侧「选择」按钮同一行），候选列表单独一行。之前是「一行值 + 一行按钮」，卡片很高。
+- **根目录脚本看不见（修 bug）**：`jmxlib:import` 到根目录能成功，但树只渲染了「目录里的文件」，根目录文件从来没显示过。
+  现在根文件从 `jmxlibList('')` 的 `files` 渲染，并加「根目录脚本」分组标题。
+  组件同时监听 `window` 事件 `pm:jmxlib-refresh`，外部 IPC 改完可以主动刷列表（测试里用它代替原生对话框）。
+- **点脚本后 JMX 路径还是上一次的（修 bug）**：`jmeterDefaults()` 在页面挂载后要 1~2 秒才返回（中间还要探测 Java），
+  晚到的默认值直接 `setJmxPath(上一次脚本)` 把用户刚点的覆盖了。改成函数式更新 `setJmxPath(prev => prev || 默认值)`。
+- **点脚本把已选输出目录冲掉（修 bug）**：脚本没存 `outDir` 时之前一律落到默认 `jmeter-reports`；
+  现在「脚本有自己的目录就用、没有就保留当前选择的、当前为空才落默认」。
+
+回归：`ui-jmxlib-test.js` 20 条（新增根目录可见、环境单行、页签移除、换脚本更新路径）；`ui-round10-test.js` 24 条。
+
+### 1.28.2：输出目录不再被冲掉 + 网址管理图标（2026-11-20）
+
+- **点脚本仍会改输出目录（真 bug 根因）**：上一版只改了 `PerfTest.loadFromLib`，但 `JmxLibrary.pickOne`
+  在调 `onPick` 之前就自己取了一次默认目录并塞进 `meta.outDir` —— 页面以为「脚本存了目录」，于是照用。
+  现在 `pickOne` 只带脚本自己存的参数；输出目录没存就完全不动页面的选择。
+  空目录的兜底挪到 `start()`：真要跑的时候才取默认 `jmeter-reports`。
+  顺带 `pickOne` 点击时现取一次 meta（列表里是旧快照时也能拿到最新参数）。
+- **网址管理图标**：卡片头部的复制网址、标签、附件数、自定义字段、备注、账号、密码，以及底部动作组
+  （复制 URL / 账号 / 密码、编辑、钉小窗）原来是 emoji（📋🏷📎🔖📝👤🔑✏️📌），
+  全部换成 Tabler 图标（`Icons.copy/tag/clip/list/note/user/key/pencil/pin/link/check`）；
+  列表视图的复制反馈、附件数，标签侧栏右键菜单（复制/重命名/钉住/删除）一并换掉。
+  `ui.tsx` 新增 `Icons.user` / `Icons.clip` 两个图标。
+- **状态字弱化**：`.perf-fold-meta` 10.5px / 75% 不透明度（「已就绪」「已选脚本」不再像标签）。
+- **运行历史展开全部**：默认最近 5 次，右上角「展开全部（N）」展开到全部（容器最高 420px 滚动），可收起。
+
+回归：`ui-jmxlib-test.js` 22 条（新增「脚本没存目录时不覆盖」「存了就带出」「换脚本保留目录」）；r9 80 条、r10 24 条。
+
+### 1.29.0：启动落点 / 历史展开 / 备份天数 / 图标收尾（2026-11-20）
+
+- **启动固定落在工作台**：以前解锁会读 `settings.lastPage` 恢复上次页面，重启后经常停在某个二级页。
+  现在统一 `setCurrentPage('home')`；`lastPage` 仍照常记录（以后要做「继续上次」开关时有数据）。
+- **运行历史「展开全部/收起」看着没反应**：底部只渲染最近 5 次，历史少于等于 5 条时点它自然没变化。
+  改成只有 `history.length > 5` 才显示这个按钮（`jmeter-history` 最多存 50 条）。
+- **「距上次备份（天）」永远是 0**：自动每日备份（`backupVaultOncePerDay`）当天第一次保存就会写
+  `vault-YYYY-MM-DD.enc`，所以文件时间永远是今天。现在 `backup:now`（用户手点的那次）会把时间写进
+  `settings.lastBackupAt`，工作台优先用它算天数；没有手动记录时退回最新备份文件时间，并在数字上加了
+  tooltip 显示具体时间。
+- **控制台行数**：界面保留最近 **4000 行**（超出丢最早的，完整输出看「打开运行日志」），
+  标题右侧加了「最近 N 行 / 最多保留 4000 行」的提示。
+- **图标收尾**：清掉剩余 emoji —— 设置页左侧 tab（🔒💾🎨⏱️ℹ️ → lock/db/tool/clock/note）、
+  TOTP 徽标 🔐、安全体检空态 🎉/🔁、导出格式下拉 🔒📄、导入模板 📥、登录提示 💡、JSON 工具 💡🔧。
+  `boundaryValues.ts` 里的 emoji 是测试数据（边界值用例），保留。

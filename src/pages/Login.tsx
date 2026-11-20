@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { Modal } from '../components/Modal';
 import type { BackupFile } from '../types';
 import { formatDateTime } from '../utils/time';
+import { Icons } from '../components/ui';
 
 interface Props {
   onLogin: () => void;
@@ -208,7 +209,7 @@ export function Login({ onLogin }: Props) {
                   placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
                 <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
                   aria-label={showPassword ? '隐藏密码' : '显示密码'}>
-                  {showPassword ? '🙈' : '👁'}
+                  {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
                 </button>
               </div>
               {password && (
@@ -267,7 +268,7 @@ export function Login({ onLogin }: Props) {
                       placeholder="至少8位，包含大小写字母、数字和符号" autoFocus />
                     <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}>
-                      {showPassword ? '🙈' : '👁'}
+                      {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
                     </button>
                   </div>
                   <div className="input-hint">需包含大小写字母、数字和特殊符号，至少8位</div>
@@ -311,7 +312,7 @@ export function Login({ onLogin }: Props) {
 
             {storedHint && (
               <div style={{ textAlign: 'center', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-secondary)' }}>
-                💡 提示: {storedHint}
+                提示：{storedHint}
               </div>
             )}
             <div className="form-group">
@@ -324,7 +325,7 @@ export function Login({ onLogin }: Props) {
                   placeholder="输入主密码解锁" autoFocus />
                 <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button"
                   aria-label={showPassword ? '隐藏密码' : '显示密码'}>
-                  {showPassword ? '🙈' : '👁'}
+                  {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
                 </button>
               </div>
             </div>
@@ -395,3 +396,4 @@ export function Login({ onLogin }: Props) {
     </>
   );
 }
+

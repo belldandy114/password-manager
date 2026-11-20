@@ -156,6 +156,8 @@ export interface AppSettings {
   updateNotifiedVersion?: string;
   /** 上次停留的页面 */
   lastPage: string;
+  /** 上一次「手动备份」的时间（自动每日备份不更新它，工作台用它算天数） */
+  lastBackupAt?: string;
   /** 禅道新 Bug 提醒（后台定时检查） */
   zentaoNotify: boolean;
   /** 提醒检查间隔（分钟） */
@@ -1269,6 +1271,27 @@ export interface ElectronAPI {
     Promise<{ success: boolean; data?: { imported: string[]; failed: string[] }; error?: string }>;
   casesMove: (rel: string, targetRel: string) =>
     Promise<{ success: boolean; data?: { rel: string; name?: string; unchanged?: boolean }; error?: string }>;
+  /* ---- 压力测试脚本库 ---- */
+  jmxlibConfig: () => Promise<{ success: boolean; data?: { configured: boolean; root: string; items: Record<string, JmxLibMeta> }; error?: string }>;
+  jmxlibChooseRoot: () => Promise<{ success: boolean; data?: { root: string }; error?: string; canceled?: boolean }>;
+  jmxlibDefaultOut: () => Promise<{ success: boolean; data?: { outDir: string }; error?: string }>;
+  jmxlibPickDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
+  jmxlibCreateTemplate: (rel: string, payload: { name?: string; url: string; method?: string; threads?: number; loops?: number }) =>
+    Promise<{ success: boolean; data?: { name: string; rel: string }; error?: string }>;
+  jmxlibList: (rel: string) => Promise<{ success: boolean; data?: JmxLibListing; error?: string }>;
+  jmxlibPickFiles: () => Promise<{ success: boolean; data?: string[]; error?: string; canceled?: boolean }>;
+  jmxlibImport: (rel: string, paths: string[]) =>
+    Promise<{ success: boolean; data?: { imported: string[]; failed: string[] }; error?: string }>;
+  jmxlibMkdir: (rel: string, name: string) => Promise<{ success: boolean; data?: { name: string }; error?: string }>;
+  jmxlibRename: (rel: string, name: string) => Promise<{ success: boolean; data?: { rel: string; name: string }; error?: string }>;
+  jmxlibDelete: (rel: string) => Promise<{ success: boolean; error?: string }>;
+  jmxlibReveal: (rel: string) => Promise<{ success: boolean; error?: string }>;
+  jmxlibOpen: (rel: string) => Promise<{ success: boolean; data?: { how: 'default' | 'open-with' }; error?: string }>;
+  jmxlibMetaSet: (rel: string, meta: Partial<JmxLibMeta>) =>
+    Promise<{ success: boolean; data?: { meta: JmxLibMeta }; error?: string }>;
+  jmxlibValidate: (rel: string) => Promise<{ success: boolean; data?: JmxInspectResult; error?: string }>;
+  jmxlibMarkRun: (rel: string, payload: { ok: boolean; reportDir?: string; durationMs?: number; threads?: number; loops?: number; stats?: { samples: number; errors: number; errorPct: number; avg: number } | null }) =>
+    Promise<{ success: boolean; error?: string }>;
   casesPreview: (rel: string) => Promise<{ success: boolean; data?: CasesPreview; error?: string }>;
   casesSearch: (q: string, limit?: number) =>
     Promise<{ success: boolean; data?: { hits: CasesSearchHit[] }; error?: string }>;
@@ -1426,6 +1449,97 @@ export type CasesPreview =
   | { kind: 'image'; dataUrl: string; size: number; name: string }
   | { kind: 'binary'; size: number; ext: string; name: string }
   | { kind: 'too-large'; size: number; name: string };
+
+
+
+
+/** 压力测试脚本库：目录 */
+export interface JmxLibDir {
+  name: string;
+  rel: string;
+  mtime: string;
+  /** 该目录下的 .jmx 数量 */
+  jmxCount: number;
+}
+
+/** 压力测试脚本库：一次运行记录 */
+export interface JmxLastRun {
+  at: string;
+  ok: boolean;
+  reportDir: string;
+  durationMs: number;
+  threads?: number;
+  loops?: number;
+}
+
+/** 压力测试脚本库：每个脚本记住的默认参数 */
+export interface JmxRun {
+  at: string;
+  ok: boolean;
+  samples: number;
+  errors: number;
+  /** 错误率（百分比，保留 1 位） */
+  errorPct: number;
+  /** 平均响应时间（ms） */
+  avg: number;
+  /** 吞吐量（样本数 / 秒） */
+  tps: number;
+  durationMs: number;
+  reportDir: string;
+}
+export interface JmxLibMeta {
+  /** 脚本里  的值 */
+  params?: Record<string, string>;
+  /** 最近 20 次运行（趋势图用） */
+  runs?: JmxRun[];
+  /** 输出目录（运行时会在这下面建 report-<时间戳>） */
+  outDir?: string;
+  threads?: number;
+  loops?: number;
+  note?: string;
+  lastRun?: JmxLastRun;
+}
+
+/** 压力测试脚本库：脚本文件 */
+export interface JmxLibFile {
+  name: string;
+  rel: string;
+  size: number;
+  mtime: string;
+  meta: JmxLibMeta;
+}
+
+export interface JmxLibListing {
+  configured: boolean;
+  root: string;
+  rel: string;
+  dirs: JmxLibDir[];
+  files: JmxLibFile[];
+}
+
+/** 脚本静态检查结果 */
+export interface JmxDataFile {
+  path: string;
+  abs: string;
+  exists: boolean;
+  bytes: number;
+  /** 行数（只读前 8MB） */
+  lines: number;
+}
+export interface JmxInspectResult {
+  files: JmxDataFile[];
+  ok: boolean;
+  error: string;
+  testName: string;
+  threadGroups: number;
+  threadsDefault: number | null;
+  loopsDefault: number | null;
+  params: { name: string; value: string }[];
+  dataFiles: string[];
+  missingFiles: string[];
+}
+
+
 
 
 

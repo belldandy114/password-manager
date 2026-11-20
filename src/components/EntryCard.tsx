@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import { BrowserMenu } from './BrowserMenu';
 import { TotpBadge } from './EntryExtras';
 import { Modal } from './Modal';
+import { Icons } from './ui';
 import { openUrlInDefaultBrowser } from '../utils/openUrl';
 import { recordEntryUse } from '../utils/recent';
 /** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
@@ -195,7 +196,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
           aria-label="复制网址"
           onClick={e => { e.stopPropagation(); onCopy(entry.url, 'URL', entry.name); }}
         >
-          {'\u{1F4CB}'}
+          <Icons.copy size={13} />
         </button>
         <BrowserMenu url={entry.url} />
       </div>
@@ -203,7 +204,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
       {/* Row 3: Tags — icon prefix + comma separated */}
       {entry.tags.length > 0 && (
         <div className="card-tags">
-          <span className="card-tags-icon">{'\u{1F3F7}\uFE0F'}</span>
+          <span className="card-tags-icon"><Icons.tag size={12} /></span>
           <span className="card-tags-text">{entry.tags.join(', ')}</span>
         </div>
       )}
@@ -221,7 +222,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
         <div className="card-meta-row">
           {attachments.length > 0 && (
             <span className="card-meta-item" title={attachments.map(a => a.name).join('、')}>
-              {'\u{1F4CE}'}{attachments.length}
+              <Icons.clip size={12} />{attachments.length}
             </span>
           )}
           {customFields.length > 0 && (
@@ -229,14 +230,14 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
               className="card-meta-item"
               title={customFields.map(f => `${f.name}${f.secret ? '（保密）' : ''}`).join('、')}
             >
-              {'\u{1F516}'}
+              <Icons.list size={12} />
               {customFields.slice(0, 2).map(f => f.name || '未命名字段').join('、')}
               {customFields.length > 2 ? ` +${customFields.length - 2}` : ''}
             </span>
           )}
           {notes && (
             <span className="card-meta-item card-meta-notes" title={notesTitle}>
-              {'\u{1F4DD}'}{notesTitle}
+              <Icons.note size={12} />{notesTitle}
             </span>
           )}
         </div>
@@ -245,7 +246,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
       {/* Row 4: Account + Password — icon-only prefixes, eye next to password */}
       <div className="card-credential-row">
         <span className="cred-account">
-          {'\u{1F464}'} {entry.username || '--'}
+          <Icons.user size={13} /> {entry.username || '--'}
           {(entry.accounts?.length || 0) > 0 && (
             <button
               type="button"
@@ -260,7 +261,7 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
         </span>
         <span className="cred-gap">{'  '}</span>
         <span className="cred-password-wrapper">
-          {'\u{1F511}'}
+          <Icons.key size={13} />
           <span className={`cred-password ${showPassword ? 'visible' : ''}`}>
             {showPassword ? (entry.password || '--') : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
           </span>
@@ -268,23 +269,24 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
             className="cred-eye-btn"
             onClick={e => { e.stopPropagation(); setShowPassword(!showPassword); }}
             title={showPassword ? '隐藏密码' : '显示密码'}
+            aria-label={showPassword ? '隐藏密码' : '显示密码'}
           >
-            {showPassword ? '\u{1F648}' : '\u{1F441}'}
+            {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
           </button>
         </span>
       </div>
 
       {/* Row 5: Action buttons — icon only, right-aligned */}
       <div className="card-actions">
-        <button onClick={e => { e.stopPropagation(); onCopy(entry.url, 'URL'); }} title="复制URL">{'\u{1F517}'}</button>
-        <button onClick={e => { e.stopPropagation(); onCopy(entry.username, '\u8D26\u53F7'); }} title="复制账号">{'\u{1F464}'}</button>
-        <button className="copy-password" onClick={e => { e.stopPropagation(); onCopy(entry.password, '\u5BC6\u7801'); }} title="复制密码">{'\u{1F511}'}</button>
-        <button onClick={e => { e.stopPropagation(); onEdit(entry); }} title="编辑">{'\u270F\uFE0F'}</button>
+        <button onClick={e => { e.stopPropagation(); onCopy(entry.url, 'URL'); }} title="复制URL"><Icons.link size={13} /></button>
+        <button onClick={e => { e.stopPropagation(); onCopy(entry.username, '\u8D26\u53F7'); }} title="复制账号"><Icons.user size={13} /></button>
+        <button className="copy-password" onClick={e => { e.stopPropagation(); onCopy(entry.password, '\u5BC6\u7801'); }} title="复制密码"><Icons.key size={13} /></button>
+        <button onClick={e => { e.stopPropagation(); onEdit(entry); }} title="编辑"><Icons.pencil size={13} /></button>
         <button
           onClick={e => { e.stopPropagation(); void window.electronAPI.pinOpen(entry.id); }}
           title="钉成小窗（浮在桌面上看）"
           aria-label="钉成小窗"
-        >{'\u{1F4CC}'}</button>
+        ><Icons.pin size={13} /></button>
       </div>
 
       {/* 多角色账号面板：Esc 由 Modal 内置处理。
@@ -300,3 +302,4 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
     </>
   );
 }
+

@@ -189,10 +189,10 @@ export function JsonTool() {
                   <div className="json-error">
                     <div className="json-error-title">❌ {result.error.type}</div>
                     <div className="json-error-msg">{result.error.message}</div>
-                    <div className="json-error-tip">💡 {result.error.suggestion}</div>
+                    <div className="json-error-tip">{result.error.suggestion}</div>
                     {result.error.quickFix && (
                       <>
-                        <button className="btn btn-secondary btn-sm" onClick={() => { const q = result.error!.quickFix!; setInput(q); setResult(repairJson(q, opts)); }}>🔧 一键修复</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => { const q = result.error!.quickFix!; setInput(q); setResult(repairJson(q, opts)); }}>一键修复</button>
                         <pre className="json-pre json-pre-fix">{result.error.quickFix}</pre>
                       </>
                     )}

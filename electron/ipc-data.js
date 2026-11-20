@@ -41,6 +41,7 @@ function registerDataIpc(deps) {
     loadVault,
     getPassword,
     loadSettings,
+    saveSettings,
     decrypt,
   } = deps;
 
@@ -149,6 +150,15 @@ function registerDataIpc(deps) {
       // 附件跟着备份走：只备份 vault 的话，换机器恢复后所有截图/证书都会「图片已失效」
       const attachments = typeof backupAttachments === 'function' ? backupAttachments(day) : { copied: 0, skipped: 0 };
       const mirror = mirrorBackupFile(target, day);
+      // 记下「手动备份」的时间：工作台「距上次备份（天）」用它。
+      // 自动每日备份不算 —— 否则每次启动都会把天数刷成 0，看着像从没备份过（1.29.0 修）
+      try {
+        if (typeof saveSettings === 'function' && typeof loadSettings === 'function') {
+          const s = loadSettings() || {};
+          s.lastBackupAt = new Date().toISOString();
+          saveSettings(s);
+        }
+      } catch { /* 记录失败不影响备份结果 */ }
       appendAudit({
         action: 'vault-backup',
         entry: path.basename(target),
@@ -525,3 +535,4 @@ function registerDataIpc(deps) {
 }
 
 module.exports = { registerDataIpc };
+

@@ -4160,9 +4160,6 @@
 
 /* 日志窗：等宽、深色底、可滚动 */
 .perf-log {
-  height: 320px;
-  overflow: auto;
-  padding: 10px 12px;
   border-radius: 9px;
   border: 1px solid var(--pm-line);
   /* 用主题 token 而不是混黑：浅色主题下混黑会变成一块死灰（1.7.4 的观感问题） */

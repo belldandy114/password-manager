@@ -1641,6 +1641,7 @@ const { registerCasesIpc } = require('./ipc-cases');
 const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
+const { registerJmxLibIpc } = require('./ipc-jmxlib');
 const { registerSystemIpc } = require('./ipc-system');
 const { registerCodelabIpc } = require('./ipc-codelab');
 const { registerPreviewScheme, registerPreviewProtocol, registerPreviewIpc } = require('./codelab-preview');
@@ -2143,6 +2144,7 @@ function setupIpcHandlers() {
     loadVault,
     getPassword: () => currentPassword,
     loadSettings,
+    saveSettings,
     attachmentFile,
     decrypt,
   });
@@ -2250,6 +2252,7 @@ function setupIpcHandlers() {
   registerEnvIpc({ loadSettings });
   // JMeter 非 GUI 运行：需要窗口引用（推送流式日志）与设置读写
   registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow, dataDir: DATA_DIR });
+  registerJmxLibIpc({ ipcMain, dialog, shell, getWindow: () => mainWindow, dataDir: DATA_DIR });
 
 }
 
@@ -2335,3 +2338,4 @@ app.on('window-all-closed', () => {
 function sortByDateDesc(arr) {
   return arr.sort((a, b) => new Date(b.deletedAt || b.createdAt) - new Date(a.deletedAt || a.createdAt));
 }
+

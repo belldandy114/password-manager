@@ -6,6 +6,7 @@ import { EntryList } from '../components/EntryList';
 import { Pager } from '../components/Pager';
 import { EntryForm } from '../components/EntryForm';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Icons } from '../components/ui';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
@@ -791,7 +792,7 @@ export function Dashboard() {
           </div>
 
           {securityReport.weak.length === 0 && securityReport.duplicates.length === 0 && securityReport.expired.length === 0 && (
-            <div className="security-empty">🎉 没有发现弱密码、重复密码或长期未修改的密码</div>
+            <div className="security-empty">没有发现弱密码、重复密码或长期未修改的密码</div>
           )}
 
           {securityReport.weak.length > 0 && (
@@ -823,7 +824,7 @@ export function Dashboard() {
               <h4>重复使用的密码（{securityReport.duplicates.length} 组）</h4>
               {securityReport.duplicates.map((issue, i) => (
                 <div key={i} className="security-item">
-                  <span className="security-item-icon">🔁</span>
+                  <span className="security-item-icon"><Icons.refresh size={13} /></span>
                   <div className="security-item-body">
                     <div>{issue.message}</div>
                     <div className="text-sm text-muted">{issue.detail}</div>
@@ -874,8 +875,8 @@ export function Dashboard() {
               </div>
               <div className="setting-control">
                 <select value={exportType} onChange={e => setExportType(e.target.value as any)} aria-label="导出类型">
-                  <option value="encrypted">🔒 加密备份 (AES-256)</option>
-                  <option value="plain">📄 明文导出</option>
+                  <option value="encrypted">加密备份 (AES-256)</option>
+                  <option value="plain">明文导出</option>
                 </select>
               </div>
             </div>
@@ -979,4 +980,5 @@ export function Dashboard() {
     </>
   );
 }
+
 

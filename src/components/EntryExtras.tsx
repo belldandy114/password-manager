@@ -76,7 +76,7 @@ export function TotpBadge({ secret, onCopy }: { secret: string; onCopy?: (code: 
         else void copySensitive(code, '两步验证码');
       }}
     >
-      🔐 {code}
+      <Icons.key size={12} /> {code}
     </span>
   );
 }

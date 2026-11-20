@@ -20,6 +20,7 @@ if (process.argv.includes('--pack')) {
     ['周报跨公司生成', 'node scripts/ui-digest-test.js'],
     ['压力测试 r10', 'node scripts/ui-round10-test.js'],
     ['用例库', 'node scripts/ui-cases-test.js'],
+    ['脚本库', 'node scripts/ui-jmxlib-test.js'],
     ['启动期回归', 'node scripts/ui-startup-test.js'],
     ['下载时间回归', 'node scripts/ui-dl-time-test.js'],
   ];
@@ -32,4 +33,5 @@ if (process.argv.includes('--pack')) {
 } else {
   console.log('\n提示：需要打包版回归时执行 npm run regress -- --pack（先 npm run dist）');
 }
+
 

@@ -41,12 +41,12 @@ type SettingsTab = 'security' | 'data' | 'appearance' | 'tasks' | 'about';
 /** 可改的三个全局键：搜索小窗 / 主窗口显隐 / 随手记小窗 */
 type HotkeySlot = 'search' | 'toggle' | 'quicknote';
 
-const TABS: { id: SettingsTab; label: string; icon: string; hint: string }[] = [
-  { id: 'security', label: '安全', icon: '🔒', hint: '主密码 / 锁定 / 剪贴板' },
-  { id: 'data', label: '数据与备份', icon: '💾', hint: '备份 / 目录 / 自检' },
-  { id: 'appearance', label: '外观与交互', icon: '🎨', hint: '主题 / 浏览器 / 按键' },
-  { id: 'tasks', label: '定时任务', icon: '⏱️', hint: '巡检 / 禅道 / 回归' },
-  { id: 'about', label: '关于与更新', icon: 'ℹ️', hint: '版本 / 更新 / 日志' },
+const TABS: { id: SettingsTab; label: string; icon: React.ReactNode; hint: string }[] = [
+  { id: 'security', label: '安全', icon: <Icons.lock size={14} />, hint: '主密码 / 锁定 / 剪贴板' },
+  { id: 'data', label: '数据与备份', icon: <Icons.db size={14} />, hint: '备份 / 目录 / 自检' },
+  { id: 'appearance', label: '外观与交互', icon: <Icons.tool size={14} />, hint: '主题 / 浏览器 / 按键' },
+  { id: 'tasks', label: '定时任务', icon: <Icons.clock size={14} />, hint: '巡检 / 禅道 / 回归' },
+  { id: 'about', label: '关于与更新', icon: <Icons.note size={14} />, hint: '版本 / 更新 / 日志' },
 ];
 
 /**

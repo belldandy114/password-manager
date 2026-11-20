@@ -3,6 +3,7 @@ import type { PasswordEntry, PasswordGenOptions } from '../types';
 import { Modal } from './Modal';
 import { EntryExtras } from './EntryExtras';
 import { passwordStrength } from '../utils/security';
+import { Icons } from './ui';
 /** 非 button 元素的键盘激活：Enter / Space 触发自身 click（复用原 onClick） */
 const onKeyClick = (e: React.KeyboardEvent<HTMLElement>) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
@@ -206,8 +207,14 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
         </div>
         <div className="password-input-wrapper">
           <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => update('password', e.target.value)} placeholder="输入密码" aria-label="输入密码" />
-          <button className="password-toggle" onClick={() => setShowPassword(!showPassword)} type="button">
-            {showPassword ? '🙈' : '👁'}
+          <button
+            className="password-toggle"
+            onClick={() => setShowPassword(!showPassword)}
+            type="button"
+            title={showPassword ? '隐藏密码' : '显示密码'}
+            aria-label={showPassword ? '隐藏密码' : '显示密码'}
+          >
+            {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
           </button>
         </div>
         {form.password && (
@@ -376,3 +383,4 @@ export function EntryForm({ open, entry, tags, onSave, onClose, seed }: Props) {
     </Modal>
   );
 }
+

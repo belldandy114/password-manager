@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { createOverlayToken, isTopOverlay, pushOverlay, removeOverlay } from './overlayStack';
 
 interface Props {
@@ -127,7 +128,9 @@ export function Modal({ open, onClose, title, children, footer, className, close
 
   if (!open) return null;
 
-  return (
+  // 挂到 body 再渲染：页面容器一旦有 transform（进入动画、hover 位移、filter 等），
+  // position:fixed 会以那个容器为基准，弹窗就会跑到页面底部而不是视口中间（1.27.0 修）。
+  return createPortal(
     <div
       className="modal-overlay"
       ref={overlayRef}
@@ -152,6 +155,8 @@ export function Modal({ open, onClose, title, children, footer, className, close
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
+

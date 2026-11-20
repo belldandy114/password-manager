@@ -7446,7 +7446,10 @@ button.notes-dirpath:focus-visible {
 
 @media (prefers-reduced-motion: no-preference) {
   /* 页面进入：懒加载页首帧不再「砰」地出现 */
-  .pg { animation: pg-enter 220ms var(--ease) both; }
+  /* 用 backwards 而不是 both：both 会让元素在动画结束后仍带着 transform（哪怕是单位矩阵），
+     从而成为 position:fixed 的包含块，弹窗会以页面为基准定位（1.27.0 修）。
+     Modal 已改成 portal 到 body，这里再兜一层。 */
+  .pg { animation: pg-enter 220ms var(--ease) backwards; }
 
   /* 按钮：hover 微抬、按下回弹 */
   .btn {
@@ -7614,3 +7617,147 @@ button.notes-dirpath:focus-visible {
 .cases-img-wrap img { max-width: 100%; border-radius: 8px; }
 .cases-sheet-tabs { margin-bottom: 10px; }
 .cases-md img { max-width: 100%; }
+
+
+/* 密码显隐按钮统一用图标（1.27.0）：之前三处分别是 emoji 和手绘 SVG，观感不一致 */
+.password-toggle,
+.pwd-icon-btn,
+.cred-eye-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  color: var(--text-3);
+}
+.password-toggle:hover,
+.pwd-icon-btn:hover,
+.cred-eye-btn:hover { color: var(--text-1); }
+.password-toggle svg,
+.pwd-icon-btn svg,
+.cred-eye-btn svg { display: block; }
+
+/* 压力测试：脚本库（1.27.0） */
+.jmxlib { display: flex; flex-direction: column; gap: 8px; }
+.jmxlib-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.jmxlib-bar .search-box { flex: 1 1 200px; min-width: 160px; }
+.jmxlib-notice {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 6px; font-size: 11.5px;
+  border: 1px solid var(--line-subtle);
+  background: var(--surface-2); color: var(--text-2);
+}
+.jmxlib-notice.is-ok { border-color: var(--ok-line, var(--line-strong)); color: var(--text-1); }
+.jmxlib-notice.is-warn { border-color: var(--warn, #c9a227); color: var(--warn-text, var(--text-1)); }
+.jmxlib-notice.is-bad { border-color: var(--bad); color: var(--bad); }
+.jmxlib-notice-x { margin-left: auto; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; }
+.jmxlib-tree { max-height: 260px; overflow: auto; border: 1px solid var(--line-subtle); border-radius: 8px; }
+.jmxlib-dir, .jmxlib-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 12px; color: var(--text-2);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.jmxlib-dir:hover, .jmxlib-row:hover { background: var(--surface-3); color: var(--text-1); }
+.jmxlib-dir.is-l2 { padding-left: 26px; }
+.jmxlib-row.is-l1 { padding-left: 26px; }
+.jmxlib-row.is-l2 { padding-left: 44px; }
+.jmxlib-chev { display: inline-flex; width: 12px; color: var(--text-3); }
+.jmxlib-chev svg { transition: transform var(--dur-1, 120ms) ease; }
+.jmxlib-chev.is-open svg { transform: rotate(90deg); }
+.jmxlib-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
+.jmxlib-n { margin-left: auto; font-style: normal; font-size: 10.5px; color: var(--text-3); }
+.jmxlib-note { font-size: 10.5px; color: var(--text-3); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jmxlib-last { margin-left: auto; font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.jmxlib-last.is-ok { color: var(--ok, #3f9d5f); }
+.jmxlib-last.is-bad { color: var(--bad); }
+.jmxlib-row-actions { display: none; align-items: center; gap: 2px; margin-left: 8px; }
+.jmxlib-dir:hover .jmxlib-row-actions, .jmxlib-row:hover .jmxlib-row-actions { display: inline-flex; }
+.jmxlib-hint, .jmxlib-empty { padding: 8px 14px; font-size: 11px; color: var(--text-3); }
+.jmxlib-dir-row { display: flex; gap: 8px; align-items: center; }
+.jmxlib-dir-row input { flex: 1; }
+.jmxlib-form-row { display: flex; gap: 12px; }
+.jmxlib-form-row > .form-group { flex: 1; }
+
+/* 压测参数面板 / 数据文件预检 / 趋势（1.27.1） */
+.perf-params { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.perf-param { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); }
+.perf-param-name { font-family: var(--font-code); color: var(--text-1); }
+.perf-param input { width: 130px; }
+.jmxlib-params { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.jmxlib-param { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); }
+.jmxlib-param span { font-family: var(--font-code); color: var(--text-1); }
+.jmxlib-param input { width: 140px; }
+.jmxlib-files { display: flex; flex-direction: column; gap: 6px; }
+.jmxlib-file {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 8px; border-radius: 6px; font-size: 11px;
+  border: 1px solid var(--line-subtle); background: var(--surface-2);
+}
+.jmxlib-file.is-ok { border-color: var(--line-subtle); }
+.jmxlib-file.is-warn { border-color: var(--warn, #c9a227); }
+.jmxlib-file.is-bad { border-color: var(--bad); }
+.jmxlib-file-name { font-family: var(--font-code); color: var(--text-1); overflow: hidden; text-overflow: ellipsis; max-width: 300px; white-space: nowrap; }
+.jmxlib-file-meta { color: var(--text-3); }
+.jmxlib-file-tip { color: var(--bad); }
+.jmxlib-file.is-warn .jmxlib-file-tip { color: var(--warn-text, var(--text-1)); }
+.jmxlib-trend { display: flex; flex-direction: column; gap: 4px; }
+.jmxlib-trend-axis { stroke: var(--line-strong); stroke-width: 1; }
+.jmxlib-trend-line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.jmxlib-trend-dot { fill: var(--accent); }
+.jmxlib-trend-err { fill: color-mix(in srgb, var(--bad) 70%, transparent); }
+.jmxlib-trend-legend { display: flex; gap: 14px; font-size: 10.5px; color: var(--text-3); }
+.jmxlib-trend-legend .is-bad { color: var(--bad); }
+
+/* 压力测试页两栏布局（1.28.0） */
+.perf-split { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1200px) { .perf-split { grid-template-columns: 1fr; } }
+.perf-side, .perf-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.perf-fold .perf-fold-head { cursor: pointer; user-select: none; }
+.perf-fold-chev { display: inline-flex; color: var(--text-3); transition: transform 0.12s ease; }
+.perf-fold.is-open .perf-fold-chev { transform: rotate(90deg); }
+.perf-fold-meta { margin-left: auto; }
+.perf-fold .pnl-body { padding-top: 8px; }
+.perf-console { display: flex; flex-direction: column; }
+.perf-console-head { display: flex; align-items: center; gap: 10px; }
+.perf-tabs { display: flex; gap: 2px; }
+.perf-tab { border: 0; background: transparent; color: var(--text-2); font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.perf-tab:hover { background: var(--surface-3); color: var(--text-1); }
+.perf-tab.is-on { background: var(--surface-selected); color: var(--text-1); font-weight: 600; }
+.perf-console-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.perf-console-body { padding: 0; }
+.perf-log { height: 380px; overflow: auto; padding: 8px 10px; }
+.perf-hist-wrap { height: 380px; overflow: auto; padding: 8px 10px; }
+.perf-hist-tbl { width: 100%; font-size: 11.5px; }
+.perf-hist-tbl .num { text-align: right; }
+.perf-hist-tbl .is-bad { color: var(--bad); }
+.perf-cmd { border: 1px solid var(--line-subtle); border-radius: 8px; padding: 8px 10px; background: var(--surface-inset); }
+.perf-cmd-label { font-size: 10.5px; color: var(--text-3); margin-bottom: 4px; }
+.perf-cmd-text { display: block; font-family: var(--font-code); font-size: 11px; color: var(--text-2); word-break: break-all; }
+.perf-cmd .btn { margin-top: 6px; }
+.perf-env-actions { display: flex; gap: 8px; align-items: center; margin: 2px 0 8px; flex-wrap: wrap; }
+.perf-env-cands { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 压测页 1.28.1：环境单行 + 根目录脚本 + 控制台标题 */
+.perf-env-row.is-line { display: flex; align-items: center; gap: 8px; }
+.perf-env-row.is-line .perf-env-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perf-env-row.is-line .btn { flex: 0 0 auto; }
+.jmxlib-row.is-l0 { padding-left: 10px; }
+.jmxlib-root-head { padding: 4px 10px 2px; color: var(--text-3); }
+.perf-console-head .pnl-title { font-size: 12.5px; }
+
+/* 压测页 1.28.2：弱化状态字 / 历史展开 / 卡片图标对齐 */
+.perf-fold-meta { font-size: 10.5px; color: var(--text-3); opacity: 0.75; font-weight: 400; letter-spacing: 0; }
+.perf-hist-expand { max-height: 420px; overflow: auto; }
+.card-actions button svg,
+.card-url-copy svg,
+.card-meta-item svg,
+.card-tags-icon svg,
+.cred-account svg,
+.cred-password-wrapper > svg { display: block; }
+.card-actions button { display: inline-flex; align-items: center; justify-content: center; }
+.card-meta-item { display: inline-flex; align-items: center; gap: 3px; }
+.card-tags-icon { display: inline-flex; align-items: center; }
+.cred-account { display: inline-flex; align-items: center; gap: 4px; }
+.cred-password-wrapper { display: inline-flex; align-items: center; gap: 4px; }
+
+/* 控制台行数提示（1.29.0） */
+.perf-console-hint { font-size: 10.5px; color: var(--text-3); margin-right: 4px; }

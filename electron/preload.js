@@ -275,6 +275,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   casesSearch: (q, limit) => ipcRenderer.invoke('cases:search', { q, limit }),
   casesPickImportDir: () => ipcRenderer.invoke('cases:pick-import-dir'),
   casesImportFolder: (rel, dir) => ipcRenderer.invoke('cases:import-folder', { rel, dir }),
+  /* ---- 压力测试脚本库 ---- */
+  jmxlibConfig: () => ipcRenderer.invoke('jmxlib:config'),
+  jmxlibChooseRoot: () => ipcRenderer.invoke('jmxlib:choose-root'),
+  jmxlibDefaultOut: () => ipcRenderer.invoke('jmxlib:default-out'),
+  jmxlibPickDir: () => ipcRenderer.invoke('jmxlib:pick-dir'),
+  jmxlibCreateTemplate: (rel, payload) => ipcRenderer.invoke('jmxlib:create-template', { rel, ...payload }),
+  jmxlibList: (rel) => ipcRenderer.invoke('jmxlib:list', { rel }),
+  jmxlibPickFiles: () => ipcRenderer.invoke('jmxlib:pick-files'),
+  jmxlibImport: (rel, paths) => ipcRenderer.invoke('jmxlib:import', { rel, paths }),
+  jmxlibMkdir: (rel, name) => ipcRenderer.invoke('jmxlib:mkdir', { rel, name }),
+  jmxlibRename: (rel, name) => ipcRenderer.invoke('jmxlib:rename', { rel, name }),
+  jmxlibDelete: (rel) => ipcRenderer.invoke('jmxlib:delete', { rel }),
+  jmxlibReveal: (rel) => ipcRenderer.invoke('jmxlib:reveal', { rel }),
+  jmxlibOpen: (rel) => ipcRenderer.invoke('jmxlib:open', { rel }),
+  jmxlibMetaSet: (rel, meta) => ipcRenderer.invoke('jmxlib:meta-set', { rel, meta }),
+  jmxlibValidate: (rel) => ipcRenderer.invoke('jmxlib:validate', { rel }),
+  jmxlibMarkRun: (rel, payload) => ipcRenderer.invoke('jmxlib:mark-run', { rel, ...payload }),
   onCasesChanged: (cb) => {
     const h = () => cb();
     ipcRenderer.on('cases:changed', h);
@@ -374,6 +391,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('jmeter:done', handler);
   },
 });
+
+
+
+
 
 
 

@@ -236,9 +236,12 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
     !!layout && /探测/.test(String(layout.headButtons)) && /开始运行/.test(String(layout.headButtons)),
     layout && layout.headButtons);
   check('压力测试：内容区可滚动（不是把面板压扁）', !!layout && layout.scrollable === true);
-  check('压力测试：四块面板都在（环境/运行配置/运行输出）',
-    Array.isArray(panels) && panels.some(p => /环境/.test(p)) && panels.some(p => /运行配置/.test(p)) && panels.some(p => /运行输出/.test(p)),
-    JSON.stringify(panels));
+  // 1.28.0 改成两栏：左边环境/脚本库/运行配置，右边实时控制台 + 运行历史
+  const consoleTitle = await ev(`document.querySelector('.perf-console-head .pnl-title')?.textContent.trim() || ''`);
+  check('压力测试：两栏布局 + 四块面板都在',
+    Array.isArray(panels) && panels.some(p => /环境/.test(p)) && panels.some(p => /运行配置/.test(p)) && panels.some(p => /脚本库/.test(p))
+      && consoleTitle === '实时控制台',
+    JSON.stringify({ panels, consoleTitle }));
 
   /* ================= 2. 运行 + 流式日志 ================= */
   const runRes = await ev(`(async () => {
@@ -312,9 +315,9 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
     });
   })()`);
   // C1：运行历史（跑完应留下一条，含脚本名与统计）
-  const histPanel = await ev(`(() => { const rows = document.querySelectorAll('.perf-hist-row'); return { n: rows.length, text: rows[0] ? rows[0].textContent.replace(/\\s+/g, ' ').trim() : '' }; })()`);
+  const histPanel = await ev(`(() => { const rows = document.querySelectorAll('.perf-hist-tbl tbody tr'); return { n: rows.length, text: rows[0] ? rows[0].textContent.replace(/\\s+/g, ' ').trim() : '' }; })()`);
   check('压力测试：运行后写入运行历史',
-    !!histPanel && histPanel.n > 0 && /样本/.test(String(histPanel.text)),
+    !!histPanel && histPanel.n > 0 && /报告|\.jtl|fake-plan/.test(String(histPanel.text)),
     JSON.stringify(histPanel).slice(0, 100));
 
   check('压力测试：连续运行不会撞「报告目录非空」', !!run2 && run2.success === true, run2 && (run2.error || ''));
@@ -356,3 +359,5 @@ setTimeout(() => { process.stdout.write('done\\n'); process.exit(0); }, 30000);
   console.log('ERR', e && e.message);
   process.exit(1);
 });
+
+

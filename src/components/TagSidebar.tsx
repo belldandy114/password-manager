@@ -3,6 +3,7 @@ import type { VaultData } from '../types';
 import { useStore } from '../store/useStore';
 import { getTagHue } from '../utils/tagColors';
 import { Modal } from './Modal';
+import { Icons } from './ui';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { callIpc } from '../utils/ipc';
@@ -501,7 +502,7 @@ export function TagSidebar() {
                     onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type: 'tag', tag }); }}
                     onClick={(e) => handleTagClick(tag, e)}>
                     <span className="tag-sidebar-dot" style={{ background: getTagColor(tag) }} />
-                    {pinned && <span className="tag-pin-icon">{'\u{1F4CC}'}</span>}
+                    {pinned && <span className="tag-pin-icon"><Icons.pin size={11} /></span>}
                     {isRenaming ? (
                       <input type="text" className="tag-sidebar-rename-input" value={inlineRenameValue}
                         onChange={e => setInlineRenameValue(e.target.value)}
@@ -569,7 +570,7 @@ export function TagSidebar() {
                   navigator.clipboard.writeText('全部标签').catch(() => {});
                   addToast('已复制标签名称', 'success');
                 }}>
-                  <span className="context-menu-icon">{'\u{1F4CB}'}</span>
+                  <span className="context-menu-icon"><Icons.copy size={13} /></span>
                   <span>复制标签名称</span>
                 </div>
               </>
@@ -602,7 +603,7 @@ export function TagSidebar() {
                   setInlineRename(contextMenu.tag!);
                   setInlineRenameValue(contextMenu.tag!);
                 }}>
-                  <span className="context-menu-icon">{'\u270F'}</span>
+                  <span className="context-menu-icon"><Icons.pencil size={13} /></span>
                   <span>重命名标签</span>
                   <kbd>F2</kbd>
                 </div>
@@ -610,7 +611,7 @@ export function TagSidebar() {
                   setContextMenu(null);
                   handlePinToggle(contextMenu.tag!);
                 }}>
-                  <span className="context-menu-icon">{isPinned(contextMenu.tag!) ? '\u{1F4CC}' : '\u{1F51D}'}</span>
+                  <span className="context-menu-icon"><Icons.pin size={13} /></span>
                   <span>{isPinned(contextMenu.tag!) ? '取消置顶' : '置顶标签'}</span>
                 </div>
                 <div className="context-menu-sep" />
@@ -619,7 +620,7 @@ export function TagSidebar() {
                   navigator.clipboard.writeText(contextMenu.tag!).catch(() => {});
                   addToast('已复制标签名称', 'success');
                 }}>
-                  <span className="context-menu-icon">{'\u{1F4CB}'}</span>
+                  <span className="context-menu-icon"><Icons.copy size={13} /></span>
                   <span>复制标签名称</span>
                 </div>
                 <div className="context-menu-sep" />
@@ -632,7 +633,7 @@ export function TagSidebar() {
                     handleDeleteTag(contextMenu.tag!);
                   }
                 }}>
-                  <span className="context-menu-icon">{'\u{1F5D1}'}</span>
+                  <span className="context-menu-icon"><Icons.trash size={13} /></span>
                   <span>删除标签</span>
                   <kbd>Del</kbd>
                 </div>
@@ -866,3 +867,4 @@ export function TagSidebar() {
     </>
   );
 }
+

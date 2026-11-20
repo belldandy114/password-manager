@@ -4,7 +4,7 @@ import {
   IconLink, IconExternalLink, IconServer, IconKey, IconCheck, IconList,
   IconDatabase, IconFileText, IconBug, IconTool, IconTerminal2, IconLock,
   IconClock, IconDownload, IconUpload, IconChartBar, IconRefresh, IconX, IconChevronRight,
-  IconTag, IconInbox, IconFolder, IconPhoto, IconPinned,
+  IconTag, IconInbox, IconFolder, IconPhoto, IconPinned, IconUser, IconPaperclip,
 } from '@tabler/icons-react';
 
 /* ================================================================
@@ -52,6 +52,8 @@ export const Icons = {
   chevron: icon(IconChevronRight),
   tag: icon(IconTag),
   inbox: icon(IconInbox),
+  user: icon(IconUser),
+  clip: icon(IconPaperclip),
   folder: icon(IconFolder),
   image: icon(IconPhoto),
   pin: icon(IconPinned),
@@ -247,5 +249,6 @@ export function Field({
     </div>
   );
 }
+
 
 

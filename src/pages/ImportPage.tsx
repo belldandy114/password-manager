@@ -356,7 +356,7 @@ export function ImportPage() {
             </div>
             <div style={{ textAlign: 'center', marginTop: 16 }}>
               <button className="btn btn-secondary" onClick={handleDownloadTemplate} style={{ fontSize: 13 }}>
-                📥 下载导入模板
+                下载导入模板
               </button>
             </div>
           </>
