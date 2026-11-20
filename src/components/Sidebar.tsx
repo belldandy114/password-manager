@@ -23,6 +23,37 @@ interface NavItem {
 
 
 
+/* ---------- 分组折叠记忆（C14，1.30.1 补兜底） ----------
+ * 用户折叠了哪个分组要跨重启保持：首屏默认全部展开（没有键 / 读到坏数据都按「全展开」），
+ * 折叠后写进 localStorage，下次打开原样恢复。只存字符串布尔值，
+ * 不碰 store、不碰 IPC —— 折叠纯属界面偏好。
+ */
+const COLLAPSED_KEY = 'pm.sidebar.collapsed';
+
+/** 读折叠记忆：键不存在 / JSON 坏 / 不是普通对象 / 无 localStorage 一律当「全部展开」 */
+function readCollapsedGroups(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    // 只认 === true：历史上手改出来的 "true" 字符串之类一律当展开，宁多显示不少显示
+    const out: Record<string, boolean> = {};
+    for (const [title, collapsed] of Object.entries(parsed as Record<string, unknown>)) {
+      if (collapsed === true) out[title] = true;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeCollapsedGroups(next: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+  } catch { /* 隐私模式/配额满写不了：本次会话仍然折叠，刷新后回到全部展开 */ }
+}
+
 export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
   /** 侧栏项是 div：补按钮语义 + Enter/Space，键盘才能切页面 */
   const navKey = (fn: () => void) => (e: React.KeyboardEvent) => {
@@ -31,13 +62,11 @@ export function Sidebar({ currentPage, onNavigate, onLock, onNotices }: Props) {
   // 禅道「我的 Bug」未读数：主进程定时检查到新 Bug 时推过来，进页面即清零
   const [unread, setUnread] = useState(0);
   // C14：分组折叠（默认展开，收起的选择记在 localStorage）
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem('pm.sidebar.collapsed') || '{}') as Record<string, boolean>; } catch { return {}; }
-  });
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
   const toggleGroup = (title: string) => {
     setCollapsedGroups((prev) => {
       const next = { ...prev, [title]: !prev[title] };
-      try { localStorage.setItem('pm.sidebar.collapsed', JSON.stringify(next)); } catch { /* ignore */ }
+      writeCollapsedGroups(next);
       return next;
     });
   };
@@ -189,8 +218,7 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'environments', label: '环境矩阵', icon: envIcon },
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
-      { id: 'notes', label: '测试笔记', icon: noteIcon },
-      { id: 'attachments', label: '附件管理', icon: attachIcon },
+      { id: 'notes', label: '笔记与附件', icon: noteIcon },
       { id: 'cases', label: '用例库', icon: casesIcon },
       { id: 'zentao', label: '缺陷管理', icon: bugIcon },
     ],

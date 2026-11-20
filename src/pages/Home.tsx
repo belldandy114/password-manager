@@ -154,6 +154,54 @@ function Empty({ text, action }: { text: string; action?: React.ReactNode }) {
   );
 }
 
+/**
+ * 合并空态的文案与主行动（1.30.1）。
+ *
+ * 背景：缺陷待办 / 环境不可达 / 接口回归三张面板各有一条空态，全空时首屏约 1/3 屏
+ * 是三行灰字 + 三个按钮。三张同时为空没有信息量，合并成一行更诚实。
+ *
+ * 文案与主行动按「最该补的那一步」给（顺序即优先级）：
+ *   没拉过缺陷 → 「去拉取缺陷」；没巡检过 → 「去巡检环境」；没配回归集 → 「去配置回归集」；
+ *   都配好了 → 今天就真的没事，主行动退回「去缺陷管理」。
+ * 纯函数、无副作用，便于对照阅读「什么状态下说什么话」。
+ */
+function todoEmptyGuide(s: {
+  bugFetched: boolean;
+  probed: boolean;
+  regConfigured: boolean;
+  /** 整板都空（连密码库条目和笔记也没有）：文案里点明「还没开始」 */
+  boardEmpty: boolean;
+}): { text: string; label: string; page: string } {
+  if (!s.bugFetched) {
+    return {
+      text: s.boardEmpty
+        ? '还没有任何数据 —— 先拉一次缺陷，环境和回归的待办之后也会出现在这里'
+        : '还没拉过缺陷数据，环境和回归也没有待办 —— 先拉一次，这里就会开始出清单',
+      label: '去拉取缺陷',
+      page: 'zentao',
+    };
+  }
+  if (!s.probed) {
+    return {
+      text: '缺陷和回归都没有待办 —— 环境还没巡检过，点一次「一键巡检」就能看到有没有挂掉的地址',
+      label: '去巡检环境',
+      page: 'environments',
+    };
+  }
+  if (!s.regConfigured) {
+    return {
+      text: '缺陷和环境都没有待办 —— 把常用请求存成回归集，跑挂了会在这里提醒',
+      label: '去配置回归集',
+      page: 'apiClient',
+    };
+  }
+  return {
+    text: '今天没有待办缺陷、没有不可达环境、没有失败的回归集',
+    label: '去缺陷管理',
+    page: 'zentao',
+  };
+}
+
 export function Home() {
   const bugs = useZentaoStore(s => s.bugs);
   const fetchedAt = useZentaoStore(s => s.fetchedAt);
@@ -339,6 +387,23 @@ export function Home() {
   const nothingToday = bugStats.total === 0 && downEnvs.length === 0
     && failedSets.length === 0 && todayNotes.length === 0;
 
+  /* ---------- 空态收敛（1.30.1） ----------
+   * 三张「待办」面板同时为空时合并成一块紧凑空态，判定条件就是下面这一行：
+   *   bugList.length === 0 && downEnvs.length === 0 && failedSets.length === 0
+   * 任何一条有内容 → 三张面板按原样渲染（各自的清单、页脚时间、跳转都不变）。
+   */
+  const todoAllEmpty = bugList.length === 0 && downEnvs.length === 0 && failedSets.length === 0;
+  /** 整板都空（连密码库条目和笔记都没有）：左栏「最近改动」、右栏「最近记录」也只剩一行空提示，一起收进合并空态 */
+  const boardAllEmpty = todoAllEmpty && recentEntries.length === 0 && realNotes.length === 0;
+  const todoEmpty = todoAllEmpty
+    ? todoEmptyGuide({
+      bugFetched: bugs.length > 0,
+      probed: Boolean(probeAt),
+      regConfigured: regSets.length > 0,
+      boardEmpty: boardAllEmpty,
+    })
+    : null;
+
   return (
     <div className="content-area">
       <Page>
@@ -358,153 +423,195 @@ export function Home() {
         <div className="home-layout">
           {/* ================= 左栏：需要动手的清单 ================= */}
           <div className="home-col-main">
-            {/* ---- 缺陷待办 ---- */}
-            <Panel
-              icon={<Icons.bug size={14} />}
-              title="缺陷待办"
-              hasItems={bugList.length > 0}
-              badge={bugStats.total > 0
-                ? <Pill tone="bad">{bugStats.total} 个未关闭</Pill>
-                : <Pill tone="ok">无待办</Pill>}
-              action={bugList.length > 0
-                ? <button className="home-link" onClick={() => go('zentao')}>去缺陷管理</button>
-                : undefined}
-            >
-              {bugList.length === 0 ? (
+            {/* ---- 待办（空态收敛：三张面板全空时合成这一块）----
+                缺陷待办 / 环境不可达 / 接口回归同时没有内容 → 只留一行文案 + 一个主行动，
+                右侧跟三个入口（空态不压掉跳转）。首屏从「三个空卡 ≈ 1/3 屏」降到一行。
+                任意一条有内容时走下面的 else 分支，三张面板行为与以前完全一致。 */}
+            {todoEmpty ? (
+              <Panel
+                icon={<Icons.check size={14} />}
+                title="待办"
+                badge={<Pill tone="ok">0 条</Pill>}
+              >
                 <Empty
-                  text={bugs.length === 0
-                    ? '还没有拉取过缺陷数据 —— 去「缺陷管理」拉一次，这里就会显示待办'
-                    : '今天没有待办缺陷'}
-                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('zentao')}>{bugs.length === 0 ? '去拉取' : '去缺陷管理'}</button>}
+                  text={todoEmpty.text}
+                  action={
+                    <>
+                      <button className="btn btn-primary btn-sm" onClick={() => go(todoEmpty.page)}>{todoEmpty.label}</button>
+                      <button className="home-link" onClick={() => go('zentao')}>缺陷管理</button>
+                      <button className="home-link" onClick={() => go('environments')}>环境矩阵</button>
+                      <button className="home-link" onClick={() => go('apiClient')}>接口调试</button>
+                      {/* 整板都空时这两个面板被收起来了，入口在这里补上 */}
+                      {boardAllEmpty && <button className="home-link" onClick={() => go('passwordManager')}>网址管理</button>}
+                      {boardAllEmpty && <button className="home-link" onClick={() => go('notes')}>笔记</button>}
+                    </>
+                  }
                 />
-              ) : (
-                <div className="home-items">
-                  {bugList.map(({ bug, why, tone }) => (
-                    <Row
-                      key={String(bug.id)}
-                      tone={tone}
-                      onClick={() => go('zentao')}
-                      main={<><span className="home-bug-id">#{bug.id}</span> {bug.title || '（无标题）'}</>}
-                      sub={[
-                        SEVERITY_LABEL[String(bug.severity || '')] || '',
-                        STATUS_LABEL[String(bug.status || '').toLowerCase()] || String(bug.status || ''),
-                        bug.assignedTo ? `指派 ${bug.assignedTo}` : '',
-                      ].filter(Boolean).join(' · ')}
-                      meta={<span className={`home-tag is-${tone}`}>{why}</span>}
-                    />
-                  ))}
-                  {bugStats.total > bugList.length && (
-                    <button className="home-more" onClick={() => go('zentao')}>
-                      还有 {bugStats.total - bugList.length} 个未关闭缺陷
-                    </button>
-                  )}
-                </div>
-              )}
-              {fetchedAt && <div className="home-panel-foot">缺陷数据拉取于 {formatRecent(fetchedAt)}</div>}
-            </Panel>
-
-            {/* ---- 环境不可达 ---- */}
-            <Panel
-              icon={<Icons.server size={14} />}
-              title="环境不可达"
-              hasItems={downEnvs.length > 0}
-              badge={downEnvs.length > 0
-                ? <Pill tone="bad">{downEnvs.length} 个</Pill>
-                : <Pill tone="ok">全部可达</Pill>}
-              action={downEnvs.length > 0
-                ? <button className="home-link" onClick={() => go('environments')}>去环境矩阵</button>
-                : undefined}
-            >
-              {downEnvs.length === 0 ? (
-                <Empty
-                  text={probeAt ? '上次巡检没有不可达的地址' : '还没巡检过 —— 去「环境矩阵」点一次「一键巡检」'}
-                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('environments')}>去巡检</button>}
-                />
-              ) : (
-                <div className="home-items">
-                  {downEnvs.slice(0, 6).map(d => (
-                    <Row
-                      key={d.id}
-                      tone="bad"
-                      onClick={() => go('environments')}
-                      main={d.name}
-                      sub={d.url.replace(/^https?:\/\//, '')}
-                      meta={d.error || (d.ms != null ? `${d.ms} ms` : '')}
-                    />
-                  ))}
-                  {downEnvs.length > 6 && (
-                    <button className="home-more" onClick={() => go('environments')}>
-                      还有 {downEnvs.length - 6} 个不可达
-                    </button>
-                  )}
-                </div>
-              )}
-              {probeAt && <div className="home-panel-foot">上次巡检 {formatAt(probeAt)}</div>}
-            </Panel>
-
-            {/* ---- 接口回归 ---- */}
-            <Panel
-              icon={<Icons.link size={14} />}
-              title="接口回归"
-              hasItems={failedSets.length > 0}
-              badge={failedSets.length > 0
-                ? <Pill tone="bad">{failedSets.length} 个失败</Pill>
-                : <Pill tone="ok">没有失败</Pill>}
-              action={<button className="home-link" onClick={() => go('apiClient')}>去接口调试</button>}
-            >
-              {failedSets.length === 0 ? (
-                <Empty
-                  text={regSets.length === 0
-                    ? '还没有配置回归集 —— 在「接口调试」里把几条请求存成回归集'
-                    : '已配置的回归集最近一次都通过了'}
-                />
-              ) : (
-                <div className="home-items">
-                  {failedSets.slice(0, 5).map(({ set, sum }) => (
-                    <Row
-                      key={set.id}
-                      tone="bad"
-                      onClick={() => go('apiClient')}
-                      main={set.name}
-                      sub={sum ? `${sum.fail} / ${sum.total} 条失败` : '上次运行失败'}
-                      meta={set.lastRunAt ? formatRecent(set.lastRunAt) : ''}
-                    />
-                  ))}
-                </div>
-              )}
-            </Panel>
+                {(fetchedAt || probeAt) && (
+                  <div className="home-panel-foot">
+                    {[
+                      fetchedAt ? `缺陷数据拉取于 ${formatRecent(fetchedAt)}` : '',
+                      probeAt ? `上次巡检 ${formatAt(probeAt)}` : '',
+                    ].filter(Boolean).join(' · ')}
+                  </div>
+                )}
+              </Panel>
+            ) : (
+              <>
+              {/* ---- 缺陷待办 ---- */}
+              <Panel
+                icon={<Icons.bug size={14} />}
+                title="缺陷待办"
+                hasItems={bugList.length > 0}
+                badge={bugStats.total > 0
+                  ? <Pill tone="bad">{bugStats.total} 个未关闭</Pill>
+                  : <Pill tone="ok">无待办</Pill>}
+                action={bugList.length > 0
+                  ? <button className="home-link" onClick={() => go('zentao')}>去缺陷管理</button>
+                  : undefined}
+              >
+                {bugList.length === 0 ? (
+                  <Empty
+                    text={bugs.length === 0
+                      ? '还没有拉取过缺陷数据 —— 去「缺陷管理」拉一次，这里就会显示待办'
+                      : '今天没有待办缺陷'}
+                    action={<button className="btn btn-ghost btn-sm" onClick={() => go('zentao')}>{bugs.length === 0 ? '去拉取' : '去缺陷管理'}</button>}
+                  />
+                ) : (
+                  <div className="home-items">
+                    {bugList.map(({ bug, why, tone }) => (
+                      <Row
+                        key={String(bug.id)}
+                        tone={tone}
+                        onClick={() => go('zentao')}
+                        main={<><span className="home-bug-id">#{bug.id}</span> {bug.title || '（无标题）'}</>}
+                        sub={[
+                          SEVERITY_LABEL[String(bug.severity || '')] || '',
+                          STATUS_LABEL[String(bug.status || '').toLowerCase()] || String(bug.status || ''),
+                          bug.assignedTo ? `指派 ${bug.assignedTo}` : '',
+                        ].filter(Boolean).join(' · ')}
+                        meta={<span className={`home-tag is-${tone}`}>{why}</span>}
+                      />
+                    ))}
+                    {bugStats.total > bugList.length && (
+                      <button className="home-more" onClick={() => go('zentao')}>
+                        还有 {bugStats.total - bugList.length} 个未关闭缺陷
+                      </button>
+                    )}
+                  </div>
+                )}
+                {fetchedAt && <div className="home-panel-foot">缺陷数据拉取于 {formatRecent(fetchedAt)}</div>}
+              </Panel>
+  
+              {/* ---- 环境不可达 ---- */}
+              <Panel
+                icon={<Icons.server size={14} />}
+                title="环境不可达"
+                hasItems={downEnvs.length > 0}
+                badge={downEnvs.length > 0
+                  ? <Pill tone="bad">{downEnvs.length} 个</Pill>
+                  : <Pill tone="ok">全部可达</Pill>}
+                action={downEnvs.length > 0
+                  ? <button className="home-link" onClick={() => go('environments')}>去环境矩阵</button>
+                  : undefined}
+              >
+                {downEnvs.length === 0 ? (
+                  <Empty
+                    text={probeAt ? '上次巡检没有不可达的地址' : '还没巡检过 —— 去「环境矩阵」点一次「一键巡检」'}
+                    action={<button className="btn btn-ghost btn-sm" onClick={() => go('environments')}>去巡检</button>}
+                  />
+                ) : (
+                  <div className="home-items">
+                    {downEnvs.slice(0, 6).map(d => (
+                      <Row
+                        key={d.id}
+                        tone="bad"
+                        onClick={() => go('environments')}
+                        main={d.name}
+                        sub={d.url.replace(/^https?:\/\//, '')}
+                        meta={d.error || (d.ms != null ? `${d.ms} ms` : '')}
+                      />
+                    ))}
+                    {downEnvs.length > 6 && (
+                      <button className="home-more" onClick={() => go('environments')}>
+                        还有 {downEnvs.length - 6} 个不可达
+                      </button>
+                    )}
+                  </div>
+                )}
+                {probeAt && <div className="home-panel-foot">上次巡检 {formatAt(probeAt)}</div>}
+              </Panel>
+  
+              {/* ---- 接口回归 ---- */}
+              <Panel
+                icon={<Icons.link size={14} />}
+                title="接口回归"
+                hasItems={failedSets.length > 0}
+                badge={failedSets.length > 0
+                  ? <Pill tone="bad">{failedSets.length} 个失败</Pill>
+                  : <Pill tone="ok">没有失败</Pill>}
+                action={<button className="home-link" onClick={() => go('apiClient')}>去接口调试</button>}
+              >
+                {failedSets.length === 0 ? (
+                  <Empty
+                    text={regSets.length === 0
+                      ? '还没有配置回归集 —— 在「接口调试」里把几条请求存成回归集'
+                      : '已配置的回归集最近一次都通过了'}
+                  />
+                ) : (
+                  <div className="home-items">
+                    {failedSets.slice(0, 5).map(({ set, sum }) => (
+                      <Row
+                        key={set.id}
+                        tone="bad"
+                        onClick={() => go('apiClient')}
+                        main={set.name}
+                        sub={sum ? `${sum.fail} / ${sum.total} 条失败` : '上次运行失败'}
+                        meta={set.lastRunAt ? formatRecent(set.lastRunAt) : ''}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+  
+              </>
+            )}
 
             {/* ---- 最近改动（1.25.1 补）----
                 左栏三张卡在「今天没事」时只有三行字，左下会留一大块空白。
                 这里补一条真正有用的清单：最近改过的密码条目 ——
-                早上开工前扫一眼「昨天动过哪些系统」，比看空白强。 */}
-            <Panel
-              icon={<Icons.clock size={14} />}
-              title="最近改动"
-              hasItems={recentEntries.length > 0}
-              action={recentEntries.length > 0
-                ? <button className="home-link" onClick={() => go('passwordManager')}>去网址管理</button>
-                : undefined}
-            >
-              {recentEntries.length === 0 ? (
-                <Empty
-                  text="密码库里还没有条目"
-                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('passwordManager')}>新增一条</button>}
-                />
-              ) : (
-                <div className="home-items">
-                  {recentEntries.map(e => (
-                    <Row
-                      key={e.id}
-                      onClick={() => go('passwordManager')}
-                      main={e.name || '（未命名）'}
-                      sub={[ENV_LABEL[e.envType] || e.envType, e.url ? e.url.replace(/^https?:\/\//, '') : ''].filter(Boolean).join(' · ')}
-                      meta={formatRecent(e.updatedAt)}
-                    />
-                  ))}
-                </div>
-              )}
-            </Panel>
+                早上开工前扫一眼「昨天动过哪些系统」，比看空白强。
+                1.30.1：整板都空时这张面板也只剩一行「还没有条目」，收进上面的合并空态
+                （入口留在合并空态的「网址管理」），避免首屏出现第二块空态。 */}
+            {!boardAllEmpty && (
+              <Panel
+                icon={<Icons.clock size={14} />}
+                title="最近改动"
+                hasItems={recentEntries.length > 0}
+                action={recentEntries.length > 0
+                  ? <button className="home-link" onClick={() => go('passwordManager')}>去网址管理</button>
+                  : undefined}
+              >
+                {recentEntries.length === 0 ? (
+                  <Empty
+                    text="密码库里还没有条目"
+                    action={<button className="btn btn-ghost btn-sm" onClick={() => go('passwordManager')}>新增一条</button>}
+                  />
+                ) : (
+                  <div className="home-items">
+                    {recentEntries.map(e => (
+                      <Row
+                        key={e.id}
+                        onClick={() => go('passwordManager')}
+                        main={e.name || '（未命名）'}
+                        sub={[ENV_LABEL[e.envType] || e.envType, e.url ? e.url.replace(/^https?:\/\//, '') : ''].filter(Boolean).join(' · ')}
+                        meta={formatRecent(e.updatedAt)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )}
           </div>
 
           {/* ================= 右栏：状态概览 ================= */}
@@ -571,33 +678,37 @@ export function Home() {
               </div>
             </Panel>
 
-            {/* ---- 今日笔记 / 最近记录 ---- */}
-            <Panel
-              icon={<Icons.note size={14} />}
-              title={todayNotes.length > 0 ? '今日笔记' : '最近记录'}
-              badge={todayNotes.length > 0 ? <Pill tone="info">{todayNotes.length} 篇</Pill> : undefined}
-              action={todayNotes.length > 0
-                ? <button className="home-link" onClick={() => go('notes')}>去笔记</button>
-                : undefined}
-            >
-              {(todayNotes.length > 0 ? todayNotes : recentNotes).length === 0 ? (
-                <Empty
-                  text="还没有笔记 —— 踩到的坑随手记一条，周报就不用回忆了"
-                  action={<button className="btn btn-ghost btn-sm" onClick={() => go('notes')}>记一条</button>}
-                />
-              ) : (
-                <div className="home-items">
-                  {(todayNotes.length > 0 ? todayNotes : recentNotes).slice(0, 4).map(n => (
-                    <Row
-                      key={n.id}
-                      onClick={() => go('notes')}
-                      main={n.title || '（未命名笔记）'}
-                      meta={formatRecent(n.updatedAt)}
-                    />
-                  ))}
-                </div>
-              )}
-            </Panel>
+            {/* ---- 今日笔记 / 最近记录 ----
+                 1.30.1：整板都空时（还没有任何笔记）这张面板也只剩一行空态，
+                 与左栏合并空态重复，收起来 —— 「笔记」入口留在合并空态里。 */}
+            {!boardAllEmpty && (
+              <Panel
+                icon={<Icons.note size={14} />}
+                title={todayNotes.length > 0 ? '今日笔记' : '最近记录'}
+                badge={todayNotes.length > 0 ? <Pill tone="info">{todayNotes.length} 篇</Pill> : undefined}
+                action={todayNotes.length > 0
+                  ? <button className="home-link" onClick={() => go('notes')}>去笔记</button>
+                  : undefined}
+              >
+                {(todayNotes.length > 0 ? todayNotes : recentNotes).length === 0 ? (
+                  <Empty
+                    text="还没有笔记 —— 踩到的坑随手记一条，周报就不用回忆了"
+                    action={<button className="btn btn-ghost btn-sm" onClick={() => go('notes')}>记一条</button>}
+                  />
+                ) : (
+                  <div className="home-items">
+                    {(todayNotes.length > 0 ? todayNotes : recentNotes).slice(0, 4).map(n => (
+                      <Row
+                        key={n.id}
+                        onClick={() => go('notes')}
+                        main={n.title || '（未命名笔记）'}
+                        meta={formatRecent(n.updatedAt)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )}
 
             {/* ---- 最近用例（用例库打开过的文件，localStorage 里只存相对路径） ---- */}
             {recentCases.length > 0 && (

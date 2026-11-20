@@ -243,6 +243,14 @@ input[type='radio']:not(.switch input):checked::after {
   background: var(--surface-1);
   border-bottom: 1px solid var(--line);
   min-height: calc(var(--d-control-h) + var(--d-toolbar-py) * 2);
+  /* 工具栏必须压住吸顶表头（--z-table-head），否则工具栏里的下拉菜单
+     上半截会被 .entry-table thead 切掉 —— 1.30.1 修过一次（当时的写法是
+     `html[data-bg='image'] .toolbar { z-index 设为 20 }` —— 也就是只在背景图模式生效）。
+     现在放在基础规则里，两种模式一致，数值走 tokens.css 的层级表。
+     ⚠️ 不要给它加 backdrop-filter / filter / transform / contain：
+     那会新建层叠上下文，把下拉关进工具栏（check-stacking.js 会拦）。 */
+  position: relative;
+  z-index: var(--z-toolbar);
 }
 
 /* ---------------- 7. 表格 ---------------- */
@@ -631,7 +639,7 @@ code, kbd, pre, .mono {
 .busy-progress {
   position: sticky;
   top: 0;
-  z-index: 40;
+  z-index: var(--z-content-menu);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -828,7 +836,7 @@ select {
 }
 .person-picker-caret { color: var(--text-3); font-size: 10px; margin-left: auto; }
 .person-picker-pop {
-  position: fixed; z-index: 200;
+  position: fixed; z-index: var(--z-toast);
   display: flex; flex-direction: column;
   background: var(--surface-overlay);
   border: 1px solid var(--line-strong); border-radius: var(--r-md);
@@ -1935,13 +1943,18 @@ button { font-family: inherit; }
   max-width: 100%;
 }
 
-/* ---- 分组卡片：表头做粘性，长组滚动时不丢系统名 ---- */
+/* ---- 分组卡片：表头做粘性，长组滚动时不丢系统名 ----
+   ⚠️ 这里原来有一条 `backdrop-filter: saturate(140%) blur(2px)`，已删（1.31.0）：
+   底部是 pages.css 的 `background: var(--bg-secondary)` 实色，糊在实色后面
+   本来就看不见 —— 属于零收益的死效果，却白白给这个容器建了一个层叠上下文，
+   再叠加 `z-index 取 2` 就是 tokens.css R2 点名的「容器自带 context + 层级」
+   危险组合（内部若有下拉会被关在卡片头里）。透光需求由 data-bg 分支的
+   `--glass-side` 承担（见文件末尾玻璃段）。 */
 .env-card-head {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-card-local);
   padding: 8px 12px;
-  backdrop-filter: saturate(140%) blur(2px);
 }
 
 .env-card-stat { font-variant-numeric: tabular-nums; }
@@ -2091,7 +2104,7 @@ button { font-family: inherit; }
 .env-cards { grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); }
 
 /* 失败明细：地址让位给原因，避免原因被挤成省略号 */
-.env-fail-url { max-width: 46%; }
+.env-fail-url { max-width: 40%; }
 .env-fail-why { max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 窄屏：隐掉计数提示，行内列宽收紧（仍是 4 列，别改成 3 列——子元素有 4 个会换行） */
@@ -2768,13 +2781,29 @@ button.env-url {
 /* ===== 42. 跳到主内容（skip-link） =====
    追加在末尾而不是塞进 global.css：三份样式表按 global → pages → redesign
    顺序加载，新规则只有在最后才能压过前面同特异性的写法。
-   平时用 translateY(-200%) 移出视口，Tab 焦点落在它身上时滑回左上角。 */
+   平时用 translateY(-200%) 移出视口，Tab 焦点落在它身上时滑回左上角。
+
+   1.31.0 改成「屏读专用隐藏」写法：
+   - position: absolute 是硬要求。它是 .app-layout 的 flex 子元素，而
+     .app-layout 是 flex 容器；只要 position 变成 static/relative，它就变成
+     flex 项并占位 —— 1.30.1 实测占 93×900，把整个侧栏从 x=0 推到 x=93
+     （用户反馈「上传背景图后左侧宽了一节」）。absolute 让它彻底脱离 flex 流。
+   - 1px 盒 + clip-path: inset(50%) + overflow: hidden 是标准屏读隐藏：
+     视觉不可见、不占布局空间，但**仍可被 Tab 聚焦**（display:none /
+     visibility:hidden 会把键盘焦点一起干掉，那条无障碍通道就废了）。
+   - 聚焦时换回 position: fixed：absolute 会随页面滚走，而 skip-link
+     必须永远贴在视口角上。 */
 .skip-link {
-  position: fixed;
+  position: absolute;
   top: 8px;
   left: 8px;
   z-index: var(--z-skip-link);
-  padding: 8px 14px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
   border-radius: 8px;
   background: var(--accent);
   color: #fff;
@@ -2788,6 +2817,12 @@ button.env-url {
 
 .skip-link:focus,
 .skip-link:focus-visible {
+  position: fixed;
+  width: auto;
+  height: auto;
+  padding: 8px 14px;
+  overflow: visible;
+  clip-path: none;
   transform: translateY(0);
   outline: 2px solid var(--text-primary);
   outline-offset: 2px;
@@ -4360,12 +4395,12 @@ html.pin-window #root {
   /* 选到 52 / 104 周时横向滚动，左侧模块名必须钉住，否则滚两屏就不知道在看哪一行 */
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: var(--z-base-raise);
   background: var(--surface-2);
 }
 
 .zt-heat-table thead .zt-heat-mod {
-  z-index: 2;
+  z-index: var(--z-card-local);
 }
 
 .zt-heat-total {
@@ -4571,7 +4606,7 @@ html.pin-window #root {
   border-bottom-right-radius: var(--r-md);
   /* 三道斜线的经典缩放手柄，不依赖图标字体 */
   background:
-    linear-gradient(135deg, transparent 46%, var(--text-3) 46%, var(--text-3) 54%, transparent 54%),
+    linear-gradient(135deg, transparent 40%, var(--text-3) 40%, var(--text-3) 54%, transparent 54%),
     linear-gradient(135deg, transparent 66%, var(--text-3) 66%, var(--text-3) 74%, transparent 74%);
 }
 
@@ -5721,7 +5756,7 @@ input[type='radio']:not(.switch input):focus-visible {
   position: absolute;
   top: 6px;
   left: 6px;
-  z-index: 2;
+  z-index: var(--z-card-local);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6917,7 +6952,7 @@ input[type='number'] {
 .pm-pager-wrap {
   position: sticky;
   bottom: 0;
-  z-index: 2;
+  z-index: var(--z-card-local);
   margin-top: 12px;
   border: 1px solid var(--pm-line);
   border-radius: var(--r-md);
@@ -7416,7 +7451,7 @@ button.notes-dirpath:focus-visible {
 .cases-drop-hint {
   position: absolute;
   inset: 8px;
-  z-index: 2;
+  z-index: var(--z-card-local);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7764,14 +7799,14 @@ button.notes-dirpath:focus-visible {
 
 /* ================================================================
    自定义背景图（1.30.0）
-   - 图片画在 body::before（z-index:-1，天然在内容下面，不动布局）
+   - 图片画在 body::before（层级 -1，天然在内容下面，不动布局）
    - 压暗遮罩 body::after；卡片/侧栏/面板在 data-bg='image' 下变半透明 + 背景模糊
    - 强调色：从图片取色后写 --bg-accent，data-accent='image' 时接管 --accent
    ================================================================ */
 .app-bg {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: var(--z-canvas);
   pointer-events: none;
   overflow: hidden;
 }
@@ -7793,31 +7828,37 @@ button.notes-dirpath:focus-visible {
   opacity: var(--bg-dim, 0.42);
 }
 html[data-theme='light'] .app-bg-dim { background: #ffffff; }
-/* 背景层是 fixed z-index:0，侧栏/内容区要抬到它上面（否则会被盖住） */
-html[data-bg='image'] .app-layout { position: relative; z-index: 0; }
+/* 背景层是 fixed 且层级为 0（--z-canvas），侧栏/内容区要抬到它上面（否则会被盖住） */
+html[data-bg='image'] .app-layout { position: relative; z-index: var(--z-canvas); }
 html[data-bg='image'] .sidebar,
-html[data-bg='image'] .main-content,
-html[data-bg='image'] .skip-link { position: relative; z-index: 1; }
+html[data-bg='image'] .main-content { position: relative; z-index: var(--z-base-raise); }
+/* ⚠️ .skip-link 绝对不能进上面这一组：它被改成 position:relative 后就变成
+   .app-layout 的 flex 项，实测占宽 93px / 高 900px，把整个侧栏从 x=0 推到 x=93
+   —— 就是 1.30.1「上传背景图后左侧宽了一节」的根因。
+   1.31.0 起 .skip-link 的基础规则已经是 position:absolute + clip-path（见第 42 节），
+   天然脱离 flex 流，所以这里不再需要一条 data-bg 专用覆盖；留着只会在
+   背景图模式下把它强行改回 fixed，与基础规则的隐藏方式打架。
+   它自己的 z-index 是 --z-skip-link，层级不受影响。 */
 
 html[data-bg='image'] body,
 html[data-bg='image'] .app-layout { background: transparent; }
 html[data-bg='image'] .sidebar {
-  background: color-mix(in srgb, var(--surface-1) 72%, transparent);
-  backdrop-filter: blur(16px) saturate(1.04);
+  background: var(--glass-side);
+  backdrop-filter: blur(var(--glass-blur-side)) saturate(var(--glass-saturate));
 }
-/* 内容区给一层薄底色：标题/说明文字直接压在图上会花，用 32% 的底色兜住可读性 */
-html[data-bg='image'] .content-area { background: color-mix(in srgb, var(--surface-0) 32%, transparent); }
+/* 内容区给一层薄底色：标题/说明文字直接压在图上会花，用底色的透明度兜住可读性 */
+html[data-bg='image'] .content-area { background: var(--glass-canvas); }
 html[data-bg='image'] .pnl {
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
-  backdrop-filter: blur(18px) saturate(1.03);
+  background: var(--glass-card);
+  backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
 }
 html[data-bg='image'] .entry-card {
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
-  backdrop-filter: blur(14px);
+  background: var(--glass-card);
+  backdrop-filter: blur(var(--glass-blur-card));
 }
 html[data-bg='image'] .modal {
-  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
-  backdrop-filter: blur(20px);
+  background: var(--glass-modal);
+  backdrop-filter: blur(var(--glass-blur-modal));
 }
 
 /* 图片取色接管强调色（data-accent='image'） */
@@ -7859,3 +7900,171 @@ html[data-bg='image'] .modal {
 
 
 .bg-warn { color: var(--warn); }
+
+/* ================================================================
+   1.30.1 背景图玻璃体系：面板 / 表格 / 控件统一半透明
+   ----------------------------------------------------------------
+   1.30.0 只处理了「侧栏 + .pnl + .entry-card + .modal」四层，实测其它页面的
+   卡片、表格、输入框、下拉框、按钮仍是纯色底，压在图上像一块块白板。
+
+   1.31.0：本段**不再出现任何透明度百分比**，取值全部收敛到 tokens.css 的
+   --glass-*（20 个 token，深/浅两套，见那里的 3b 段）。以前
+   40%/42%/45%/52%/55%/56%/62%/64%/66%/90%/94% 散在 40 多条规则里、
+   深色还要再抄一遍，调一档要动十几处。现在这里只回答一个问题：
+   **哪个类用哪个 token**。
+
+   ⚠️ 本段给容器（.toolbar / .sidebar / .pnl / .card2 …）只换背景，不加
+   backdrop-filter：那会给容器新建层叠上下文，把里面的下拉关在容器里
+   （tokens.css 的 R2 + scripts/check-stacking.js 在盯这一条）。
+   只有 th 与浮层菜单可以加模糊 —— 它们内部没有需要跑出容器的定位子元素。
+   ================================================================ */
+
+/* 面板类容器（工作台卡片 / 设置左栏 / 标签栏 / 统计卡 / 压测脚本库） */
+html[data-bg='image'] :is(
+  .card2, .home-panel, .task-card, .pin-card, .zt-sum-card,
+  .tag-sidebar, .set-rail, .tb-rail, .settings-section,
+  .cases-tree, .jmxlib-dir, .jmxlib-row, .digest-inst, .notice-item
+) {
+  background-color: var(--glass-card);
+}
+
+/* 工具条 / 表格表头：原来是不透明的 surface-1，压在图上最显眼 */
+html[data-bg='image'] :is(.toolbar, .entry-table th, .zt-table th, .tbl th) {
+  background-color: var(--glass-side);
+}
+/* ⚠️ .toolbar 绝对不能加 backdrop-filter（或其他会创建层叠上下文的属性）：
+   它一旦成为 stacking context，里面搜索下拉的 z-index 就只在这个 context 内有效，
+   整个工具栏（连菜单）会被后面的 .pg 内容盖住 —— 用户看到的就是
+   「下拉嵌进表格里、被表头/行挡住」。要透用半透明背景就够了。
+
+   它的 z-index 由基础规则 .toolbar 统一给（tokens.css 的 --z-toolbar），
+   这里不再单独写 —— 那条注释写清了「必须高于 .entry-table thead 的
+   --z-table-head，否则下拉上半截会被吸顶表头切掉」。 */
+html[data-bg='image'] .entry-table th,
+html[data-bg='image'] .zt-table th,
+html[data-bg='image'] .tbl th {
+  backdrop-filter: blur(var(--glass-blur-card));
+}
+
+/* 输入框 / 下拉框 / 多行文本：--input-bg 是纯色，换成玻璃底。
+   checkbox / radio 排除在外 —— 它们的 background 用来画「已勾选」的填充，
+   跟着变半透明会让勾选状态看起来像没选中。 */
+html[data-bg='image'] :is(
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea
+) {
+  background-color: var(--glass-input);
+}
+
+/* 次级按钮 / 图标按钮 / 页签：白色或 surface 底一律透一半 */
+html[data-bg='image'] :is(.btn-secondary, .ibtn, .tab2) {
+  background-color: var(--glass-control);
+}
+html[data-bg='image'] .btn-secondary:hover {
+  background-color: var(--glass-control-hover);
+}
+
+/* 侧栏 hover / 选中：surface-3 与 accent-soft 也跟着半透明 */
+html[data-bg='image'] .nav-item:hover {
+  background-color: var(--glass-hover);
+}
+html[data-bg='image'] .nav-item.active {
+  background-color: var(--glass-active);
+}
+
+/* 下拉框的 option 由系统绘制，不受 CSS 控制（无法半透明），这里只保证 trigger 一致 */
+html[data-bg='image'] select option { background-color: var(--surface-2); color: var(--text-1); }
+
+/* 深色主题：**这里不要再写百分比**。
+   --glass-* 已经在 tokens.css 的 3b 段分了两套（:root 深色 / [data-theme='light']
+   浅色），深色那套本来就比浅色多留一档不透明度（40% → 52%），
+   所以「深色再补一遍」的 4 组覆盖（面板 52% / 工具条 52% / 输入框 56% /
+   次级按钮 64%）已全部并入 token。在这里写死数值会盖掉 token，
+   深浅两套立刻失去意义。 */
+
+
+/* 内嵌小块（工作台统计卡 / 环境 KPI / 近期条目等）：原来用 --surface-inset 实底，
+   压在大图上看像贴了一排白纸 */
+html[data-bg='image'] :is(
+  .home-stat, .env-kpi, .recent-chip, .zt-insight, .zt-sum-period, .vault-audit-item, .zt-todo
+) {
+  background-color: var(--glass-inset);
+}
+/* 其余页面的大块容器（接口调试统计卡 / 环境矩阵卡 / 附件卡 / 用例库 / 压测脚本库 /
+   代码调试面板 / 工具箱主区 / 导出页等）：与 .pnl 同一档玻璃。
+   浮层类（.modal/.drawer/.cmdk/.toast/下拉菜单）刻意不在此列——它们压在任意背景上，
+   保持不透明才能保证可读；只对 .modal 做 90% 的轻微玻璃化。 */
+html[data-bg='image'] :is(
+  .api-stat, .ps-card, .ps-panel, .ws-panel, .att-card, .reg-row, .orphan-strip,
+  .notes-dirbar, .coll-preview, .cases-batch, .cases-sort, .jmxlib-file,
+  .codelab-pane, .codelab-strip, .json-pane, .json-pane-head,
+  .tb-main, .tb-rail, .toolbox-body, .toolbox-tab, .tb-main-group,
+  .env-card, .env-stat, .env-hist-card, .env-report, .env-matrix-wrap,
+  .api-side-group, .zt-sumbar, .zt-filterbar, .zt-banner,
+  .module-section, .module-empty, .trash-item, .password-gen-panel,
+  .export-page .settings-section
+) {
+  background-color: var(--glass-card);
+}
+/* 工具箱「时间戳」结果表：白底整块压在卡片上，是最后一个明显不透明的内嵌表 */
+html[data-bg='image'] .tb-main .kv-table {
+  background-color: var(--glass-card);
+}
+/* 卡片头部条 / 工具条 / 标签栏：这些是「条状块」，之前只覆盖了容器本体，
+   头部仍是 --surface-1 / --surface-2 实底，压在背景图上表现为一条白带
+   （工作台「今日速览」标题行、缺陷管理「连接配置」标题行、接口调试的页签条都是它）。
+   环境矩阵卡片的粘性头 .env-card-head 也是同一条白带，一并收进来 ——
+   它的 backdrop-filter 在实底上本来就是看不见的死效果，去掉后
+   它也不再是「自带层叠上下文的容器 + z-index」这种危险组合。 */
+html[data-bg='image'] :is(
+  .home-panel-head, .pnl-head, .pnl-foot, .zt-filterbar, .zt-sumbar,
+  .env-bar, .env-card-head, .json-pane-head, .tb-subtabs, .api-side-tabs2, .api-dlg-foot,
+  .zt-sum-bar, .zt-global-scope select
+) {
+  background-color: var(--glass-side);
+}
+/* 缺陷管理「连接配置」这类可折叠配置块的外壳（.zt-cfg-*）也是实底 */
+html[data-bg='image'] :is(.zt-cfg, .zt-cfg-chip, .zt-cfg-body) {
+  background-color: var(--glass-card);
+}
+/* 自定义下拉 / 分段开关的触发器：它们是 <button>，前面的 input/select 规则覆盖不到，
+   在缺陷管理「当前项目」、笔记「全部/笔记/SQL 片段」这些地方会留下一块白底。 */
+html[data-bg='image'] :is(.person-picker-trigger, .zt-global-scope select, .view-switch-btn) {
+  background-color: var(--glass-input);
+}
+html[data-bg='image'] .view-switch-btn.is-on {
+  background-color: var(--glass-control);
+}
+/* ⚠️ 代码编辑框必须保持 transparent：.codelab-code 原本就是 background:transparent，
+   靠父容器 .codelab-editor 的 #1b1f27 出深色。1.30.1 第一版的全局 textarea 半透明
+   规则正好命中它，于是代码区变成一块灰底（用户反馈的「代码背景变灰色」）。
+   这里是可读性底线：代码/终端区保持深色实底，不参与玻璃化。 */
+html[data-bg='image'] .codelab-editor textarea.codelab-code {
+  background-color: transparent;
+}
+
+/* 结果 / 日志 / 目录条等信息块：比输入框再透一档，读长文本时不刺眼 */
+html[data-bg='image'] :is(
+  .url-bar, .perf-log, .perf-cmd, .tool-live,
+  .att-dir-bar, .att-dir-bar-note, .tb-pre, .json-pane pre
+) {
+  background-color: var(--glass-input-soft);
+}
+/* 表格行内的复制/打开图标：.url-cell / .username-cell 是 flex 容器，
+   图标按钮默认 flex-shrink:1 会被 .url-display 挤扁（用户反馈「链接 icon 显示不全」）。
+   固定成 flex:0 0 auto，图标永远保持 22×22。 */
+.entry-table .cell-icon-btn { flex: 0 0 auto; }
+/* 浮层（搜索范围下拉 / 行内动作菜单 / 浏览器选择 / 颜色选择器 / 人员选择器）：
+   背景图下卡片是 40% 白，浮层若也用同色白，两者叠在一起会看不出边界，
+   用户会觉得「下拉嵌进了卡片里」（z-index 其实是 --z-toolbar-menu，没被遮挡，
+   是视觉分不清）。做法：浮层几乎不透明（--glass-overlay）+ 毛玻璃 + 加重阴影，
+   让它明确地浮在卡片之上。 */
+html[data-bg='image'] :is(
+  .search-scope-menu, .action-dropdown, .browser-dropdown, .manage-color-popup,
+  .person-picker-pop, .api-more-menu, .tag-popover, .tag-suggestions
+) {
+  background-color: var(--glass-overlay);
+  backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
+  box-shadow: var(--glass-overlay-shadow);
+}

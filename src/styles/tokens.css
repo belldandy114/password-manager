@@ -81,37 +81,116 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* ---------- 3. Layers（叠放层级） ----------
-     只给「跨组件争抢同一片屏幕」的图层定了名字；组件内部那些 z-index:1/2/5
-     （表格里的展开块、输入框旁边的浮标）不在这里，它们只在局部叠放上下文里
-     比较，抽成令牌只会把数字换成另一批数字。
+     ⚠️ 硬规则（改样式前先读这一页，两条门禁脚本都在盯）：
 
-     现状阶梯（数字来自历次叠加，不连续是历史原因，别再往里插新值）：
-       10   表头吸顶
-       20   行内浮起（徽标/角标）
-       40   内容区下拉（api-more-menu、进度条）
-       50   工具栏下拉（搜索范围、标签浮层、行操作）
-       60   页面级菜单 / 接口调试弹窗遮罩
-       90   抽屉遮罩   91 抽屉本体
-       100  浮层（颜色选择器、标签建议、浏览器下拉）
-       120  页内轻提示
-       130  命令面板遮罩  131 命令面板本体
-       140  截图查看器
-       200  全局 toast / 悬浮面板
-       999  右键菜单遮罩 1000 右键菜单本体
-       3000 图片灯箱
-       4000 跳到主内容（必须压在所有浮层之上，否则焦点环被遮住）
-       9999 浏览器下拉的 portal 容器
-       10000 致命错误横幅（必须压住一切，包括上面那个 portal）
+     R1. 层级表是本项目 z-index 的**唯一真源**。新浮层从下表挑一层，禁止再写
+         z-index 字面量 —— `scripts/check-z-index.js`（已在 npm run check 里）
+         命中「z-index: <数字>」就以非零码退出。
+     R2. **容器类选择器**（class 名含 toolbar / sidebar / panel / card / section /
+         header / rail / shell）不要同时出现 `backdrop-filter|filter|transform|
+         contain` 与 `z-index`。那几个属性会**新建层叠上下文**，写在同一选择器上的
+         z-index 于是变成「这个容器内部的天花板」：内部菜单再写 z-index 50 也只在
+         容器里有效，而容器本身又低于后来的吸顶表头 → 表现就是「下拉明明 z-index
+         更高，却被表头/行盖掉」。`scripts/check-stacking.js` 命中即失败。
+         要透光请用半透明背景（见 3b 的 --glass-*），不要靠 backdrop-filter 做层次。
+     R3. 玻璃层（半透明底）只用 --glass-*，不要在 data-bg 分支里逐类补百分比。
 
-     新增浮层请挑一层，不要发明新数字。 */
+     层级表（数值只在这里出现一次；冒号后面那句是「压谁 / 被谁压」）：
+         0    --z-canvas          背景图层            | 被一切内容压，自己不压任何东西
+         1    --z-base-raise      同层容器互抬         | 压 canvas；被 2 及以上压
+                                   （侧栏 / 内容区 / 吸顶小节头）
+         2    --z-card-local      卡片内部局部抬升     | 压卡片正文；被 5 及以上压
+                                   （勾选角标 / 吸顶卡片头 / 拖放提示）
+         5    --z-sidebar-toggle  侧栏收起开关(fixed)  | 压页面内容；被 10 及以上压
+         5    --z-input-float     控件旁浮动小件       | 压同容器内容；被 10 及以上压
+                                   （复制结果按钮 / 输入框浮标）
+        10    --z-table-head      吸顶表头             | 压表体与行内容；被 20 及以上压
+        20    --z-toolbar         工具栏外壳           | **必须压 10**（否则工具栏里的
+                                  下拉上半截被吸顶表头切掉）；被 40 及以上压
+        20    --z-row-raise       行内浮起             | 压表头 10；被 40 及以上压
+                                   （复制实时反馈 / 角标）
+        40    --z-content-menu    内容区下拉 / 吸顶进度条 | 压 20；被 50 及以上压
+        50    --z-toolbar-menu    工具栏与表格行内下拉 | 压 40；被 60 及以上压
+        60    --z-page-menu       页面级菜单 / 页内弹窗遮罩 | 压 50；被 90 及以上压
+        90    --z-drawer-mask     抽屉遮罩             | 压 60；被 91 压
+        91    --z-drawer          抽屉本体             | 压 90；被 100 及以上压
+       100    --z-overlay         浮层 / 模态遮罩      | 压 91；被 110 及以上压
+                                   （颜色选择器 / 浏览器下拉 / .modal-overlay）
+       110    --z-field-hint      输入框建议列表       | 压 100；被 120 及以上压
+       120    --z-inline-toast    页内轻提示           | 压 110；被 130 及以上压
+       130    --z-cmdk-mask       命令面板遮罩         | 压 120；被 131 压
+       131    --z-cmdk            命令面板本体         | 压 130；被 200 及以上压
+       200    --z-toast           全局 toast / 浮动面板 | 压 131；被 999 及以上压
+                                   （脱离文档流的 .person-picker-pop 也在这层）
+       999    --z-menu-overlay    右键菜单遮罩         | 压 200；被 1000 压
+      1000    --z-menu            右键菜单本体         | 压 999；被 3000 及以上压
+      3000    --z-lightbox        图片灯箱             | 压 1000；被 4000 压
+      4000    --z-skip-link       跳到主内容           | 压所有浮层（否则焦点环被遮住）；
+                                                       被 9999 及以上压
+      9999    --z-portal-top      浏览器下拉 portal 容器 | 压 4000；被 10000 压
+     10000    --z-alert-top       致命错误横幅         | 压住一切，包括上面那个 portal
+
+     数字不连续是历次叠加留下的历史，别再往里插新值；确实需要新的一层，
+     先改这张表再改脚本白名单，不要直接在样式里写数字。 */
+  --z-canvas: 0;
+  --z-base-raise: 1;
+  --z-card-local: 2;
+  --z-sidebar-toggle: 5;
+  --z-input-float: 5;
   --z-table-head: 10;
+  --z-toolbar: 20;
   --z-row-raise: 20;
+  --z-content-menu: 40;
+  --z-toolbar-menu: 50;
+  --z-page-menu: 60;
+  --z-drawer-mask: 90;
+  --z-drawer: 91;
+  --z-overlay: 100;
+  --z-field-hint: 110;
+  --z-inline-toast: 120;
+  --z-cmdk-mask: 130;
+  --z-cmdk: 131;
+  --z-toast: 200;
   --z-menu-overlay: 999;
   --z-menu: 1000;
   --z-lightbox: 3000;
   --z-skip-link: 4000;
   --z-portal-top: 9999;
   --z-alert-top: 10000;
+
+  /* ---------- 3b. Glass（玻璃层，只在 html[data-bg='image'] 下吃到） ----------
+     自定义背景图打开后，卡片 / 侧栏 / 浮层 / 输入框要变成半透明，让图透出来。
+     以前这些百分比散落在 redesign.css 的 data-bg 段（45 条覆盖规则里 40%/42%/
+     45%/52%/55%/56%/62%/64%/66%/90%/94% 混着写，深浅两套各抄一遍），
+     换个档位要改十几处还容易漏。现在按「语义角色」收敛成 12 个 token：
+     组件规则只写 background: var(--glass-xxx)，data-bg 段里不再出现百分比。
+
+     取值口径：深色主题的 surface 压暗能力弱，多留一点不透明度（40% → 52%），
+     否则亮背景图会把深色界面冲淡；浅色主题够透才看得见图。
+     下面 :root 是**深色**那套，浅色在 [data-theme='light'] 覆盖 ——
+     与上面 semantic token 的写法完全一致（data-theme 只有 dark/light 两个值）。 */
+  --glass-card: color-mix(in srgb, var(--surface-2) 52%, transparent);      /* 卡片 / 面板容器 */
+  --glass-side: color-mix(in srgb, var(--surface-1) 52%, transparent);      /* 侧栏 / 工具条 / 表头 / 条状块 */
+  --glass-overlay: color-mix(in srgb, var(--surface-2) 94%, transparent);   /* 浮层菜单（几乎不透明，才分得清边界） */
+  --glass-modal: color-mix(in srgb, var(--surface-2) 90%, transparent);     /* 模态框 */
+  --glass-input: color-mix(in srgb, var(--input-bg) 56%, transparent);      /* 输入 / 下拉 / 触发器 */
+  --glass-input-soft: color-mix(in srgb, var(--input-bg) 54%, transparent); /* 结果区 / 日志区 / 目录条 */
+  --glass-inset: color-mix(in srgb, var(--surface-inset) 66%, transparent); /* 内嵌小块（统计卡 / KPI / chip） */
+  --glass-control: color-mix(in srgb, var(--surface-2) 64%, transparent);   /* 次级按钮 / 图标按钮 / 页签 */
+  --glass-control-hover: color-mix(in srgb, var(--surface-3) 62%, transparent); /* 次级按钮 hover */
+  --glass-hover: color-mix(in srgb, var(--surface-3) 52%, transparent);     /* 导航 hover */
+  --glass-active: color-mix(in srgb, var(--accent-soft) 70%, transparent);  /* 导航选中 */
+  --glass-canvas: color-mix(in srgb, var(--surface-0) 10%, transparent);    /* 内容区薄底（兜文字可读性） */
+
+  /* 毛玻璃强度：与上面成对使用，别在规则里写 px */
+  --glass-blur-card: 12px;
+  --glass-blur-panel: 16px;
+  --glass-blur-side: 18px;
+  --glass-blur-modal: 20px;
+  --glass-blur-overlay: 16px;
+  --glass-saturate: 1.04;
+  /* 浮层阴影：浮层与卡片都是半透明白/深底时会糊在一起，靠这一档重阴影拉开层次 */
+  --glass-overlay-shadow: 0 14px 34px color-mix(in srgb, #05070a 22%, transparent);
 
   /* ---------- 4. Environment badges（环境徽标） ----------
      同一套徽标在卡片和表格里是两种形态：卡片是「深底+浅字」，表格是
@@ -178,6 +257,15 @@
   --shadow-1: 0 1px 2px rgba(23, 25, 26, 0.06);
   --shadow-2: 0 8px 24px rgba(23, 25, 26, 0.08);
   --shadow-3: 0 24px 56px rgba(23, 25, 26, 0.12);
+
+  /* 玻璃层浅色那套：白色 surface 本来就亮，多让一点背景图透出来（52% → 40%）。
+     浮层 / 模态 / 导航态不随主题变（浅色已经够透，再降就看不清边界）。 */
+  --glass-card: color-mix(in srgb, var(--surface-2) 40%, transparent);
+  --glass-side: color-mix(in srgb, var(--surface-1) 40%, transparent);
+  --glass-input: color-mix(in srgb, var(--input-bg) 45%, transparent);
+  --glass-input-soft: color-mix(in srgb, var(--input-bg) 42%, transparent);
+  --glass-inset: color-mix(in srgb, var(--surface-inset) 55%, transparent);
+  --glass-control: color-mix(in srgb, var(--surface-2) 52%, transparent);
 
   /* 浅色下徽标改成「浅底+深字」，对比度都过 AA；表格形态用实色底+白字，
      因为浅底深字放在斑马纹表格里会看不出边界。 */

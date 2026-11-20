@@ -155,7 +155,7 @@ body {
   transition: width 0.2s ease, min-width 0.2s ease;
 }
 .tag-sidebar-toggle {
-  z-index: 5;
+  z-index: var(--z-sidebar-toggle);
 }
 .tag-sidebar-header {
   justify-content: space-between;
@@ -233,7 +233,7 @@ body {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 100;
+  z-index: var(--z-overlay);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -522,7 +522,7 @@ body {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 50;
+  z-index: var(--z-toolbar-menu);
   min-width: 140px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1112,7 +1112,8 @@ body {
 /* ---- Entry Table View (V2) ---- */
 .entry-table {
   width: 100%;
-  min-width: 1100px;
+  /* 1.30.1：URL 列固定 180px 后列宽总和变大，最小宽度同步加宽（横向滚动本来就有） */
+  min-width: 1240px;
   table-layout: fixed;
   border-collapse: collapse;
 }
@@ -1120,7 +1121,7 @@ body {
 .entry-table thead {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-table-head);
 }
 
 .entry-table th {
@@ -1244,7 +1245,9 @@ body {
 
 /* Column: URL */
 .entry-table .col-url {
-  width: auto;
+  /* table-layout:fixed 下 min-width 不参与列宽计算，必须给明确 width，
+     否则 URL 列会被自动分配到 38px（文字被截空、22px 图标占满整格） */
+  width: 180px;
   min-width: 120px;
   overflow: hidden;
 }
@@ -1412,7 +1415,7 @@ body {
   position: absolute;
   bottom: 100%;
   left: 0;
-  z-index: 50;
+  z-index: var(--z-toolbar-menu);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1513,7 +1516,7 @@ body {
   position: absolute;
   right: 0;
   top: 100%;
-  z-index: 50;
+  z-index: var(--z-toolbar-menu);
   min-width: 140px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1616,7 +1619,7 @@ body {
   padding: 2px 8px;
   border-radius: 4px;
   line-height: 1.5;
-  z-index: 20;
+  z-index: var(--z-row-raise);
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 /* Arrow pointing down */
@@ -1858,7 +1861,7 @@ mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-overlay);
   animation: fadeIn 0.15s ease;
 }
 
@@ -1918,7 +1921,7 @@ mark {
   position: fixed;
   top: 16px;
   right: 16px;
-  z-index: 200;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2007,7 +2010,7 @@ mark {
   top: 100%;
   left: 0;
   right: 0;
-  z-index: 110;
+  z-index: var(--z-field-hint);
   max-height: 180px;
   overflow-y: auto;
   background: var(--bg-card);
@@ -2255,7 +2258,7 @@ mark {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 100;
+  z-index: var(--z-overlay);
   min-width: 120px;
   background: var(--bg-card);
   border: 1px solid var(--border);

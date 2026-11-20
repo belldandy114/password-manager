@@ -142,6 +142,46 @@ npx vitest run src/utils/__tests__/csv.test.ts   # 单跑一个
 分别注入旧/新 CSS，逐元素哈希 `getComputedStyle`（含 `::before/::after`），深浅主题各跑一遍。
 首次清理实测 13 个页面 / 3158 + 3358 个元素 / 0 差异。
 
+### CSS 层叠门禁（2026-11-20：z-index 令牌化 + 层叠上下文约束）
+
+背景：**「下拉被吸顶表头压住」不是偶发**，是四类写法各自在不同地方犯了同一个病——
+`z-index` 字面量随手写（42 条声明里曾有 41 条是数字，17 种取值）；容器类选择器上加了
+`backdrop-filter|filter|transform|contain`（会**新建层叠上下文**，写在同一选择器上的
+`z-index` 就变成「容器内部的天花板」，内部菜单再高也出不去）；`skip-link` 用了
+`position: relative` 变成 flex 占位把侧栏挤偏。前两类已各配一条机械门禁。
+
+| 命令 | 作用 |
+|---|---|
+| `node scripts/check-z-index.js` | 门禁用：`z-index:` 后直接跟数字（含负数）即失败 |
+| `node scripts/check-z-index.js --self-test` | 自测 10 项，确认门能抓能放 |
+| `node scripts/check-stacking.js` | 门禁用：容器类选择器同时出现上下文属性 + `z-index` 即失败 |
+| `node scripts/check-stacking.js --self-test` | 自测 10 项 |
+
+四条判据：
+
+1. **层级表是唯一真源**：`tokens.css` 的 `3. Layers` 段有 25 个 `--z-*`，每个数值只出现
+   一次，后面跟着「压谁 / 被谁压」的说明。新浮层从表里挑一层，不要发明新数字。
+   确实需要新层 → 先改表，再改脚本白名单。
+2. **容器不许自带层叠上下文**：容器类（class 名含 toolbar / sidebar / panel / card /
+   section / header / rail / shell）同时带 `backdrop-filter|filter|transform|contain`
+   与 `z-index` 会命中 R2。要透光用三家背景色（见 `--glass-*`），不要靠 `backdrop-filter`
+   做层次。白名单必须写在样式的就地注解里并写理由（理由太短脚本不认），
+   全局放行等于关掉这条门。
+3. **两个门禁都先 `--self-test` 再跑真检查**（`ci-gate.js` 里各两步）：自测用内存样例验证
+   「能抓到 / 不误报」，防止改脚本时把门写成永远绿。
+4. **门只证明结构，不证明好看**：z-index 全走令牌 ≠ 层级顺序对。层序对不对要看
+   「表头吸顶 + 工具栏下拉 + 命令面板 + 右键菜单」四个场景在真实窗口里的开合。
+
+两条踩坑：
+
+- **玻璃层（半透明底）一律用 `--glass-*`，不要在 `data-bg='image'` 分支里逐类补百分比**。
+  这套 token 有深浅两套 + 图片档（`--glass-card / side / overlay / input / control`），
+  切换背景只改 token 值。核对实测值时不要拿 `getPropertyValue('--glass-card')` 和
+  `getComputedStyle().backgroundColor` 做**字符串比较**——自定义属性返回的是未解析的
+  `color-mix()` 原文，会假红；用探针元素解析后再比。
+- **`backdrop-filter` 在父层是实色时是死效果**（`.env-card-head` 就是），删掉不影响观感，
+  但会让「图片模式下的白带」消失——这类删除属于视觉变化，改完要过一遍背景图模式。
+
 ## 1.24.3：菜单合并 / 测试数据（改这里前先看）
 
 > 2026-11-14 从 `AGENTS.md` 末尾搬来，原文未改。原因：`AGENTS.md` 超出 65,536 B 预算，

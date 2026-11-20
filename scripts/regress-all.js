@@ -22,6 +22,7 @@ if (process.argv.includes('--pack')) {
     ['用例库', 'node scripts/ui-cases-test.js'],
     ['脚本库', 'node scripts/ui-jmxlib-test.js'],
   ['自定义背景', 'node scripts/ui-bg-test.js'],
+    ['玻璃层计算样式', 'node scripts/ui-bg-glass-test.js'],
     ['启动期回归', 'node scripts/ui-startup-test.js'],
     ['下载时间回归', 'node scripts/ui-dl-time-test.js'],
   ];

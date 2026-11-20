@@ -27,8 +27,9 @@ const DataGenerator = lazy(PAGE_LOADERS.dataGenerator);
 const Toolbox = lazy(PAGE_LOADERS.toolbox);
 const Environments = lazy(PAGE_LOADERS.environments);
 const WeeklyReport = lazy(PAGE_LOADERS.weeklyReport);
-const Notes = lazy(PAGE_LOADERS.notes);
-const Attachments = lazy(PAGE_LOADERS.attachments);
+// 1.30.1：notes / attachments 两个 loader 都指向合并页 NotesAttachments，
+// 别名跟着改成真实组件名，避免读代码时以为这里还是单页的 Notes
+const NotesAttachments = lazy(PAGE_LOADERS.notes);
 const ZentaoPage = lazy(PAGE_LOADERS.zentao);
 const ApiClient = lazy(PAGE_LOADERS.apiClient);
 const PerfTest = lazy(PAGE_LOADERS.perfTest);
@@ -468,9 +469,13 @@ function App() {
     case 'environments': return <Environments />;
       case 'weeklyReport': return <WeeklyReport />;
       // 「SQL 片段」页已并入测试笔记：老用户上次停在这一页时平滑落到笔记页
-      case 'snippets': return <Notes />;
-      case 'notes': return <Notes />;
-      case 'attachments': return <Attachments />;
+      case 'snippets': return <NotesAttachments initialScope="notes" />;
+      // 1.30.1：「测试笔记 + 附件管理」合并成一个菜单页，两个入口都落同一页，
+      // 只是默认打开的页签不同（旧链接 / 首页快捷入口 / 条目里的「查看附件」都还能直达）。
+      // 'notes' 是主入口：NotesAttachments 内部会恢复上次页签（localStorage）；
+      // 'attachments' 是显式附件入口：一定落附件管理，不被记忆覆盖。
+      case 'notes': return <NotesAttachments initialScope="notes" />;
+      case 'attachments': return <NotesAttachments initialScope="attachments" />;
       case 'zentao': return <ZentaoPage />;
       case 'dataGenerator': return <DataGenerator onNavigate={setCurrentPage} />;
       case 'apiClient': return <ApiClient />;

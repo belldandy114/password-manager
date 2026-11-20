@@ -63,3 +63,7 @@ dist-tdg/
 # 背景图/玻璃体系实测产物（scripts/ui-bg-glass-test.js 生成，可随时重跑）
 scripts/.tmp-shots/
 scripts/.tmp-bg.png
+
+# Agent 团队运行态（任务图/成员会话/邮箱）与评审回归过程产物：本机协作用，不进公开仓库
+.agent-teams/
+.reviews/

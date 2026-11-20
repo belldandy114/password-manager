@@ -82,6 +82,13 @@ function runGate() {
   // 只报告不阻断：三份 CSS 有历史重复规则，目的是让新增重复可见；
   // 但「声明完全相同」的重复已经清零，新增会失败（这是可机械清理的那一半）。
   step('CSS 重复选择器检查', process.execPath, ['scripts/check-css-dup.js']);
+  // 层叠体系的两条保险（2026-11-20）：z-index 不许写字面量、容器不许自带层叠上下文。
+  // 与上面的 IPC 守卫同理：坏掉的守卫跑真实文件永远是绿的（真实文件恰好都合规），
+  // 所以每个守卫先用内联 fixture 自证「该报的报、不该报的不报」，再跑真实检查。
+  step('z-index 层叠守卫自测 (check-z-index --self-test)', process.execPath, ['scripts/check-z-index.js', '--self-test']);
+  step('z-index 令牌门禁 (check-z-index)', process.execPath, ['scripts/check-z-index.js']);
+  step('层叠上下文守卫自测 (check-stacking --self-test)', process.execPath, ['scripts/check-stacking.js', '--self-test']);
+  step('层叠上下文门禁 (check-stacking)', process.execPath, ['scripts/check-stacking.js']);
   // 2026-11-14 清完 926 条死声明后加的回归门禁：新增「被后面同名规则完全覆盖」的
   // 声明要拦住；同名但声明不同的冲突不拦（那本来就是本项目换肤手段，需人工确认）。
   step('CSS 级联死声明检查', process.execPath, ['scripts/css-cascade-audit.js', 'assert']);
