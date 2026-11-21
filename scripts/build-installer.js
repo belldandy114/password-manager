@@ -44,13 +44,31 @@ function step(label, cmd) {
   }
 }
 
-/** 删不掉就跳过：临时目录偶尔会被索引器/杀软咬住，没必要为它中断构建 */
-function cleanDir(p, label) {
+/**
+ * 清空目录。
+ *
+ * ⚠️ 默认「删不掉就跳过」只适用于**临时目录**（偶尔被索引器/杀软咬住，覆盖写就行）。
+ * `dist` 不能用这个策略：它一旦没清干净，旧构建产物会**原样打进安装包**。
+ * 2026-11-21 实测过一次——`vite build` 的 emptyOutDir 在这台机器上没生效（Vite 8），
+ * dist 累积到 860 个文件 / 46.2 MB，asar 从 43.2 MB 涨到 86.6 MB。
+ * 所以 dist 传 strict:true，清不掉直接中止构建，不产出脏包。
+ *
+ * @param {string} p 目录
+ * @param {string} label 日志名
+ * @param {{strict?: boolean}} [opts] strict=true 时清理失败即 exit 1
+ */
+function cleanDir(p, label, opts = {}) {
   if (!fs.existsSync(p)) return;
   try {
     fs.rmSync(p, { recursive: true, force: true });
     console.log(`${GREEN}✓ 清理 ${label}${RESET}`);
-  } catch {
+  } catch (e) {
+    if (opts.strict) {
+      console.error(`${RED}✗ ${label} 清理失败，中止构建：${e.message}${RESET}`);
+      console.error('  继续打会把旧产物原样打进安装包（历史事故：dist 累积 860 个文件 / 46 MB 全进了 asar）。');
+      console.error('  先把占用它的进程（electron / 编辑器索引）关掉再重试。');
+      process.exit(1);
+    }
     console.log(`${YELLOW}⚠ ${label} 清理失败，继续（会被覆盖写）${RESET}`);
   }
 }
@@ -85,7 +103,7 @@ console.log(`${CYAN}════════════════════
 // 1. 清理编译产物。
 //    注意：**不能删 OUT_DIR**，里面的 resources/app.asar 被系统句柄占住（EBUSY），
 //    删它会直接让整个构建挂掉 —— 这是历史上目录越堆越多的根因。
-cleanDir(path.join(ROOT, 'dist'), 'dist');
+cleanDir(path.join(ROOT, 'dist'), 'dist', { strict: true });
 cleanDir(path.join(ROOT, 'node_modules', '.cache'), 'node_modules/.cache');
 cleanDir(STAGE_ROOT, '打包临时目录');
 cleanDir(NSIS_OUT, '安装包临时目录');
