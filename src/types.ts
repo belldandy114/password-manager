@@ -566,6 +566,18 @@ export interface Note {
   kind?: 'note' | 'sql' | 'weekly';
   /** 关联的条目 / 缺陷 / 环境 / 用例（1.25.0）；老数据没有 = 无关联 */
   links?: NoteLink[];
+
+  /* ---- 1.30.2：SQL 片段专用（只对 kind==='sql' 有意义，其余 kind 不读不写，缺省 = 空） ----
+   * 独立页 `SqlSnippets.tsx` 用这四个字段，数据仍住在 notes 集合里：
+   * 不新建集合、不动 vault 版本号，老条目没有这些字段 → 界面按空处理，保存时补齐。 */
+  /** 库 / 环境，如 test_order、预发 */
+  dbOrEnv?: string;
+  /** 变量说明，如 {{orderNo}} = 订单号；{{today}} = 今天 */
+  varHint?: string;
+  /** 备注 */
+  remark?: string;
+  /** 收藏（左侧「收藏」筛选 + KPI 用） */
+  starred?: boolean;
 }
 
 /**

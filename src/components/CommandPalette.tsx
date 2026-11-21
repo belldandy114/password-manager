@@ -45,6 +45,8 @@ export const PAGES: { page: string; label: string }[] = [
   { page: 'passwordManager', label: '网址管理' },
   { page: 'weeklyReport', label: '周报' },
   { page: 'notes', label: '测试笔记' },
+  // 1.30.2：SQL 片段拆成独立页，命令面板也要能直接搜到
+  { page: 'sqlSnippets', label: 'SQL 片段' },
   { page: 'zentao', label: '缺陷管理' },
   { page: 'dataGenerator', label: '测试数据' },
   { page: 'toolbox', label: '工具箱' },
@@ -179,7 +181,9 @@ export function CommandPalette({
       ...PAGES.map(p => ({
         id: `page:${p.page}`,
         title: p.label,
-        sub: p.page === 'notes' ? '打开页面 · 笔记 / SQL 片段' : '打开页面',
+        sub: p.page === 'notes' ? '打开页面 · 笔记与附件'
+          : p.page === 'sqlSnippets' ? '打开页面 · SQL 片段'
+            : '打开页面',
         kind: 'page' as Kind,
         page: p.page,
         run: () => onNavigate(p.page),
@@ -250,10 +254,11 @@ export function CommandPalette({
     const fromSnippets: Cmd[] = extra.snippets.slice(0, 200).map((s: any) => ({
       id: `snippet:${s.id}`,
       title: s.title || '（无标题片段）',
-      sub: ['SQL 片段 · 测试笔记', (s.tags || []).join(' ')].filter(Boolean).join(' · '),
+      // 1.30.2：SQL 片段有自己的页面了，别再落到笔记页（那边已经过滤掉 sql，点进去是空的）
+      sub: ['SQL 片段', (s.tags || []).join(' ')].filter(Boolean).join(' · '),
       kind: 'snippet' as Kind,
       tags: s.tags,
-      run: () => onNavigate('notes'),
+      run: () => onNavigate('sqlSnippets'),
     }));
 
     const fromNotes: Cmd[] = extra.notes.slice(0, 200).map((n: any) => ({

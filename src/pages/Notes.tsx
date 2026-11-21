@@ -12,20 +12,25 @@ import { clipboardImageFiles, insertAtCaret } from '../components/pasteImage';
 import { MarkdownView, AttImage } from '../components/MarkdownView';
 import { ImageLightbox } from '../components/ImageLightbox';
 import { copyPlain } from '../utils/clipboard';
-import { planDirKinds, countDirKinds, type DirNoteKind } from '../utils/noteKind';
+import { planDirKinds, kindDecidedByName, type DirNoteKind } from '../utils/noteKind';
 
 const LS_DIR = 'pm.notes.dir';
 /** 旧「SQL 片段」集合并入笔记的迁移标记。旧集合**不删**，留作兜底。 */
 const LS_SQL_MERGED = 'pm.notes.sql-merged-v1';
 
 type NoteKind = 'note' | 'sql';
-type KindFilter = 'all' | NoteKind;
 
 const emptyNote = (kind: NoteKind = 'note'): Note => ({
   id: '', title: '', content: '', tags: [], kind, updatedAt: new Date().toISOString(),
 });
 
-/** 老数据没有 kind 字段，一律当普通笔记 */
+/**
+ * 老数据没有 kind 字段，一律当普通笔记。
+ *
+ * 1.31：本页 UI 不再展示类型（用户要求「笔记页彻底移除类型入口与标识」），
+ * 但底层仍要认得出老数据里的 `kind`，否则读到一条老旧数据会渲染成 Markdown 把 SQL 里的
+ * `_` / `*` 当格式符吃掉。这里保留作为兜底判断。
+ */
 const kindOf = (n: Note): NoteKind => (n.kind === 'sql' ? 'sql' : 'note');
 
 const fmtDate = (iso: string) => {
@@ -98,6 +103,9 @@ function EditAttStrip({ content }: { content: string }) {
     </div>
   );
 }
+
+// 1.31：列表项的「类型图标 + 徽标」整块删掉了（用户要求笔记页不再出现任何类型标识）。
+// 卡片头回到「标题 + 标签摘要」，见下方卡片渲染。
 
 /**
  * 笔记的「关联」编辑区（1.25.0）。
@@ -257,14 +265,13 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   const [editing, setEditing] = useState<Note | null>(null);
   const { ask, confirmNode } = useConfirm();
   const [preview, setPreview] = useState<Note | null>(null);
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [toast, setToast] = useState('');
   const snippetSeed = useStore(s => s.snippetSeed);
   const consumeSnippetSeed = useStore(s => s.consumeSnippetSeed);
   const mergedRef = useRef(false);
 
   /**
-   * 1.24.3：原来独立的「SQL 片段」页取消，历史数据并进笔记。
+   * 1.24.3：原来独立的片段页取消，历史数据并进笔记。
    * 迁移只在本地加密库模式做一次：目录模式是纯 .md 文件，没有类型元数据。
    * 旧 snippets 集合保留不删 —— 万一写入失败，下次启动还会重试，数据不会凭空消失。
    * 这两个 effect 必须放在 dirMode / dirEditing 声明之后（依赖数组在渲染时求值）。
@@ -294,6 +301,17 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
 
   const dirMode = !!dir;
 
+  /**
+   * 目录模式下属于「笔记」的文件（1.31）。
+   *
+   * 用户确认：目录里的 `.sql.md` 由 SQL 片段页接管（新增/编辑/删除/列表/搜索/导出都在那边），
+   * 笔记页**不再显示**它们，否则同一批文件两个入口、还能在笔记页改错。
+   *
+   * 只按文件名判定（`kindDecidedByName` 见 utils/noteKind.ts）：
+   * 文件名定不出来的 `.md` 一律留下 —— 正文看起来像 SQL 的 Markdown 笔记不该被藏起来。
+   */
+  const dirNoteFiles = useMemo(() => files.filter(f => !kindDecidedByName(f.name)), [files]);
+
   /** 旧版本目录只存在 localStorage：迁进设置，设置页与主进程自检才看得到 */
   useEffect(() => {
     const legacy = localStorage.getItem(LS_DIR) || '';
@@ -316,7 +334,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         .filter(s => !have.has(`${s.title}\u0000${s.sql || ''}`))
         .map(s => ({
           id: s.id || crypto.randomUUID(),
-          title: s.title || '（未命名 SQL 片段）',
+          title: s.title || '（未命名片段）',
           content: s.sql || '',
           tags: s.tags || [],
           kind: 'sql' as const,
@@ -325,18 +343,24 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
       if (add.length) {
         const ok = await save([...items, ...add]);
         if (!ok || ok.success === false) { mergedRef.current = false; return; }
-        setToast(`已并入 ${add.length} 条历史 SQL 片段`);
+        setToast(`已并入 ${add.length} 条历史片段`);
         setTimeout(() => setToast(''), 3000);
       }
       localStorage.setItem(LS_SQL_MERGED, '1');
     })();
   }, [loading, dirMode, items, save]);
 
-  /** 命令面板粘贴一段 SQL → 直接开新建弹窗，预置为 SQL 类型 */
+  /**
+   * 命令面板粘贴一段片段 → 预置草稿。
+   *
+   * 1.30.2：本地库模式的片段已经搬到独立页（`SqlSnippets.tsx`），那边自己消费这个种子；
+   * 这里只接目录模式（写成 `标题.md` 文件）。本地库模式**不要**消费种子，否则
+   * 「粘贴 → 落进笔记页的编辑器 → 保存后这页看不见」。
+   */
   useEffect(() => {
     if (!snippetSeed || !snippetSeed.text.trim()) return;
-    if (dirMode) setDirEditing({ name: '', title: '', content: snippetSeed.text });
-    else { setKindFilter('all'); setEditing({ ...emptyNote('sql'), content: snippetSeed.text }); }
+    if (!dirMode) return;
+    setDirEditing({ name: '', title: '', content: snippetSeed.text });
     consumeSnippetSeed();
   }, [snippetSeed, consumeSnippetSeed, dirMode]);
 
@@ -430,10 +454,10 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
     setDirKinds({});
   };
 
-  /** 全文搜索：按需把目录里的文件读一遍建索引 */
+  /** 全文搜索：按需把目录里的笔记文件读一遍建索引 */
   const ensureBodies = async () => {
     if (scanning || !dir) return;
-    const todo = files.filter(f => bodies[f.name] === undefined);
+    const todo = dirNoteFiles.filter(f => bodies[f.name] === undefined);
     if (todo.length === 0) return;
     setScanning(true);
     const map = { ...bodies };
@@ -482,12 +506,13 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
     if (!title) { setDirError('请填写标题'); return; }
     setDirSaving(true);
     setDirError('');
-    // 类型决定文件名后缀（.sql.md / .md）—— 这是目录模式唯一的类型元数据
+    // 文件名后缀由内部 kind 决定（`.md` / `.sql.md`）—— 目录模式唯一的类型元数据。
+    // 1.31：本页不再展示类型，`kind` 只为「保住已有文件的扩展名」而留（新建恒为 note）。
     const kind: DirNoteKind = dirEditing.kind === 'sql' ? 'sql' : 'note';
     let name = dirEditing.name;
     if (!name) {
       // 新建：文件名交给主进程按标题生成（重名会自动加 -2，不会覆盖已有笔记）。
-      // 主进程的 notesFileName 只会补 .md，所以 SQL 片段这里自己拼好文件名再传。
+      // 主进程的 notesFileName 只会补 .md，所以带后缀的名字这里自己拼好再传。
       const want = fileOf(title, kind);
       const r = await window.electronAPI.notesSave(dir, want, dirEditing.content, title);
       name = r.success && r.data ? r.data.name : want;
@@ -515,30 +540,30 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
 
   /* ---------- 本地加密库模式 ---------- */
   /**
-   * 周报片段（kind='weekly'）也存 notes 集合，但它们属于周报页的片段库，
-   * 不是「测试笔记」：混进列表里既搜不到意义，还会把笔记计数撑大。
-   * 这里统一排除，笔记页只显示 note / sql 两类。
+   * notes 集合里其实混了三类条目，笔记页只留 Markdown 笔记：
+   * - `weekly`（周报句式片段）：属于周报页的片段库，混进列表既搜不到意义，还会把计数撑大；
+   * - `sql`（代码片段）：1.30.2 起有了独立页（`SqlSnippets.tsx`），笔记页**过滤掉**，
+   *   避免同一批片段两个入口（见 docs/agents/sql-snippets-page.md §3）。
+   * 老数据 `kind` 缺省 = 普通笔记，照旧显示。
+   *
+   * 1.31：过滤规则不变（否则同一批片段两个入口），只是本页不再用 UI 展示类型。
    */
   const visibleItems = useMemo(
-    () => items.filter(n => String(n.kind || '') !== 'weekly'),
+    () => items.filter(n => {
+      const k = String(n.kind || '');
+      return k !== 'weekly' && k !== 'sql';
+    }),
     [items],
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = visibleItems.filter(n => {
-      if (kindFilter !== 'all' && kindOf(n) !== kindFilter) return false;
       if (!q) return true;
       return [n.title, n.content, (n.tags || []).join(' ')].some(v => (v || '').toLowerCase().includes(q));
     });
     return [...list].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  }, [visibleItems, search, kindFilter]);
-
-  const counts = useMemo(() => ({
-    all: visibleItems.length,
-    note: visibleItems.filter(n => kindOf(n) === 'note').length,
-    sql: visibleItems.filter(n => kindOf(n) === 'sql').length,
-  }), [visibleItems]);
+  }, [visibleItems, search]);
 
   // 长列表分页：几百条笔记一次性渲染会明显卡顿，一页 24 条
   const [page, setPage] = useState(1);
@@ -549,7 +574,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
     () => filtered.slice((curPage - 1) * pageSize, curPage * pageSize),
     [filtered, curPage, pageSize],
   );
-  useEffect(() => { setPage(1); }, [search, kindFilter]);
+  useEffect(() => { setPage(1); }, [search]);
 
   const saveEditing = async () => {
     if (!editing || !editing.title.trim()) return;
@@ -561,12 +586,6 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
 
   const remove = async (id: string) => {
     await save(items.filter(i => i.id !== id));
-  };
-
-  const copySql = (n: Note) => {
-    void navigator.clipboard.writeText(n.content || '');
-    setToast('SQL 已复制到剪贴板');
-    setTimeout(() => setToast(''), 1500);
   };
 
   /**
@@ -616,18 +635,19 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   };
 
   /* ---------- 目录模式下的搜索结果 ---------- */
-  /** 目录模式：类型筛选 + 关键词过滤（1.25.1 起类型筛选也生效） */
+  /**
+   * 目录模式：关键词过滤。
+   *
+   * 1.31：类型筛选条删掉了（用户要求），这里只剩搜索；`.sql.md` 已在 `dirNoteFiles`
+   * 里被滤掉（它们归 SQL 片段页）。
+   */
   const dirVisible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return files.filter(f => {
-      if (kindFilter !== 'all' && (dirKinds[f.name] || 'note') !== kindFilter) return false;
+    return dirNoteFiles.filter(f => {
       if (!q) return true;
       return f.name.toLowerCase().includes(q) || (bodies[f.name] || '').toLowerCase().includes(q);
     });
-  }, [files, search, bodies, kindFilter, dirKinds]);
-
-  /** 目录模式的类型计数（筛选条上的数字） */
-  const dirCounts = useMemo(() => countDirKinds(dirKinds), [dirKinds]);
+  }, [dirNoteFiles, search, bodies]);
 
   useEffect(() => {
     if (dirMode && search.trim()) ensureBodies();
@@ -640,6 +660,21 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
     await copyPlain(dir);
     setToast('目录路径已复制');
     setTimeout(() => setToast(''), 1500);
+  };
+
+  /**
+   * 新建入口（1.31：只剩「新建笔记」一个入口，类型选择器已从页头与弹窗里删掉）。
+   *
+   * 目录模式保存时仍走 `fileOf(title, kind)` 决定文件名；`kind` 默认 note，只有
+   * 「编辑一张已存在的 `标题.sql.md`」这种情况会带着 `sql` 走完全程，用来保住原文件名
+   * （否则一保存就把用户的 .sql.md 改名成 .md）。
+   */
+  const startNew = () => {
+    if (dirMode) {
+      setDirEditing({ name: '', title: '', content: '' });
+      return;
+    }
+    setEditing(emptyNote('note'));
   };
 
   const dirBar = (
@@ -661,7 +696,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         改回本地库
       </button>
       <span className="text-sm text-muted" style={{ marginLeft: 'auto' }}>
-        {files.length} 篇
+        {dirNoteFiles.length} 篇
       </span>
     </div>
   );
@@ -671,7 +706,9 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         <PageHead
           icon={<Icons.note size={16} />}
           title="测试笔记"
-          desc={dirMode ? '笔记以 .md 文件保存在你选择的目录里，可随时用其它编辑器打开' : '踩坑记录、测试结论、SQL 语句片段，支持 Markdown，加密保存在本地'}
+          desc={dirMode
+            ? '笔记以 .md 文件保存在你选择的目录里，可随时用其它编辑器打开'
+            : '踩坑记录、测试结论，支持 Markdown 与截图，加密保存在本地'}
           tools={
             <>
               {!dirMode && (
@@ -682,12 +719,10 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
               <SearchBox value={search} onChange={setSearch} placeholder={dirMode ? '搜索文件名 / 正文' : '搜索标题 / 内容 / 标签'} />
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => (dirMode
-                  // 目录模式：当前筛选是 SQL 时直接新建 SQL 片段（文件名 .sql.md）
-                  ? setDirEditing({ name: '', title: '', content: '', kind: kindFilter === 'sql' ? 'sql' : 'note' })
-                  : setEditing(emptyNote(kindFilter === 'sql' ? 'sql' : 'note')))}
+                onClick={startNew}
+                title="新建一篇 Markdown 笔记（目录模式下存成 标题.md）"
               >
-                <Icons.plus size={13} /> {kindFilter === 'sql' ? '新建片段' : '新建笔记'}
+                <Icons.plus size={13} /> 新建笔记
               </button>
             </>
           }
@@ -695,23 +730,8 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
 
         {afterHead}
 
-        {/* 两个菜单合并后，用类型筛选区分 Markdown 笔记与 SQL 语句。
-            1.25.1：目录模式也显示 —— 类型由 utils/noteKind.ts 按「文件名 + 正文特征」判出来，
-            计数用目录文件的实际分类（dirCounts），不再是本地库的 counts。 */}
-        <div className="notes-kind-bar">
-          {([
-            ['all', `全部 ${dirMode ? dirCounts.all : counts.all}`],
-            ['note', `笔记 ${dirMode ? dirCounts.note : counts.note}`],
-            ['sql', `SQL 片段 ${dirMode ? dirCounts.sql : counts.sql}`],
-          ] as const).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              className={`view-switch-btn${kindFilter === k ? ' is-on' : ''}`}
-              onClick={() => setKindFilter(k)}
-            >{label}</button>
-          ))}
-        </div>
+        {/* 1.31：类型筛选条（全部 / 笔记 / 片段）整条删掉了 —— 用户要求笔记页不再有类型 UI。
+            目录里的 `标题.sql.md` 也不在本页显示（归 SQL 片段页，见 dirNoteFiles）。 */}
         {toast && <div className="inline-hint">{toast}</div>}
 
         {dirMode && dirBar}
@@ -726,14 +746,14 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         {dirMode ? (
           dirLoading ? (
             <Panel><div className="tbl-empty">读取目录…</div></Panel>
-          ) : files.length === 0 ? (
+          ) : dirNoteFiles.length === 0 ? (
             <Panel>
               <Empty
                 icon={<Icons.note size={22} />}
                 title="这个目录里还没有笔记"
-                desc="点右上角「新建笔记」，会在这个目录下生成一个 .md 文件（SQL 片段是 .sql.md）"
+                desc="点右上角「新建笔记」，会在这个目录下生成 标题.md 文件"
                 action={
-                  <button className="btn btn-primary btn-sm" onClick={() => setDirEditing({ name: '', title: '', content: '', kind: 'note' })}>
+                  <button className="btn btn-primary btn-sm" onClick={startNew}>
                     <Icons.plus size={13} /> 新建笔记
                   </button>
                 }
@@ -742,11 +762,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
           ) : dirVisible.length === 0 ? (
             <Panel>
               <div className="tbl-empty">
-                {kindFilter === 'sql'
-                  ? '这个目录里没有识别到 SQL 片段（文件名以 .sql.md 结尾，或正文以 -- / /* 开头且含 SQL 语句）'
-                  : kindFilter === 'note'
-                    ? '这个目录里没有普通笔记（其余文件都被识别成 SQL 片段了）'
-                    : `没有匹配的笔记，换个关键词试试${scanning ? '（正在检索正文…）' : ''}`}
+                {`没有匹配的笔记，换个关键词试试${scanning ? '（正在检索正文…）' : ''}`}
               </div>
             </Panel>
           ) : (
@@ -756,18 +772,8 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                 return (
                 <div key={f.name} className="card2 is-clickable" onClick={() => openDirNote(f)}>
                   <div className="card2-head">
-                    <div className="card2-title" title={titleOf(f.name)}>{titleOf(f.name)}</div>
+                    <div className="card2-title">{titleOf(f.name)}</div>
                     <div className="card2-actions" onClick={e => e.stopPropagation()}>
-                      {k === 'sql' && (
-                        <IconBtn
-                          title="复制 SQL"
-                          onClick={() => {
-                            void copyPlain(bodies[f.name] || '');
-                            setToast('SQL 已复制到剪贴板');
-                            setTimeout(() => setToast(''), 1500);
-                          }}
-                        ><Icons.copy size={13} /></IconBtn>
-                      )}
                       <IconBtn
                         title="钉成小窗（浮在桌面上照着做）"
                         onClick={() => { void window.electronAPI.pinOpen({ id: `dir::${f.name}`, kind: 'note' }); }}
@@ -786,9 +792,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                     </div>
                   </div>
                   <div className="card2-meta">
-                    {k === 'sql' ? <Icons.db size={11} /> : <Icons.note size={11} />}
                     {fmtDate(f.mtime)}
-                    {k === 'sql' && <span className="chip">SQL</span>}
                     <span className="text-sm text-muted" style={{ marginLeft: 'auto' }}>
                       {(f.size / 1024).toFixed(1)} KB
                     </span>
@@ -816,12 +820,12 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
           <Panel>
             <Empty
               icon={<Icons.note size={22} />}
-              title={search ? '没有匹配的内容' : kindFilter === 'sql' ? '还没有 SQL 片段' : '还没有笔记'}
-              desc={search ? '换个关键词试试' : '踩坑记录、测试结论、常用 SQL 语句，都存在这里'}
+              title={search ? '没有匹配的内容' : '还没有笔记'}
+              desc={search ? '换个关键词试试' : '踩坑记录、测试结论都存在这里'}
               hint={<>写完后用 <kbd>Ctrl+K</kbd> 全局搜索，随时找回</>}
-              action={search || kindFilter === 'all' ? undefined : (
-                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote(kindFilter === 'sql' ? 'sql' : 'note'))}>
-                  <Icons.plus size={13} /> {kindFilter === 'sql' ? '新建 SQL 片段' : '新建笔记'}
+              action={search ? undefined : (
+                <button className="btn btn-primary btn-sm" onClick={() => setEditing(emptyNote('note'))}>
+                  <Icons.plus size={13} /> 新建笔记
                 </button>
               )}
             />
@@ -832,11 +836,8 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
             {pagedNotes.map(n => (
               <div key={n.id} className="card2 is-clickable" onClick={() => setPreview(n)}>
                 <div className="card2-head">
-                  <div className="card2-title" title={n.title}>{n.title}</div>
+                  <div className="card2-title">{n.title}</div>
                   <div className="card2-actions" onClick={e => e.stopPropagation()}>
-                    {kindOf(n) === 'sql' && (
-                      <IconBtn title="复制 SQL" onClick={() => copySql(n)}><Icons.copy size={13} /></IconBtn>
-                    )}
                     <IconBtn
                       title="钉成小窗（浮在桌面上照着做）"
                       onClick={() => { void window.electronAPI.pinOpen({ id: n.id, kind: 'note' }); }}
@@ -856,9 +857,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                 </div>
 
                 <div className="card2-meta">
-                  {kindOf(n) === 'sql' ? <Icons.db size={11} /> : <Icons.note size={11} />}
                   {fmtDate(n.updatedAt)}
-                  {kindOf(n) === 'sql' && <span className="chip">SQL</span>}
                   {/* 关联数量：一眼看出这条笔记挂在哪些对象上，点开才看明细 */}
                   {(n.links?.length || 0) > 0 && (
                     <span className="chip note-link-count" title={(n.links || []).map(l => l.label || l.id).join('、')}>
@@ -868,22 +867,15 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                   {n.tags?.length > 0 && <span className="chip" style={{ marginLeft: 'auto' }}>{n.tags.join(' · ')}</span>}
                 </div>
 
-                {kindOf(n) === 'sql' ? (
-                  <div className="card2-body note-sql-preview" style={{
-                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}>{n.content || '（空片段）'}</div>
-                ) : (
-                  <div className="card2-body" style={{
-                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}>
-                    {plainPreview(n.content) || (extractAttIds(n.content || '').length ? '' : '（空笔记）')}
-                  </div>
-                )}
+                <div className="card2-body" style={{
+                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}>
+                  {plainPreview(n.content) || (extractAttIds(n.content || '').length ? '' : '（空笔记）')}
+                </div>
 
                 {/* 正文里有截图就在卡片上给缩略图，不用点开才知道记了什么 */}
-                {kindOf(n) !== 'sql' && extractAttIds(n.content || '').length > 0 && (
+                {extractAttIds(n.content || '').length > 0 && (
                   <div className="card2-thumbs">
                     {extractAttIds(n.content || '').slice(0, 3).map(id => (
                       <AttImage key={id} id={id} />
@@ -908,11 +900,11 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
           )}
           </>
         )}
-      {/* 本地库：编辑（Markdown 笔记 / SQL 片段共用，只是渲染方式不同） */}
+      {/* 本地库：编辑（1.31：类型选择器删掉，本页只写 Markdown 笔记） */}
       <Modal
         open={!!editing}
         onClose={() => setEditing(null)}
-        title={`${editing?.id ? '编辑' : '新建'}${editing && kindOf(editing) === 'sql' ? ' SQL 片段' : '笔记'}`}
+        title={`${editing?.id ? '编辑' : '新建'}笔记`}
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setEditing(null)}>取消</button>
@@ -922,19 +914,6 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
       >
         {editing && (
           <>
-            <div className="form-group">
-              <label>类型</label>
-              <div className="notes-kind-bar">
-                {([['note', 'Markdown 笔记'], ['sql', 'SQL 片段']] as const).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`view-switch-btn${kindOf(editing) === k ? ' is-on' : ''}`}
-                    onClick={() => setEditing({ ...editing, kind: k })}
-                  >{label}</button>
-                ))}
-              </div>
-            </div>
             <div className="form-group">
               <label>标题 *</label>
               <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="例如：资产系统登录偶发 500 的排查" data-autofocus="1" aria-label="标题" />
@@ -949,36 +928,31 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
               />
             </div>
             <div className="form-group">
-              <label>{kindOf(editing) === 'sql' ? 'SQL 语句' : '内容（支持 Markdown）'}</label>
+              <label>内容（支持 Markdown）</label>
               <textarea
                 value={editing.content}
                 onChange={e => setEditing({ ...editing, content: e.target.value })}
                 onPaste={e => void pasteImages(e, v => setEditing(prev => (prev ? { ...prev, content: v } : prev)))}
                 rows={16}
                 className="code-input"
-                placeholder={kindOf(editing) === 'sql' ? 'SELECT * FROM t_user WHERE status = 1;' : '## 现象\n\n## 原因\n\n## 结论'}
-                aria-label={kindOf(editing) === 'sql' ? 'SQL 语句' : '内容（支持 Markdown）'}
+                placeholder={'## 现象\n\n## 原因\n\n## 结论'}
+                aria-label="内容（支持 Markdown）"
               />
               <div className="input-hint">
-                {kindOf(editing) === 'sql'
-                  ? '保存后在卡片上点复制图标，即可一键复制整段 SQL。'
-                  : <>支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。</>}
+                支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在本地。
               </div>
-              {kindOf(editing) !== 'sql' && attachHint && <div className="inline-hint">{attachHint}</div>}
-              {kindOf(editing) !== 'sql' && <EditAttStrip content={editing.content} />}
+              {attachHint && <div className="inline-hint">{attachHint}</div>}
+              <EditAttStrip content={editing.content} />
             </div>
-            {/* 关联区只给 Markdown 笔记：SQL 片段是「拿来就用的语句」，挂关联没有意义 */}
-            {kindOf(editing) !== 'sql' && (
-              <NoteLinksEditor
-                links={editing.links || []}
-                onChange={next => setEditing(prev => (prev ? { ...prev, links: next } : prev))}
-              />
-            )}
+            <NoteLinksEditor
+              links={editing.links || []}
+              onChange={next => setEditing(prev => (prev ? { ...prev, links: next } : prev))}
+            />
           </>
         )}
       </Modal>
 
-      {/* 本地库：预览（SQL 不能走 Markdown，_ 和 * 会被当成格式符） */}
+      {/* 本地库：预览（老数据里 kind==='sql' 的条目按原文显示，_ 和 * 不会被当成格式符） */}
       <Modal
         open={!!preview}
         onClose={() => setPreview(null)}
@@ -986,9 +960,6 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setPreview(null)}>关闭</button>
-            {preview && kindOf(preview) === 'sql' && (
-              <button className="btn btn-ghost" onClick={() => copySql(preview)}><Icons.copy size={13} /> 复制 SQL</button>
-            )}
             <button className="btn btn-primary" onClick={() => { setEditing(preview); setPreview(null); }}>编辑</button>
           </>
         }
@@ -998,11 +969,11 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
           : <MarkdownView md={preview?.content || ''} />}
       </Modal>
 
-      {/* 目录模式：编辑 */}
+      {/* 目录模式：编辑（1.31：类型选择器删掉；已存在的 标题.sql.md 靠内部 kind 保住原文件名） */}
       <Modal
         open={!!dirEditing}
         onClose={() => setDirEditing(null)}
-        title={`${dirEditing?.name ? '编辑' : '新建'}${dirEditing?.kind === 'sql' ? ' SQL 片段' : '笔记'}`}
+        title={`${dirEditing?.name ? '编辑' : '新建'}笔记`}
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setDirEditing(null)}>取消</button>
@@ -1014,23 +985,6 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
       >
         {dirEditing && (
           <>
-            {/* 目录模式的类型靠文件名约定（.sql.md），所以这里必须能选类型 */}
-            <div className="form-group">
-              <label>类型</label>
-              <div className="notes-kind-bar">
-                {([['note', 'Markdown 笔记'], ['sql', 'SQL 片段']] as const).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`view-switch-btn${(dirEditing.kind || 'note') === k ? ' is-on' : ''}`}
-                    onClick={() => setDirEditing({ ...dirEditing, kind: k })}
-                  >{label}</button>
-                ))}
-              </div>
-              <div className="input-hint">
-                SQL 片段会存成 <code>标题.sql.md</code>，列表里按文件名自动识别类型。
-              </div>
-            </div>
             <div className="form-group">
               <label>标题 *（同时作为文件名）</label>
               <input
@@ -1040,7 +994,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                 autoFocus aria-label="标题" />
             </div>
             <div className="form-group">
-              <label>{dirEditing.kind === 'sql' ? 'SQL 语句' : '内容（Markdown）'}</label>
+              <label>内容（Markdown）</label>
               <textarea
                 value={dirEditing.content}
                 onChange={e => setDirEditing({ ...dirEditing, content: e.target.value })}
@@ -1052,8 +1006,8 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                 )}
                 rows={16}
                 className="code-input"
-                placeholder={dirEditing.kind === 'sql' ? 'SELECT * FROM t_user WHERE status = 1;' : '## 现象\n\n## 原因\n\n## 结论'}
-                aria-label={dirEditing.kind === 'sql' ? 'SQL 语句' : '内容（Markdown）'} />
+                placeholder={'## 现象\n\n## 原因\n\n## 结论'}
+                aria-label="内容（Markdown）" />
               <div className="input-hint">
                 支持 <kbd>Ctrl+V</kbd> 直接粘贴截图，图片会加密存在
                 <code>{dir ? `${dir}\\attachments` : '本地附件目录'}</code>。
@@ -1069,7 +1023,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         )}
       </Modal>
 
-      {/* 目录模式：预览（SQL 片段不能走 Markdown，_ 和 * 会被当成格式符） */}
+      {/* 目录模式：预览（老数据 / 以 .sql.md 结尾的文件按原文显示，_ 和 * 不会被当成格式符） */}
       <Modal
         open={!!dirPreview}
         onClose={() => setDirPreview(null)}
@@ -1077,18 +1031,6 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setDirPreview(null)}>关闭</button>
-            {dirPreview && (dirKinds[dirPreview.name] || 'note') === 'sql' && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  void copyPlain(dirPreview.content || '');
-                  setToast('SQL 已复制到剪贴板');
-                  setTimeout(() => setToast(''), 1500);
-                }}
-              >
-                <Icons.copy size={13} /> 复制 SQL
-              </button>
-            )}
             {dirPreview && (
               <button
                 className="btn btn-ghost"
@@ -1100,7 +1042,8 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
             <button
               className="btn btn-primary"
               onClick={() => {
-                // 预览 → 编辑：带上类型（目录模式没有 kind 元数据，靠 dirKinds 判出来的）
+                // 预览 → 编辑：带上类型（目录模式没有 kind 元数据，靠 dirKinds 判出来的）。
+                // 1.31：类型不再显示，但必须继续传下去，否则保存时会把 标题.sql.md 改名成 .md。
                 if (!dirPreview) return;
                 setDirEditing({
                   name: dirPreview.name,
@@ -1117,9 +1060,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
         }
       >
         <div className="card2-meta" style={{ marginBottom: 10 }}>
-          {(dirPreview && (dirKinds[dirPreview.name] || 'note') === 'sql') ? <Icons.db size={11} /> : <Icons.note size={11} />}
           {dirPreview?.name}
-          {dirPreview && (dirKinds[dirPreview.name] || 'note') === 'sql' && <span className="chip">SQL</span>}
           <span className="text-sm text-muted" style={{ marginLeft: 'auto' }}>{formatRecent(dirPreview?.mtime || '')}</span>
         </div>
         {dirPreview && (dirKinds[dirPreview.name] || 'note') === 'sql'

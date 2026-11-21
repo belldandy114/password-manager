@@ -4,7 +4,7 @@ import {
   IconFileText, IconCalendarStats, IconClipboardCheck,
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
-  IconHome2,
+  IconHome2, IconCode,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -197,6 +197,8 @@ const casesIcon = nav(IconFolder);
 const reportIcon = nav(IconCalendarStats);
 const checkIcon = nav(IconClipboardCheck);
 const noteIcon = nav(IconPencil);
+// SQL 片段独立页（1.30.2）：从「笔记与附件」里拆出来，代码图标比文件图标更好认
+const sqlIcon = nav(IconCode);
 const bugIcon = nav(IconBug);
 const dataGenIcon = nav(IconTable);
 const jsonIcon = nav(IconJson);
@@ -218,6 +220,8 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'environments', label: '环境矩阵', icon: envIcon },
       { id: 'weeklyReport', label: '周报', icon: reportIcon },
+      // 1.30.2：SQL 片段从笔记页拆成独立页，放在「笔记与附件」之前
+      { id: 'sqlSnippets', label: 'SQL 片段', icon: sqlIcon },
       { id: 'notes', label: '笔记与附件', icon: noteIcon },
       { id: 'cases', label: '用例库', icon: casesIcon },
       { id: 'zentao', label: '缺陷管理', icon: bugIcon },

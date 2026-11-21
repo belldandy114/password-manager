@@ -23,6 +23,10 @@ if (process.argv.includes('--pack')) {
     ['脚本库', 'node scripts/ui-jmxlib-test.js'],
   ['自定义背景', 'node scripts/ui-bg-test.js'],
     ['玻璃层计算样式', 'node scripts/ui-bg-glass-test.js'],
+    // 1.32.0：背景图模式下「还有没有不透明白块」的扫描（深浅两套主题 × 4 个页面）。
+    // 它比玻璃层计算样式更狠：不预设类名，凡是 alpha=1 且面积 > 600 的块都要求解释，
+    // 所以新增页面/新增容器把实底漏在背景图上时，这条会先红。
+    ['玻璃层不透明块扫描', 'node scripts/ui-glass-opaque-scan.js'],
     ['启动期回归', 'node scripts/ui-startup-test.js'],
     ['下载时间回归', 'node scripts/ui-dl-time-test.js'],
   ];

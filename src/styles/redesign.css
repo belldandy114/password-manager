@@ -7827,7 +7827,19 @@ button.notes-dirpath:focus-visible {
   background: #05070a;
   opacity: var(--bg-dim, 0.42);
 }
-html[data-theme='light'] .app-bg-dim { background: #ffffff; }
+/* 浅色主题的压暗遮罩按比例减淡（1.32.0）
+   深色遮罩是 #05070a「压暗」，光学上只是降低亮度，不会把图冲淡，所以保持原值。
+   浅色遮罩是 #ffffff「压亮」——白雾会把图的对比度整体拉平：42% 白 = 图只剩 58% 的动态范围，
+   用户反馈的就是「浅色下背景图发白、看不清」。
+   系数 0.67 的来由：把纯白遮罩的有效浓度打到 67% 折（42% → 28.1%），
+   相当于图的动态范围从 58% 回到 71.9%（1 − 0.281），肉眼已经能看清图的层次，
+   又仍然保留一层白纱保证文字对比度（正文压在白遮罩 + 玻璃卡片上仍满足可读性）。
+   写成 calc() 而不是写死 0.281：滑块（--bg-dim，默认 0.42，范围 0~0.9）必须继续线性生效，
+   浅色下「设置值 v → 实际白度 v×0.67」，深色下仍是 v。 */
+html[data-theme='light'] .app-bg-dim {
+  background: #ffffff;
+  opacity: calc(var(--bg-dim, 0.42) * 0.67);
+}
 /* 背景层是 fixed 且层级为 0（--z-canvas），侧栏/内容区要抬到它上面（否则会被盖住） */
 html[data-bg='image'] .app-layout { position: relative; z-index: var(--z-canvas); }
 html[data-bg='image'] .sidebar,
@@ -8067,4 +8079,259 @@ html[data-bg='image'] :is(
   background-color: var(--glass-overlay);
   backdrop-filter: blur(var(--glass-blur-overlay)) saturate(var(--glass-saturate));
   box-shadow: var(--glass-overlay-shadow);
+}
+
+/* ================================================================
+   1.32.0 玻璃补漏：四处「块状容器还在给自己上实底」的漏网之鱼
+   ----------------------------------------------------------------
+   用户报「背景图模式下还是有几处不透明白块」。用 scripts/ui-glass-opaque-scan.js
+   的口径（visible && backgroundColor alpha === 1 && 面积 > 600）实测，真漏正好这四个：
+     .tag-sidebar-search                 标签侧栏搜索框       原底色 --bg-input（实底）
+     .toolbar-search .search-scope-btn   搜索范围「全部」按钮  原底色 --bg-input（实底）
+     .toolbar-actions .view-toggle-btn   安全体检图标按钮      原底色 --bg-input（实底）
+                                         （DOM 上 class 是 `view-toggle-btn security-btn`）
+     .tb-main-head                       工具箱工具卡头部条   原底色 color-mix(bg-secondary 55%, bg-card)（实底）
+
+   ⚠️ 四个都是「容器 / 块」，所以**只换背景色，一条 backdrop-filter / transform /
+   filter / contain 都不加**：`.tag-sidebar-search` 的类名里就带 sidebar，
+   一旦和 z-index 同时出现在同一规则块，scripts/check-stacking.js 会直接判违规
+   （容器自带层叠上下文 → 内部浮层被关在容器里）。
+
+   取值全部沿用 tokens.css 3b 段已有的 --glass-*，本段不出现任何新百分比：
+   - 前三个原本就是 --bg-input 实底，换成同族的 --glass-input（与相邻输入框保持一致的玻璃档位）；
+   - .tb-main-head 是「条状块」，与 .home-panel-head / .pnl-head 同一档，用 --glass-side。 */
+html[data-bg='image'] .tag-sidebar-search,
+html[data-bg='image'] .toolbar-search .search-scope-btn,
+html[data-bg='image'] .toolbar-actions .view-toggle-btn {
+  background-color: var(--glass-input);
+}
+/* hover 态跟着一起玻璃化：原来这两个按钮 hover 用 --bg-hover 实底，
+   上面那条覆盖的优先级更高（html[data-bg] 多一层类型+属性选择器），
+   不显式补一条的话 hover 反馈会消失、只剩玻璃底。复用 --glass-control-hover。 */
+html[data-bg='image'] .toolbar-search .search-scope-btn:hover,
+html[data-bg='image'] .toolbar-actions .view-toggle-btn:hover {
+  background-color: var(--glass-control-hover);
+}
+html[data-bg='image'] .tb-main-head {
+  background-color: var(--glass-side);
+}
+
+/* 表格行的斑马纹与 hover（补漏 5 / 6，扫描门禁扫出来的）
+   ----------------------------------------------------------------
+   上面那 4 个类是「肉眼一眼看见」的白块；这一条是 scripts/ui-glass-opaque-scan.js 扫出来的：
+   浅色主题下 .entry-table 的偶数行（global.css:1174 的
+   `[data-theme="light"] .entry-table tbody tr:nth-child(even) { background: var(--bg-input) }`）
+   是实底 #e6e8f0，整行 1242×49 = 60858px²，**完全符合「白板」的定义**，
+   只是它长得像「表格条纹」所以人不会当成漏。
+   深色那半本来就是 rgba(0, 0, 0, .02)（alpha 0.02，天然是透的），所以只改浅色。
+   取值用 --glass-input（和原来 --bg-input 同一个颜色族，只是带 45% alpha）：
+   相邻行仍然有差别，但不再把图挡成灰白条。
+   hover 同理：浅色下 hover 走 --bg-hover 实底，鼠标一过就是整行白条，一起玻璃化。 */
+html[data-bg='image'][data-theme='light'] .entry-table tbody tr:nth-child(even):not(:hover):not(.selected) {
+  background: var(--glass-input);
+}
+html[data-bg='image'] .entry-table tbody tr:hover:not(.selected) {
+  background: var(--glass-hover);
+}
+
+/* ================================================================
+   SQL 片段独立页（1.30.2）
+   ----------------------------------------------------------------
+   为什么写在文件末尾：AGENTS.md 的规矩是「新增/修复样式一律写在最后加载的
+   redesign.css 末尾并注明原因」，不在前面三份样式表里靠猜优先级改老规则。
+   本页由 1.30.2 新建（src/pages/SqlSnippets.tsx），主体已经全部复用现成类：
+   .pm-shell / .pm-main / .tag-sidebar-* / .home-stats / .home-stat / .toolbar /
+   .pnl / .tbl / .modal / .form-group / .empty / .pill。这里只补它真正缺的三件事，
+   **没有新增任何类名**（.sql-table 是本页唯一自带的类，由页面声明）。
+
+   1) .sql-table 列宽：不写 table-layout 时浏览器按内容分配宽度，实测 1280×800 下
+      748px 的面板里表格取到 816px（超 68px），.pnl 的 overflow: hidden 正好把
+      操作列后两个图标（编辑 / 删除）裁掉；同时「库 / 环境」列只有 101px，
+      「test_order / 预发」折成两行、长值折成四行，行高在 49~100px 之间抖。
+      改为定宽列 + 名称列弹性 + 单行省略号：名称吃掉剩余宽度，
+      库/环境 168 / 更新时间 96 / 操作 152（4 个 26px 图标按钮 = 104 + 单元格左右内边距 32）。
+
+   2) KPI 三卡：本页复用工作台的 .home-stats.is-3 + .home-stat，但那两个类
+      按「右栏小卡」设计（background: --surface-inset，无边框）。放进整页宽度后
+      浅色下 --surface-inset 与画布 --surface-0 只差 1 个色阶（三块数字看不出是卡片），
+      深色下 --surface-inset 同样贴着画布色，也只是勉强能分。
+      非背景图模式给一道 --line 细边 + --surface-2 卡面（与 .pnl 同色），
+      背景图模式保持 1.32.0 的 --glass-inset（玻璃档位本身有对比，不再叠边框）。
+      作用域 .pm-shell 只命中本页（工作台的 .home-stats 不在 .pm-shell 里，不受影响）。
+
+   3) 背景图模式下弹窗里的单行输入框还是纯白：通用玻璃规则是
+      `html[data-bg='image'] :is(input:not(...):not(...), select, textarea)`，特异性 (0,3,2)；
+      而 .form-group 的单行输入框规则带三层 :not()（checkbox / radio / range），
+      特异性 (0,4,1)，压过了玻璃规则 —— 所以同一只弹窗里 textarea 是 45% 玻璃、
+      单行 input 却是不透明的 --input-bg。补一条 .modal 作用域内的玻璃底
+      （运行时注入验证过：这条生效后单行框背景从纯色变成 color(srgb ... / 0.45) 这种带 alpha 的值）。
+
+   ⚠️ 本段没有一条 backdrop-filter / filter / transform / contain / z-index：
+   上面三类都是「背景色 + 列宽 + 边框」，不需要层叠上下文（tokens.css R2、
+   scripts/check-stacking.js 在盯这条）。
+   ================================================================ */
+
+/* ---- 1) 表格：定宽列 + 名称列弹性 + 单行省略号 ---- */
+.sql-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.sql-table th:nth-child(2),
+.sql-table td:nth-child(2) { width: 168px; }
+.sql-table th:nth-child(3),
+.sql-table td:nth-child(3) { width: 96px; }
+.sql-table th:nth-child(4),
+.sql-table td:nth-child(4) { width: 152px; }
+/* 名称列不写宽度：table-layout: fixed 下它自动吃掉剩余空间。
+   列内标题的省略号由页面自己写在 span 上（t4 的 inline style），这里只兜住 td 不撑宽。 */
+.sql-table td:nth-child(1) { overflow: hidden; }
+.sql-table td:nth-child(2),
+.sql-table td:nth-child(3) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sql-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
+
+/* ---- 2) KPI 三卡：非背景图模式给一道卡面（背景图模式走 --glass-inset） ---- */
+html:not([data-bg='image']) .pm-shell .home-stats .home-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+/* ---- 3) 背景图模式：弹窗单行输入框补玻璃底（三层 :not() 压过通用规则） ---- */
+html[data-bg='image'] .modal .form-group > input:not([type='checkbox']):not([type='radio']):not([type='range']) {
+  background-color: var(--glass-input);
+}
+
+/* ================================================================
+   1.32.1 背景图模式下表头文字提一档（t7）
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md 的规矩 —— 新增/修复样式一律写在最后加载的
+   redesign.css 末尾并注明原因，不在前面的样式表里猜优先级。
+
+   问题（qa t3 量出、t7 复现）：表头压在 --glass-side 玻璃上（浅色 40% alpha /
+   深色 52% alpha），文字是 --text-3，实测「文字 rect 四周 2~26px 窄带」的最差像素
+   对比度：浅色 4.12（中位 4.32）、深色 3.49（中位 3.69），都不到 WCAG AA 的 4.5。
+   关掉背景图时是 5.19 / 6.00 —— 说明是「玻璃 + 背景图」这条链路把表头文字逼到边缘，
+   而表头是可点击的排序控件（不是装饰性弱化文字），不能按 3:1 放过。
+
+   为什么提文字、不提玻璃 alpha（两条路的取舍）：
+   - 提 alpha（把 --glass-side 做更实）等于把这一轮刚统一改透的玻璃层打回去，
+     会让表头与卡片/侧栏的档位不一致，且下次再有人降透明度又会复发；
+   - 提文字只动一个属性，不参与层叠/透明度体系，关背景图时完全不生效（选择器带
+     html[data-bg='image']），所以普通模式的观感与改前逐像素一致。
+   档位选 --text-2 而不是 --text-1：--text-1 是主文字，用在表头上会把「表头比单元格
+   还重」的层次反过来；--text-2 在浅色主题的实测目标就是 6.4:1 那一档，深色同理。
+
+   深浅两套都提：深色改前 3.49 同样低于 4.5，不是只救浅色（任务书要求深色「不低于改前」，
+   这里直接一并提上来）。表头里没有别的颜色来源，改完不再有第二处色值。
+
+   ⚠️ 只改 color，不动 th 的 background（玻璃 alpha 保持原值），也不加任何
+   backdrop-filter / z-index —— 上面实测的「表头底色」在改前改后逐字节相同。 */
+html[data-bg='image'] :is(.entry-table, .zt-table, .tbl) th {
+  color: var(--text-2);
+}
+/* 深色为什么停在 --text-2（实测最差 4.45、中位 4.71，改前 3.49 / 3.69）：
+   深色玻璃 alpha 更高（52%），背景图最暗的那块会把表头底色再压黑一档，所以最差像素
+   比浅色低。要把它也顶到 4.5 只有两条路，都不划算，所以没做：
+   - 用 --text-1（主文字）：对比度会到 8.7，但表头与正文同亮，层次反了；
+   - 用 color-mix(--text-2, --text-1)：视觉上只差半个色阶，可 computed color 会序列化成
+     color(srgb …) 形式，而团队现有的对比度取证脚本（.reviews/ux-fixes/tools/
+     contrast-tight.js）只按十进制三元组解析、并假定取值范围是 0-255，会把文字色读成近黑、
+     报出 1.x 的假红（本轮踩过一次：0.62 被当成 0.62/255，文字色读成近黑，最差 1.28）。
+   与其为了 0.05 制造一个「工具读不准」的颜色，不如留 token + 把差额写在回执里。 */
+/* 排序表头 hover 时本来会提亮到 --text-primary（.entry-table th:hover）：
+   上面那条特异性更高，会把它压掉，所以显式补回来，保持「悬停可点」的反馈。 */
+html[data-bg='image'] .entry-table th:hover {
+  color: var(--text-primary);
+}
+
+/* ================================================================
+   1.32.2 分页条 .pager 玻璃补漏（通用组件）
+   ----------------------------------------------------------------
+   用户验收第二轮反馈：「分页条（.pager）在背景图模式下还是白板」。
+   .pager 是**通用组件**（components/Pager.tsx），笔记 / 附件 / 用例库 /
+   缺陷管理 / 接口调试 / 网址管理都在用，样式在 pages.css:2664；
+   它从来没有进 html[data-bg='image'] 段，所以有两条独立的漏：
+
+     1) 普通页面（笔记 / 附件 / 缺陷管理）：.pager 自带
+        `color-mix(in srgb, var(--bg-input) 35%, transparent)` 的灰白底，
+        压在图上是一条「半透明白贴片」，与相邻的 --glass-side 条状块不同族；
+     2) 网址管理：容器 .pm-pager-wrap（第 52 节的吸底卡片）是 --surface-2 **实底**，
+        整条底标就是一块白板 —— scripts/ui-glass-opaque-scan.js 扫到并拦下来的就是它
+        （扫描此前只造 2 条数据、分页条根本不渲染，所以这颗雷一直没被门禁覆盖）。
+
+   档位选 --glass-side 而不是 --glass-card：.pager 是「固定底标 / 条状块」，
+   与 .toolbar / .pnl-head / .pnl-foot / 表头同一族（都是 --surface-1 系），
+   用 --glass-card 会和它上方的表格/卡片同色，底标失去「一条独立横条」的边界。
+
+   ⚠️ 只换 background-color，**不加** backdrop-filter / filter / transform /
+   contain / z-index：.pager 里没有浮层，且容器一旦自带层叠上下文就会把
+   内部元素关进去（tokens.css R2、scripts/check-stacking.js 在盯这条）。
+
+   color 也一并提一档（--text-muted → --text-2）：测量依据见本段后面
+   「分页条小字的对比度」那条注释 —— 玻璃化之后 12px 小字掉到了 AA 以下。
+   ================================================================ */
+html[data-bg='image'] .pager {
+  background-color: var(--glass-side);
+  color: var(--text-2);
+}
+/* 网址管理的吸底容器给一次玻璃底；里面的 .pager 保持透明（第 52 节原本就是
+   让容器出底、.pager 只留内容），否则两层玻璃叠起来 = 40%+40% → 64%，
+   比 .pnl 卡片还实，反而在背景图上重新变成一条白带。
+   特异性 (0,3,1) > (0,2,1)，与书写顺序无关。 */
+html[data-bg='image'] .pm-pager-wrap {
+  background-color: var(--glass-side);
+}
+html[data-bg='image'] .pm-pager-wrap .pager {
+  background-color: transparent;
+}
+/* 翻页按钮与「每页条数」下拉：与工具栏里的次级按钮 / 下拉同族（--glass-control）。
+   ⚠️ 禁用态刻意**排除在外**（:not(:disabled)）：.pager-btn:disabled 现在是
+   「透明底 + opacity .35」的弱化外观，如果也给它一层玻璃底，叠上 .35 的透明度后
+   按钮几乎看不见，「不能点」反而变得不可读 —— 保持原样就是保持「看得出禁用」。
+
+   特异性说明（为什么写成 .pager .pager-ctrl .pager-btn 这么长）：
+   - .pager-btn 基础规则是 `background: transparent`(0,1,0)，好压；
+   - .pager-size 是 <select>，通用玻璃规则
+     `html[data-bg='image'] :is(input:not(...):not(...), select, textarea)` 特异性 (0,3,2)，
+     单写 `html[data-bg='image'] .pager-size`(0,2,1) 会输给它、结果拿到 --glass-input。
+     加上 .pager/.pager-ctrl 两层类变成 (0,4,1)，才稳稳落成 --glass-control。 */
+html[data-bg='image'] .pager .pager-ctrl .pager-btn:not(:disabled) {
+  background-color: var(--glass-control);
+}
+/* hover 反馈：pages.css 的 `.pager-btn:hover:not(:disabled)` 是 --bg-hover 实底，
+   上面那条特异性更高会把它压掉，不补一条的话「悬停可点」的反馈就没了
+   （与 1.32.0 的 search-scope-btn / view-toggle-btn 同一个坑）。 */
+html[data-bg='image'] .pager .pager-ctrl .pager-btn:hover:not(:disabled) {
+  background-color: var(--glass-control-hover);
+}
+html[data-bg='image'] .pager .pager-ctrl .pager-size {
+  background-color: var(--glass-control);
+}
+/* 分页条小字的对比度：为什么上面那条规则要同时写 color: var(--text-2)（实测数，不是猜的）
+   ----------------------------------------------------------------
+   .pager 基础色是 --text-muted（= redesign.css 文件头里重定向到 --text-3 的那个别名），
+   12px 小字压在新玻璃底（--glass-side，浅色 40% / 深色 52% alpha）上：
+   实测「文字正下方 1~4px 窄带」最接近的背景像素 = 浅色 rgb(226,227,228) / 深色 rgb(51,55,56)，
+   对比度 .pager-info = 浅色 4.05 / 3.96、深色 3.94 / 3.76 —— **都不到 WCAG AA 的 4.5**
+   （网址管理吸底容器 / 笔记独立分页条各量一次，浅深两套主题各一次；取像素中位数）。
+   改成 --text-2 后：浅色 5.09 / 4.99、深色 5.03 / 4.81，全部过 4.5。
+   .pager-cur 本来就是 --text-secondary（浅色 5.09 / 4.99、深色 5.03 / 4.81），不受影响。
+   这与 1.32.1 处理表头文字（--text-3 → --text-2）是同一条判据、同一个理由：
+   小字压在「玻璃 + 背景图」上会掉到 AA 以下，而提 alpha 会把刚统一的玻璃层打回去。
+   只改 color，不动背景；选择器带 html[data-bg='image']，普通模式观感逐像素不变。
+   ⚠️ 刻意与上面那条 .pager 规则**合并成同一条**（不再单写一个 `html[data-bg='image'] .pager`
+   规则块）：同选择器出现两次会让 check-css-dup 的「同名选择器重复」计数 +1，
+   而这两个声明之间没有覆盖关系，合并没有任何代价。 */
+
+/* 标签胶囊 .chip：pages.css:216 的底色是 --bg-input 实底。
+   它是**通用胶囊**（笔记标签、正则预设、建议词、结果芯片都在用），
+   压在玻璃卡片上就是一排小白片 —— 加上分页造数之后，扫描门禁在「笔记与附件」页
+   一次抓到 24 个（每个 40×24 = 960px²，浅色 rgb(230,232,240) / 深色 rgb(18,20,30)）。
+   档位跟「同源的 input 族」走 --glass-input：与 1.32.0 处理 .tag-sidebar-search
+   的判据一致（原本是 --bg-input 实底的，一律换 --glass-input，不再新造百分比）。 */
+html[data-bg='image'] .chip {
+  background-color: var(--glass-input);
 }

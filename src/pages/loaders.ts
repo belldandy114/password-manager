@@ -21,6 +21,9 @@ export const PAGE_LOADERS = {
   // 两个 key 指向同一个 chunk —— 旧路由、命令面板、首页快捷入口都不用改。
   notes: () => import('./NotesAttachments').then(m => ({ default: m.NotesAttachments })),
   attachments: () => import('./NotesAttachments').then(m => ({ default: m.NotesAttachments })),
+  // 1.30.2：SQL 片段重新独立成页（数据仍是 notes 集合里 kind='sql' 的条目）。
+  // 挂在表里是为了让侧栏悬停预取对它也生效 —— 直接写在 App.tsx 的 lazy() 里就没有预取了。
+  sqlSnippets: () => import('./SqlSnippets').then(m => ({ default: m.SqlSnippets })),
   zentao: () => import('./ZentaoPage').then(m => ({ default: m.ZentaoPage })),
   apiClient: () => import('./ApiClient').then(m => ({ default: m.ApiClient })),
   perfTest: () => import('./PerfTest').then(m => ({ default: m.PerfTest })),
@@ -34,7 +37,8 @@ export type PageKey = keyof typeof PAGE_LOADERS;
 const PAGE_ALIAS: Record<string, string> = {
   jsonConverter: 'toolbox',
   accounts: 'passwordManager',
-  snippets: 'notes',
+  // 1.30.2：旧 'snippets' 路由现在落到独立页（数据源与预取目标都跟着改）
+  snippets: 'sqlSnippets',
   // 用例页目前没有实现（vault 里的 checklists 也没有写入方），
   // 真要做的时候把 'checklists' 指到新页面即可，预取不用改别处。
 };

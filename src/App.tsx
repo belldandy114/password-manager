@@ -35,6 +35,10 @@ const ApiClient = lazy(PAGE_LOADERS.apiClient);
 const PerfTest = lazy(PAGE_LOADERS.perfTest);
 const CodeLab = lazy(PAGE_LOADERS.codeLab);
 const Cases = lazy(PAGE_LOADERS.cases);
+// 1.30.2：SQL 片段从笔记页拆成独立页。页面载入表（pages/loaders.ts）本轮不在改动范围内，
+// 所以这里直接给 import 路径；补进 loaders 之后侧栏的悬停预取才生效（功能不受影响，
+// 点开时 lazy 会自己 import，只是少了预取那一次预热）。
+const SqlSnippets = lazy(PAGE_LOADERS.sqlSnippets);
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -392,7 +396,7 @@ function App() {
         case 'regrun': setCurrentPage('apiClient'); break;
         case 'paste':
           // 快速搜索小窗里粘贴后的动作：原文经 item.text 带过来，这里落到对应页面
-          if (arg === 'sql') { setCurrentPage('notes'); st.seedSnippet(String(item.text || '')); }
+          if (arg === 'sql') { setCurrentPage('sqlSnippets'); st.seedSnippet(String(item.text || '')); }
           else if (arg === 'json') { setCurrentPage('apiClient'); st.seedApiBodyText(String(item.text || '')); }
           else if (arg === 'log' || arg === 'accesslog') { st.openToolboxTool('log', String(item.text || '')); setCurrentPage('toolbox'); }
           else if (arg === 'jwt') { st.openToolboxTool('jwt', String(item.text || '')); setCurrentPage('toolbox'); }
@@ -468,13 +472,16 @@ function App() {
       case 'accounts': return <PasswordManagerPage />;
     case 'environments': return <Environments />;
       case 'weeklyReport': return <WeeklyReport />;
-      // 「SQL 片段」页已并入测试笔记：老用户上次停在这一页时平滑落到笔记页
-      case 'snippets': return <NotesAttachments initialScope="notes" />;
+      // 1.30.2：SQL 片段重新独立成页（数据仍来自 notes 集合里 kind='sql' 的条目）。
+      // 老路由 'snippets' 跟着改指向独立页 —— 数据源是同一批条目，落到笔记页会看不见它们。
+      case 'snippets': return <SqlSnippets onNavigate={setCurrentPage} />;
       // 1.30.1：「测试笔记 + 附件管理」合并成一个菜单页，两个入口都落同一页，
       // 只是默认打开的页签不同（旧链接 / 首页快捷入口 / 条目里的「查看附件」都还能直达）。
       // 'notes' 是主入口：NotesAttachments 内部会恢复上次页签（localStorage）；
       // 'attachments' 是显式附件入口：一定落附件管理，不被记忆覆盖。
       case 'notes': return <NotesAttachments initialScope="notes" />;
+      // 1.30.2：SQL 片段独立页（数据仍来自 notes 集合里 kind='sql' 的条目）
+      case 'sqlSnippets': return <SqlSnippets onNavigate={setCurrentPage} />;
       case 'attachments': return <NotesAttachments initialScope="attachments" />;
       case 'zentao': return <ZentaoPage />;
       case 'dataGenerator': return <DataGenerator onNavigate={setCurrentPage} />;

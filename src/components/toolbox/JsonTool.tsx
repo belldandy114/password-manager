@@ -24,6 +24,15 @@ const DEFAULT_OPTS: Partial<JsonRepairOptions> = {
   sortKeys: false,
 };
 
+/**
+ * 输入框的完整说明。
+ *
+ * 只放在 title（悬停）与 aria-label（读屏）里，**不再当占位符**：工具箱这一栏最窄 430px，
+ * 40+ 字的占位符会被 CSS 硬裁掉后半截，连「Ctrl+Enter」都看不全，等于把说明变成了噪音。
+ */
+const JSON_INPUT_HINT =
+  '粘贴 JSON：支持单引号、无引号键、注释、多余逗号，也能从日志里夹着的片段中抠出来；Ctrl+Enter 直接转化';
+
 const EXAMPLES: Array<{ label: string; hint: string; text: string }> = [
   { label: '单引号', hint: '键和值都用单引号（从 JS 里复制出来的）', text: "{ 'id': 1, 'name': '张三', 'tags': ['a','b'] }" },
   { label: '无引号键', hint: '对象的键没有引号（console 里打印的样子）', text: '{ id: 1, name: "李四", ok: true }' },
@@ -156,13 +165,17 @@ export function JsonTool() {
             <span>输入</span>
             <span className="json-pane-meta">{inputLines ? `${inputLines} 行` : '待输入'}</span>
           </div>
+          {/* 占位符只留 26 字：输入框在 430px 宽时 40+ 字会被硬裁掉尾巴。
+              完整说明放 title（鼠标悬停）与 aria-label（读屏），信息一个字都不少。 */}
           <textarea
             className="json-io"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (tab === 'repair') convert(); } }}
             spellCheck={false}
-            placeholder="粘贴 JSON（支持单引号、无引号键、注释、多余逗号、日志里夹着的片段），Ctrl+Enter 转化" aria-label="粘贴 JSON（支持单引号、无引号键、注释、多余逗号、日志里夹着的片段），Ctrl+Enter 转化" />
+            title={JSON_INPUT_HINT}
+            placeholder="粘贴 JSON，支持单引号/无引号键/注释/多余逗号"
+            aria-label={JSON_INPUT_HINT} />
         </div>
 
         <div className="json-pane">
