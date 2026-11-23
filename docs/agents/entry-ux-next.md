@@ -309,3 +309,22 @@ git diff --stat                # 对照 §7.2 文件边界
 2. **B**（依赖 A 的抽屉组件）→ 跑 B 片用例；确认 `PasswordManagerPage.tsx` 的 diff 只有「tab 三处 + `members` 分支抽屉实例」两块，`Dashboard.tsx` 零改动。
 3. **C**（与 A/B 路径不重叠，可并行）→ 跑 C 片用例；确认普通模式卡面靠新选择器（不是靠 `.pm-shell`）。
 4. 三片合并后跑 §7.7 全量，把原始输出贴给 qa，D 片才开。
+
+## 9. 交付记录（2026-11-23，v1.32.0）
+
+| 项 | 结果 |
+|---|---|
+| 单测 | `npx vitest run` → 95 files / **1313 tests** 全绿（本批 +62） |
+| 类型 / 门禁 | `tsc --noEmit` exit 0；`npm run check` 12 道门全过 |
+| 玻璃门禁（开发） | 16 个「主题 × 页面/弹窗」组合 **0 违规**，含成员账号 tab 与详情抽屉 |
+| 玻璃门禁（**打包版**） | 同样 16 组合 0 违规，`.drawer.entry-drawer` = 460×761 / alpha 0.9 / ← `var(--glass-modal)`（证明 CSS 进了 asar） |
+| 几何实测（Electron） | SQL 卡高 44.64（≤64）/ b 16px / i 11px / 1024 宽三卡 top 均 144；勾选框 24×24、10 张卡高全 182.19（极差 0）；抽屉 460；`.mem-acc-entry` alpha 0；附件页 `.att-dir-path` 由 2 → 0 |
+| 打包回归 | 冒烟 13/13、IPC 契约、完整性、CSV、r9、r10、启动期回归全过 |
+| 契约体检 | `team_task_audit` → 🔴 0 · 🟡 0 |
+| Release | https://github.com/belldandy114/password-manager/releases/tag/v1.32.0 ，`PasswordManager-Setup-1.32.0.exe` 94.72 MB，CI 成功 |
+
+**验收期修掉的两个缺陷**（均由成员在交付时主动上报，未越界改动）：
+1. 抽屉根类名 `entry-detail-drawer` 与 CSS 选择器 `.drawer.entry-drawer` 不一致 → 两条规则都不命中（460px/玻璃全失效）；已改名并加「CSS 选择器↔组件挂点」守卫（t8）。
+2. 成员账号 tab 的 `.mem-acc-*` 样式整段没落盘（B 片 inScope 里没有样式表，属队长契约漏洞）→ 浏览器默认按钮实底导致门禁 10 条违规；已补样式 + 同款守卫（t9）。
+
+**遗留（本批按裁定未做）**：附件管理 tab 与本批无关的两条既存玻璃泄漏（`.pnl-meta` / `.notes-dirpath`），已记入 `docs/optimization-backlog.md` 的 P1-2b。
