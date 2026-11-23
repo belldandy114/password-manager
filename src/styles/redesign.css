@@ -8362,3 +8362,249 @@ html[data-bg='image'] .sql-var-preview {
 html[data-bg='image'] .modal-footer {
   background-color: transparent;
 }
+
+/* ================================================================
+   1.32.4（A 片）：条目详情抽屉 .drawer.entry-drawer
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css
+   末尾并注明原因，不在前面三份样式表里靠猜优先级。
+
+   1) 宽度：契约 §3.1 要求 420–480px，而 `.drawer`（pages.css:2079）是 520px ——
+      那是给缺陷详情写的，直接复用会多出 40px 空白。不改 `.drawer` 本体
+      （components/BugDrawer.tsx 还在用），只在新抽屉的修饰类上收窄到 460px。
+
+   2) 玻璃：全仓库此前**没有一条** `.drawer` 的 data-bg='image' 规则，抽屉是实心
+      `--bg-card`（520×全高，远超 ui-glass-opaque-scan 的 601px² 判据），
+      背景图模式下就是一块白板。这里只给 `.entry-drawer` 补 `--glass-modal`
+      （与 Modal 同档：浮层要几乎不透明才分得清边界），`.drawer` 本体一字不动
+      → 缺陷详情的 BugDrawer 观感零变化。
+
+   ⚠️ 两条都只写 width / background-color：没有 backdrop-filter / z-index /
+   transform（scripts/check-stacking.js 在盯），也不新增色值字面量
+   （scripts/check-debt-budget.js 的预算只许下降）。
+   ================================================================ */
+.drawer.entry-drawer {
+  width: 460px;
+  max-width: 92vw;
+}
+html[data-bg='image'] .drawer.entry-drawer {
+  background-color: var(--glass-modal);
+}
+
+/* ================================================================
+   1.32.5（C 片）：SQL 统计卡上移压缩 + 卡片勾选框
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css
+   末尾并注明原因，不在前面三份样式表里猜优先级。
+
+   1) SQL 三卡从右栏移到页头下方（契约 §3.3）：位置由 SqlSnippets.tsx 负责，
+      这里只补它移出后缺的两件事——压缩尺寸与卡面。
+      原尺寸是「padding 8px + 数字 20px + 标签 11px ≈ 54px」，按「内边距减半 +
+      数字 16 + 标签 11」压到 ≈41px，再用 max-height 兜住 64px 上限；
+      grid 显式三列 + minmax(0, 1fr) 保证宽度 1024 时仍一行三列、不换行。
+
+   2) 移出 .pm-shell 会打断第 8197 行那条 `.pm-shell .home-stats .home-stat`
+      的卡面规则（surface-2 底 + 1px --line 边），不补的话普通模式下三卡会退回
+      无边框的 --surface-inset，浅色下几乎看不出是卡片。这里把同一份声明补在
+      `html:not([data-bg='image']) .sql-kpi-top .home-stat` 上，作用面比原来更窄；
+      背景图模式走 --glass-inset，与既有 KPI 同档。
+
+   3) 卡片勾选框（A 片只落了 DOM，这里补观感）：与卡片表头同一行左侧、
+      点击区 24×24、键盘 focus-visible 有可见描边、不压住收藏 ★。
+      只动勾选框自身，不加上下外边距/内边距，也不碰卡片与表头，
+      所以卡片高度变化为 0（≤2px 的判据天然满足）。
+
+   ⚠️ 本段只有 background / border / padding / 字体 / 尺寸 / outline：
+   不加任何层叠相关属性（scripts/check-stacking.js 在盯），也不新增色值字面量
+   （scripts/check-debt-budget.js 的预算只许下降）。
+   ================================================================ */
+
+.sql-kpi-top {
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.sql-kpi-top .home-stats.is-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.sql-kpi-top .home-stat {
+  padding: 4px 8px;
+  max-height: 64px;
+}
+.sql-kpi-top .home-stat b {
+  font-size: 16px;
+  line-height: 1.1;
+}
+.sql-kpi-top .home-stat i {
+  font-size: 11px;
+}
+html:not([data-bg='image']) .sql-kpi-top .home-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+html[data-bg='image'] .sql-kpi-top .home-stat {
+  background-color: var(--glass-inset);
+}
+
+/* 卡片左上勾选框：参与 .card-header 的流式布局（不是绝对定位，不会压住 ★） */
+.entry-card-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 24px;
+  min-height: 24px;
+  margin-right: 2px;
+  cursor: pointer;
+}
+.entry-card-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.entry-card-check input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ================================================================
+   1.32.6（repair B）：成员账号 tab 的 .mem-acc-* 样式
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css
+   末尾并注明原因，不在前面三份样式表里猜优先级。
+
+   问题：B 片（t4）交付了 MemberAccountsTab.tsx 与它的 5 个类名
+   （.mem-acc / -bar / -table / -entry / -pwd），但当时 inScope 里没有样式表，
+   一条规则都没落盘。后果是「网址」列那个 <button class="mem-acc-entry">
+   吃浏览器默认的浅灰按钮底（深浅两套主题都一样），
+   在 html[data-bg='image'] 下就是一块实心白牌：D1 按「alpha >= 0.999 且面积
+   > 600px²」判违规，实测 5 行 × 2 主题 = 10 条。
+
+   做法：
+   1) .mem-acc-entry 按表格里的文本按钮写（对齐既有 .acc-user-link 的口径）：
+      透明底 / 无边框 / 无内边距 / 链接色 / pointer，悬停下划线。
+   2) .mem-acc-bar 给一个与 .att-bulk-bar 同档的实底 + 1px --line 边框
+      （非背景图模式与「有工具条」的观感一致）；背景图模式换成 --glass-side
+      （与侧栏 / 工具条 / 表头同档，不逐类补百分比）。
+   3) .mem-acc-table 只补 table-layout: fixed + 列宽（名称列弹性、操作列定宽），
+      .mem-acc-pwd 用等宽数字，打码/明文切换时列宽不抖。
+   4) 只为**真实存在**的 5 个类写规则；骨架里曾设想的「筛选行 / 动作区」两个类
+      在组件里不存在（筛选控件就在 .mem-acc-bar 内、动作列是既有 .btn），不写。
+
+   ⚠️ 本段只有 background / border / padding / 字体 / 尺寸 / 颜色令牌：
+   不加任何层叠相关属性（scripts/check-stacking.js 在盯），也不新增色值字面量
+   （scripts/check-debt-budget.js 的预算只许下降）。
+   ================================================================ */
+
+/* 网址列：表格里的文本按钮（默认按钮底在背景图模式下就是实心白牌） */
+.mem-acc-entry {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-acc-entry:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mem-acc-entry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* 工具条：非背景图模式实底 + 细边（与 .att-bulk-bar 同档） */
+.mem-acc-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.mem-acc-bar select {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.mem-acc-bar input[type='text'] {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.mem-acc-bar .btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* 背景图模式：工具条走玻璃档位（与侧栏 / 表头同档） */
+html[data-bg='image'] .mem-acc-bar {
+  background-color: var(--glass-side);
+}
+
+/* 表格：定宽列 + 名称列弹性，避免长网址把操作列挤出去 */
+.mem-acc-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.mem-acc-table th:nth-child(2),
+.mem-acc-table td:nth-child(2),
+.mem-acc-table th:nth-child(3),
+.mem-acc-table td:nth-child(3) {
+  width: 96px;
+}
+.mem-acc-table th:nth-child(5),
+.mem-acc-table td:nth-child(5) {
+  width: 220px;
+}
+.mem-acc-table th:nth-child(6),
+.mem-acc-table td:nth-child(6) {
+  width: 180px;
+}
+.mem-acc-table th:nth-child(7),
+.mem-acc-table td:nth-child(7) {
+  width: 150px;
+}
+.mem-acc-table td:nth-child(1) {
+  overflow: hidden;
+}
+/* 密码列：等宽数字，打码/明文切换时列宽不抖 */
+.mem-acc-pwd {
+  display: inline-block;
+  min-width: 72px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+}
+/* ================================================================
+   1.32.7（repair 抽屉）：.role-acc-row 在背景图模式下补玻璃底
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css 末尾
+   并注明原因，不在前面三份样式表里猜优先级。
+
+   问题：抽屉里「其他角色账号」的每一行是 .role-acc-row（redesign.css:5669），
+   基础规则里底是实心的（background: var(--surface-2)）—— 这组样式原本只服务
+   卡片的账号弹窗；详情抽屉纳入玻璃扫描后，423×115 的实心底在深浅两套主题
+   各命中 1 条。
+
+   做法：只加一条 data-bg 作用域的 background-color: var(--glass-inset)
+   （内嵌小块档位，与 KPI / 统计卡同档）。**不改基础规则**，所以非背景图模式
+   逐字节不变；也不动 padding / border / radius（尺寸与排版零变化）。
+   .btn-danger 仍保持实色 —— 破坏性按钮是防误点的视觉锚点，由 D 片进白名单。
+
+   ⚠️ 本段只有一条 background-color：不碰任何层叠相关属性，不新增色值字面量
+   （scripts/check-stacking.js 与 scripts/check-debt-budget.js 都在盯）。
+   ================================================================ */
+html[data-bg='image'] .role-acc-row {
+  background-color: var(--glass-inset);
+}

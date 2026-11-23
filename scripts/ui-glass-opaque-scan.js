@@ -68,6 +68,35 @@
  *      所以每次判定前（就绪后、prep 后、弹窗打开后、扫描前）都先 finish 一遍 ——
  *      它把动画推到**最终帧**（就是用户 0.2s 后看到的那个状态），比「等动画播完」可靠，也不改判据。
  *
+ * ⚠️ 1.32.5（t6/D1，依据 docs/agents/glass-scan-tab-plan.md）三处新增：
+ *
+ *   1) **「网址管理 · 成员账号」tab 进扫描组合**。它是 `PasswordManagerPage` 的 `pmSubPage`
+ *      （tab 键 `members`），不是 Dashboard 的视图 —— 所以：
+ *      · 就绪判据必须**与「当前在哪个 tab」无关**（只验页面真的挂载 + tab 栏齐 + 有内容），
+ *        否则「切到成员账号」是下一步 prep 的动作，用结果等前置条件会死锁
+ *        （与 1.32.3 那个「等 rows>=1 再切列表」同一种坑）；
+ *      · 切 tab 由 `prep`（点 tab2）做、由 `APPLIED_PRED` 验（tab 文案 + 表格行 >= 1）；
+ *      · 扫描完必须 `restore` 回「所有网址」：`pmSubPage` 是 store 状态、侧栏导航不重置，
+ *        扫完留在 members 的话，**下一套主题**的首个网址管理页会落在成员账号 tab 上，
+ *        而它的就绪判据要 `.toolbar` + 三个 `.view-switch-btn` → 必然 10s 超时红。
+ *      · 自证用 `maRows`（`.mem-acc table.tbl tbody tr`，B 片复用既有 `.tbl`；限定在 `.mem-acc`
+ *        容器里，否则 SQL 片段页的 `.tbl` 表格行也会被算进来）而不是猜类名；
+ *        造数必须带 `accounts`（否则是空态，空表扫出 0 违规没有意义）。
+ *
+ *   2) **「网址管理 · 详情抽屉」进扫描组合**（契约 §8-5）。扫描根只取
+ *      `document.querySelector('.drawer.entry-drawer')` **子树**（`.drawer-mask` 是全窗口压暗层，
+ *      本来就该半透明，扫进来只是噪声）；打开方式是**点卡片主体**（勾选框是另一个元素，
+ *      点它只切选中、不开抽屉）；关闭**只点抽屉头部的关闭按钮**，绝不「点第一个按钮」——
+ *      抽屉底栏第一个按钮是「编辑」，点了会弹出 EntryForm，把后面的扫描全搞脏。
+ *      锚点：`.drawer.entry-drawer` 的背景必须**逐字符等于** `var(--glass-modal)` 且 alpha < 1
+ *      （1.32.2 的口径：只验 alpha<1 拦不住「玻璃规则没命中、但底色恰好半透明」的假绿）。
+ *
+ *   3) **修掉稳定判据的一个既存漏洞**：`modalSig` 用了 `ctx.modalInputs / ctx.preLen`，
+ *      但 `buildScanExpr` 的 ctx 里从来没有这两个字段 → `JSON.stringify([undefined, undefined])`
+ *      恒为 `"[null,null]"`，**弹窗的稳定判据实际上只等于「命中块列表」**（自证那一半永远相等）。
+ *      现在把 `modalInputs / preLen / drawerKv / drawerTitle` 补进 ctx，并让 `pageSig` / `drawerSig`
+ *      真正引用它们 —— 改了这些字段，签名就会跟着变，不再有恒等的一半。
+ *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
  *   USE_PACKED=1 node scripts/ui-glass-opaque-scan.js # 打包版（先 npm run pack / npm run dist）
@@ -96,6 +125,21 @@ const STABLE_TIMEOUT = 4000;
 const POLL_MS = 100;
 /** 稳定性采样间隔 */
 const STABLE_POLL_MS = 150;
+/**
+ * 变异验证用的临时 CSS 注入（**默认关闭**，只给「这条门禁到底会不会红」的验证用）。
+ *
+ * 为什么要这个开关：要证明「扫描组合不是空跑」，最直接的办法是给被测元素临时加一条实底，
+ * 看门禁是否真的把它列出来（本仓库的历史做法是「临时改 src/styles → 跑 → 改回来」）。
+ * 改 `src/` 会把「只改 scripts/」的边界打破（还可能和并行片抢同一个 CSS 文件），
+ * 所以改成运行时往 `<head>` 追加一条 `<style>`：效果等价（同样的 alpha=1 实底），
+ * 但仓库文件一个字节都不动，跑完进程一退就没了。
+ *
+ *   PM_SCAN_INJECT_CSS=".mem-acc-table{background-color:#fff !important}" node scripts/ui-glass-opaque-scan.js
+ *
+ * 变异验证的正常预期：**必须 exit=1**，且违规清单里出现被注入的那个元素/类名。
+ * 不加这个环境变量时它恒为空串，对正常扫描零影响。
+ */
+const MUTATION_CSS = String(process.env.PM_SCAN_INJECT_CSS || '').trim();
 
 /**
  * 白名单：这些块**本应实心**，玻璃化反而是错的。每条都必须写理由 ——
@@ -120,6 +164,18 @@ const WHITELIST = [
     id: 'KBD 键帽',
     test: (e) => e.tag === 'KBD',
     why: '快捷键键帽：靠实心底 + 内阴影画「凸起的键」，半透明会糊成一团；且键帽都是 20~60px 宽',
+  },
+  {
+    // 1.32.7（t11）：破坏性按钮。与「主按钮」同一类判断，但理由不同 ——
+    // 主按钮是「这里点这里」的引流锚点，破坏性按钮是「别乱点这里」的警示锚点；
+    // 玻璃化会把红色实底掺进背景图，警示强度直接掉一档（用户看不出危险动作）。
+    // 实测只在「网址管理 · 详情抽屉」底栏出现（64×34 = 2176px²，深浅各 1 条）。
+    id: '破坏性按钮 (btn-danger)',
+    test: (e) => /(^|\s)btn-danger(\s|$)/.test(e.cls),
+    why: '破坏性按钮（删除 / 清空 / 彻底删除）：实色红底是「这一步不可逆」的视觉锚点，'
+      + '玻璃化后与普通次级按钮拉不开层次、警示被背景图冲淡，用户更容易误点；'
+      + '而且单个按钮面积很小（实测 64×34 = 2176px²，与主按钮同量级），挡不住图。'
+      + '注意：这条只放行按类名判定的按钮本身，不给抽屉里的容器/行放行（那些必须补玻璃，见 1.32.7 的 .role-acc-row）',
   },
   {
     id: 'env 徽标 (env-badge / env-badge-table)',
@@ -179,6 +235,16 @@ const PAGES = [
     min: { cards: 0, rows: 1, pagers: 1 }, hint: 'pagers=0 说明没超过一页，分页条没渲染 = 这一页没真的扫到',
   },
   { label: '网址管理 · 卡片视图', nav: '网址管理', prep: (s) => clickText(s, '卡片'), min: { cards: 1, pagers: 1 } },
+  // 1.32.5（t6/D1）：「成员账号」是 PasswordManagerPage 的 pmSubPage tab（键 members），
+  // 不是 Dashboard 的视图 —— prep 点顶部 tab、restore 必须切回「所有网址」（见文件头 1.32.5 第 1 条）。
+  // min.maRows：空表扫出 0 违规没有意义，所以要求账号行 >= 1（造数里 entries 1/2/3 带 accounts）。
+  {
+    label: '网址管理 · 成员账号', nav: '网址管理',
+    prep: (s) => clickText(s, '成员账号'),
+    restore: (s) => clickText(s, '所有网址'),
+    min: { maRows: 1 },
+    hint: 'maRows=0 说明成员账号表没渲染：造数没带 accounts，或 tab 落进了空态',
+  },
   { label: '工具箱', nav: '工具箱' },
   // 25 条笔记 / 每页 24 条 = 2 页（笔记页的 .pager 是独立元素，玻璃档位在这里量）
   {
@@ -227,6 +293,16 @@ const READY_PRED = {
     const state = { skel: !!document.querySelector('.page-skel'), tbHead: !!document.querySelector('.tb-main-head') };
     return { ok: !state.skel && state.tbHead, state };
   })()`,
+  // 1.32.5（t6/D1）：**与「当前在哪个 tab」无关**（切 tab 是下一步 prep 的动作，用它等前置条件会死锁）。
+  // 只证明：网址管理页真的挂载了、页签栏齐了（>= 5 个 tab2：所有网址/成员账号/回收站/导入/导出）、有任意内容。
+  '网址管理 · 成员账号': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const state = { skel: !!document.querySelector('.page-skel'), pmTabs: q('.tabs .tab2'),
+      toolbar: !!document.querySelector('.toolbar'), cards: q('.entry-card'),
+      rows: q('.entry-table tbody tr'), maRows: q('.mem-acc table.tbl tbody tr') };
+    const ok = !state.skel && state.pmTabs >= 5 && (state.cards >= 1 || state.rows >= 1);
+    return { ok, state };
+  })()`,
   '笔记与附件': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const state = { skel: !!document.querySelector('.page-skel'), pagers: q('.pager'), chips: q('.chip') };
@@ -254,6 +330,16 @@ const APPLIED_PRED = {
     const on = document.querySelector('.view-switch-btn.is-on');
     const state = { on: on ? on.textContent.trim() : '', cards: document.querySelectorAll('.entry-card').length };
     return { ok: state.on === '卡片' && state.cards >= 1, state };
+  })()`,
+  // 1.32.5（t6/D1）：真的切到「成员账号」tab 且表格里真的有行（空态不算就绪 —— 空表扫 0 违规没意义）
+  '网址管理 · 成员账号': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const on = document.querySelector('.tabs .tab2.is-active');
+    const sel = document.querySelector('.mem-acc-bar select[aria-label="按网址筛选"]') || document.querySelector('.mem-acc-bar select');
+    const state = { tab: on ? on.textContent.trim() : '', maRows: q('.mem-acc table.tbl tbody tr'),
+      maFilterOpts: sel ? sel.options.length : 0, empty: !!document.querySelector('.mem-acc .tbl-empty') };
+    const ok = state.tab === '成员账号' && state.maRows >= 1;
+    return { ok, state };
   })()`,
 };
 
@@ -284,7 +370,22 @@ const buildScanExpr = (rootSel) => `(() => {
     // 分页条（1.32.2）：通用组件 .pager 只有超过一页才渲染，这一项是「这一页真的翻页了」的自证
     pagers: document.querySelectorAll('.pager').length,
     pagerCur: (document.querySelector('.pager .pager-cur') || {}).textContent || '',
-    pagerInfo: (document.querySelector('.pager .pager-info') || {}).textContent || '' };
+    pagerInfo: (document.querySelector('.pager .pager-info') || {}).textContent || '',
+    // 1.32.5（t6/D1）：成员账号 tab 的自证（页签数 / 账号行 / 按网址筛选选项）
+    //   maRows 限定在 .mem-acc 容器里：.pm-main table.tbl 会把 SQL 片段页的 .tbl 表格行
+    //   也算进来（实测 2 行），自证值就不专属于这一页了。
+    pmTabs: document.querySelectorAll('.tabs .tab2').length,
+    maRows: document.querySelectorAll('.mem-acc table.tbl tbody tr').length,
+    maFilterOpts: (() => {
+      const s = document.querySelector('.mem-acc-bar select[aria-label="按网址筛选"]') || document.querySelector('.mem-acc-bar select');
+      return s ? s.options.length : 0;
+    })(),
+    // 1.32.5（t6/D1）：修掉「modalSig 引用了 ctx 里不存在的字段」这个恒等漏洞 ——
+    // 以前 modalSig 的 [modalInputs, preLen] 恒为 [null,null]，弹窗的稳定判据只剩命中块列表。
+    modalInputs: document.querySelectorAll('.modal .modal-body input:not([type=checkbox]):not([type=radio])').length,
+    preLen: (() => { const p = document.querySelector('pre.sql-var-preview'); return p ? (p.textContent || '').length : 0; })(),
+    drawerKv: document.querySelectorAll('.drawer.entry-drawer .drawer-kv dt').length,
+    drawerTitle: (() => { const t = document.querySelector('.drawer.entry-drawer .drawer-title-text'); return t ? (t.textContent || '').slice(0, 40) : ''; })() };
   // Chromium 的 computed backgroundColor 有两种序列化：rgba(r, g, b, a) 与 color(srgb r g b / a)
   const alphaOf = (c) => {
     const s = String(c || '').trim();
@@ -598,13 +699,25 @@ async function stableScan(ev, expr, sigFn, label) {
     + '扫描结果不可信（多半还在重排 / 换视图 / 布局未完成）');
 }
 
-/** 页面扫描的稳定性签名：不透明块列表 + 页面自证计数 */
+/**
+ * 页面扫描的稳定性签名：不透明块列表 + 页面自证计数。
+ * 1.32.5（t6/D1）：把 `maRows / pmTabs` 也并进签名 —— 成员账号 tab 上 `cards/rows/pagers` 恒 0，
+ * 不并入的话签名只剩「命中块列表」，表还在挂载/填数据时也能「两次采样一致」= 新的假绿通道。
+ */
 const pageSig = (res) => JSON.stringify(res.rows.map((r) => [r.cls, r.w, r.h, r.bg]))
-  + '|' + JSON.stringify([res.ctx.cards, res.ctx.rows, res.ctx.pagers]);
+  + '|' + JSON.stringify([res.ctx.cards, res.ctx.rows, res.ctx.pagers, res.ctx.maRows, res.ctx.pmTabs]);
 
-/** 弹窗扫描的稳定性签名：块列表 + 弹窗自证（输入框数 / 预览字数） */
+/**
+ * 弹窗扫描的稳定性签名：块列表 + 弹窗自证（输入框数 / 预览字数）。
+ * ⚠️ 1.32.5（t6/D1）之前这两个字段**在 ctx 里不存在** → 恒为 `[null,null]`，
+ * 弹窗的稳定判据实际上只等于命中块列表。现在 ctx 补了字段，这一半才真的在起作用。
+ */
 const modalSig = (res) => JSON.stringify(res.rows.map((r) => [r.cls, r.w, r.h, r.bg]))
   + '|' + JSON.stringify([res.ctx.modalInputs, res.ctx.preLen]);
+
+/** 抽屉扫描的稳定性签名：块列表 + 抽屉自证（键值对项数 / 标题） */
+const drawerSig = (res) => JSON.stringify(res.rows.map((r) => [r.cls, r.w, r.h, r.bg]))
+  + '|' + JSON.stringify([res.ctx.drawerKv, res.ctx.drawerTitle]);
 
 /**
  * 等「页面真的渲染出来」+（有 prep 的）等「视图真的切过去了」（1.32.3 / t4）。
@@ -765,6 +878,287 @@ async function scanCopyModal(session, ev, theme, violations) {
   await waitUntil(ev, MODAL_GONE_EXPR, { timeout: 3000, label: '复制弹窗关闭' });
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ * 1.32.5（t6/D1）「卡片详情抽屉」扫描（契约 §8-5）
+ * ----------------------------------------------------------------
+ * 为什么单独一段：`.drawer` 是浮层，只有用户点开卡片时才存在；而且它**此前没有任何
+ * data-bg='image' 规则**（`redesign.css:8008` 的注释明确把它排除在玻璃之外），
+ * 背景图模式下就是一块 520×全高的实心板 —— 门禁从来不开抽屉，所以一直没抓到。
+ * 这一段把「点卡片主体 → 等抽屉可见 → 扫抽屉子树 → 量 .drawer.entry-drawer 的
+ * --glass-modal 溯源 → 关掉」固化下来。
+ *
+ * 三条硬约束（写死的理由）：
+ *   1) 扫描根只取 `.drawer.entry-drawer` 子树：`.drawer-mask` 是全窗口压暗层，本来就该半透明；
+ *      扫整个 body 又会把页面自身的不透明块重复算一遍。
+ *   2) 打开方式必须是**点卡片主体**：勾选框（`input[type=checkbox]`）是另一个元素，
+ *      点它只切选中、不开抽屉（契约 §3.1）—— 点错就永远等不到抽屉。
+ *   3) 关闭**只点抽屉头部的关闭按钮**，绝不「点第一个 button」：
+ *      抽屉底栏第一个按钮是「编辑」，点了会弹出 EntryForm（`.modal`），把后面的扫描全搞脏。
+ * ════════════════════════════════════════════════════════════════════ */
+
+/** 抽屉扫描（只扫 `.drawer.entry-drawer` 子树） */
+const DRAWER_SCAN_EXPR = buildScanExpr("document.querySelector('.drawer.entry-drawer')");
+
+/** 抽屉「挂上了」：只看 DOM 存在与尺寸（不判 opacity —— 进场动画可能停在起始帧，要先收尾动画） */
+const DRAWER_EXISTS_EXPR = `(() => {
+  const d = document.querySelector('.drawer.entry-drawer');
+  if (!d) return { ok: false, state: { drawer: 0 } };
+  const r = d.getBoundingClientRect();
+  return { ok: r.width > 0 && r.height > 0,
+    state: { drawer: 1, w: Math.round(r.width), h: Math.round(r.height),
+      opacity: Number(getComputedStyle(d).opacity), masks: document.querySelectorAll('.drawer-mask').length } };
+})()`;
+
+/** 抽屉「真的打开了」：有尺寸 + opacity 1（进场动画结束）+ 标题/键值对已渲染 */
+const DRAWER_READY_EXPR = `(() => {
+  const d = document.querySelector('.drawer.entry-drawer');
+  if (!d) return { ok: false, state: { drawer: 0 } };
+  const r = d.getBoundingClientRect();
+  const cs = getComputedStyle(d);
+  const t = d.querySelector('.drawer-title-text');
+  const state = { drawer: 1, w: Math.round(r.width), h: Math.round(r.height),
+    opacity: Number(cs.opacity), title: t ? (t.textContent || '').slice(0, 20) : '',
+    kv: d.querySelectorAll('.drawer-kv dt').length,
+    masks: document.querySelectorAll('.drawer-mask').length,
+    theme: document.documentElement.dataset.theme };
+  // 宽度是否落在契约 420–480 只打印、不作门禁判据（几何归回归报告；类名 entry-drawer 已够定位）
+  const ok = r.width > 0 && Number(cs.opacity) === 1 && !!state.title && state.kv >= 1;
+  return { ok, state };
+})()`;
+
+/**
+ * 打开抽屉：点**第一个卡片的主体**（不是勾选框 input）。
+ * 定位失败要明确失败，不许静默跳过 —— 跳过等于这一段门禁没装。
+ */
+const OPEN_DRAWER_EXPR = `(() => {
+  const card = document.querySelector('.entry-card');
+  if (!card) return { ok: false, why: '卡片视图里没有 .entry-card（视图没切到卡片？）' };
+  const title = card.querySelector('.card-title');
+  const check = card.querySelector('input[type=checkbox]');
+  card.click();
+  return { ok: true, name: title ? (title.textContent || '').trim() : '',
+    hasCheckbox: !!check, checkboxLabel: check ? (check.getAttribute('aria-label') || '') : '' };
+})()`;
+
+/**
+ * 关闭抽屉：只点抽屉头部的关闭按钮（`aria-label=关闭` / `.ibtn`），退路是派发 Escape。
+ * ⚠️ 绝不「点第一个 button」：底栏第一个是「编辑」，会弹出 EntryForm。
+ */
+const CLOSE_DRAWER_EXPR = `(() => {
+  const d = document.querySelector('.drawer.entry-drawer');
+  if (!d) return true;
+  const b = d.querySelector('.drawer-head [aria-label="关闭"]') || d.querySelector('.drawer-head .ibtn');
+  if (b) { b.click(); return true; }
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  return true;
+})()`;
+
+/** 抽屉是否已经关掉（给 waitUntil 用；.drawer.entry-drawer / .drawer / .drawer-mask 都必须没了） */
+const DRAWER_GONE_EXPR = `(() => {
+  const state = { entryDrawer: document.querySelectorAll('.drawer.entry-drawer').length,
+    drawers: document.querySelectorAll('.drawer').length, masks: document.querySelectorAll('.drawer-mask').length,
+    modals: document.querySelectorAll('.modal').length };
+  return { ok: state.entryDrawer === 0 && state.drawers === 0 && state.masks === 0, state };
+})()`;
+
+/**
+ * 泛化关闭（只在「抽屉根类名与契约选择器不一致」的诊断分支用）：
+ * 任意 `.drawer` 头部的关闭按钮 → 退路 Escape。仍然只点**头部**按钮，不点底栏第一个（那是「编辑」）。
+ */
+const CLOSE_ANY_DRAWER_EXPR = `(() => {
+  const d = document.querySelector('.drawer');
+  if (!d) return true;
+  const b = d.querySelector('.drawer-head [aria-label="关闭"]') || d.querySelector('.drawer-head .ibtn');
+  if (b) { b.click(); return true; }
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  return true;
+})()`;
+
+/** 任意抽屉是否都关掉了（诊断分支收尾用） */
+const ANY_DRAWER_GONE_EXPR = `(() => ({
+  ok: document.querySelectorAll('.drawer').length === 0 && document.querySelectorAll('.drawer-mask').length === 0,
+  state: { drawers: document.querySelectorAll('.drawer').length, masks: document.querySelectorAll('.drawer-mask').length },
+}))()`;
+
+/**
+ * 和 `waitUntil` 同一个「条件轮询」语义，但**超时不抛错**、把最后一次实测返回给调用方。
+ * 只给「期望的东西没出现时还有话要说」的分支用（抽屉根类名不匹配的诊断），
+ * 正常路径一律走 `waitUntil`（超时就是失败）。**不是固定 sleep**：条件满足立刻返回。
+ *
+ * @param {(expr: string) => Promise<any>} ev 页面求值函数
+ * @param {string} expr 返回 { ok, state } 的表达式
+ * @param {number} timeout 最长等多久（ms）
+ * @returns {Promise<{ok: boolean, ms: number, state: any}>} 最后一次实测
+ */
+async function waitSoft(ev, expr, timeout) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeout) {
+    last = await ev(expr);
+    if (last && last.ok) return { ok: true, ms: Date.now() - t0, state: last.state };
+    await sleep(POLL_MS);
+  }
+  return { ok: false, ms: Date.now() - t0, state: last ? last.state : null };
+}
+
+/**
+ * 抽屉锚点：面板底必须**逐字符等于** `var(--glass-modal)` 且 alpha < 1（契约 §8-5 / 队长裁定）。
+ * 只验 alpha<1 拦不住「玻璃规则没命中、但底色恰好半透明」的假绿（1.32.2 的口径）。
+ */
+const DRAWER_TARGETS = [
+  { sel: '.drawer.entry-drawer', label: '.drawer.entry-drawer（卡片详情抽屉面板）', token: '--glass-modal' },
+];
+
+/**
+ * 扫一次「卡片详情抽屉」（契约 §8-5）。
+ *
+ * @param {object} session cdp 会话
+ * @param {(expr: string) => Promise<any>} ev 页面求值函数
+ * @param {'light'|'dark'} theme 当前主题
+ * @param {Array<object>} violations 违规收集数组（与页面/弹窗扫描共用一个）
+ * @returns {Promise<void>}
+ */
+async function scanEntryDrawer(session, ev, theme, violations) {
+  const pageLabel = '网址管理 · 详情抽屉';
+  // 1) 进网址管理 + 切到卡片视图（卡片主体才是开抽屉的入口）
+  const ok = await navTo(session, '网址管理', { timeout: 15000 });
+  if (!ok) throw new Error('导航不到「网址管理」');
+  const page = PAGES.find((p) => p.label === '网址管理 · 卡片视图');
+  await waitPageReady(session, ev, page);
+
+  // 2) 点卡片主体开抽屉（点不到 / 没卡片 → 直接失败）
+  const opened = await ev(OPEN_DRAWER_EXPR);
+  if (!opened || !opened.ok) {
+    throw new Error(`打不开详情抽屉：${JSON.stringify(opened)}`
+      + '（卡片视图里没有 .entry-card，或卡片主体不再绑定 onClick）');
+  }
+  // 先用**软等待**（超时不抛错）：如果契约类名 `.drawer.entry-drawer` 根本没出现，
+  // 下面要能说出「实际渲染的类名是什么」—— 这正是「CSS 选择器与组件类名不一致」这类缺陷的形态。
+  const mountedSoft = await waitSoft(ev, DRAWER_EXISTS_EXPR, 3000);
+  if (!mountedSoft.ok) {
+    // 诊断分支：抽屉出现了但类名不匹配 → **记违规（不是跳过）**，然后关掉、继续扫后面的组合，
+    // 这样一次运行就能同时拿到「抽屉这条缺陷」和「其他组合有没有回退」两份证据。
+    const actual = await ev(`(() => {
+      const ds = [...document.querySelectorAll('.drawer')];
+      const d = ds[0];
+      const r = d ? d.getBoundingClientRect() : { width: 0, height: 0 };
+      return { count: ds.length, classes: ds.map((x) => String(x.className || '')),
+        w: Math.round(r.width), h: Math.round(r.height),
+        bg: d ? getComputedStyle(d).backgroundColor : '-',
+        masks: document.querySelectorAll('.drawer-mask').length,
+        modals: document.querySelectorAll('.modal').length };
+    })()`);
+    if (!actual || actual.count === 0) {
+      throw new Error(`点卡片后没有任何 .drawer 出现（${JSON.stringify(opened)}）——`
+        + '卡片主体还绑着「打开详情抽屉」的 onClick 吗？这段门禁不能静默跳过');
+    }
+    violations.push({
+      theme, page: pageLabel,
+      cls: `(抽屉根类名不匹配：期望 .drawer.entry-drawer，实测 .${actual.classes.join(' / .')}；宽 ${actual.w}px)`,
+      bg: actual.bg, w: actual.w, h: actual.h, area: actual.w * actual.h,
+    });
+    console.log(`\n──── ${pageLabel}：\u2717 抽屉根类名与契约选择器不一致（不静默跳过，记为违规）`);
+    console.log(`  · 期望 .drawer.entry-drawer，实测 .${actual.classes.join(' / .')}`
+      + ` / ${actual.w}×${actual.h} / ${actual.bg} / 遮罩 ${actual.masks}`);
+    console.log('      ↑ 两个后果：① 抽屉仍是基础实底色（alpha=1，挡住背景图）；'
+      + '② 契约 §3.1 的 460px 宽度规则也不命中。修法：把组件根上的修饰类改成 entry-drawer（一行）；');
+    console.log('        不要靠扩白名单或放宽锚点消红 —— 那等于把这条门禁关掉');
+    // 关掉（用泛化选择器，仍然只点头部关闭按钮），避免污染后面的页面扫描
+    await ev(CLOSE_ANY_DRAWER_EXPR);
+    const gone = await waitSoft(ev, ANY_DRAWER_GONE_EXPR, 3000);
+    if (!gone.ok) {
+      throw new Error(`诊断分支关不掉抽屉（实测 ${JSON.stringify(gone.state)}）—— 残留抽屉会让后续扫描失真`);
+    }
+    return;
+  }
+  const mounted = mountedSoft;
+  // 进场动画收尾：窗口被遮挡时抽屉的 fadeIn 会停在 opacity:0，不收尾就一直读到 opacity=0
+  await settleAnimations(ev, '抽屉挂载后');
+  const ready = await waitUntil(ev, DRAWER_READY_EXPR, {
+    timeout: READY_TIMEOUT,
+    label: '详情抽屉打开（可见 + 标题 + 键值对；opacity 一直为 0 多半是动画停在起始帧）',
+  });
+  console.log(`  · 抽屉打开：等 ${mounted.ms + ready.ms}ms（${JSON.stringify(ready.state)}）`
+    + `（卡片「${opened.name}」/ 勾选框 ${opened.hasCheckbox ? `「${opened.checkboxLabel}」` : '未找到'}）`);
+
+  // 3) 抽屉刚挂载时可能被组件自己按 settings.theme 重写一次 data-theme，钉一次并复验
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await setTheme(session, theme);
+    await sleep(250);
+    const probe = await ev(`document.documentElement.dataset.theme`);
+    if (probe === theme) break;
+    if (attempt === 1) throw new Error(`无法把 data-theme 固定成 ${theme}（实读 ${probe}），本次抽屉扫描不可信`);
+  }
+
+  // 4) 稳定采样后扫抽屉子树（不扫 .drawer-mask：那是全窗口压暗层，本来就该半透明）
+  await settleAnimations(ev, '抽屉钉主题后');
+  const { res, samples, ms } = await stableScan(ev, DRAWER_SCAN_EXPR, drawerSig, `${pageLabel} · ${theme}`);
+  console.log(`  · 稳定：${samples} 次采样，${ms}ms 后签名不再变`);
+  const drawerCtx = await ev(DRAWER_READY_EXPR);
+  if (drawerCtx.state.theme !== theme) {
+    throw new Error(`${pageLabel} 扫描时的页面状态不对：data-theme=${drawerCtx.state.theme}（期望 ${theme}）`);
+  }
+
+  const rows = res.rows || [];
+  const bad = [];
+  const good = [];
+  for (const r of rows) {
+    const w = whitelistOf(r);
+    if (w) good.push({ r, w }); else bad.push(r);
+  }
+  console.log(`\n──── ${pageLabel}：不透明块 ${rows.length} 个（白名单 ${good.length} / 违规 ${bad.length}）`);
+  console.log(`  · 抽屉自证：主题 ${theme} / 背景 ${res.ctx.bg} / 抽屉 ${drawerCtx.state.w}×${drawerCtx.state.h}`
+    + ` / opacity ${drawerCtx.state.opacity} / 标题「${drawerCtx.state.title}」/ 键值对 ${drawerCtx.state.kv}`
+    + ` / 遮罩 ${drawerCtx.state.masks}`);
+  for (const { r, w } of good) {
+    console.log(`  \u2713 ${pad(r.area, 7)} ${pad(`${r.w}×${r.h}`, 11)} ${pad(r.bg, 26)} ${r.cls || r.tag}`);
+    console.log(`      ↑ 白名单「${w.id}」：${w.why}`);
+  }
+  for (const r of bad) {
+    console.log(`  \u2717 ${pad(r.area, 7)} ${pad(`${r.w}×${r.h}`, 11)} ${pad(r.bg, 26)} ${r.cls || r.tag}`);
+    violations.push({ theme, page: pageLabel, ...r });
+  }
+  if (bad.length) {
+    console.log('      ↑ 抽屉里的实底同样会挡住背景图：在 redesign.css 的 html[data-bg=\'image\'] 段给');
+    console.log('        .drawer.entry-drawer（及其内部块）补 var(--glass-*) 背景，容器不要加 backdrop-filter');
+  }
+
+  // 5) 锚点：面板底必须逐字符等于 var(--glass-modal) 且 alpha < 1
+  for (const t of DRAWER_TARGETS) {
+    const m = await ev(targetExpr(t.sel, t.token));
+    const label = pad(t.label, 34);
+    if (!m || !m.found) {
+      violations.push({ theme, page: pageLabel, cls: `${t.label}（未出现）`, bg: '-', w: 0, h: 0, area: 0 });
+      console.log(`  \u2717 ${pad(theme, 6)} ${label} 抽屉里没找到这类元素，无法证明已玻璃化`);
+      continue;
+    }
+    const a = alphaOf(m.bg);
+    const provOk = m.tokenMatch === true && a < 1;
+    if (provOk) {
+      console.log(`  \u2713 ${pad(theme, 6)} ${label} ${pad(m.bg, 30)} alpha=${a}  ${m.w}×${m.h}  ← var(${t.token})`);
+      continue;
+    }
+    violations.push({ theme, page: pageLabel, cls: t.label, bg: m.bg, w: m.w, h: m.h, area: m.area });
+    if (a >= 1) {
+      console.log(`  \u2717 ${pad(theme, 6)} ${label} ${pad(m.bg, 30)} alpha=${a} —— 仍然全不透明（期望 var(${t.token})）`);
+      console.log('      ↑ 常见原因：组件根上的修饰类与 CSS 选择器不一致（例如 CSS 写 .drawer.entry-drawer、');
+      console.log('        组件渲染成 .drawer.entry-detail-drawer）→ 规则一条都没命中，抽屉还是基础实底色');
+    } else {
+      console.log(`  \u2717 ${pad(theme, 6)} ${label} ${pad(m.bg, 30)} alpha=${a} —— 是半透明，但不是 var(${t.token})`
+        + `（该 token 的 computed 值 ${m.tokenBg}）`);
+    }
+  }
+
+  // 6) 关掉抽屉（关不掉按失败处理：残留抽屉会让后面的页面扫描失真；也要确认没弹出 EntryForm）
+  const closed = await ev(CLOSE_DRAWER_EXPR);
+  if (!closed) throw new Error('详情抽屉关不掉（找不到 .drawer-head [aria-label=关闭]），后面的扫描不可信');
+  const gone = await waitUntil(ev, DRAWER_GONE_EXPR, { timeout: 3000, label: '详情抽屉关闭（.drawer / .drawer-mask 归零）' });
+  if (gone.state.modals !== 0) {
+    throw new Error(`关抽屉时弹出了 .modal（${gone.state.modals} 个）—— 多半是点到了抽屉底栏的「编辑」`
+      + '而不是头部关闭按钮；后面的扫描会被 EntryForm 污染');
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -793,7 +1187,9 @@ async function scanCopyModal(session, ev, theme, violations) {
     //       让「库/环境列定宽 + 省略号」也在扫描范围内）。
     //   - 1.32.3（t4）：SQL 样本第一条必须**带 {{变量}}**（`{{today}}` + 一段变量说明），
     //     弹窗扫描就是靠它把「变量输入框 / 预览块 / 底栏」都渲染出来。
-    // 全部走 app 自己的通道（entries:add / ws:set），跑完在 finally 里按 id 前缀 opaque 清理，并打印前后条数。
+    //   - 1.32.5（t6/D1）：「成员账号」tab 的自证靠 `entry.accounts`，所以前 3 条样本必须带账号
+    //     （3 个网址 5 个账号：1→2 个、2→2 个、3→1 个，角色/账号/密码都有值，覆盖「密码打码列」）。
+    //     账号是条目内嵌字段，收尾按 entries 前缀删除时一起消失，不用单独清理。
     const seed = await ev(`(async () => {
       const now = Date.now();
       const iso = (minAgo) => new Date(now - minAgo * 60000).toISOString();
@@ -802,12 +1198,20 @@ async function scanCopyModal(session, ev, theme, violations) {
       const beforeList = (before && before.success && before.data && Array.isArray(before.data.entries))
         ? before.data.entries : [];
       const ENTRIES = 25;
+      // 成员账号样本：前 3 条条目带 accounts（id 前缀同样是 opaque-，随条目一起清）
+      const accPlan = { 1: [['管理员', 'admin1@example.com'], ['只读', 'viewer1@example.com']],
+        2: [['运维', 'ops2@example.com'], ['审计', 'audit2@example.com']],
+        3: [['备份', 'backup3@example.com']] };
       for (let i = 1; i <= ENTRIES; i += 1) {
         const [envType, envLabel] = envs[i % envs.length];
+        const accounts = (accPlan[i] || []).map(([role, username], k) => ({
+          id: 'opaque-acc-' + i + '-' + (k + 1), role, username,
+          password: 'Pw-' + i + '-' + (k + 1), note: k === 0 ? '造数样本（背景图扫描）' : '',
+        }));
         await window.electronAPI.entriesAdd({ id: 'opaque-entry-' + i,
           name: '背景样本 ' + String(i).padStart(2, '0') + ' · ' + envLabel,
           username: 'user-' + i, url: 'https://example.com/entry/' + i, note: '',
-          tags: [], envType, updatedAt: iso(i) });
+          tags: [], envType, accounts, updatedAt: iso(i) });
       }
       const cur = await window.electronAPI.wsGet('notes');
       const kept = ((cur && cur.success && Array.isArray(cur.data)) ? cur.data : [])
@@ -831,11 +1235,14 @@ async function scanCopyModal(session, ev, theme, violations) {
       const afterList = (after && after.success && after.data && Array.isArray(after.data.entries))
         ? after.data.entries : [];
       return { entriesBefore: beforeList.length, entriesAfter: afterList.length,
+        withAccounts: afterList.filter((e) => (e.accounts || []).length > 0).length,
+        totalAccounts: afterList.reduce((n, e) => n + (e.accounts || []).length, 0),
         notesBefore: kept.length, notesAfter: kept.length + notes.length + sql.length,
         notes: notes.length, sql: sql.length }; })()`);
     console.log(`\n（造数）entries ${seed.entriesBefore} → ${seed.entriesAfter} 条（+${seed.entriesAfter - seed.entriesBefore}）`
+      + `，其中带成员账号 ${seed.withAccounts} 条 / 账号 ${seed.totalAccounts} 个`
       + ` / notes ${seed.notesBefore} → ${seed.notesAfter} 条（普通笔记 +${seed.notes}、SQL +${seed.sql}）`
-      + ' —— 分页条与复制弹窗都必须渲染出来，否则下面的自证会红');
+      + ' —— 分页条、成员账号表格与复制弹窗都必须渲染出来，否则下面的自证会红');
     const saved = await applyBackground(session, {
       name: backgroundName,
       // 压暗取默认 0.42（浅色下 CSS 会再乘 0.67）：扫描要按用户的实际默认配置来
@@ -851,6 +1258,21 @@ async function scanCopyModal(session, ev, theme, violations) {
     if (bgOk !== true) {
       throw new Error(`等 10s 仍未进入 data-bg=image（读到 ${await ev(`document.documentElement.getAttribute('data-bg')`)}），`
         + '玻璃规则没生效，这次扫描没有意义');
+    }
+
+    // 变异验证（默认关闭）：往 <head> 追加一条实底样式，用来证明「这条扫描组合会真的红」。
+    // 放在这里而不是每个页面前：SPA 内部导航不会重建 <head>，注入一次就一直在。
+    if (MUTATION_CSS) {
+      const injected = await ev(`(() => {
+        const s = document.createElement('style');
+        s.id = 'qa-mutation-css';
+        s.textContent = ${JSON.stringify(MUTATION_CSS)};
+        document.head.appendChild(s);
+        return true;
+      })()`);
+      if (injected !== true) throw new Error('变异 CSS 注入失败（<head> 里加不上 <style>）');
+      console.log(`\n（变异）已注入临时实底 CSS：${MUTATION_CSS}`);
+      console.log('  本次运行**预期 exit=1**：违规清单里必须出现被注入的元素；跑完不要拿它当正常结果');
     }
 
     for (const theme of THEMES) {
@@ -890,7 +1312,8 @@ async function scanCopyModal(session, ev, theme, violations) {
         const ctxLine = `  · 页面自证：主题 ${ctx.theme} / 背景 ${ctx.bg} / 卡片 ${ctx.cards} / 列表行 ${ctx.rows}`
           + ` / 环境徽标 ${ctx.badges} / 主按钮 ${ctx.primaryBtns} / KBD ${ctx.kbds}`
           + ` / KPI 卡 ${ctx.stats} / 标签栏项 ${ctx.tagItems} / SQL 行 ${ctx.sqlRows}`
-          + ` / 分页条 ${ctx.pagers}${ctx.pagers ? `（${String(ctx.pagerCur).trim()} · ${String(ctx.pagerInfo).trim()}）` : ''}`;
+          + ` / 分页条 ${ctx.pagers}${ctx.pagers ? `（${String(ctx.pagerCur).trim()} · ${String(ctx.pagerInfo).trim()}）` : ''}`
+          + ` / 页签 ${ctx.pmTabs} / 成员账号行 ${ctx.maRows} / 按网址筛选选项 ${ctx.maFilterOpts}`;
         const minFail = [];
         for (const [key, min] of Object.entries(page.min || {})) {
           const got = Number(ctx[key]) || 0;
@@ -936,7 +1359,25 @@ async function scanCopyModal(session, ev, theme, violations) {
           const d = await ev(DIM_EXPR);
           if (d && d.found) dim[theme] = { ...d, page: page.label };
         }
+
+        // 1.32.5（t6/D1）：**扫完必须 restore 回原 tab**。
+        // 成员账号是 pmSubPage（store 状态，侧栏导航不重置）；不切回去的话，下一套主题的
+        // 首个「网址管理 · 列表视图」会落在成员账号 tab 上，而它的就绪判据要 .toolbar +
+        // 三个 .view-switch-btn → 必然 10s 超时红。这不是理论风险，是「按现有两轮循环必然发生」的。
+        if (page.restore) {
+          const restored = await page.restore(session);
+          if (restored !== true) {
+            throw new Error(`「${page.label}」的 restore 点击落空：这一页改了页面级 tab，`
+              + '不切回去会让下一套主题的首个网址管理页落在错误的 tab 上（就绪判据会死等 .toolbar）');
+          }
+          console.log('  · restore：已切回「所有网址」（否则下一轮主题会落在成员账号 tab 上）');
+        }
       }
+
+      // 1.32.5（t6/D1）：每套主题再扫一次「卡片详情抽屉」（.drawer.entry-drawer 子树）。
+      // 放在页面循环之后：此时卡片样本与 store 都是热的；抽屉自己会钉主题。
+      await scanEntryDrawer(session, ev, theme, violations);
+      scanned += 1;
 
       // 1.32.3（t4）：每套主题再扫一次「复制弹窗」（.modal 子树）。
       // 放在页面循环之后：此时 store 里已有 SQL 样本，导航与渲染都是热的；弹窗自己会钉主题。
@@ -1045,7 +1486,8 @@ async function scanCopyModal(session, ev, theme, violations) {
     setTimeout(() => process.exit(1), 200);
     return;
   }
-  console.log('\n\u2713 0 违规：白名单外没有 alpha=1 且面积 > 600 的块（含复制弹窗子树），补漏类都是半透明（带 token 的还验了背景来源）');
+  console.log('\n\u2713 0 违规：白名单外没有 alpha=1 且面积 > 600 的块'
+    + '（含「成员账号」tab、复制弹窗与卡片详情抽屉子树），补漏类都是半透明（带 token 的还验了背景来源）');
   setTimeout(() => process.exit(0), 200);
 })().catch((e) => {
   console.error(`\n\u2717 扫描失败：${e && e.message}`);

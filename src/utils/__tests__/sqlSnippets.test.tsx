@@ -1159,3 +1159,92 @@ describe('SQL 片段页：选中文字转化为变量', () => {
   });
 });
 
+
+/* ==================================================================
+   C 片（docs/agents/entry-ux-next.md §3.3 / §8 裁定）
+   1) 三张统计卡从右栏 .pm-main 移到页头下方、.pm-shell 之前（全宽）
+   2) 挂点对齐：页面提供的 DOM 结构必须和 redesign.css 末尾的 `.sql-kpi-top` /
+      `.entry-card-check` 选择器对得上。上一批踩过的坑就是「CSS 写了、类名没对上，
+      测试全绿但功能全错」，所以这两处挂点在这里钉成断言。
+   注：Vitest 默认关闭 CSS 处理（`?raw` 导入得到空串，实测 length=0），因此本文件
+   不做 CSS 文本断言；数值契约（16px / 11px / max-height 64 / 卡面 --surface-2 +
+   1px --line / 勾选框 24×24 与 focus-visible 描边）由 scripts/check-stacking.js
+   与 D 片的真实 Electron 几何测量兜住。
+   ================================================================== */
+import type { PasswordEntry } from '../../types';
+import { EntryCard } from '../../components/EntryCard';
+
+const CARD_ENTRY: PasswordEntry = {
+  id: 'e-kpi', name: '合同管理系统', envType: 'testing',
+  url: 'https://example.com', username: 'u', password: 'p', notes: '', tags: [],
+  createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z',
+};
+
+describe('SQL 片段页：三张统计卡在页头下方、.pm-shell 之前', () => {
+  const pgChildren = (container: HTMLElement) =>
+    [...(container.querySelector('.pg') as HTMLElement).children];
+  const topIndex = (container: HTMLElement, sel: string) =>
+    pgChildren(container).findIndex(el => el.matches(sel));
+
+  it('DOM 顺序 .pg-head → .sql-kpi-top → .pm-shell；三卡不再在 .pm-main 里', async () => {
+    stubElectronApi(FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    const head = topIndex(container, '.pg-head');
+    const kpi = topIndex(container, '.sql-kpi-top');
+    const shell = topIndex(container, '.pm-shell');
+    expect(head).toBeGreaterThanOrEqual(0);
+    expect(kpi).toBeGreaterThan(head);
+    expect(shell).toBeGreaterThan(kpi);
+
+    // 防止「复制一份留在原处」：右栏里一张都不该剩
+    expect(container.querySelector('.pm-shell .home-stat')).toBeNull();
+    expect(container.querySelector('.pm-main .home-stat')).toBeNull();
+  });
+
+  it('仍是三张卡：全部片段 / 收藏 / 本周新增，计数沿用 countSql', async () => {
+    stubElectronApi(FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    const cards = container.querySelectorAll('.sql-kpi-top .home-stat');
+    expect(cards).toHaveLength(3);
+    const kpi = KPI(container);
+    expect(kpi).toHaveLength(3);
+    expect(kpi[0]).toContain('全部片段');
+    expect(kpi[1]).toContain('收藏');
+    expect(kpi[2]).toContain('本周新增');
+    expect(kpi[0]).toContain('2'); // 只有两条 kind==='sql'
+  });
+
+  it('CSS 挂点对齐：.sql-kpi-top 是 .pg 的直接子元素，内部 .home-stats.is-3 > 三张 .home-stat', async () => {
+    stubElectronApi(FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    const top = container.querySelector('.sql-kpi-top') as HTMLElement;
+    expect(top).toBeTruthy();
+    expect(top.parentElement?.classList.contains('pg')).toBe(true);
+    // redesign.css 里的压缩规则写在 `.sql-kpi-top .home-stats.is-3` /
+    // `.sql-kpi-top .home-stat` 上：这两个类名少一个，规则就静默失效
+    const stats = top.querySelector('.home-stats') as HTMLElement;
+    expect(stats).toBeTruthy();
+    expect(stats.classList.contains('is-3')).toBe(true);
+    expect(stats.querySelectorAll(':scope > .home-stat')).toHaveLength(3);
+  });
+});
+
+describe('C 片挂点对齐：卡片勾选框的 DOM 与 .entry-card-check 选择器', () => {
+  it('勾选框是 .card-header 的第一个子元素，类名就是 entry-card-check（含一个 checkbox）', () => {
+    const { container } = render(<EntryCard entry={CARD_ENTRY} onEdit={() => {}} onCopy={() => {}} />);
+    const header = container.querySelector('.entry-card .card-header') as HTMLElement;
+    expect(header).toBeTruthy();
+    const first = header.firstElementChild as HTMLElement;
+    expect(first.classList.contains('entry-card-check')).toBe(true);
+    expect(first.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+    // 类名一旦漂移（比如改成 entry-check），redesign.css 里的 24×24 与
+    // focus-visible 规则就会全部落空 —— 这条断言就是那个守卫
+    expect(container.querySelectorAll('.entry-card-check input[type="checkbox"]')).toHaveLength(1);
+  });
+});

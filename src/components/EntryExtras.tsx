@@ -51,14 +51,35 @@ function TotpPreview({ secret }: { secret: string }) {
   );
 }
 
-/** 列表/卡片上的精简动态码，点击复制 */
-export function TotpBadge({ secret, onCopy }: { secret: string; onCopy?: (code: string) => void }) {
+/**
+ * 列表/卡片上的精简动态码，点击复制。
+ *
+ * `showRemaining` 只给条目详情抽屉用（契约 §3.1「显示当前码与剩余秒数」）：
+ * 卡片调用点不传 = 默认 false，观感与改动前逐像素一致。
+ */
+export function TotpBadge({
+  secret, onCopy, showRemaining = false,
+}: {
+  secret: string;
+  onCopy?: (code: string) => void;
+  /** 是否显示「剩余 N 秒」；默认关闭，卡片调用点不受影响 */
+  showRemaining?: boolean;
+}) {
   const [code, setCode] = useState('');
+  const [remain, setRemain] = useState(0);
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       const res = await window.electronAPI.totpCode({ secret });
-      if (alive && res.success && res.data) setCode(res.data.code);
+      if (!alive) return;
+      // 主进程给 remain（TOTP 30 秒窗口）；拿不到就按本地时钟算，别显示 0
+      const fallback = 30 - (Math.floor(Date.now() / 1000) % 30);
+      if (res.success && res.data) {
+        setCode(res.data.code);
+        setRemain(Number(res.data.remain) > 0 ? Number(res.data.remain) : fallback);
+      } else {
+        setRemain(fallback);
+      }
     };
     tick();
     const timer = setInterval(tick, 1000);
@@ -77,6 +98,7 @@ export function TotpBadge({ secret, onCopy }: { secret: string; onCopy?: (code: 
       }}
     >
       <Icons.key size={12} /> {code}
+      {showRemaining && <span className="totp-sec">{remain}s</span>}
     </span>
   );
 }

@@ -27,6 +27,11 @@ interface Props {
   /** 安全体检标记：弱密码 / 重复密码 */
   security?: { weak: boolean; duplicate: boolean };
   onToggleFavorite?: (entry: PasswordEntry) => void;
+  /**
+   * 点卡片主体 / Enter / Space 打开详情抽屉。
+   * `trigger` 是卡片元素本身：抽屉关闭后要把焦点还给它（可访问性验收项）。
+   */
+  onOpenDetail?: (entry: PasswordEntry, trigger: HTMLElement) => void;
 }
 
 const envLabel: Record<string, string> = {
@@ -124,7 +129,7 @@ function AccountsModal({
   );
 }
 
-export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFavorite }: Props) {
+export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFavorite, onOpenDetail }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showAccounts, setShowAccounts] = useState(false);
   const selected = useStore(s => s.selectedIds.has(entry.id));
@@ -150,13 +155,28 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
     <>
     <div
       className={`entry-card ${selected ? 'selected' : ''}`}
-      onClick={() => { recordEntryUse(entry.id); toggleSelected(entry.id); }}
+      /* 卡片主体 = 打开详情抽屉（契约 §3.1）。多选入口只剩左上角勾选框，
+         所以这里不再切换 selectedIds —— 「选 ≠ 看」，两者别混在一个动作里。
+         recordEntryUse 仍留在这里：点开详情就是「用过这条」，
+         scripts/ui-round17-test.js 也按这个动作验「最近」条。 */
+      onClick={(e) => { recordEntryUse(entry.id); onOpenDetail?.(entry, e.currentTarget); }}
       tabIndex={0}
-      aria-selected={selected}
       onKeyDown={onKeyClickStrict}
     >
       {/* Row 1: Title + Env badge */}
       <div className="card-header">
+        {/* 勾选框：卡片里**唯一**改 selectedIds 的元素。
+            放流内第一个子元素 = 左上角；绝对定位会压住同一行的收藏 ★。
+            label 上的 stopPropagation 让点它不会冒泡成「打开详情」。 */}
+        <label className="entry-card-check" onClick={e => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => toggleSelected(entry.id)}
+            onClick={e => e.stopPropagation()}
+            aria-label={`选择 ${entry.name}`}
+          />
+        </label>
         {onToggleFavorite && (
           <button
             className={`fav-btn ${entry.favorite ? 'active' : ''}`}

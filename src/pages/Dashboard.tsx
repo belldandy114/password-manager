@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { PasswordEntry, SearchField } from '../types';
 import { useStore, sortFieldLabels, sortOrderLabels, searchFieldLabels } from '../store/useStore';
 import { EntryCard } from '../components/EntryCard';
+import { EntryDetailDrawer } from '../components/EntryDetailDrawer';
 import { EntryList } from '../components/EntryList';
 import { Pager } from '../components/Pager';
 import { EntryForm } from '../components/EntryForm';
@@ -10,6 +11,7 @@ import { Icons } from '../components/ui';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { useConfirm } from '../components/confirm';
 import { buildSecurityReport, entrySecurityFlags } from '../utils/security';
 import { callIpc } from '../utils/ipc';
 import { isSensitiveLabel } from '../utils/clipboard';
@@ -54,8 +56,16 @@ function groupBy<T>(list: T[], key: (item: T) => string): Record<string, T[]> {
 export function Dashboard() {
   const store = useStore();
   const { toasts, addToast, removeToast } = useToast();
+  const { ask, confirmNode } = useConfirm();
   const [editingEntry, setEditingEntry] = useState<PasswordEntry | null>(null);
   const [showForm, setShowForm] = useState(false);
+  /**
+   * 卡片详情抽屉（1.32.x / 契约 §3.1）。
+   * 只存「哪条 + 哪个元素打开的」这层页面级 UI 状态；条目本身仍从 store 取实时副本，
+   * 否则编辑保存后抽屉里还是旧值。抽屉的全部逻辑在 components/EntryDetailDrawer.tsx，
+   * 不再往这个 900+ 行的文件里堆。
+   */
+  const [detail, setDetail] = useState<{ entry: PasswordEntry; trigger: HTMLElement | null } | null>(null);
   /** 新建时的预填（快速搜索回车新建带过来的 URL/名称）；引用保持不变，避免输入被重置 */
   const [formSeed, setFormSeed] = useState<Partial<PasswordEntry> | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -245,6 +255,34 @@ export function Dashboard() {
       // 删除是写盘操作：失败必须报错并保留弹窗，不能「点了没反应」
       addToast(result.error || '删除失败', 'error');
     }
+  };
+
+  // ---- 卡片详情抽屉 ----
+  /** 抽屉里展示的条目：优先 store 里的实时副本（编辑保存后立刻反映） */
+  const detailEntry = detail
+    ? (store.entries.find(e => e.id === detail.entry.id) ?? detail.entry)
+    : null;
+
+  /** 抽屉底栏「删除」：走既有二次确认（与列表行的删除同口径），确认前一行都不动 */
+  const handleDrawerDelete = (entry: PasswordEntry) => {
+    ask({
+      title: '彻底删除网址',
+      message: `确定彻底删除「${entry.name}」？此操作不可撤销，也无法从回收站恢复。`,
+      confirmText: '永久删除',
+      onOk: async () => {
+        const result = await window.electronAPI.entriesDelete({ ids: [entry.id], permanent: true });
+        if (!result.success || !result.data) {
+          // 写盘失败必须报错，且抽屉留在原地（别让用户以为删掉了）
+          addToast(result.error || '删除失败', 'error');
+          return;
+        }
+        store.setVaultData(result.data);
+        // 这条如果正好被勾选着，顺手把陈旧 id 清掉，批量条不会显示「已选中 1」却删不到东西
+        if (useStore.getState().selectedIds.has(entry.id)) useStore.getState().toggleSelected(entry.id);
+        setDetail(null);
+        addToast('已永久删除 1 个网址', 'success');
+      },
+    });
   };
 
   // Batch export — open modal
@@ -672,7 +710,8 @@ export function Dashboard() {
                           onToggleFavorite={handleToggleFavorite}
                           onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
                           onCopy={handleCopy}
-                          onOpen={handleOpenUrl} />
+                          onOpen={handleOpenUrl}
+                          onOpenDetail={(e, trigger) => setDetail({ entry: e, trigger })} />
                       ))}
                     </div>
                   )}
@@ -714,7 +753,8 @@ export function Dashboard() {
                           onToggleFavorite={handleToggleFavorite}
                           onEdit={(e) => { setEditingEntry(e); setShowForm(true); }}
                           onCopy={handleCopy}
-                          onOpen={handleOpenUrl} />
+                          onOpen={handleOpenUrl}
+                          onOpenDetail={(e, trigger) => setDetail({ entry: e, trigger })} />
                       ))}
                     </div>
                   )}
@@ -754,6 +794,17 @@ export function Dashboard() {
         tags={store.tags}
         onSave={handleSave}
         onClose={() => { setShowForm(false); setEditingEntry(null); setFormSeed(null); }}
+      />
+
+      {/* 卡片详情抽屉：编辑/删除都借用上面的既有弹窗，抽屉只负责展示 + 触发 */}
+      <EntryDetailDrawer
+        open={!!detail}
+        entry={detailEntry}
+        trigger={detail?.trigger ?? null}
+        onClose={() => setDetail(null)}
+        onEdit={(e) => { setDetail(null); setEditingEntry(e); setFormSeed(null); setShowForm(true); }}
+        onDelete={handleDrawerDelete}
+        onOpen={handleOpenUrl}
       />
 
       {/* Delete Confirm */}
@@ -977,6 +1028,9 @@ export function Dashboard() {
           </div>
         </div>
       </Modal>
+
+      {/* useConfirm 的确认框节点：抽屉删除走这里（与列表行删除同一个组件） */}
+      {confirmNode}
     </>
   );
 }

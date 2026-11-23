@@ -631,6 +631,18 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
         </div>
       )}
 
+      {/* 三张统计卡（契约 §3.3）：从右栏移到页头下方、.pm-shell 之上，全宽三列。
+          口径仍写死在 countSql()，与左侧栏计数同源，不会两边对不上。
+          压缩尺寸（卡高 ≤64 / 数字 16 / 标签 11 / 内边距减半）在 redesign.css 末尾
+          的 `.sql-kpi-top` 段落里，页面这边只负责位置与结构。 */}
+      <div className="sql-kpi-top">
+        <div className="home-stats is-3">
+          <div className="home-stat"><b>{kpi.all}</b><i>全部片段</i></div>
+          <div className="home-stat"><b>{kpi.starred}</b><i>收藏</i></div>
+          <div className="home-stat"><b>{kpi.week}</b><i>本周新增</i></div>
+        </div>
+      </div>
+
 
       <div className="pm-shell">
         <aside className="tag-sidebar">
@@ -688,13 +700,6 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
         </aside>
 
         <div className="pm-main">
-          {/* KPI 三卡：口径写死在 countSql()，与左侧栏计数同源，不会两边对不上 */}
-          <div className="home-stats is-3">
-            <div className="home-stat"><b>{kpi.all}</b><i>全部片段</i></div>
-            <div className="home-stat"><b>{kpi.starred}</b><i>收藏</i></div>
-            <div className="home-stat"><b>{kpi.week}</b><i>本周新增</i></div>
-          </div>
-
           <div className="toolbar">
             <SearchBox value={q} onChange={setQ} placeholder="搜索名称 / SQL 正文 / 标签" />
             <span className="text-sm text-muted">{rows.length} / {kpi.all} 条</span>

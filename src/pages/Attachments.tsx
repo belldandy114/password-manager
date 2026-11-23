@@ -11,7 +11,6 @@ import { useToast } from '../hooks/useToast';
 import { AttImage } from '../components/MarkdownView';
 import { ImageLightbox } from '../components/ImageLightbox';
 import { extractAttIds } from '../utils/attachRefs';
-import { copyPlain } from '../utils/clipboard';
 import { formatRecent } from '../utils/time';
 
 /**
@@ -288,10 +287,23 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
     if (!nr.success) flash(nr.error || '打开目录失败', 'error');
   };
 
-  const copyDir = async () => {
-    if (!dir) return;
-    await copyPlain(dir);
-    flash('已复制附件目录');
+  /**
+   * 更改笔记目录（契约 §3.4 / §8 裁定 4）：走现成通道，**零新增 IPC**。
+   * 与 Notes.tsx 的 pickDir 同一套：`notes:pick-dir` 选目录 → `settings:save` 落盘
+   * → 同步 store 与 localStorage（旧版本/笔记页只认 localStorage）→ 重扫附件。
+   * 失败才红 toast 并保持原值；用户取消（success 但没有目录）静默返回。
+   */
+  const changeNotesDir = async () => {
+    const picked = await window.electronAPI.notesPickDir();
+    if (!picked.success) { flash(picked.error || '更改笔记目录失败', 'error'); return; }
+    const next = String(picked.data || '');
+    if (!next) return; // 用户取消
+    const saved = await window.electronAPI.settingsSave({ notesDir: next });
+    if (!saved || saved.success === false) { flash('保存笔记目录失败，原目录未改', 'error'); return; }
+    useStore.getState().updateSettings({ notesDir: next });
+    try { localStorage.setItem('pm.notes.dir', next); } catch { /* 隐私模式忽略 */ }
+    await load();
+    flash('已切换笔记目录');
   };
 
   /** 更改附件目录：主进程先把已有附件复制过去，成功才切换，不用重启 */
@@ -382,15 +394,23 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
           <div className="att-dir-bar">
             <Icons.folder size={13} />
             <span className="att-dir-label">全局目录</span>
-            <code className="att-dir-path" title={dir}>{dir}</code>
             {!dirExists && <span className="att-dir-warn">目录不存在（移动硬盘没插？）</span>}
-            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void copyDir()}>
-              复制路径
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void reveal()}>
+            {/* 契约 §3.4 / §8 裁定 4：不再渲染路径文本、也不再有「复制路径」，
+                只留两个按钮；完整路径放进「打开目录」的 title（悬停可见）。 */}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm att-dir-btn"
+              title={`打开目录：${dir}`}
+              onClick={() => void reveal()}
+            >
               打开目录
             </button>
-            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void changeDir()} title="更改附件存放位置（含随手记粘贴的图片）">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm att-dir-btn"
+              title={`更改附件存放位置（当前：${dir}）`}
+              onClick={() => void changeDir()}
+            >
               更改目录
             </button>
           </div>
@@ -401,12 +421,22 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
           <div className="att-dir-bar att-dir-bar-note">
             <Icons.note size={13} />
             <span className="att-dir-label">笔记目录</span>
-            <code className="att-dir-path" title={notesDir}>{notesDir}</code>
-            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void copyPlain(notesDir).then(() => flash('已复制笔记附件目录'))}>
-              复制路径
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm att-dir-btn" onClick={() => void revealNoteDir()}>
+            {/* 同上：路径只进 title，不占文本节点（§8 裁定 4） */}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm att-dir-btn"
+              title={`打开目录：${notesDir}`}
+              onClick={() => void revealNoteDir()}
+            >
               打开目录
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm att-dir-btn"
+              title={`更改笔记目录（当前：${notesDir}）`}
+              onClick={() => void changeNotesDir()}
+            >
+              更改目录
             </button>
             <span className="att-dir-hint">目录模式笔记里粘贴的截图存这里，跟着笔记目录走</span>
           </div>
