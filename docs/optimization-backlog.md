@@ -120,6 +120,12 @@
 - **成本**：小~中；风险：改完全量回归脚本可能一次性变红（那是好事——说明以前是假绿）。
 - **状态**：第二批已修掉 `ui-glass-opaque-scan.js` 这一处（含 `settleAnimations()`）；公共库 `scripts/lib/app.js` 与其余 `ui-*.js` 未动。
 
+#### P1-2b 背景图模式两条既存玻璃泄漏（qa t2 实测，本批未修）
+
+- **现象**：附件管理 tab 的 `.pnl-meta`（70×22，1533px²）与测试笔记 tab（目录模式）的 `.notes-dirpath`（443×22，9735px²）在 `html[data-bg='image']` 下仍是实底，深浅两套主题各命中一次，共 4 条。
+- **为什么本批不修**：都不是本批引入；修 `.pnl-meta` 要连带检查附件页所有面板 meta，修 `.notes-dirpath` 会撞笔记页目录模式（同一元素在非目录模式不存在），属于独立一轮的玻璃补漏。
+- **做法**：按 tokens.css 的档位口径补 `--glass-*`（`.pnl-meta` 属"内嵌小块"→ `--glass-inset`；`.notes-dirpath` 属"条状块"→ `--glass-side`），加进 `ui-glass-opaque-scan` 的附件管理 / 测试笔记组合，做一次变异验证。
+- **成本**：小（两条规则 + 扫描组合），风险：低。
 #### P1-3 环境 / 库词表统一
 
 - **问题**：`environments`（系统 + envType + url）与 SQL 片段的 `dbOrEnv`、接口调试的环境名是**三套手输词表**，拼错就搜不到、统计断。
