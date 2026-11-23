@@ -8335,3 +8335,30 @@ html[data-bg='image'] .pager .pager-ctrl .pager-size {
 html[data-bg='image'] .chip {
   background-color: var(--glass-input);
 }
+
+/* ================================================================
+   变量填充弹窗（SQL 片段页 1.31.x）：预览区 + 弹窗底栏的实底
+   ----------------------------------------------------------------
+   用户要求：背景图模式下新增的块也要透，不能在图上贴实心板。
+   判据与 scripts/ui-glass-opaque-scan.js 完全一致（可见 && backgroundColor
+   alpha >= 0.999 && 面积 > 600），实测命中两块（1440×900、深浅各一遍）：
+     .code2 预览块       478×47   浅色 rgb(212,214,221) / 深色 color(srgb …)（alpha=1）
+     .modal-footer       518×67   浅色 rgb(255,255,255) / 深色 rgb(25,30,33)（alpha=1）
+
+   为什么这么补：
+   - 预览块是「结果区」，档位照 tokens.css 的注释走 --glass-input-soft
+     （结果区 / 日志区 / 目录条同一档），不新造百分比；
+   - .modal-footer 是**既有**漏网（所有弹窗都带，1.32 的扫描没有开弹窗所以没抓到）。
+     它原本是 --surface-overlay 实底，而同一只弹窗的 .modal-header 本来就没有底色、
+     只有一条 border-bottom 分隔 —— 底栏改成透底、靠 border-top 分隔，与头部同构，
+     不需要再造一个玻璃档位。
+   - 两条都只写 background-color，不加 backdrop-filter / z-index / transform
+     （scripts/check-stacking.js 在盯）；选择器带 html[data-bg='image']，
+     非背景图模式观感逐像素不变。
+   ================================================================ */
+html[data-bg='image'] .sql-var-preview {
+  background-color: var(--glass-input-soft);
+}
+html[data-bg='image'] .modal-footer {
+  background-color: transparent;
+}

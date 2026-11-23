@@ -4,11 +4,14 @@ import type { Note } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { Modal } from '../components/Modal';
+import { CopyVarsModal } from '../components/CopyVarsModal';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 import { formatRecent } from '../utils/time';
 import { getTagHue } from '../utils/tagColors';
-import { copyPlain } from '../utils/clipboard';
+import { extractVars, mergeVarHint, parseVarHint, sanitizeVarName, wrapSelection, upsertVarHint } from '../utils/sqlVars';
 import { kindDecidedByName } from '../utils/noteKind';
 import {
   noteFromSqlFile, sqlFileText, sqlFileName, uniqueSqlFileName, titleOfSqlFile, dirNameOf,
@@ -22,7 +25,9 @@ import {
    - 笔记页过滤掉 sql，避免同一批片段两个入口（见 Notes.tsx 的 visibleItems）
    - 这里多出 dbOrEnv / varHint / remark / starred 四个字段（types.ts 的 Note，
      全部可选、缺省 = 空，老条目不需要迁移）
-   - 本期**不做**变量替换引擎：「复制」复制原文，toast 里明说变量未替换
+   - 1.31.x：复制改成「填充变量并复制」——弹窗按正文里 `{{变量}}` 出现顺序生成输入框，
+     填完替换后再进剪贴板；留空的变量保留原样。纯逻辑在 utils/sqlVars.ts。
+     「复制原文」按钮仍在，两条路径独立（原文不做任何替换）。
 
    目录模式（笔记以 `标题.sql.md` 文件存盘）本期只给提示、不渲染表格：
    文件模式的类型与正文都归笔记页管，这里再读写一遍会变成两套数据源。
@@ -118,6 +123,31 @@ export function countByTag(notes: Note[] | null | undefined): Record<string, num
 /** 所有标签的并集（按中文序） */
 export function tagsOf(notes: Note[] | null | undefined): string[] {
   return Object.keys(countByTag(notes)).sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+/**
+ * 「库 / 环境」已有值：已有片段里出现过的 dbOrEnv，按出现次数降序、去重、最多 `max` 个。
+ *
+ * 用途是编辑弹窗输入框下方的可点标签 —— ⚠️ **不用 `<datalist>`**：AGENTS.md 记录它会在
+ * 输入框聚焦时候选项更新时让 Chromium 直接崩溃（0xC0000005，无 JS 报错）。
+ * 组合值（`test_order / 预发`）本身就是合法值，不做解析；大小写敏感
+ * （`TEST_ORDER` 与 `test_order` 是两个真实库名）。同票按首次出现顺序，顺序稳定。
+ */
+export function dbEnvValues(notes: Note[] | null | undefined, max = 8): string[] {
+  const seen = new Map<string, { count: number; first: number }>();
+  let index = 0;
+  for (const n of sqlOnly(notes)) {
+    const v = String(n.dbOrEnv || '').trim();
+    if (!v) continue;
+    const hit = seen.get(v);
+    if (hit) hit.count += 1;
+    else seen.set(v, { count: 1, first: index });
+    index += 1;
+  }
+  return [...seen.entries()]
+    .sort((a, b) => b[1].count - a[1].count || a[1].first - b[1].first)
+    .slice(0, Math.max(0, Math.floor(Number(max) || 0)))
+    .map(([v]) => v);
 }
 
 const newId = (): string => (
@@ -230,28 +260,17 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
   const [editing, setEditing] = useState<Note | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const [toast, setToast] = useState('');
+  /** 页面级提示一律走全局 toast（右上浮层、3 秒自动消失），不再在列表上方插一行文字 */
+  const { toasts, addToast, removeToast } = useToast();
   const snippetSeed = useStore(s => s.snippetSeed);
   const consumeSnippetSeed = useStore(s => s.consumeSnippetSeed);
 
   /**
-   * 提示条：2.6s 后自动消失。
-   * ⚠️ 定时器必须自己记住并清掉 —— 连续两次操作间隔 <2.6s 时（比如连点两行星标），
-   * 前一次的定时器会把新提示提前清掉，表现为「点了没反应」。所以新提示前先 clear，
-   * 卸载时也清一次，避免在已卸载组件上 setState。
+   * 提示条走全局 toast：右上浮层、3 秒自动消失、点一下可提前关掉。
+   * 以前是页面里插一行 `.inline-hint`（会把列表往下顶、还得自己做定时器去清），
+   * 现在与工作台 / 工具箱等页面同一套观感。类型决定左侧色条与图标。
    */
-  const toastTimer = useRef<number | null>(null);
-  const flash = (msg: string) => {
-    setToast(msg);
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => {
-      toastTimer.current = null;
-      setToast('');
-    }, 2600);
-  };
-  useEffect(() => () => {
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-  }, []);
+  const flash = (msg: string, type: 'success' | 'error' | 'info' = 'success') => addToast(msg, type);
 
   /**
    * 读目录：只认 `.sql.md`（`kindDecidedByName`，utils/noteKind.ts 既有规则），
@@ -290,6 +309,65 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
     [items, q, tag, starredOnly, sort],
   );
 
+  /** 复制弹窗的目标片段（fillVars / 变量说明 / 剪贴板都在 CopyVarsModal 里） */
+  const [copyTarget, setCopyTarget] = useState<Note | null>(null);
+
+  /** 已有片段里出现过的「库 / 环境」值：编辑弹窗下方给可点标签（⚠️ 不是 datalist） */
+  const dbEnvOptions = useMemo(() => dbEnvValues(items), [items]);
+
+  /**
+   * 「变量说明」一键生成：按正文里的 `{{变量}}` 补 `{{name}} = ` 模板。
+   * 纯函数 mergeVarHint 负责「已有释义原样保留 + 缺的追加 + 幂等」，这里只做接线。
+   * 正文里没有变量时按钮 disabled（见变量说明那一行的 JSX）。
+   */
+  const editingVars = useMemo(() => extractVars(editing?.content || ''), [editing?.content]);
+  const genVarHint = () => {
+    if (!editing) return;
+    setEditing({ ...editing, varHint: mergeVarHint(editing.varHint || '', editingVars) });
+  };
+
+  /**
+   * 「转化为变量」：把 SQL 里**选中的那一段**包成 `{{名字}}`，并顺手把「名字 = 说明」写进变量说明。
+   *
+   * 选区在点击那一刻从 textarea 的 ref 上现读（不维护 selection state）——
+   * 按钮带 onMouseDown preventDefault，点它不会把焦点抢走、选区因此不会丢。
+   * 没选中就只给一句提示，不悄悄改正文。
+   */
+  const sqlRef = useRef<HTMLTextAreaElement | null>(null);
+  const [varDraft, setVarDraft] = useState<{ name: string; desc: string; start: number; end: number } | null>(null);
+  const openVarDraft = () => {
+    if (!editing) return;
+    const el = sqlRef.current;
+    const start = el ? el.selectionStart ?? 0 : 0;
+    const end = el ? el.selectionEnd ?? 0 : 0;
+    if (!el || start >= end) {
+      flash('先在 SQL 里选中一段文字，再点「转化为变量」', 'info');
+      return;
+    }
+    const name = sanitizeVarName(String(editing.content || '').slice(start, end));
+    const hint = parseVarHint(editing.varHint || '');
+    // 这个变量已经有释义 → 预填出来供修改（确定后改的是释义，不会重复追加一条）
+    setVarDraft({ name, desc: hint[name] || '', start, end });
+  };
+  const varNameOk = !!varDraft && /^[\w.-]+$/.test(varDraft.name.trim());
+  const confirmVarDraft = () => {
+    if (!editing || !varDraft || !varNameOk) return;
+    const name = varDraft.name.trim();
+    const wrapped = wrapSelection(editing.content, varDraft.start, varDraft.end, name);
+    if (!wrapped) {
+      setVarDraft(null);
+      flash('正文已经变了，请重新选中再点一次', 'info');
+      return;
+    }
+    setEditing({
+      ...editing,
+      content: wrapped.text,
+      varHint: upsertVarHint(editing.varHint || '', name, varDraft.desc),
+    });
+    setVarDraft(null);
+    flash(`已转为 {{${name}}}`);
+  };
+
   /** 命令面板「粘贴 SQL」→ 直接开新增弹窗（目录模式下保存成 `标题.sql.md`） */
   useEffect(() => {
     if (!snippetSeed || !String(snippetSeed.text || '').trim()) return;
@@ -322,7 +400,7 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
    */
   const exportMd = async () => {
     if (rows.length === 0) {
-      flash('当前筛选下没有可导出的片段');
+      flash('当前筛选下没有可导出的片段', 'info');
       return;
     }
     try {
@@ -333,13 +411,13 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
       );
       if (r?.canceled) return; // 用户取消：静默
       if (!r || r.success === false) {
-        flash(r?.error || '导出失败');
+        flash(r?.error || '导出失败', 'error');
         return;
       }
       flash(`已导出 ${rows.length} 条`);
     } catch (e) {
       // IPC 异常也不能把页面打崩：给一条提示就行
-      flash((e as Error)?.message || '导出失败');
+      flash((e as Error)?.message || '导出失败', 'error');
     }
   };
 
@@ -475,9 +553,19 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
     });
   };
 
-  const copyRow = async (n: Note) => {
-    await copyPlain(n.content || '');
-    flash('SQL 已复制原文（{{变量}} 未替换）');
+  /**
+   * 复制入口：先开弹窗（不直接进剪贴板）。
+   * 没有 `{{变量}}` 的片段也开同一个弹窗，只把提示换成「可以直接复制」——照用户确认的截图，
+   * 复制结果要看得见、要点得到，不在点按钮的同一瞬间偷偷写剪贴板。
+   */
+  const openCopy = (n: Note) => setCopyTarget(n);
+
+  /**
+   * 弹窗复制成功后的提示：两条不带上文的文案补回 `SQL ` 前缀，与抽组件前的页面文案逐字一致
+   * （带替换计数的文案本来就没有前缀，原样透出）。文案由页面决定，组件只说「做了什么」。
+   */
+  const onCopied = (message: string) => {
+    flash(message === '已复制原文' || message === '已复制（没有变量）' ? `SQL ${message}` : message);
   };
 
   const clearFilters = () => { setQ(''); setTag(''); setStarredOnly(false); };
@@ -511,7 +599,7 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
         title="SQL 片段"
         desc={dirMode
           ? '目录模式：片段以 标题.sql.md 存在你选的目录里，字段写在文件头的 YAML frontmatter'
-          : '常用 SQL、造数与校验脚本，按库 / 环境归档；{{变量}} 只在「变量说明」里注明，复制到的是原文'}
+          : '常用 SQL、造数与校验脚本，按库 / 环境归档；复制时弹出变量输入框，填完替换后再进剪贴板，留空保留原样'}
         tools={
           <>
             <span className="text-sm text-muted">{kpi.all} 条</span>
@@ -542,7 +630,7 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
           {dirError}
         </div>
       )}
-      {toast && <div className="inline-hint">{toast}</div>}
+
 
       <div className="pm-shell">
         <aside className="tag-sidebar">
@@ -699,7 +787,7 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
                       </td>
                       <td className="text-sm text-muted">{formatRecent(n.updatedAt)}</td>
                       <td className="cell-actions" onClick={e => e.stopPropagation()}>
-                        <IconBtn title="复制 SQL 原文（变量未替换）" onClick={() => void copyRow(n)}>
+                        <IconBtn title="复制 SQL（可填 {{变量}}）" onClick={() => openCopy(n)}>
                           <Icons.copy size={13} />
                         </IconBtn>
                         <IconBtn
@@ -767,10 +855,35 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
                 placeholder="例如：test_order / 预发"
                 aria-label="库或环境"
               />
+              {/* 已有值：可点标签（⚠️ 禁用 datalist，Chromium 会崩）。没有历史值时整行不渲染 */}
+              {dbEnvOptions.length > 0 && (
+                <div className="suggest-row" aria-label="已有库 / 环境值">
+                  {dbEnvOptions.map(v => (
+                    <button
+                      key={v}
+                      type="button"
+                      className="chip"
+                      onClick={() => setEditing({ ...editing, dbOrEnv: v })}
+                    >{v}</button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="form-group">
-              <label>SQL *</label>
+              {/* 标题行：标签在左、「转化为变量」贴右（与「变量说明 / 按正文生成」同一套排布） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label>SQL *</label>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginLeft: 'auto' }}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={openVarDraft}
+                  title="先在正文里选中一段文字，再把它变成 {{变量}}"
+                >转化为变量</button>
+              </div>
               <textarea
+                ref={sqlRef}
                 className="code-input"
                 value={editing.content}
                 onChange={e => setEditing({ ...editing, content: e.target.value })}
@@ -780,11 +893,23 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
                 aria-label="SQL 正文"
               />
               <div className="input-hint">
-                变量用 <code>{'{{名字}}'}</code> 写；本期只做展示和「复制原文」，不自动替换变量。
+                变量用 <code>{'{{名字}}'}</code> 写；复制时会按出现顺序生成输入框，留空则保留原样。
               </div>
             </div>
             <div className="form-group">
-              <label>变量说明</label>
+              {/* 标题行：标签在左、生成按钮贴右（与接口调试的字段标题行同一套排布） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label>变量说明</label>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginLeft: 'auto' }}
+                  onClick={genVarHint}
+                  disabled={editingVars.length === 0}
+                  title={editingVars.length === 0
+                    ? '正文里没有 {{变量}}'
+                    : '按正文里的变量补 {{名字}} = ，已有释义不动'}
+                >按正文生成</button>
+              </div>
               <textarea
                 value={editing.varHint || ''}
                 onChange={e => setEditing({ ...editing, varHint: e.target.value })}
@@ -828,7 +953,69 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
         )}
       </Modal>
 
+      {/* 转化为变量：选中一段 → 起个名字 + 写说明 → 确定后正文变成 {{名字}}、说明追加 `{{名字}} = 说明`。
+          说明留空只补名字；这个变量已有释义时不重复追加，改的是释义（赋值符按原文保留）。 */}
+      <Modal
+        open={!!varDraft}
+        onClose={() => setVarDraft(null)}
+        title="转化为变量"
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setVarDraft(null)}>取消</button>
+            <button className="btn btn-primary" disabled={!varNameOk} onClick={confirmVarDraft}>确定</button>
+          </>
+        }
+      >
+        {varDraft && (
+          <>
+            <div className="form-group">
+              <label>变量名 *</label>
+              <input
+                value={varDraft.name}
+                onChange={e => setVarDraft({ ...varDraft, name: e.target.value })}
+                aria-label="变量名"
+                placeholder="字母 / 数字 / _ . -，例如 orderNo"
+                spellCheck={false}
+                data-autofocus="1"
+              />
+              <div className="input-hint">
+                正文里会变成 <code>{`{{${varDraft.name.trim() || '名字'}}}`}</code>
+                {!varNameOk && ' —— 变量名只能用字母、数字、下划线、点和横线'}
+              </div>
+            </div>
+            <div className="form-group">
+              <label>说明</label>
+              <input
+                value={varDraft.desc}
+                onChange={e => setVarDraft({ ...varDraft, desc: e.target.value })}
+                aria-label="变量说明（新）"
+                placeholder="例如：订单号"
+              />
+              <div className="input-hint">
+                写到「变量说明」里：<code>{`{{${varDraft.name.trim() || '名字'}}}`}</code> = 说明（留空则只补名字）
+              </div>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 填充变量并复制：输入框按 {{变量}} 出现顺序生成，「变量说明」里的释义显示在标签旁，
+          底部预览与「替换并复制」调用同一个 fillVars —— 预览到什么就复制什么。
+          弹窗本体在 components/CopyVarsModal.tsx（笔记页复用同一个组件）。 */}
+      <CopyVarsModal
+        open={!!copyTarget}
+        content={copyTarget?.content || ''}
+        varHint={copyTarget?.varHint || ''}
+        title="填充变量并复制 SQL"
+        onClose={() => setCopyTarget(null)}
+        onCopied={onCopied}
+      />
+
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+
       {confirmNode}
     </>
   );
 }
+
+

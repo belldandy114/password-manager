@@ -4,6 +4,8 @@ import type { CasesDir, CasesFile, CasesListing, CasesPreview, CasesSearchHit } 
 import { Page, PageHead, Panel, Empty, IconBtn, Icons, SearchBox, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { callIpc } from '../utils/ipc';
 import { formatRecent } from '../utils/time';
 import { formatSize } from '../../electron/cases-paths';
@@ -41,8 +43,8 @@ export function Cases() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
-  const [notice, setNotice] = useState('');
+  /** 页面级提示改用全局 toast（右上浮层、3 秒自动消失） */
+  const { toasts, addToast, removeToast } = useToast();
   const [busy, setBusy] = useState(false);
   const [dlg, setDlg] = useState<{ kind: 'mkdir' | 'rename'; value: string; rel?: string; parent?: string } | null>(null);
   // 左侧树：系统（一级）展开后加载模块（二级），两级封顶
@@ -66,16 +68,15 @@ export function Cases() {
   const openCaseIntent = useStore(s => s.casesIntent);
   const consumeCasesIntent = useStore(s => s.consumeCasesIntent);
 
-  const flash = useCallback((msg: string) => {
-    setNotice(msg);
-    window.setTimeout(() => setNotice(''), 2600);
-  }, []);
+  const flash = useCallback((msg: string) => addToast(msg, 'success'), [addToast]);
+  /** 页面级错误：红 toast（空字符串 = 清空，直接忽略） */
+  const flashErr = useCallback((msg: string) => { if (msg) addToast(msg, 'error'); }, [addToast]);
 
   const load = useCallback(async (targetRel: string) => {
     setLoading(true);
-    setErr('');
+    flashErr('');
     const cfg = await callIpc(() => window.electronAPI.casesConfig());
-    if (!cfg.ok) { setErr(cfg.error); setLoading(false); return; }
+    if (!cfg.ok) { flashErr(cfg.error); setLoading(false); return; }
     const info = cfg.data as { root: string; configured: boolean; exists: boolean } | undefined;
     setRoot(info?.root || '');
     setConfigured(!!info?.configured);
@@ -91,7 +92,7 @@ export function Cases() {
       setListing(data);
       setRel(data.rel || '');
     } else {
-      setErr(cur.ok ? '读取用例库失败' : cur.error);
+      flashErr(cur.ok ? '读取用例库失败' : cur.error);
       setListing(null);
     }
     if (rootList.ok && rootList.data) setSystems((rootList.data as CasesListing).dirs);
@@ -200,20 +201,20 @@ export function Cases() {
   const importFiles = useCallback(async (files: File[], targetRel: string) => {
     const paths = files.map(f => window.electronAPI.filePathFor?.(f) || '').filter(Boolean);
     if (!paths.length) {
-      setErr('读不到文件路径：请用「上传文件」按钮选择，或从资源管理器拖入');
+      flashErr('读不到文件路径：请用「上传文件」按钮选择，或从资源管理器拖入');
       return;
     }
     setBusy(true);
     const r = await callIpc(() => window.electronAPI.casesImport(targetRel, paths));
     setBusy(false);
-    if (!r.ok) { setErr(`导入失败：${r.error}`); return; }
+    if (!r.ok) { flashErr(`导入失败：${r.error}`); return; }
     const data = r.data as { imported: string[]; failed: string[] } | undefined;
     await load(rel);
     await refreshTree();
     const ok = data?.imported.length || 0;
     const bad = data?.failed.length || 0;
     flash(bad ? `已导入 ${ok} 个，${bad} 个失败` : `已导入 ${ok} 个文件`);
-    if (bad) setErr(`未导入：${(data?.failed ?? []).join('；')}`);
+    if (bad) flashErr(`未导入：${(data?.failed ?? []).join('；')}`);
   }, [flash, load, refreshTree, rel]);
 
   /** 从拖拽事件里取出要移动的条目（支持多选；老格式单条兜底） */
@@ -244,7 +245,7 @@ export function Cases() {
     await load(rel);
     await refreshTree();
     if (moved) flash(`已移动 ${moved} 项到「${targetRel.split('/').pop() || '用例库'}」`);
-    if (failMsg) setErr(`部分未移动：${failMsg}`);
+    if (failMsg) flashErr(`部分未移动：${failMsg}`);
   }, [flash, load, refreshTree, rel]);
 
   const onTreeDragOver = (e: React.DragEvent, targetRel: string) => {
@@ -305,7 +306,7 @@ export function Cases() {
 
   const chooseRoot = async () => {
     const r = await callIpc(() => window.electronAPI.casesChooseRoot());
-    if (!r.ok) { setErr(r.error); return; }
+    if (!r.ok) { flashErr(r.error); return; }
     const data = r.data as { root: string } | undefined;
     if (!data?.root) return; // 用户取消
     flash('用例库目录已设置');
@@ -323,7 +324,7 @@ export function Cases() {
         setBusy(true);
         const r = await callIpc(() => window.electronAPI.casesChangeRoot(chosen));
         setBusy(false);
-        if (!r.ok) { setErr(`迁移失败：${r.error}`); return; }
+        if (!r.ok) { flashErr(`迁移失败：${r.error}`); return; }
         const data = r.data as { root: string; moved: number } | undefined;
         flash(`已迁移到新目录（${data?.moved ?? 0} 个文件）`);
         await load('');
@@ -336,26 +337,26 @@ export function Cases() {
     const r = await callIpc(() => (
       mode === '迁移' ? window.electronAPI.casesPickDir() : window.electronAPI.casesPickExportDir()
     ));
-    if (!r.ok) { setErr(r.error); return null; }
+    if (!r.ok) { flashErr(r.error); return null; }
     return (r.data as string | undefined) || null;
   };
 
   const upload = async () => {
     const picked = await callIpc(() => window.electronAPI.casesPickFiles());
-    if (!picked.ok) { setErr(picked.error); return; }
+    if (!picked.ok) { flashErr(picked.error); return; }
     const files = picked.data as string[] | undefined;
     if (!files?.length) return;
     setBusy(true);
     const r = await callIpc(() => window.electronAPI.casesImport(rel, files));
     setBusy(false);
-    if (!r.ok) { setErr(`上传失败：${r.error}`); return; }
+    if (!r.ok) { flashErr(`上传失败：${r.error}`); return; }
     const data = r.data as { imported: string[]; failed: string[] } | undefined;
     await load(rel);
     await refreshTree();
     const ok = data?.imported.length || 0;
     const bad = data?.failed.length || 0;
     flash(bad ? `已导入 ${ok} 个，${bad} 个失败（详见文件列表）` : `已导入 ${ok} 个文件`);
-    if (bad) setErr(`未导入：${(data?.failed ?? []).join('；')}`);
+    if (bad) flashErr(`未导入：${(data?.failed ?? []).join('；')}`);
   };
 
   const doMkdir = async () => {
@@ -364,7 +365,7 @@ export function Cases() {
     const parent = dlg.parent ?? rel;
     if (!name) return;
     const r = await callIpc(() => window.electronAPI.casesMkdir(parent, name));
-    if (!r.ok) { setErr(r.error); return; }
+    if (!r.ok) { flashErr(r.error); return; }
     const data = r.data as { name: string } | undefined;
     setDlg(null);
     // 在系统上新建子文件夹后自动展开它，用户能立刻看到结果
@@ -384,7 +385,7 @@ export function Cases() {
     const name = dlg.value.trim();
     if (!name) return;
     const r = await callIpc(() => window.electronAPI.casesRename(target, name));
-    if (!r.ok) { setErr(r.error); return; }
+    if (!r.ok) { flashErr(r.error); return; }
     setDlg(null);
     await load(rel);
     flash('已重命名');
@@ -393,17 +394,17 @@ export function Cases() {
   /** 整目录导入：保留内部结构，重名自动加后缀（模块里不允许，避免第三级） */
   const importFolder = async () => {
     if (depthOf(rel) >= MAX_DEPTH) {
-      setErr('最多两级：请在根目录或系统目录导入文件夹');
+      flashErr('最多两级：请在根目录或系统目录导入文件夹');
       return;
     }
     const picked = await callIpc(() => window.electronAPI.casesPickImportDir());
-    if (!picked.ok) { setErr(picked.error); return; }
+    if (!picked.ok) { flashErr(picked.error); return; }
     const dir = picked.data as string | undefined;
     if (!dir) return;
     setBusy(true);
     const r = await callIpc(() => window.electronAPI.casesImportFolder(rel, dir));
     setBusy(false);
-    if (!r.ok) { setErr(`导入文件夹失败：${r.error}`); return; }
+    if (!r.ok) { flashErr(`导入文件夹失败：${r.error}`); return; }
     const data = r.data as { name: string; files: number } | undefined;
     await load(rel);
     await refreshTree();
@@ -412,19 +413,19 @@ export function Cases() {
   const openItem = async (targetRel: string) => {
     rememberRecent(targetRel, targetRel.split('/').pop() || targetRel);
     const r = await callIpc(() => window.electronAPI.casesOpen(targetRel));
-    if (!r.ok) { setErr(`打开失败：${r.error}`); return; }
+    if (!r.ok) { flashErr(`打开失败：${r.error}`); return; }
     const how = (r.data as { how?: string } | undefined)?.how;
     if (how === 'open-with') flash('没有默认应用，已弹出「打开方式」让你选');
   };
 
   const openWithItem = async (targetRel: string) => {
     const r = await callIpc(() => window.electronAPI.casesOpenWith(targetRel));
-    if (!r.ok) setErr(`打开失败：${r.error}`);
+    if (!r.ok) flashErr(`打开失败：${r.error}`);
   };
 
   const revealItem = async (targetRel: string) => {
     const r = await callIpc(() => window.electronAPI.casesReveal(targetRel));
-    if (!r.ok) setErr(r.error);
+    if (!r.ok) flashErr(r.error);
   };
 
   const removeOne = (targetRel: string, label: string) => {
@@ -435,7 +436,7 @@ export function Cases() {
       danger: true,
       onOk: async () => {
         const r = await callIpc(() => window.electronAPI.casesDelete(targetRel));
-        if (!r.ok) { setErr(r.error); return; }
+        if (!r.ok) { flashErr(r.error); return; }
         setSelected(prev => { const next = new Set(prev); next.delete(targetRel); return next; });
         await load(rel);
         flash('已移入回收站');
@@ -450,10 +451,10 @@ export function Cases() {
     setBusy(true);
     const r = await callIpc(() => window.electronAPI.casesExport(rels, dest));
     setBusy(false);
-    if (!r.ok) { setErr(`导出失败：${r.error}`); return; }
+    if (!r.ok) { flashErr(`导出失败：${r.error}`); return; }
     const data = r.data as { exported: string[]; failed: string[] } | undefined;
     flash(`已导出 ${data?.exported.length ?? 0} 项到 ${dest}`);
-    if (data?.failed.length) setErr(`部分未导出：${data.failed.join('；')}`);
+    if (data?.failed.length) flashErr(`部分未导出：${data.failed.join('；')}`);
   };
 
   /* ---------------- 展示数据 ---------------- */
@@ -635,8 +636,6 @@ export function Cases() {
           }
         />
 
-        {notice && <div className="inline-hint is-ok">{notice}</div>}
-        {err && <div className="inline-hint is-error">{err}</div>}
 
         {!configured ? (
           <Panel>
@@ -1147,6 +1146,8 @@ export function Cases() {
             );
           })()}
         </Modal>
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+
         {confirmNode}
       </Page>
     </div>

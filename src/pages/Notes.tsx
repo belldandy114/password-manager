@@ -3,8 +3,11 @@ import type { Note, NoteLink, Snippet, WeeklyFile, EnvEntry } from '../types';
 import { useCollection } from '../hooks/useCollection';
 import { useStore } from '../store/useStore';
 import { Modal } from '../components/Modal';
+import { CopyVarsModal } from '../components/CopyVarsModal';
 import { Pager } from '../components/Pager';
 import { useConfirm } from '../components/confirm';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons } from '../components/ui';
 import { formatRecent } from '../utils/time';
 import { attImageMarkdown, extractAttIds } from '../utils/attachRefs';
@@ -265,7 +268,11 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   const [editing, setEditing] = useState<Note | null>(null);
   const { ask, confirmNode } = useConfirm();
   const [preview, setPreview] = useState<Note | null>(null);
-  const [toast, setToast] = useState('');
+  /** 复制入口（与 SQL 片段页共用一个弹窗）：只带标题 + 正文；目录模式下正文可能还没读 */
+  const [copyTarget, setCopyTarget] = useState<{ title: string; content: string } | null>(null);
+  /** 页面级提示改用全局 toast（右上浮层、3 秒自动消失） */
+  const { toasts, addToast, removeToast } = useToast();
+  const notify = (msg: string) => addToast(msg, 'success');
   const snippetSeed = useStore(s => s.snippetSeed);
   const consumeSnippetSeed = useStore(s => s.consumeSnippetSeed);
   const mergedRef = useRef(false);
@@ -343,8 +350,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
       if (add.length) {
         const ok = await save([...items, ...add]);
         if (!ok || ok.success === false) { mergedRef.current = false; return; }
-        setToast(`已并入 ${add.length} 条历史片段`);
-        setTimeout(() => setToast(''), 3000);
+        notify(`已并入 ${add.length} 条历史片段`);
       }
       localStorage.setItem(LS_SQL_MERGED, '1');
     })();
@@ -500,6 +506,28 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
     }
   };
 
+  /**
+   * 目录模式的复制入口（与 SQL 片段页同一个 CopyVarsModal）。
+   *
+   * 正文可能还没读：分类阶段（`planDirKinds`）只为判类型读前 20 个正文，
+   * 第 21 个以后的卡片 `bodies` 里没有内容。这时现读一次再开弹窗，
+   * 读失败只给一句提示，不改任何保存 / 编辑 / 目录模式逻辑。
+   */
+  const openDirCopy = async (f: WeeklyFile) => {
+    const cached = bodies[f.name];
+    if (cached !== undefined) {
+      setCopyTarget({ title: titleOf(f.name), content: cached });
+      return;
+    }
+    const r = await window.electronAPI.notesRead(dir, f.name);
+    if (r.success && r.data) {
+      setBodies(b => ({ ...b, [f.name]: r.data!.content }));
+      setCopyTarget({ title: titleOf(f.name), content: r.data.content });
+    } else {
+      setDirError(r.error || '读取失败');
+    }
+  };
+
   const saveDirNote = async () => {
     if (!dirEditing) return;
     const title = dirEditing.title.trim();
@@ -589,6 +617,12 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   };
 
   /**
+   * 本地加密库的复制入口：正文就在条目里，直接开弹窗（与 SQL 片段页同一个组件）。
+   * 弹窗自己负责变量输入 / 预览 / 两条复制路径，这里只传标题与正文。
+   */
+  const openCopy = (n: Note) => setCopyTarget({ title: n.title, content: n.content || '' });
+
+  /**
    * 粘贴截图 → 加密附件。
    * 正文里只留 `![说明](pm-att:<id>)`，图片本体按会话密钥加密存在 attachments 目录。
    *
@@ -658,8 +692,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
   const copyDirPath = async () => {
     if (!dir) return;
     await copyPlain(dir);
-    setToast('目录路径已复制');
-    setTimeout(() => setToast(''), 1500);
+    notify('目录路径已复制');
   };
 
   /**
@@ -732,8 +765,7 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
 
         {/* 1.31：类型筛选条（全部 / 笔记 / 片段）整条删掉了 —— 用户要求笔记页不再有类型 UI。
             目录里的 `标题.sql.md` 也不在本页显示（归 SQL 片段页，见 dirNoteFiles）。 */}
-        {toast && <div className="inline-hint">{toast}</div>}
-
+  
         {dirMode && dirBar}
 
         {dirError && (
@@ -774,6 +806,11 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                   <div className="card2-head">
                     <div className="card2-title">{titleOf(f.name)}</div>
                     <div className="card2-actions" onClick={e => e.stopPropagation()}>
+                      {/* 复制入口与 SQL 片段页同图标位次（第一个）：打开同一个 CopyVarsModal */}
+                      <IconBtn
+                        title="复制（可填 {{变量}}）"
+                        onClick={() => void openDirCopy(f)}
+                      ><Icons.copy size={13} /></IconBtn>
                       <IconBtn
                         title="钉成小窗（浮在桌面上照着做）"
                         onClick={() => { void window.electronAPI.pinOpen({ id: `dir::${f.name}`, kind: 'note' }); }}
@@ -838,6 +875,11 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
                 <div className="card2-head">
                   <div className="card2-title">{n.title}</div>
                   <div className="card2-actions" onClick={e => e.stopPropagation()}>
+                    {/* 复制入口与 SQL 片段页同图标位次（第一个）：打开同一个 CopyVarsModal */}
+                    <IconBtn
+                      title="复制（可填 {{变量}}）"
+                      onClick={() => openCopy(n)}
+                    ><Icons.copy size={13} /></IconBtn>
                     <IconBtn
                       title="钉成小窗（浮在桌面上照着做）"
                       onClick={() => { void window.electronAPI.pinOpen({ id: n.id, kind: 'note' }); }}
@@ -1067,6 +1109,20 @@ export function NotesBody({ afterHead }: { afterHead?: React.ReactNode } = {}) {
           ? <pre className="code-block note-sql-block">{dirPreview.content}</pre>
           : <MarkdownView md={dirPreview?.content || ''} />}
       </Modal>
+
+      {/* 复制入口（与 SQL 片段页同一个组件）：有 {{变量}} 时按出现顺序出输入框，
+          替换后再进剪贴板；「复制原文」是另一条独立路径。标题用组件默认文案。 */}
+      <CopyVarsModal
+        open={!!copyTarget}
+        content={copyTarget?.content || ''}
+        title="填充变量并复制"
+        onClose={() => setCopyTarget(null)}
+        onCopied={message => {
+          notify(message);
+        }}
+      />
+
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
 
       {confirmNode}
     </>

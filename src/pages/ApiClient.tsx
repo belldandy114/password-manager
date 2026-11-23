@@ -9,6 +9,8 @@ import { runAssertions, hasAssertions, migrateAssertions, toAssertions, makeRule
 import { schemaFromBody, diffSchema, isSameStructure } from '../utils/apiSchema';
 import { codegenFromBody } from '../utils/apiCodegen';
 import { useConfirm } from '../components/confirm';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { parseCurl, buildCurl } from '../utils/curl';
 import { parsePostmanCollection, mergeRequests, type PostmanImportResult, type MergeStrategy } from '../utils/collectionImport';
 import { filterHistory, groupByDay, matchesQuery } from '../utils/apiHistory';
@@ -190,15 +192,9 @@ export function ApiClient() {
   const [envDraft, setEnvDraft] = useState<ApiEnv | null>(null);
   const [response, setResponse] = useState<ApiResponseData | null>(null);
   const [error, setError] = useState('');
-  // 轻量成功提示（这个页面没有 toast 容器，用一次性 pill 更省事）
-  const [notice, setNotice] = useState('');
-  const noticeTimer = useRef<number | null>(null);
-  /** 一次性成功提示：2.5s 后自动消失（换新提示时重置计时） */
-  const flashNotice = useCallback((msg: string) => {
-    setNotice(msg);
-    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(''), 2500);
-  }, []);
+  /** 页面级提示改用全局 toast（右上浮层、3 秒自动消失、点一下可提前关） */
+  const { toasts, addToast, removeToast } = useToast();
+  const flashNotice = useCallback((msg: string, type: 'success' | 'error' | 'info' = 'success') => addToast(msg, type), [addToast]);
   const [sending, setSending] = useState(false);
   // 请求头经常一大屏（从 cURL 导入 15 行很常见），默认展开但可折叠
   const [headersOpen, setHeadersOpen] = useState(true);
@@ -685,7 +681,7 @@ export function ApiClient() {
       ? { ...s, lastRunAt: at, lastRunId: runId, lastStatus: (rows.every(r => r.ok) ? 'pass' : 'fail') as 'pass' | 'fail' }
       : s));
     const savedSet = await regSets.save(nextSets);
-    if (!saved?.success || !savedSet?.success) setNotice('结果保存失败，请确认密码库已解锁');
+    if (!saved?.success || !savedSet?.success) flashNotice('结果保存失败，请确认密码库已解锁', 'error');
 
     setDiffs(compareRuns(meta.baseline, rows));
   };
@@ -699,7 +695,7 @@ export function ApiClient() {
       .map(id => items.find(i => i.id === id))
       .filter((x): x is ApiRequest => !!x);
     if (list.length === 0) {
-      setNotice(`回归集「${set.name}」里的请求都被删了`);
+      flashNotice(`回归集「${set.name}」里的请求都被删了`);
       return;
     }
     const prev = latestRunOf(regRuns.items, set.id);
@@ -732,22 +728,22 @@ export function ApiClient() {
       createdAt: new Date().toISOString(),
     }];
     const r = await regSets.save(next);
-    if (!r?.success) { setNotice('保存回归集失败，请确认密码库已解锁'); return; }
+    if (!r?.success) { flashNotice('保存回归集失败，请确认密码库已解锁', 'error'); return; }
     setRegNewName('');
     setRegOpen(true);
-    setNotice(`已保存回归集「${name}」（${ids.length} 个请求）`);
+    flashNotice(`已保存回归集「${name}」（${ids.length} 个请求）`);
   };
 
   /** 回归集开关 / 间隔 / 删除 */
   const patchRegression = async (id: string, patch: Partial<RegressionSet>) => {
     const next = regSets.items.map(s => (s.id === id ? { ...s, ...patch } : s));
     const r = await regSets.save(next);
-    if (!r?.success) setNotice('修改没保存成功');
+    if (!r?.success) flashNotice('修改没保存成功', 'error');
   };
 
   const removeRegression = async (id: string) => {
     const r = await regSets.save(regSets.items.filter(s => s.id !== id));
-    if (!r?.success) { setNotice('删除失败'); return; }
+    if (!r?.success) { flashNotice('删除失败', 'error'); return; }
     // 历史结果一起清掉，避免留下没有集合的孤儿记录
     await regRuns.save(regRuns.items.filter(x => x.setId !== id));
   };
@@ -766,7 +762,7 @@ export function ApiClient() {
 
   const copyBatchReport = async () => {
     await navigator.clipboard.writeText(batchMarkdown());
-    setNotice('报告已复制到剪贴板');
+    flashNotice('报告已复制到剪贴板');
   };
 
   const saveBatchReport = async () => {
@@ -776,7 +772,7 @@ export function ApiClient() {
     });
     if (pick.canceled || !pick.filePath) return;
     const r = await window.electronAPI.fileWrite({ filePath: pick.filePath, content: batchMarkdown() });
-    if (r.success) setNotice('报告已保存');
+    if (r.success) flashNotice('报告已保存');
     else setError(r.error || '保存失败');
   };
 
@@ -1748,11 +1744,6 @@ export function ApiClient() {
                     {error}
                   </div>
                 )}
-                {notice && (
-                  <div className="pill pill-ok" style={{ padding: '8px 12px', borderRadius: 8, alignSelf: 'flex-start', fontWeight: 400 }}>
-                    {notice}
-                  </div>
-                )}
               </div>
             </Panel>
 
@@ -2492,6 +2483,7 @@ export function ApiClient() {
           </div>
         </div>
       )}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

@@ -8,13 +8,13 @@
 //      （1.31 起目录模式直接读写 `.sql.md`，细节见 utils/__tests__/sqlFrontmatter.test.ts）
 //
 // 断言的判据来自 docs/agents/sql-snippets-page.md §7（12 条验收）。
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
 import type { Note } from '../../types';
 import {
   startOfWeek, sqlOnly, countSql, matchSql, filterSql, sortSql, tagsOf, countByTag,
-  buildSqlMarkdown, exportFileName, fmtStamp,
+  buildSqlMarkdown, exportFileName, fmtStamp, dbEnvValues,
   SqlSnippets,
 } from '../../pages/SqlSnippets';
 
@@ -147,6 +147,57 @@ describe('SQL 片段：左侧标签栏', () => {
     ];
     expect(tagsOf(notes)).toEqual(['订单', '造数'].sort((a, b) => a.localeCompare(b, 'zh')));
     expect(countByTag(notes)).toEqual({ 订单: 2, 造数: 1 });
+  });
+});
+
+/* ----------------------------------------------------------------
+   第三批 C：库 / 环境已有值（纯函数 dbEnvValues）
+   ---------------------------------------------------------------- */
+describe('SQL 片段：库 / 环境已有值（dbEnvValues）', () => {
+  it('按出现次数降序、去重、trim；同票按首次出现顺序', () => {
+    const notes: Note[] = [
+      sql({ id: 'a', dbOrEnv: 'test_order' }),
+      sql({ id: 'b', dbOrEnv: 'test_order / 预发' }),
+      sql({ id: 'c', dbOrEnv: 'test_order / 预发' }),
+      sql({ id: 'd', dbOrEnv: '  test_order  ' }),
+      sql({ id: 'e', dbOrEnv: '' }),
+      sql({ id: 'f', dbOrEnv: 'test_order / 预发' }),
+    ];
+    // 预发 3 次 > test_order 2 次（b 的 "test_order / 预发" 是**另一个**值，不能拆开算）
+    expect(dbEnvValues(notes)).toEqual(['test_order / 预发', 'test_order']);
+
+    // 同票时按首次出现：x 先出现、y 后出现
+    expect(dbEnvValues([
+      sql({ id: 'g', dbOrEnv: 'x' }),
+      sql({ id: 'h', dbOrEnv: 'y' }),
+    ])).toEqual(['x', 'y']);
+  });
+
+  it('最多 8 个；max 可调，0 / 负数返回空', () => {
+    const notes = Array.from({ length: 10 }, (_, i) => sql({ id: `n${i}`, dbOrEnv: `db_${i}` }));
+    const all = dbEnvValues(notes);
+    expect(all).toHaveLength(8);
+    expect(all[0]).toBe('db_0');
+    expect(dbEnvValues(notes, 2)).toEqual(['db_0', 'db_1']);
+    expect(dbEnvValues(notes, 0)).toEqual([]);
+    expect(dbEnvValues(notes, -1)).toEqual([]);
+  });
+
+  it('只统计 kind==="sql"：普通笔记 / 周报片段的 dbOrEnv 不参与', () => {
+    const notes: Note[] = [
+      note({ id: 'n1', dbOrEnv: '缺省 kind 的笔记' }),
+      note({ id: 'n2', kind: 'note', dbOrEnv: '笔记库' }),
+      note({ id: 'w1', kind: 'weekly', dbOrEnv: '周报库' }),
+      sql({ id: 's1', dbOrEnv: '只看这个' }),
+    ];
+    expect(dbEnvValues(notes)).toEqual(['只看这个']);
+  });
+
+  it('空入参 / null / 只有空值：返回空数组，不抛错', () => {
+    expect(dbEnvValues([])).toEqual([]);
+    expect(dbEnvValues(null)).toEqual([]);
+    expect(dbEnvValues(undefined)).toEqual([]);
+    expect(dbEnvValues([sql({ id: 'x', dbOrEnv: '   ' })])).toEqual([]);
   });
 });
 
@@ -661,3 +712,450 @@ describe('SQL 片段页：导出按钮与保存通道', () => {
     expect(calls).toBe(0); // 一次无效的「选路径」都不该发生
   });
 });
+
+/* ==================================================================
+   「填充变量并复制」（1.31.x）
+   判据：docs/agents/sql-snippets-page.md §3「变量」+ §7 第 13 条。
+   ================================================================== */
+
+describe('SQL 片段页：填充变量并复制', () => {
+  /** 复制走 navigator.clipboard；jsdom 没有实现，这里接一个只记录调用的桩 */
+  let copied: string[] = [];
+  const clipboardStub = {
+    writeText: (t: string) => { copied.push(String(t)); return Promise.resolve(); },
+  };
+
+  beforeAll(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: clipboardStub, configurable: true });
+  });
+  beforeEach(() => { copied = []; });
+
+  const VAR_FIXTURE: Note[] = [
+    {
+      id: 'v1', title: '查订单', content: 'select *from {{table}} where {{id}}=1',
+      tags: [], kind: 'sql', updatedAt: new Date().toISOString(),
+      varHint: '{{table}} = 表名；{{id}} = 主键',
+    },
+    {
+      id: 'v2', title: '没变量的片段', content: 'select count(*) from t_order',
+      tags: [], kind: 'sql', updatedAt: '2019-01-01T00:00:00.000Z',
+    },
+  ];
+
+  const copyBtnOf = (container: HTMLElement, titlePart: string) => {
+    const row = ROWS(container).find(r => r.textContent!.includes(titlePart)) as HTMLElement;
+    return row.querySelector('.cell-actions button[title*="复制"]') as HTMLElement;
+  };
+  const dialogOf = () => document.querySelector('[role="dialog"]') as HTMLElement;
+
+  it('点复制：弹窗列出 {{table}} / {{id}} 两个输入框，并显示变量说明里的释义', async () => {
+    stubElectronApi(VAR_FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    fireEvent.click(copyBtnOf(container, '查订单'));
+    const dlg = await waitFor(dialogOf);
+
+    expect(dlg.textContent).toContain('检测到 2 个变量');
+    expect(dlg.textContent).toContain('{{table}}');
+    expect(dlg.textContent).toContain('{{id}}');
+    // 变量说明联动：释义显示在输入框附近
+    expect(dlg.textContent).toContain('表名');
+    expect(dlg.textContent).toContain('主键');
+    // 两个输入框（aria-label 精确到变量名，避免与搜索框混淆）
+    expect(dlg.querySelector('input[aria-label="变量 table"]')).toBeTruthy();
+    expect(dlg.querySelector('input[aria-label="变量 id"]')).toBeTruthy();
+  });
+
+  it('填完变量点「替换并复制」：剪贴板拿到完整 SQL，未填的保留原样，弹窗关闭', async () => {
+    stubElectronApi(VAR_FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    fireEvent.click(copyBtnOf(container, '查订单'));
+    const dlg = await waitFor(dialogOf);
+
+    const tableInput = dlg.querySelector('input[aria-label="变量 table"]') as HTMLInputElement;
+    const idInput = dlg.querySelector('input[aria-label="变量 id"]') as HTMLInputElement;
+    fireEvent.change(tableInput, { target: { value: '33' } });
+
+    // 实时预览：只填了一个时，另一个还是 {{变量}}
+    expect(dlg.textContent).toContain('select *from 33 where {{id}}=1');
+
+    fireEvent.change(idInput, { target: { value: '1333' } });
+    // 两个都填好 → 预览就是最终要复制的完整语句
+    expect(dlg.textContent).toContain('select *from 33 where 1333=1');
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /替换并复制/ }));
+    await waitFor(() => expect(copied).toEqual(['select *from 33 where 1333=1']));
+
+    await waitFor(() => expect(container.textContent).toContain('已复制'));
+    await waitFor(() => expect(dialogOf()).toBeNull());
+  });
+
+  it('留空的变量保留原样：只填 table 时，剪贴板里仍是 {{id}}', async () => {
+    stubElectronApi(VAR_FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    fireEvent.click(copyBtnOf(container, '查订单'));
+    const dlg = await waitFor(dialogOf);
+    fireEvent.change(dlg.querySelector('input[aria-label="变量 table"]') as HTMLInputElement, { target: { value: '33' } });
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /替换并复制/ }));
+    await waitFor(() => expect(copied).toEqual(['select *from 33 where {{id}}=1']));
+  });
+
+  it('没有变量的片段：弹窗提示「这段内容里没有 {{变量}}，可以直接复制」，点「复制原文」复制原文', async () => {
+    stubElectronApi(VAR_FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    fireEvent.click(copyBtnOf(container, '没变量的片段'));
+    const dlg = await waitFor(dialogOf);
+
+    expect(dlg.textContent).toContain('这段内容里没有');
+    expect(dlg.querySelectorAll('input[aria-label^="变量 "]').length).toBe(0);
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /复制原文/ }));
+    await waitFor(() => expect(copied).toEqual(['select count(*) from t_order']));
+  });
+
+  it('「复制原文」在有变量时也不做替换（与替换并复制是两条独立的路径）', async () => {
+    stubElectronApi(VAR_FIXTURE);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(2));
+
+    fireEvent.click(copyBtnOf(container, '查订单'));
+    const dlg = await waitFor(dialogOf);
+    fireEvent.change(dlg.querySelector('input[aria-label="变量 table"]') as HTMLInputElement, { target: { value: '33' } });
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /复制原文/ }));
+    await waitFor(() => expect(copied).toEqual(['select *from {{table}} where {{id}}=1']));
+  });
+});
+
+/* ==================================================================
+   第二批（docs/agents/sql-copy-vars-next.md §3.A / §3.B / §3.D）
+   A：变量说明一键生成 / B：常用日期变量一键填 / D：CopyVarsModal 抽取
+   ================================================================== */
+
+describe('SQL 片段页：变量说明一键生成（第二批 A）', () => {
+  const VAR_NOTE: Note = {
+    id: 'g1', title: '查订单', content: 'select * from {{t}} where {{id}}=1',
+    tags: [], kind: 'sql', updatedAt: new Date().toISOString(), varHint: '{{id}} = 主键',
+  };
+
+  const openEdit = async (container: HTMLElement) => {
+    fireEvent.click(ROWS(container)[0]);
+    return await waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
+  };
+  const genBtn = (dialog: HTMLElement) => (
+    within(dialog).getByRole('button', { name: '按正文生成' }) as HTMLButtonElement
+  );
+
+  it('按正文生成：缺的 {{t}} 补成 {{t}} = ，已有 {{id}} = 主键 一个字都不改；再点一次不变', async () => {
+    stubElectronApi([VAR_NOTE]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dialog = await openEdit(container);
+
+    const hint = within(dialog).getByLabelText('变量说明') as HTMLTextAreaElement;
+    expect(hint.value).toBe('{{id}} = 主键');
+
+    fireEvent.click(genBtn(dialog));
+    expect(hint.value).toBe('{{id}} = 主键；{{t}} = ');
+
+    // 幂等：连点两次文本完全不变（不产生重复条目）
+    fireEvent.click(genBtn(dialog));
+    expect(hint.value).toBe('{{id}} = 主键；{{t}} = ');
+  });
+
+  it('正文没有 {{变量}}：按钮 disabled，title 说明「正文里没有 {{变量}}」', async () => {
+    stubElectronApi([{
+      id: 'g2', title: '没变量的片段', content: 'select count(*) from t_order',
+      tags: [], kind: 'sql', updatedAt: new Date().toISOString(),
+    }]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dialog = await openEdit(container);
+
+    const btn = genBtn(dialog);
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute('title')).toContain('正文里没有 {{变量}}');
+
+    // 正文里写上变量后按钮可用（不是一次性判定的死状态）
+    fireEvent.change(within(dialog).getByLabelText('SQL 正文'), { target: { value: 'select * from {{t}}' } });
+    expect(genBtn(dialog).disabled).toBe(false);
+  });
+});
+
+/* ----------------------------------------------------------------
+   第三批 C：「库 / 环境」已有值标签行（页面渲染）
+   ---------------------------------------------------------------- */
+describe('SQL 片段页：库 / 环境已有值标签（第三批 C）', () => {
+  const DB_NOTES: Note[] = [
+    {
+      id: 'e1', title: '片段一', content: 'select 1', tags: [], kind: 'sql',
+      updatedAt: '2026-01-01T00:00:00.000Z', dbOrEnv: 'test_order / 预发',
+    },
+    {
+      id: 'e2', title: '片段二', content: 'select 2', tags: [], kind: 'sql',
+      updatedAt: '2026-01-02T00:00:00.000Z', dbOrEnv: 'test_order / 预发',
+    },
+    {
+      id: 'e3', title: '片段三', content: 'select 3', tags: [], kind: 'sql',
+      updatedAt: '2026-01-03T00:00:00.000Z', dbOrEnv: 'test_order',
+    },
+  ];
+
+  const openEdit = async (container: HTMLElement, title: string) => {
+    const row = ROWS(container).find(r => r.textContent!.includes(title)) as HTMLElement;
+    fireEvent.click(row);
+    return await waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
+  };
+
+  it('编辑弹窗列出已有值（次数降序），点标签把值填进输入框', async () => {
+    stubElectronApi(DB_NOTES);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(3));
+    const dialog = await openEdit(container, '片段一');
+
+    const chips = [...dialog.querySelectorAll('.suggest-row button.chip')].map(b => b.textContent);
+    expect(chips).toEqual(['test_order / 预发', 'test_order']);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'test_order' }));
+    expect((within(dialog).getByLabelText('库或环境') as HTMLInputElement).value).toBe('test_order');
+  });
+
+  it('库里没有历史值时不渲染标签行（不出现空标题 / 空容器）', async () => {
+    stubElectronApi([{
+      id: 'x1', title: '没库名', content: 'select 1', tags: [], kind: 'sql',
+      updatedAt: new Date().toISOString(),
+    }]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dialog = await openEdit(container, '没库名');
+
+    expect(dialog.querySelector('.suggest-row')).toBeNull();
+    expect(dialog.querySelectorAll('button.chip').length).toBe(0);
+  });
+
+  it('仍可自由输入组合值：点标签后再手改，保存按手写的落盘', async () => {
+    stubElectronApi(DB_NOTES);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(3));
+    const dialog = await openEdit(container, '片段三');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'test_order / 预发' }));
+    const input = within(dialog).getByLabelText('库或环境') as HTMLInputElement;
+    expect(input.value).toBe('test_order / 预发');
+
+    fireEvent.change(input, { target: { value: 'test_order / 预发 / 回归' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(saved.length).toBe(1));
+    const edited = saved[0].data.find(n => n.id === 'e3')!;
+    expect(edited.dbOrEnv).toBe('test_order / 预发 / 回归');
+  });
+
+  it('禁用 <datalist>：编辑弹窗里没有任何 datalist 元素', async () => {
+    stubElectronApi(DB_NOTES);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(3));
+    await openEdit(container, '片段一');
+
+    expect(document.querySelector('datalist')).toBeNull();
+  });
+});
+
+describe('SQL 片段页：常用日期变量一键填（第二批 B）', () => {
+  let copied: string[] = [];
+  beforeAll(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (t: string) => { copied.push(String(t)); return Promise.resolve(); } },
+      configurable: true,
+    });
+  });
+  beforeEach(() => { copied = []; });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const DATE_NOTE: Note = {
+    id: 'd1', title: '日期片段',
+    content: "select '{{today}}' as d, '{{now}}' as n, '{{orderNo}}' as o",
+    tags: [], kind: 'sql', updatedAt: new Date().toISOString(),
+  };
+
+  const openCopy = async (container: HTMLElement) => {
+    fireEvent.click(ROWS(container)[0].querySelector('.cell-actions button[title*="复制"]') as HTMLElement);
+    return await waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
+  };
+
+  it('只有识别出的日期变量给「填今天」/「填现在」，未知变量不给按钮', async () => {
+    stubElectronApi([DATE_NOTE]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dlg = await openCopy(container);
+
+    expect(dlg.querySelectorAll('[data-fill-var]').length).toBe(2);
+    expect(dlg.querySelector('[data-fill-var="today"]')?.textContent).toBe('填今天');
+    expect(dlg.querySelector('[data-fill-var="now"]')?.textContent).toBe('填现在');
+    expect(dlg.querySelector('[data-fill-var="orderNo"]')).toBeNull();
+  });
+
+  it('点「填今天」/「填现在」：输入框与预览同步更新（固定 2026-03-01 09:05:06）', async () => {
+    stubElectronApi([DATE_NOTE]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dlg = await openCopy(container);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 1, 9, 5, 6));
+    fireEvent.click(dlg.querySelector('[data-fill-var="today"]') as HTMLElement);
+    fireEvent.click(dlg.querySelector('[data-fill-var="now"]') as HTMLElement);
+    vi.useRealTimers();
+
+    const todayInput = dlg.querySelector('input[aria-label="变量 today"]') as HTMLInputElement;
+    const nowInput = dlg.querySelector('input[aria-label="变量 now"]') as HTMLInputElement;
+    expect(todayInput.value).toBe('2026-03-01');
+    expect(nowInput.value).toBe('2026-03-01 09:05:06');
+    // 预览与输入框同源：预览什么就复制什么
+    expect(dlg.querySelector('.sql-var-preview')?.textContent)
+      .toBe("select '2026-03-01' as d, '2026-03-01 09:05:06' as n, '{{orderNo}}' as o");
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /替换并复制/ }));
+    await waitFor(() => expect(copied).toEqual(["select '2026-03-01' as d, '2026-03-01 09:05:06' as n, '{{orderNo}}' as o"]));
+  });
+
+  it('关窗重开：变量值被清空（与抽取前行为一致）', async () => {
+    stubElectronApi([DATE_NOTE]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+
+    const dlg = await openCopy(container);
+    fireEvent.change(dlg.querySelector('input[aria-label="变量 today"]') as HTMLInputElement, { target: { value: '2026-03-01' } });
+    fireEvent.click(within(dlg).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+
+    const again = await openCopy(container);
+    expect((again.querySelector('input[aria-label="变量 today"]') as HTMLInputElement).value).toBe('');
+  });
+
+  it('日期输入框仍是 .form-group 的直接子元素（背景图玻璃选择器依赖它，E 片扫描的前提）', async () => {
+    stubElectronApi([DATE_NOTE]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    const dlg = await openCopy(container);
+
+    const input = dlg.querySelector('input[aria-label="变量 today"]') as HTMLInputElement;
+    // 一旦有人把 input 包进一层 div，`html[data-bg='image'] .modal .form-group > input` 就匹配不上，
+    // 背景图模式下这个输入框会回到不透明实底 —— E 片的弹窗扫描会红。这里用 DOM 结构把它钉住。
+    expect(input.parentElement?.classList.contains('form-group')).toBe(true);
+    expect(input.parentElement?.parentElement?.classList.contains('modal-body')).toBe(true);
+    // 填值按钮是 input 的兄弟节点（不是包一层 flex 容器）
+    expect(dlg.querySelector('[data-fill-var="today"]')?.parentElement).toBe(input.parentElement);
+  });
+});
+
+/* ==================================================================
+   第三批：选中一段文字 → 「转化为变量」
+   判据（用户给的流程）：选中 → 点按钮 → 弹窗填名称/说明 → 确定后
+   ① SQL 里那段变成 {{名字}}；② 变量说明里出现 `{{名字}} = 说明`。
+   ================================================================== */
+
+describe('SQL 片段页：选中文字转化为变量', () => {
+  const openNew = async (container: HTMLElement) => {
+    fireEvent.click(within(container.querySelector('.pg-tools') as HTMLElement).getByRole('button', { name: /新增片段/ }));
+    return await waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
+  };
+  const sqlArea = (root: ParentNode) => root.querySelector('textarea[aria-label="SQL 正文"]') as HTMLTextAreaElement;
+  const hintArea = (root: ParentNode) => root.querySelector('textarea[aria-label="变量说明"]') as HTMLTextAreaElement;
+  const draftDialog = () => {
+    const all = document.querySelectorAll('[role="dialog"]');
+    return all.length >= 2 ? all[all.length - 1] as HTMLElement : null;
+  };
+  /** 等第二个弹窗（转化弹窗）出现并返回它；TS 需要显式收窄，所以不用 waitFor 的返回值 */
+  const waitDraft = async (): Promise<HTMLElement> => {
+    let el: HTMLElement | null = null;
+    await waitFor(() => {
+      el = draftDialog();
+      expect(el).not.toBeNull();
+    });
+    return el as unknown as HTMLElement;
+  };
+
+  it('没选中就点：只给提示，不打开转化弹窗', async () => {
+    stubElectronApi([]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(container.textContent).toContain('还没有 SQL 片段'));
+    const dlg = await openNew(container);
+    fireEvent.change(sqlArea(dlg), { target: { value: 'select 1' } });
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /转化为变量/ }));
+
+    expect(container.textContent).toContain('选中');
+    expect(document.querySelectorAll('[role="dialog"]').length).toBe(1);
+  });
+
+  it('选中 id → 填说明「主键」→ SQL 换成 {{id}}、变量说明追加 {{id}} = 主键', async () => {
+    stubElectronApi([]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(container.textContent).toContain('还没有 SQL 片段'));
+    const dlg = await openNew(container);
+    const sql = 'select * from t_order where id = 1';
+    fireEvent.change(sqlArea(dlg), { target: { value: sql } });
+    const s = sql.indexOf('id = 1');
+    sqlArea(dlg).setSelectionRange(s, s + 2);
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /转化为变量/ }));
+    const draft = await waitDraft();
+    expect((draft.querySelector('input[aria-label="变量名"]') as HTMLInputElement).value).toBe('id');
+
+    fireEvent.change(draft.querySelector('input[aria-label="变量说明（新）"]') as HTMLElement, { target: { value: '主键' } });
+    fireEvent.click(within(draft).getByRole('button', { name: /^确定$/ }));
+
+    await waitFor(() => expect(sqlArea(dlg).value).toBe('select * from t_order where {{id}} = 1'));
+    expect(hintArea(dlg).value).toContain('{{id}} = 主键');
+    // 转化弹窗关掉了，只剩编辑弹窗
+    await waitFor(() => expect(document.querySelectorAll('[role="dialog"]').length).toBe(1));
+  });
+
+  it('选中中文：变量名留空、确定不可用（不瞎猜名字）', async () => {
+    stubElectronApi([]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(container.textContent).toContain('还没有 SQL 片段'));
+    const dlg = await openNew(container);
+    const sql = 'select * from t where 中文 = 1';
+    fireEvent.change(sqlArea(dlg), { target: { value: sql } });
+    const s = sql.indexOf('中文');
+    sqlArea(dlg).setSelectionRange(s, s + 2);
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /转化为变量/ }));
+    const draft = await waitDraft();
+    const nameInput = draft.querySelector('input[aria-label="变量名"]') as HTMLInputElement;
+    expect(nameInput.value).toBe('');
+    expect((within(draft).getByRole('button', { name: /^确定$/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('该变量已有释义：说明框预填原释义，确定后改的是释义而不是重复追加', async () => {
+    stubElectronApi([{
+      id: 'v1', title: '查订单', content: 'select * from t_order where id = 1',
+      tags: [], kind: 'sql', updatedAt: new Date().toISOString(), varHint: '{{id}} = 主键',
+    }]);
+    const { container } = render(<SqlSnippets />);
+    await waitFor(() => expect(ROWS(container).length).toBe(1));
+    fireEvent.click(ROWS(container)[0]);
+    const dlg = await waitFor(() => document.querySelector('[role="dialog"]') as HTMLElement);
+    const sql = 'select * from t_order where id = 1';
+    const s = sql.indexOf('id = 1');
+    sqlArea(dlg).setSelectionRange(s, s + 2);
+
+    fireEvent.click(within(dlg).getByRole('button', { name: /转化为变量/ }));
+    const draft = await waitDraft();
+    expect((draft.querySelector('input[aria-label="变量说明（新）"]') as HTMLInputElement).value).toBe('主键');
+
+    fireEvent.change(draft.querySelector('input[aria-label="变量说明（新）"]') as HTMLElement, { target: { value: '订单主键' } });
+    fireEvent.click(within(draft).getByRole('button', { name: /^确定$/ }));
+    await waitFor(() => expect(hintArea(dlg).value).toBe('{{id}} = 订单主键'));
+  });
+});
+

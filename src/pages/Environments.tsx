@@ -5,6 +5,8 @@ import { useStore } from '../store/useStore';
 import { useEnvProbeStore, formatAt } from '../store/envProbeStore';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { newId } from '../utils/id';
 import { copyPlain } from '../utils/clipboard';
 import { callIpc } from '../utils/ipc';
@@ -98,7 +100,8 @@ export function Environments() {
    */
   const [timeoutMs, setTimeoutMs] = useState(() => normalizeTimeout(settings.envProbeTimeoutMs));
   const [editing, setEditing] = useState<EnvEntry | null>(null);
-  const [hint, setHint] = useState('');
+  /** 页面级提示改用全局 toast（右上浮层、3 秒自动消失） */
+  const { toasts, addToast, removeToast } = useToast();
   const { ask, confirmNode } = useConfirm();
 
   /** 设置里的值变了（例如设置页改过）就同步过来，避免两处显示不一致 */
@@ -124,19 +127,10 @@ export function Environments() {
   // 首次还会把 localStorage 里的旧历史搬进库。store 内部有 historyLoaded 去重。
   useEffect(() => { void loadProbeHistory(); }, [loadProbeHistory]);
 
-  /**
-   * 页面内的一次性提示。
-   *
-   * 必须自己持有一个 timer 并在下次提示时清掉旧的：否则「复制」的 2.6s 定时器会把
-   * 紧接着「打开」产生的新提示提前清空，表现为「点了打开，什么提示都没有」。
-   */
-  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flash = (text: string) => {
-    setHint(text);
-    if (hintTimer.current) clearTimeout(hintTimer.current);
-    hintTimer.current = setTimeout(() => { setHint(''); }, 2600);
-  };
-  useEffect(() => () => { if (hintTimer.current) clearTimeout(hintTimer.current); }, []);
+  /** 成功绿 / 失败红 / 提示蓝；计时与去重交给 useToast，页面不再自己持 timer */
+  const flash = (text: string, type: 'success' | 'error' | 'info' = 'success') => addToast(text, type);
+  /** 巡检失败原因：以前是页面上一行红字，现在弹一次红 toast（巡检报告区仍保留状态） */
+  useEffect(() => { if (lastError) addToast(lastError, 'error'); }, [lastError, addToast]);
 
   /**
    * 改巡检超时：先更新界面，再落盘。
@@ -152,7 +146,7 @@ export function Environments() {
     if (!r.ok) {
       setTimeoutMs(prev);
       updateSettings({ envProbeTimeoutMs: prev });
-      flash(`超时设置保存失败：${r.error}`);
+      flash(`超时设置保存失败：${r.error}`, 'error');
     }
   };
 
@@ -203,9 +197,9 @@ export function Environments() {
     const targets = filtered
       .filter(i => String(i.url || '').trim())
       .map(i => ({ id: i.id, url: i.url }));
-    if (!targets.length) { flash('当前列表里没有可巡检的地址'); return; }
+    if (!targets.length) { flash('当前列表里没有可巡检的地址', 'info'); return; }
     const ok = await runProbeAction(targets, timeoutMs, sig);
-    if (!ok) flash(useEnvProbeStore.getState().lastError || '巡检失败');
+    if (!ok) flash(useEnvProbeStore.getState().lastError || '巡检失败', 'error');
     else if (search.trim()) flash('已按当前筛选结果巡检');
   };
 
@@ -214,7 +208,7 @@ export function Environments() {
     const url = editing.url.trim();
     if (!editing.system.trim() || !url) return;
     const dup = items.some(i => i.id !== editing.id && i.url.trim().toLowerCase() === url.toLowerCase());
-    if (dup) { flash('这个地址已经存在了'); return; }
+    if (dup) { flash('这个地址已经存在了', 'info'); return; }
     const entry: EnvEntry = {
       ...editing,
       system: editing.system.trim(),
@@ -241,16 +235,16 @@ export function Environments() {
    */
   const openUrl = async (url: string) => {
     const target = String(url || '').trim();
-    if (!target) { flash('这条没有填地址'); return; }
+    if (!target) { flash('这条没有填地址', 'info'); return; }
     const r = await window.electronAPI.envOpen({ url: target });
     if (r.success) { flash(`已交给系统浏览器打开：${shortenAddress(target)}`); return; }
     await copyPlain(target);
-    flash(`没能打开浏览器（${r.error || '系统未响应'}），地址已复制：${shortenAddress(target)}`);
+    flash(`没能打开浏览器（${r.error || '系统未响应'}），地址已复制：${shortenAddress(target)}`, 'error');
   };
 
   const copyUrl = async (url: string) => {
     const target = String(url || '').trim();
-    if (!target) { flash('这条没有填地址'); return; }
+    if (!target) { flash('这条没有填地址', 'info'); return; }
     await copyPlain(target);
     flash(`网址已复制：${shortenAddress(target)}`);
   };
@@ -284,7 +278,7 @@ export function Environments() {
   }, [items, pwEntries]);
 
   const importFromVault = async () => {
-    if (!importable.length) { flash('网址管理里没有新的地址可导入'); return; }
+    if (!importable.length) { flash('网址管理里没有新的地址可导入', 'info'); return; }
     await save([...items, ...importable]);
     flash(`已从网址管理导入 ${importable.length} 个地址`);
   };
@@ -369,8 +363,6 @@ export function Environments() {
           }
         />
 
-        {hint && <div className="inline-hint">{hint}</div>}
-        {lastError && !running && !summary && <div className="inline-hint is-error">{lastError}</div>}
 
         {/* ---- 环境类型快筛：一条地址一个环境，先按类型收敛再巡检，比搜索框快 ---- */}
         {items.length > 0 && (
@@ -710,6 +702,8 @@ export function Environments() {
           </>
         )}
       </Modal>
+
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
 
       {confirmNode}
     </div>

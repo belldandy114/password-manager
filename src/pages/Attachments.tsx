@@ -6,6 +6,8 @@ import { useConfirm } from '../components/confirm';
 import { Page, PageHead, Panel, Empty, IconBtn, SearchBox, Icons, Pill } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { Pager } from '../components/Pager';
+import { ToastContainer } from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import { AttImage } from '../components/MarkdownView';
 import { ImageLightbox } from '../components/ImageLightbox';
 import { extractAttIds } from '../utils/attachRefs';
@@ -40,7 +42,8 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [onlyOrphan, setOnlyOrphan] = useState(false);
-  const [hint, setHint] = useState('');
+  /** 页面级提示改用全局 toast（右上浮层、3 秒自动消失），不再在列表上方插一行字 */
+  const { toasts, addToast, removeToast } = useToast();
   /** 点缩略图进灯箱：与测试笔记一致，滚轮缩放 / 拖动 / Esc 关闭 */
   const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   /** 非图片附件（证书/密钥）：缩略图读不出来的原因，按 id 记 */
@@ -54,10 +57,8 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
   const [exporting, setExporting] = useState(false);
   const { ask, confirmNode } = useConfirm();
 
-  const flash = (msg: string) => {
-    setHint(msg);
-    window.setTimeout(() => setHint(''), 1800);
-  };
+  /** 成功绿 / 失败红 / 提示蓝 */
+  const flash = (msg: string, type: 'success' | 'error' | 'info' = 'success') => addToast(msg, type);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -207,7 +208,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
   const exportOne = async (f: AttachmentFileMeta & { name?: string }) => {
     const r = await window.electronAPI.attachmentExport({ id: f.id, name: f.name });
     if (r.canceled) return;
-    if (!r.success) { flash(r.error || '导出失败'); return; }
+    if (!r.success) { flash(r.error || '导出失败', 'error'); return; }
     flash('已导出');
   };
 
@@ -225,7 +226,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
     try {
       const r = await window.electronAPI.attachmentExportMany({ ids });
       if (r.canceled) return;   // 用户取消选目录：不算失败，不弹错误
-      if (!r.success || !r.data) { flash(r.error || '批量导出失败'); return; }
+      if (!r.success || !r.data) { flash(r.error || '批量导出失败', 'error'); return; }
       const { dir, exported, skipped, failed } = r.data;
       const extra: string[] = [];
       if (skipped > 0) extra.push(`跳过 ${skipped} 个重名`);
@@ -233,7 +234,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
       flash(`已导出 ${exported} 个到 ${dir}${extra.length ? `（${extra.join('，')}）` : ''}`);
       if (exported > 0) setSelectedIds(new Set());
     } catch (e) {
-      flash(e instanceof Error ? e.message : '批量导出失败');
+      flash(e instanceof Error ? e.message : '批量导出失败', 'error');
     } finally {
       setExporting(false);
     }
@@ -265,7 +266,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
         void previewText(f);
         return;
       }
-      flash('图片无法读取');
+      flash('图片无法读取', 'error');
       return;
     }
     setZoom({ src: r.data.dataUrl, alt: f.name || `附件 ${f.id.slice(0, 8)}` });
@@ -274,17 +275,17 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
   /** 在资源管理器里定位这个附件（或直接打开附件目录） */
   const reveal = async (id?: string) => {
     const r = await window.electronAPI.attachmentReveal(id ? { id } : undefined);
-    if (!r.success) flash(r.error || '打开目录失败');
+    if (!r.success) flash(r.error || '打开目录失败', 'error');
   };
 
   /** 打开笔记附件目录（`<笔记目录>/attachments`）：先确保它存在，再交给主进程定位 */
   const revealNoteDir = async () => {
     const r = await window.electronAPI.attachmentEnsureNoteDir();
-    if (!r.success || !r.data?.dir) { flash(r.error || '笔记附件目录不可用'); return; }
+    if (!r.success || !r.data?.dir) { flash(r.error || '笔记附件目录不可用', 'error'); return; }
     // 目录里可能还没有附件：attachmentReveal 不带 id 时打开的是全局目录，
     // 所以这里用「打开目录」的通用能力（notesReveal 只认笔记目录，正好）
     const nr = await window.electronAPI.notesReveal(r.data.dir);
-    if (!nr.success) flash(nr.error || '打开目录失败');
+    if (!nr.success) flash(nr.error || '打开目录失败', 'error');
   };
 
   const copyDir = async () => {
@@ -298,7 +299,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
     const p = await window.electronAPI.attachmentPickDir();
     if (!p.success || !p.data?.dir) return;
     const r = await window.electronAPI.attachmentSetDir({ dir: p.data.dir });
-    if (!r.success || !r.data) { flash(r.error || '切换附件目录失败'); return; }
+    if (!r.success || !r.data) { flash(r.error || '切换附件目录失败', 'error'); return; }
     flash(r.data.copied
       ? `已切换附件目录，复制 ${r.data.copied} 个附件`
       : '已切换附件目录（目标目录已有全部附件）');
@@ -311,7 +312,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
    */
   const previewText = async (f: AttachmentFileMeta & { name?: string }) => {
     const r = await window.electronAPI.attachmentTextPreview({ id: f.id });
-    if (!r.success || !r.data) { flash(r.error || '无法预览，请导出后查看'); return; }
+    if (!r.success || !r.data) { flash(r.error || '无法预览，请导出后查看', 'error'); return; }
     setTextPreview({
       title: f.name || `附件 ${f.id.slice(0, 8)}`,
       text: r.data.text,
@@ -330,7 +331,7 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
       confirmText: '删除',
       onOk: async () => {
         const r = await window.electronAPI.attachmentDelete({ id: f.id });
-        if (!r.success) { flash(r.error || '删除失败'); return; }
+        if (!r.success) { flash(r.error || '删除失败', 'error'); return; }
         setFiles(prev => prev.filter(x => x.id !== f.id));
         flash('已删除');
       },
@@ -411,7 +412,6 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
           </div>
         )}
 
-        {hint && <div className="inline-hint">{hint}</div>}
 
         {/* 1.25.1：附件现在有两个来源（笔记目录 / 全局目录），给一个来源筛选 */}
         {files.length > 0 && (
@@ -553,6 +553,8 @@ export function AttachmentsBody({ afterHead }: { afterHead?: React.ReactNode } =
           </>
         )}
       </Modal>
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+
       {confirmNode}
     </>
   );
