@@ -21,6 +21,13 @@ import type { ScanRunData, ScanFinding, ScanPack, ScanRunRecord } from './scanMo
    页签①：代码体检
    ================================================================ */
 
+/**
+ * 同一规则在**同一个文件**里最多记几条命中（后端 `electron/scan-rules.js` 的 `MAX_HITS_PER_RULE`）。
+ * 超出部分被折叠，数量由 `scan:run` 的 `suppressed` 如实返回（t63 之前的静默折叠是个 bug）。
+ * 这里只能写字面量：渲染层不 import 主进程常量，改后端时必须同步这一处（两个数字写在文案里，用户能看见）。
+ */
+const MAX_HITS_PER_RULE = 3;
+
 
 export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'success' | 'error') => void }) {
   const { items: runs, save: saveRuns } = useCollection<ScanRunRecord>('scanRuns');
@@ -145,6 +152,12 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
   });
   /** 是否已到后端上限（到了就只能说「已展示 N 条」） */
   const hitCap = findings.length >= FINDINGS_CAP;
+  /**
+   * 被「同一文件同一规则最多 MAX_HITS_PER_RULE 条」折叠掉的命中数。
+   * 与 hitCap 是**两件事**：hitCap 是"扫到 300 条就停，总数不知道"；这里是"知道确切数字，只是没展示"。
+   * 旧主进程不返回该字段 → 取 0 → 不显示（不制造「0 条未展示」的噪音）。
+   */
+  const suppressed = Math.max(0, Math.floor(Number(data?.suppressed ?? 0) || 0));
 
   return (
     <div>
@@ -264,6 +277,17 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
                 <div className="text-sm">
                   已展示 {findings.length} 条（达到上限，实际可能更多）——扫描到 {FINDINGS_CAP} 条就停了，
                   总数后端也不知道，所以这里不给「命中 N 条」。下面的分布只统计已展示的这部分。
+                </div>
+              </div>
+            )}
+
+            {/* 折叠与截断是两回事：这里**数量是确切的**，所以给具体数字，不说「实际可能更多」 */}
+            {suppressed > 0 && (
+              <div className="dev-banner is-info" style={{ marginBottom: 8 }} role="status">
+                <Icons.list size={14} />
+                <div className="text-sm">
+                  另有 {suppressed} 条命中未展示（同一文件同一规则最多 {MAX_HITS_PER_RULE} 条）——
+                  这些是同一文件里超出上限被折叠的，不是没扫到。
                 </div>
               </div>
             )}
