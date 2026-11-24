@@ -8,6 +8,7 @@
 //      （1.31 起目录模式直接读写 `.sql.md`，细节见 utils/__tests__/sqlFrontmatter.test.ts）
 //
 // 断言的判据来自 docs/agents/sql-snippets-page.md §7（12 条验收）。
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
@@ -1246,5 +1247,15 @@ describe('C 片挂点对齐：卡片勾选框的 DOM 与 .entry-card-check 选�
     // 类名一旦漂移（比如改成 entry-check），redesign.css 里的 24×24 与
     // focus-visible 规则就会全部落空 —— 这条断言就是那个守卫
     expect(container.querySelectorAll('.entry-card-check input[type="checkbox"]')).toHaveLength(1);
+  });
+});
+
+describe('SQL 片段表格：更新时间列放得下完整时间', () => {
+  it('列宽守卫：redesign.css 末尾把第 3 列（更新时间）撑到 132px', () => {
+    const css = readFileSync('src/styles/redesign.css', 'utf8');
+    // 表头列序是 名称 / 库·环境 / 更新时间 / 操作，用户截图里被截成「11-23 14:」
+    const i = css.lastIndexOf('.sql-table th:nth-child(3)');
+    expect(i).toBeGreaterThan(-1);
+    expect(css.slice(i, css.indexOf('}', i))).toContain('width: 132px');
   });
 });

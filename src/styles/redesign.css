@@ -8178,8 +8178,9 @@ html[data-bg='image'] .entry-table tbody tr:hover:not(.selected) {
 }
 .sql-table th:nth-child(2),
 .sql-table td:nth-child(2) { width: 168px; }
+/* 第 3 列 = 更新时间：96px 放不下「11-23 14:35」（1.32.2 用户截图被截成「11-23 14:」） */
 .sql-table th:nth-child(3),
-.sql-table td:nth-child(3) { width: 96px; }
+.sql-table td:nth-child(3) { width: 132px; }
 .sql-table th:nth-child(4),
 .sql-table td:nth-child(4) { width: 152px; }
 /* 名称列不写宽度：table-layout: fixed 下它自动吃掉剩余空间。
@@ -8679,19 +8680,7 @@ html[data-bg='image'] .role-acc-row {
    浮层档位与既有下拉一致：普通模式卡面实底，背景图模式走 --glass-overlay。 */
 .entry-picker { position: relative; }
 .entry-picker input { width: 100%; }
-.entry-picker-chosen {
-  position: absolute;
-  left: 10px;
-  right: 28px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-}
+
 .entry-picker-list {
   position: absolute;
   z-index: var(--z-toolbar-menu);
@@ -8725,3 +8714,8 @@ html[data-bg='image'] .entry-picker-list {
 .entry-picker-item.is-active { background: var(--bg-hover); color: var(--text-1); }
 .entry-picker-item.is-selected { color: var(--accent-text, var(--accent)); }
 .entry-picker-empty { padding: 8px; font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* 1.32.2（体验修）：成员账号「所属网址」可搜索下拉——去掉叠在输入框上的 .entry-picker-chosen
+   （它会和占位符两份文字重叠），关闭态直接用 input.value 显示已选名称。
+   SQL 更新时间列的宽度直接在 1.32.4 段的 .sql-table 规则里改，不再追加同选择器覆盖
+   （否则前面那条会被 check-css-dup 判成死声明）。 */

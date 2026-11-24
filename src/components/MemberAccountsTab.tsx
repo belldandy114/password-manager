@@ -436,8 +436,10 @@ function EntryPicker({ options, value, onChange }: {
         aria-controls="entry-picker-list"
         aria-autocomplete="list"
         autoComplete="off"
-        placeholder={selected ? selected.name : '输入关键字搜索网址'}
-        value={open ? q : ''}
+        placeholder="输入关键字搜索网址"
+        /* 关掉时直接把已选名称放进 value：之前用绝对定位的 overlay 叠在输入框上，
+           占位符 + overlay 两份文字会重叠（1.32.2 用户反馈） */
+        value={open ? q : (selected ? selected.name : '')}
         onFocus={() => { setOpen(true); setQ(''); setActive(0); }}
         onChange={e => { setQ(e.target.value); setOpen(true); setActive(0); }}
         onKeyDown={e => {
@@ -448,9 +450,7 @@ function EntryPicker({ options, value, onChange }: {
           } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); setQ(''); }
         }}
       />
-      {selected && !open && (
-        <span className="entry-picker-chosen" title={selected.name}>{selected.name}</span>
-      )}
+
       {open && (
         <ul className="entry-picker-list" id="entry-picker-list" role="listbox" aria-label="网址候选">
           {list.length === 0

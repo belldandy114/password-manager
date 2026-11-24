@@ -588,8 +588,9 @@ describe('成员账号：所属网址可搜索下拉', () => {
     const picked = first.textContent || '';
     fireEvent.mouseDown(first);
 
-    const chosen = dlg.querySelector('.entry-picker-chosen') as HTMLElement;
-    expect(chosen.textContent).toBe(picked);
+    // 关闭态直接在 input.value 显示已选名称（不再用叠在框上的 overlay，避免两份文字重叠）
+    expect((combo as HTMLInputElement).value).toBe(picked);
+    expect(dlg.querySelector('.entry-picker-chosen')).toBeNull();
     const save = within(dlg).getByRole('button', { name: /^保存$/ }) as HTMLButtonElement;
     expect(save.disabled).toBe(false);
   });

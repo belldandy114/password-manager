@@ -790,7 +790,7 @@ export function SqlSnippetsBody({ onNavigate }: { onNavigate?: (page: string) =>
                       <td title={n.dbOrEnv || undefined}>
                         {n.dbOrEnv ? <span>{n.dbOrEnv}</span> : <span className="text-muted">—</span>}
                       </td>
-                      <td className="text-sm text-muted">{formatRecent(n.updatedAt)}</td>
+                      <td className="text-sm text-muted" title={formatRecent(n.updatedAt)}>{formatRecent(n.updatedAt)}</td>
                       <td className="cell-actions" onClick={e => e.stopPropagation()}>
                         <IconBtn title="复制 SQL（可填 {{变量}}）" onClick={() => openCopy(n)}>
                           <Icons.copy size={13} />
