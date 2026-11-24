@@ -1011,8 +1011,30 @@ export interface ScanFinding {
   path?: string;
 }
 
-/** `scan:run` 的截断原因（属 `[C-09]` 的 10 值枚举） */
-export type ScanTruncatedReason = 'files' | 'file-size' | 'depth' | 'max-files' | 'findings' | 'timeout';
+/**
+ * `scan:run` 的截断原因**单一真源**（属 `[C-09]` 的 11 值枚举，scan 侧只用这 6 个）。
+ *
+ * **scan 侧不含 `'files'`**（`[C-09] v17` 裁定）：`'files'` 只归 `allure:parse` 的 5000，
+ * scan 的文件数触顶一律用 `'max-files'`。以前这里多写了一个 `'files'`，与
+ * `electron/scan-collect.d.ts` 的 6 值声明不一致（第 1 轮评审 R-03）。
+ *
+ * 顺序就是**优先级**（多类同时触顶只报一个）：`timeout > max-files > depth > file-size > suppressed > findings`。
+ * 运行时数组与 `electron/scan-collect.js` 的 `TRUNCATED_REASONS` 由
+ * `src/utils/__tests__/scanConstants.test.ts` 做相等断言（改一侧不改另一侧会红）。
+ *
+ * v16 起语义：`'findings'` 只表示**明细**到顶（总数仍由 `totalFindings` 给出，不再「不可知」）；
+ * `'suppressed'` 表示同文件同规则的命中被折叠（**不等于**明细被砍，界面不许再说「命中数可能偏少」）。
+ */
+export const SCAN_TRUNCATED_REASONS = [
+  'timeout',
+  'max-files',
+  'depth',
+  'file-size',
+  'suppressed',
+  'findings',
+] as const;
+
+export type ScanTruncatedReason = typeof SCAN_TRUNCATED_REASONS[number];
 
 /** `scan:run` 的 data（11 个字段 + 可选 truncatedReason） */
 export interface ScanRunResult {
@@ -1025,6 +1047,17 @@ export interface ScanRunResult {
   bytes: number;
   /** 因是符号链接而跳过、未参与统计的条目数（`[C-54]` 必填） */
   skippedSymlinks: number;
+  /**
+   * 被**守卫**挡掉、未参与统计的条目数（第 1 轮评审 S-03；`[C-54]` v17 必填）。
+   *
+   * 两类守卫：① `SKIP_DIRS` 目录跳过（含 `coverage`）；② `.min.` / `.bundle.` /
+   * `app.asar.unpacked` 产物路径 negative。**目录按 1 个条目计**、不递归统计其内部文件数
+   * （递归数 `node_modules` 会吃光 60 s 预算，且那个数对用户没有意义）。
+   *
+   * 为什么必须有：v16 的两个守卫是**静默**生效的——用户读到「0 命中」会误判仓库干净，
+   * 而 `sec-*` 若正好落在被挡掉的产物里就永远不会报（C-09「禁止静默截断」同理）。
+   */
+  skippedByGuard: number;
   truncated: boolean;
   truncatedReason?: ScanTruncatedReason;
   counts: { high: number; medium: number; low: number };
@@ -1035,9 +1068,21 @@ export interface ScanRunResult {
    * **运行时每个包都会给**（`audit` / `coverage` 都走同一个返回对象，无折叠时为 0，
    * 见 `electron/ipc-scan.js` 的 `data.suppressed`），所以用「可选 + `?? 0`」而不是必填：
    * 渲染层若连到旧版主进程（不带这个字段）也不会因为类型报错而炸。
-   * 与 `suppressed > 0` 配套看的是 `truncated` / `truncatedReason: 'findings'`。
+   *
+   * v16/v17 口径（**旧说明已作废**）：折叠**只置** `truncatedReason: 'suppressed'`，它**不是**
+   * 「明细被砍」——`'findings'` 专指明细到顶（总数已知）。两者是两件事，界面要分别说：
+   * 折叠说「另有 N 条同类命中已折叠」，明细到顶说「命中 N 条，明细展示前 2000 条」。
+   * （旧注释曾写「与 suppressed > 0 配套看 truncatedReason: 'findings'」，与实现相反，第 1 轮评审 C5。）
    */
   suppressed?: number;
+  /**
+   * 当次**全仓命中总数**（契约 C-30 v16）。
+   *
+   * 不变量：`counts.high + counts.medium + counts.low === totalFindings`，
+   * 且 `findings.length <= totalFindings`（未到明细上限 2000 时两者相等）。
+   * 明细到顶后后端**继续扫描、只计数**，所以这是真数，不是估计。
+   */
+  totalFindings: number;
   findings: ScanFinding[];
   ms: number;
 }

@@ -411,3 +411,270 @@ describe('S-06：scan:reveal 的 root + rel 拼接与越界拒绝', () => {
     }
   });
 });
+
+/**
+ * W8 新增 7 条规则（契约 v16 / `docs/acceptance/W8-扫描规则口径.md` §3.2）。
+ *
+ * 这批规则的共同点：**几乎全是「只在测试代码里才算缺陷」的反模式**。应用代码里
+ * `try { fs.closeSync(fd) } catch {}`、`Math.random()` 生成 id、`System.out` 打印日志都是合法的，
+ * 拿它们当缺陷报＝把整类规则送进垃圾桶。所以测试作用域（TESTISH + TEST_PATH）是这批规则的**前置条件**，
+ * 下面每组都有「应用代码不命中」的反例——那不是顺手写的，是最重要的那条判据。
+ *
+ * 实测（本仓库 704 文件）：不加作用域时 assert-swallow-catch 139 个文件、ui-print-instead-of-log 115、
+ * assert-random-no-seed 23；加作用域后 1 / 2 / 0。
+ */
+describe('W8 新增规则：测试作用域与规则表形态', () => {
+  /** 路径 + 内容都像测试代码（`src/test/java/.../XxxTest.java`） */
+  const TEST_JAVA = 'src/test/java/LoginTest.java';
+  /** 应用代码（路径不像测试、内容里也没有测试标记） */
+  const APP_JS = 'src/app.js';
+
+  const W8_RULES = [
+    'ui-driver-no-quit',
+    'ui-no-timeout',
+    'assert-swallow-catch',
+    'assert-random-no-seed',
+    'assert-json-string-compare',
+    'ui-url-concat-param',
+    'assert-skip-leftover',
+  ];
+
+  it('7 条新规则齐备，id 前缀只用 ui-/assert-，分类仍是三类，且不含已暂缓的 ui-print-instead-of-log', () => {
+    const audit = rulesOf('audit');
+    const idSet = new Set(audit.map((r: { id: string }) => r.id));
+    for (const id of W8_RULES) expect(idSet.has(id)).toBe(true);
+    // 暂缓的那条**不许**进表（实测加作用域后仍 2/2 误报，见口径 §3.3）
+    expect(idSet.has('ui-print-instead-of-log')).toBe(false);
+    // 新 id 的文档守卫靠前缀（CODE_ONLY_RULE_RE = /^(?:ui|assert|cov)-/），前缀写错就漏守卫
+    for (const r of audit) expect(r.id).toMatch(/^(?:ui|assert|sec)-/);
+    // 不许引入第四类 category（会让 scanRules.test.ts 的分类断言与契约 C-52 同时漂移）
+    expect([...new Set(audit.map((r: { category: string }) => r.category))].sort()).toEqual(['assert', 'secret', 'ui']);
+  });
+
+  it('测试作用域一次判定、被全部新规则共享：同一段代码在测试文件命中、在应用文件一条都不命中', () => {
+    // 这段同时命中 5 条（3 条 file 级 + 2 条行级）：空 catch、new Random()、JSON 字符串比较、URL 拼接、enabled=false
+    const mixed = `public class AllTest {
+  @Test public void t() {
+    try { api.pay(o); } catch (Exception e) { }
+    int n = new Random().nextInt(9);
+    assertEquals("{\\"code\\":0}", body);
+    String url = BASE + "/api/search?q=" + kw;
+  }
+  @Test(enabled = false) public void old() { }
+}`;
+    const inTest = ids(mixed, TEST_JAVA);
+    for (const id of ['assert-swallow-catch', 'assert-random-no-seed', 'assert-json-string-compare', 'ui-url-concat-param', 'assert-skip-leftover']) {
+      expect(inTest).toContain(id);
+    }
+    // 同样的内容放到「不像测试代码」的路径 + 无测试标记 → 一条都不该命中
+    const inApp = ids(mixed, APP_JS);
+    for (const id of W8_RULES) expect(inApp).not.toContain(id);
+  });
+});
+
+describe('ui-driver-no-quit（建了驱动没 quit）', () => {
+  const base = `public class LoginTest {
+  WebDriver driver = new ChromeDriver();
+  @Test public void login() { driver.get("http://example.com/login"); }
+}`;
+
+  it('ui-driver-no-quit：整文件没 quit 命中，且是整文件级（line=0）', () => {
+    const { hits } = matchRules(base, 'src/test/java/LoginTest.java') as { hits: { ruleId: string; line: number }[] };
+    const hitOne = hits.find((x) => x.ruleId === 'ui-driver-no-quit');
+    expect(hitOne).toBeTruthy();
+    expect(hitOne!.line).toBe(0);
+  });
+
+  it('ui-driver-no-quit 反例：同文件有 driver.quit()（@AfterMethod 里）不命中', () => {
+    const src = `${base}\n@AfterMethod public void down() { driver.quit(); }`;
+    expect(hit('ui-driver-no-quit', src, 'src/test/java/LoginTest.java')).toBe(false);
+  });
+
+  it('ui-driver-no-quit 反例：extends BaseTest（驱动在基类里释放）不命中', () => {
+    expect(hit('ui-driver-no-quit', base.replace('public class LoginTest {', 'public class LoginTest extends BaseTest {'), 'src/test/java/LoginTest.java')).toBe(false);
+  });
+
+  it('ui-driver-no-quit 反例：注释里的 new ChromeDriver() 不命中（注释先被 stripComments 抹掉）', () => {
+    const src = `// 老代码：WebDriver driver = new ChromeDriver();\n@Test public void t() { click(el); }`;
+    expect(hit('ui-driver-no-quit', src, 'src/test/java/LoginTest.java')).toBe(false);
+  });
+
+  it('ui-driver-no-quit 反例：README 里贴的示例代码不命中（文档守卫）', () => {
+    expect(hit('ui-driver-no-quit', base, 'README.md')).toBe(false);
+  });
+});
+
+describe('ui-no-timeout（请求缺显式超时）', () => {
+  it('ui-no-timeout：整文件看不到任何超时配置 → 命中', () => {
+    const src = `public class ApiTest {\n  @Test public void t() {\n    Response r = given().when().post("/api/login");\n  }\n}`;
+    expect(hit('ui-no-timeout', src, 'src/test/java/ApiTest.java')).toBe(true);
+  });
+
+  it('ui-no-timeout 反例：给了 .timeout(5000) 不命中', () => {
+    const src = `public class ApiTest {\n  @Test public void t() {\n    Response r = given().timeout(5000).when().post("/api/login");\n  }\n}`;
+    expect(hit('ui-no-timeout', src, 'src/test/java/ApiTest.java')).toBe(false);
+  });
+
+  it('ui-no-timeout 反例：配置了 readTimeout / connectTimeout 不命中', () => {
+    const src = `public class ApiTest {\n  @Test public void t() {\n    HttpURLConnection c = open();\n    c.setReadTimeout(3000);\n  }\n}`;
+    expect(hit('ui-no-timeout', src, 'src/test/java/ApiTest.java')).toBe(false);
+  });
+
+  it('ui-no-timeout 反例：应用代码（无测试标记）里发请求不命中（作用域前置）', () => {
+    // 本仓库实测：不加作用域时这条会命中 electron/ipc-api.js 这类 Node 网络代码
+    const src = `export function net(url) { return fetch(url); }`;
+    expect(hit('ui-no-timeout', src, 'electron/ipc-api.js')).toBe(false);
+  });
+
+  it('ui-no-timeout 反例：测试文件里根本没有 HTTP 调用不命中', () => {
+    expect(hit('ui-no-timeout', '@Test public void t() { assertThat(1).isEqualTo(1); }', 'src/test/java/PureTest.java')).toBe(false);
+  });
+});
+
+describe('assert-swallow-catch（吞异常）', () => {
+  const testPath = 'src/test/java/PayTest.java';
+
+  it('assert-swallow-catch：空 catch 命中（整文件级）', () => {
+    const src = `public class PayTest {\n  @Test public void t() {\n    try { api.pay(o); } catch (Exception e) { }\n  }\n}`;
+    const { hits } = matchRules(src, testPath) as { hits: { ruleId: string; line: number }[] };
+    const hitOne = hits.find((x) => x.ruleId === 'assert-swallow-catch');
+    expect(hitOne).toBeTruthy();
+    expect(hitOne!.line).toBe(0);
+  });
+
+  it('assert-swallow-catch：catch 里只有 printStackTrace 也算吞（没转成失败）', () => {
+    const src = `public class PayTest {\n  @Test public void t() {\n    try { api.pay(o); } catch (Exception e) { e.printStackTrace(); }\n  }\n}`;
+    expect(hit('assert-swallow-catch', src, testPath)).toBe(true);
+  });
+
+  it('assert-swallow-catch 反例：catch 里 throw / fail() 不命中', () => {
+    const src = `public class PayTest {\n  @Test public void t() {\n    try { api.pay(o); } catch (Exception e) { throw new AssertionError(e); }\n  }\n}`;
+    expect(hit('assert-swallow-catch', src, testPath)).toBe(false);
+  });
+
+  it('assert-swallow-catch 反例（最重要）：应用代码里的空 catch 不命中', () => {
+    // 这就是 electron/ipc-scan.js:77 自己的写法：关不掉就让 GC —— 合法，不是缺陷。
+    // 不加测试作用域时本仓库有 139 个文件会被这条报出来。
+    const src = `'use strict';\nfunction close(fd) {\n  try { fs.closeSync(fd); } catch { /* 关不掉就让 GC */ }\n}`;
+    expect(hit('assert-swallow-catch', src, 'electron/ipc-scan.js')).toBe(false);
+  });
+
+  it('assert-swallow-catch 反例：文档里讲「不要写空 catch」不命中（文档守卫）', () => {
+    const src = '@Test 里不要写 try { x() } catch (Exception e) { }';
+    expect(hit('assert-swallow-catch', src, 'docs/notes.md')).toBe(false);
+  });
+});
+
+describe('assert-random-no-seed（随机数据未固定种子）', () => {
+  const testPath = 'src/test/java/OrderTest.java';
+
+  it('assert-random-no-seed：new Random() 命中，且行号是 1-based 的那一行', () => {
+    const src = '@Test public void t() {\n  int n = new Random().nextInt(100);\n}';
+    const { hits } = matchRules(src, testPath) as { hits: { ruleId: string; line: number }[] };
+    const hitOne = hits.find((x) => x.ruleId === 'assert-random-no-seed');
+    expect(hitOne).toBeTruthy();
+    expect(hitOne!.line).toBe(2);
+  });
+
+  it('assert-random-no-seed：Python 的 random.randint / JS 的 Math.random 也命中', () => {
+    expect(hit('assert-random-no-seed', 'def test_t():\n    n = random.randint(1, 100)\n', 'test/test_x.py')).toBe(true);
+    expect(hit('assert-random-no-seed', 'it("t", () => {\n  const id = Math.random();\n});', 'src/utils/__tests__/x.test.ts')).toBe(true);
+  });
+
+  it('assert-random-no-seed 反例：固定种子（new Random(42) / setSeed / random.seed）不命中', () => {
+    expect(hit('assert-random-no-seed', '@Test public void t() { Random r = new Random(20260101L); }', testPath)).toBe(false);
+    expect(hit('assert-random-no-seed', '@Test public void t() { r.setSeed(7); }', testPath)).toBe(false);
+    expect(hit('assert-random-no-seed', 'def test_t():\n    random.seed(42)\n', 'test/test_x.py')).toBe(false);
+  });
+
+  it('assert-random-no-seed 反例：注释里提到 new Random() 不命中', () => {
+    expect(hit('assert-random-no-seed', '@Test public void t() {\n  // 以前是 new Random()，现在固定种子\n  Random r = new Random(1L);\n}', testPath)).toBe(false);
+  });
+
+  it('assert-random-no-seed 反例：应用代码用 Math.random 生成 id 不命中（作用域前置）', () => {
+    // 本仓库实测：不加作用域 23 个文件命中，全是 electron/codelab-preview.js:87 这类 id 生成
+    const src = 'const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;';
+    expect(hit('assert-random-no-seed', src, 'electron/codelab-preview.js')).toBe(false);
+  });
+});
+
+describe('assert-json-string-compare（JSON 用字符串比较）', () => {
+  const testPath = 'src/test/java/ApiTest.java';
+
+  it('assert-json-string-compare：assertEquals 拿整个 JSON 串比较命中', () => {
+    const src = '@Test public void t() {\n  assertEquals("{\\"code\\":0}", r.getBody().asString());\n}';
+    expect(hit('assert-json-string-compare', src, testPath)).toBe(true);
+  });
+
+  it('assert-json-string-compare 反例：mustache 模板串 {{nope}} 不命中（首版正则的误报回归）', () => {
+    // 第一版写成 `["\'`]\{\s*` 就会命中 expect(applyVars('{{nope}}', 'a=1')).toBe('{{nope}}')
+    const src = "it('t', () => {\n  expect(applyVars('{{nope}}', 'a=1')).toBe('{{nope}}');\n});";
+    expect(hit('assert-json-string-compare', src, 'src/utils/__tests__/apiVars.test.ts')).toBe(false);
+  });
+
+  it('assert-json-string-compare 反例：用 jsonPath 取值断言不命中', () => {
+    const src = '@Test public void t() {\n  assertEquals(0, r.jsonPath().getInt("code"));\n}';
+    expect(hit('assert-json-string-compare', src, testPath)).toBe(false);
+  });
+
+  it('assert-json-string-compare 反例：注释里的字符串比较不命中', () => {
+    const src = '@Test public void t() {\n  // 老写法：assertEquals("{\\"code\\":0}", body)\n  assertEquals(0, r.jsonPath().getInt("code"));\n}';
+    expect(hit('assert-json-string-compare', src, testPath)).toBe(false);
+  });
+
+  it('assert-json-string-compare 反例：应用代码里的普通字符串比较不命中（作用域前置）', () => {
+    expect(hit('assert-json-string-compare', 'expect(toText({ a: 1 })).toBe(\'{"a":1}\');', 'src/utils/format.ts')).toBe(false);
+  });
+});
+
+describe('ui-url-concat-param（URL 拼接参数未 encode）', () => {
+  const testPath = 'src/test/java/SearchTest.java';
+
+  it('ui-url-concat-param：query 串拼变量命中', () => {
+    const src = '@Test public void t() {\n  String url = BASE + "/api/search?q=" + kw + "&page=1";\n}';
+    expect(hit('ui-url-concat-param', src, testPath)).toBe(true);
+  });
+
+  it('ui-url-concat-param 反例：URLEncoder.encode 之后拼接不命中', () => {
+    const src = '@Test public void t() {\n  String url = BASE + "/api/search?q=" + URLEncoder.encode(kw, "UTF-8");\n}';
+    expect(hit('ui-url-concat-param', src, testPath)).toBe(false);
+  });
+
+  it('ui-url-concat-param 反例：用 queryParam 传参不命中', () => {
+    expect(hit('ui-url-concat-param', '@Test public void t() { given().queryParam("q", kw).when().get("/api/search"); }', testPath)).toBe(false);
+  });
+
+  it('ui-url-concat-param 反例：注释里的拼接不命中', () => {
+    const src = '@Test public void t() {\n  // 以前写 BASE + "/api/search?q=" + kw\n  given().queryParam("q", kw).get("/api/search");\n}';
+    expect(hit('ui-url-concat-param', src, testPath)).toBe(false);
+  });
+
+  it('ui-url-concat-param 反例：工具产物/压缩代码里的字符串拼接不命中（作用域前置）', () => {
+    // 本仓库实测的纯误报：coverage/prettify.js:244 aa.push("(?:" + W(ae) + ")")
+    expect(hit('ui-url-concat-param', 'aa.push("(?:" + W(ae) + ")");', 'coverage/prettify.js')).toBe(false);
+  });
+});
+
+describe('assert-skip-leftover（用例被静默跳过 / 只跑一条）', () => {
+  const testPath = 'src/test/java/OldTest.java';
+
+  it('assert-skip-leftover：@Test(enabled = false) 命中', () => {
+    const src = '@Test(enabled = false)\npublic void oldCase() { }';
+    expect(hit('assert-skip-leftover', src, testPath)).toBe(true);
+  });
+
+  it('assert-skip-leftover：it.skip / it.only 命中（留在提交里等于静默漏测）', () => {
+    expect(hit('assert-skip-leftover', 'it.skip("t", () => { expect(1).toBe(1); });', 'src/utils/__tests__/x.test.ts')).toBe(true);
+    expect(hit('assert-skip-leftover', 'it.only("t", () => { expect(1).toBe(1); });', 'src/utils/__tests__/x.test.ts')).toBe(true);
+  });
+
+  it('assert-skip-leftover 反例：普通属性赋值 enabled = false 不命中（首版正则的误报回归）', () => {
+    // 第一版写成 `enabled\s*=\s*false` 就会命中 src/utils/__tests__/clipHistory.test.ts:46 的这行
+    const src = 'it("t", () => {\n  const opt = { enabled: false };\n  enabled = false;\n});';
+    expect(hit('assert-skip-leftover', src, 'src/utils/__tests__/clipHistory.test.ts')).toBe(false);
+  });
+
+  it('assert-skip-leftover 反例：注释里的 @Ignore 不命中', () => {
+    expect(hit('assert-skip-leftover', '@Test public void t() {\n  // 别写 @Ignore，要跑\n  assertThat(1).isEqualTo(1);\n}', testPath)).toBe(false);
+  });
+});

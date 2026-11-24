@@ -18,10 +18,24 @@ export interface ScanRule {
   requires?: RegExp;
   /** 命中排除条件（同一行命中即跳过），误报控制用 */
   negative?: RegExp;
-  /** 整文件判定 */
-  detect?: (code: string) => boolean;
+  /** 整文件判定；`ctx` 是**每个文件只算一次**的上下文（测试作用域等） */
+  detect?: (code: string, ctx: ScanRuleContext) => boolean;
+  /**
+   * 只在「像测试代码」的文件里跑（`isTestCode` = 内容有 @Test/describe/it… **且** 路径像测试）。
+   * W8 那批规则查的是测试代码里的反模式，同一写法在应用代码里往往合法（空 catch 关流、
+   * `Math.random()` 生成 id），不加这个就是成片误报。
+   */
+  testOnly?: boolean;
   /** true 时把 pattern 的第 1 个捕获组作为 Finding.key（coverage 包） */
   coverage?: boolean;
+}
+
+/** 一份文件跑规则时的共享上下文（每个文件只算一次，避免每条规则各扫一遍全文） */
+export interface ScanRuleContext {
+  /** 这份文件算不算测试代码（见 `isTestCode`） */
+  isTest: boolean;
+  /** 相对路径（POSIX 分隔符） */
+  filePath: string;
 }
 
 export interface ScanRulePublic {
@@ -76,6 +90,15 @@ export declare function rulesOf(pack: string): ScanRulePublic[];
 
 /** 抹掉注释，返回与输入行数一致的「只剩代码」的文本行 */
 export declare function stripComments(text: string, filePath?: string): string[];
+
+/**
+ * 判定「这份文件是不是测试代码」：内容像测试（@Test / describe( / it( / def test_ …）
+ * **且** 路径像测试（`test/`、`tests/`、`__tests__/`、`spec/`、`*.test.*`、`*.spec.*`、`*Test.java`）。
+ *
+ * W8 那批规则的前置条件；`matchRules` 每个文件只调一次并把结果放进 ctx 共享。
+ * 已知取舍：不在测试目录、文件名也不带 Test 的用例文件会漏报（漏报 < 误报）。
+ */
+export declare function isTestCode(codeText: string, filePath: string): boolean;
 
 /** 在单个文件上跑规则；ruleIds 缺省/空 = 跑全部 */
 export declare function matchRules(text: string, filePath: string, ruleIds?: string[]): ScanMatchResult;

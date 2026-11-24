@@ -53,6 +53,42 @@ const DOC_FILE_RE = /\.(?:md|txt)$/i;
 const CODE_ONLY_RULE_RE = /^(?:ui|assert|cov)-/;
 
 /**
+ * 「这段代码算不算测试代码」——W8 新增规则的前置条件（口径 §4.2）。
+ *
+ * 为什么必须加：新一批规则查的是**测试代码**里的反模式，而同一写法在应用代码里往往是合法的——
+ * `try { fs.closeSync(fd) } catch {}`（关不掉就让 GC）、`Math.random()` 生成 id、`System.out` 打日志。
+ * 本仓库实测（704 文件）：不加作用域时 `assert-swallow-catch` 命中 **139** 个文件、
+ * `ui-print-instead-of-log` **115**、`assert-random-no-seed` **23**；加作用域后 **1 / 2 / 0**。
+ * 误报率决定用户会不会把整类规则关掉，所以这里跟 `CODE_ONLY_RULE_RE` 一样按**前置条件**挡，
+ * 而不是靠改正则去凑。
+ *
+ * 两个条件**同时**成立才算测试代码，避免把 `src/app.js` 里恰好有 `it(` 字符串的东西算进去：
+ *   1. **内容**像测试（`@Test` / `describe(` / `it(` / `def test_` / `public void testXxx(`）；
+ *   2. **路径**像测试（`test/`、`tests/`、`__tests__/`、`spec/`、`*.test.*`、`*.spec.*`、`*Test.java`）。
+ *
+ * 已知取舍：不在测试目录、文件名也不带 Test 的用例文件会漏报。这是**有意**的（漏报 < 误报），
+ * 规则 `desc` 里已写明，用户看到「没报」时知道是作用域挡的。
+ */
+const TESTISH_RE = /(?:@Test\b|@Before|@After|@ParameterizedTest|describe\s*\.?\s*\w*\s*\(|\bit\s*\.?\s*\w*\s*\(|\btest\s*\.?\s*\w*\s*\(|\bdef\s+test_|public\s+void\s+test\w+\s*\()/;
+const TEST_PATH_RE = /(?:^|\/)(?:test|tests|__tests__|spec)\/|[./](?:test|spec)\.\w+$|Test\.java$/i;
+
+/**
+ * 判定「这份文件是不是测试代码」。
+ *
+ * **每个文件只调一次**（`matchRules` 里算好后放进 ctx 传给所有规则）——
+ * file 级规则要跑整文件正则，一条规则扫一遍 1 MB 文件就是浪费。
+ *
+ * @param {string} codeText 去掉注释后的全文
+ * @param {string} filePath 相对路径（POSIX 分隔符；容忍反斜杠）
+ * @returns {boolean}
+ */
+function isTestCode(codeText, filePath) {
+  const code = String(codeText == null ? '' : codeText);
+  const rel = String(filePath == null ? '' : filePath).replace(/\\/g, '/');
+  return TESTISH_RE.test(code) && TEST_PATH_RE.test(rel);
+}
+
+/**
  * coverage 规则的 HTTP method 归一：
  *   - 命名组 `method` 有值 → 大写（`.get(` / `requests.post(`）；
  *   - `@XxxMapping` → 注解名大写（`RequestMapping` → ANY）；
@@ -115,6 +151,43 @@ const RULES = [
     title: '按界面文案定位',
     desc: 'linkText / partialLinkText / By.text 依赖文案，改个字或被翻译就挂。改用 data-testid。',
     pattern: /\b(?:linkText|partialLinkText|By\s*\.\s*text|text\s*=\s*)\s*\(?\s*["'`][^"'`]+["'`]/,
+  },
+  {
+    id: 'ui-driver-no-quit',
+    pack: 'audit',
+    category: 'ui',
+    severity: 'medium',
+    title: '浏览器驱动未释放',
+    desc: '建了 WebDriver 却看不到 quit()/close()：僵尸 chromedriver 进程会越积越多，几轮后端口和内存吃光，表现成「换台机器就好了」的偶发失败。在 @AfterMethod / afterAll 里释放；驱动在基类释放的，继承 BaseTest 即可不报。',
+    kind: 'file',
+    detect: (code, ctx) => !!ctx && ctx.isTest
+      && /new\s+(?:Chrome|Firefox|Edge|Safari)Driver\s*\(|webdriver\.(?:Chrome|Firefox)\s*\(/.test(code)
+      && !/\.quit\s*\(|\.dispose\s*\(|driver\s*\.\s*close\s*\(/i.test(code)
+      && !/extends\s+\w*(?:Base|BaseTest|AbstractTest)\b/.test(code),
+  },
+  {
+    id: 'ui-no-timeout',
+    pack: 'audit',
+    category: 'ui',
+    severity: 'medium',
+    title: '缺显式超时',
+    desc: '文件里发请求却看不到任何超时配置：服务端挂住时用例会无限等，CI 上表现为「卡住不退出」，比失败更难查。给 .timeout() / readTimeout / connectTimeout；超时若配在基类或全局，本条会误报，可以关掉。',
+    kind: 'file',
+    detect: (code, ctx) => !!ctx && ctx.isTest
+      && /\b(?:given\s*\(\s*\)|restTemplate\.|requests\.(?:get|post|put|delete)\s*\(|axios\.(?:get|post|put|delete)\s*\(|fetch\s*\()/.test(code)
+      && !/\btimeout\b|\.timeout\s*\(|readTimeout|connectTimeout|Duration\.of|page\.setDefaultTimeout/i.test(code),
+  },
+  {
+    id: 'ui-url-concat-param',
+    pack: 'audit',
+    category: 'ui',
+    severity: 'medium',
+    title: 'URL 拼接未编码',
+    desc: '把变量直接拼进 query 串（"?q=" + kw）：只要值里带 & / 空格 / 中文，参数语义就变了，用例本身写错却报在接口上。用 URLEncoder.encode / encodeURIComponent / queryParam。',
+    // 只在「像测试代码」的文件里报：工具产物里的字符串拼接（coverage/prettify.js 那种）是误报
+    testOnly: true,
+    pattern: /["'`][^"'`]*\?(?:\w+=)?[^"'`]*["'`]\s*\+\s*[A-Za-z_$]|\+\s*["'`]&[^"'`]*["'`]/,
+    negative: /encodeURI|URLEncoder|URLSearchParams|urlencode|UriComponentsBuilder/,
   },
 
   // ---------------- 硬编码敏感 ----------------
@@ -191,6 +264,51 @@ const RULES = [
     // 再加 Python 的 `assert x == 1` 写法。这条是实跑时抓到的误报，别改回去。
     detect: (code) => /\b(?:requests\.(?:get|post|put|delete)|axios\.(?:get|post|put|delete)|driver\.get|WebDriver|restTemplate\.|given\(\))/i.test(code)
       && !/\bassert\w*\s*\(|\bassert\s+\w|\bexpect\s*\(|\bshould\b/i.test(code),
+  },
+  {
+    id: 'assert-swallow-catch',
+    pack: 'audit',
+    category: 'assert',
+    severity: 'high',
+    title: '吞异常',
+    desc: '空 catch / 只 printStackTrace：异常没转成失败，这条用例永远绿——比报错危险得多。改成 throw / fail(e) 或至少断言失败。应用代码里的空 catch 不算（本规则只在测试代码里跑）。',
+    kind: 'file',
+    detect: (code, ctx) => !!ctx && ctx.isTest
+      && /catch\s*(?:\([^)]*\))?\s*\{\s*\}|catch\s*(?:\([^)]*\))?\s*\{\s*[\w.]+\s*\.\s*printStackTrace\s*\([^)]*\)\s*;?\s*\}/.test(code),
+  },
+  {
+    id: 'assert-random-no-seed',
+    pack: 'audit',
+    category: 'assert',
+    severity: 'medium',
+    title: '随机数据未固定种子',
+    desc: '每次跑的数据都不同，失败无法复现——「昨天红了今天绿」只能靠重跑碰运气。用固定种子（new Random(42) / setSeed / random.seed）或固定的样例数据。',
+    testOnly: true,
+    pattern: /new\s+Random\s*\(\s*\)|Math\.random\s*\(\s*\)|\brandom\.(?:random|randint|choice|uniform)\s*\(/,
+    negative: /seed\s*\(|setSeed|new\s+Random\s*\(\s*\d+\s*\)/,
+  },
+  {
+    id: 'assert-json-string-compare',
+    pack: 'audit',
+    category: 'assert',
+    severity: 'medium',
+    title: 'JSON 用字符串比较',
+    desc: '把整个响应体当字符串断言：字段顺序、空格、数字/字符串差异都会让它红，真出问题时又说不清哪个字段不对。用 jsonPath / JSON.parse 后逐字段断言。',
+    testOnly: true,
+    // `\{\s*\\` 里的反斜杠是实跑抓出来的：少了它就命中 `toBe('{{nope}}')` 这类模板串（纯误报）
+    pattern: /(?:assertEquals?|assertThat|toBe|toEqual|assertEqual)\s*\([^)\n]*["'`]\{\s*\\/,
+    negative: /jsonPath|JSON\.parse|\.json\b|jsonDecode/i,
+  },
+  {
+    id: 'assert-skip-leftover',
+    pack: 'audit',
+    category: 'assert',
+    severity: 'medium',
+    title: '用例被静默跳过',
+    desc: '@Ignore / @Disabled / enabled=false / it.skip / it.only 留在提交里：覆盖率虚高，没人知道这条根本没跑。有意跳过请补 reason 并加白名单；只留了 .only 的还会让整条套件只跑一条。',
+    testOnly: true,
+    // `enabled = false` 必须限定在注解括号内：普通属性赋值（clipHistory.test.ts:46）是误报
+    pattern: /@\w+\s*\([^)]*enabled\s*=\s*false|@Ignore\b|@Disabled\b|\b(?:it|test|describe|suite)\.(?:skip|only)\s*\(|pytest\.mark\.skip/,
   },
 
   // ---------------- 覆盖取数（coverage 包：只抽路径原文） ----------------
@@ -347,8 +465,12 @@ function rulesOf(pack) {
  * @param {string} filePath 相对路径（只用来判断注释语法，不读盘）
  * @param {string[]} [ruleIds] 只跑这些规则；缺省/空数组 = 跑全部
  * @returns {{ ok: true, hits: { ruleId: string, severity: string, category: string, title: string,
- *                              line: number, snippet: string, key?: string }[] }}
- *          `line` 为 1-based，`0` 表示整文件级规则；`snippet` 只含该行原文（≤200 字符）
+ *                              line: number, snippet: string, method?: string, path?: string }[],
+ *             suppressed: number }}
+ *          `line` 为 1-based，`0` 表示整文件级规则；`snippet` 只含该行原文（≤200 字符）。
+ *          **`suppressed`** = 被 `MAX_HITS_PER_RULE`（每规则 3 条/文件）折叠掉、没有出现在 `hits` 里的条数；
+ *          运行时**总会给**（无折叠时为 0），调用方要把它累加进 `scan:run` 的 `data.suppressed` 并置
+ *          `truncatedReason: 'suppressed'`（RC-01：折叠必须可见；v16 起它与 `'findings'` 是两件事）。
  */
 function matchRules(text, filePath, ruleIds) {
   const src = String(text == null ? '' : text);
@@ -356,6 +478,9 @@ function matchRules(text, filePath, ruleIds) {
   const codeLines = stripComments(src, filePath);
   const rawLines = src.split(/\r?\n/);
   const codeText = codeLines.join('\n');
+  // W8：测试作用域**只算一次**，所有规则共享（口径 §4.2）。
+  // 别让每条 file 级规则各自再扫一遍全文——1 MB 文件上那是成倍的浪费。
+  const ctx = { isTest: isTestCode(codeText, filePath), filePath: String(filePath || '') };
 
   const hits = [];
   let suppressed = 0; // RC-01：被 MAX_HITS_PER_RULE 折掉的命中条数（必须能回传给用户）
@@ -363,9 +488,11 @@ function matchRules(text, filePath, ruleIds) {
     if (wanted && !wanted.has(rule.id)) continue;
     // 扩展名守卫：ui-* / assert-* / cov-* 只体检代码，不体检文档（见 CODE_ONLY_RULE_RE 注释）
     if (CODE_ONLY_RULE_RE.test(rule.id) && DOC_FILE_RE.test(String(filePath || ''))) continue;
+    // 测试作用域守卫（W8）：行级规则里的「只在测试代码里才算缺陷」那批
+    if (rule.testOnly && !ctx.isTest) continue;
 
     if (rule.kind === 'file') {
-      if (typeof rule.detect === 'function' && rule.detect(codeText)) {
+      if (typeof rule.detect === 'function' && rule.detect(codeText, ctx)) {
         hits.push({
           ruleId: rule.id,
           severity: rule.severity,
@@ -450,6 +577,7 @@ module.exports = {
   ruleOf,
   rulesOf,
   stripComments,
+  isTestCode,
   matchRules,
   isInsideRoot,
 };

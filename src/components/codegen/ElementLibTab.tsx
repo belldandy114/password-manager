@@ -218,51 +218,60 @@ export function ElementLibTab({
   };
 
   return (
-    <div className="split" style={{ gridTemplateColumns: '248px minmax(0, 1fr)' }}>
-      {/* ---- 左：页面列表 ---- */}
-      <Panel title="页面" meta={loading ? '加载中…' : `${items.length}/${MAX_PAGES}`} flush>
-        <div style={{ padding: 8 }}>
-          <button className="btn btn-secondary btn-sm" style={{ width: '100%' }} onClick={createPage} disabled={loading}>
+    <div className="split">
+      {/* ---- 左：页面列表（普通列表 .dev-list*，不复用数据生成器的两行类型卡 .tdg-type） ---- */}
+      <Panel
+        title="页面"
+        meta={loading ? '加载中…' : `${items.length}/${MAX_PAGES}`}
+        flush
+        tools={
+          <button className="btn btn-secondary btn-sm" onClick={createPage} disabled={loading}>
             <Icons.plus size={13} /> 新建页面
           </button>
+        }
+      >
+        <div className="dev-list">
+          {loading && <div className="text-sm text-muted">正在读加密库…</div>}
+          {!loading && items.length === 0 && (
+            <div className="text-sm text-muted">
+              还没有元素库页面。点上面「新建页面」，填页面名与地址，再加元素。
+            </div>
+          )}
+          {!loading && items.map((p) => {
+            const on = p.id === activeId;
+            return (
+              /* 行容器**不交互**：原来给 div 挂 role=button + tabIndex + onClick，里面再嵌删除
+                 button，等于「交互控件内嵌交互控件」（ARIA 不允许，读屏用户会遇到两个焦点、
+                 也分不清哪个代表"选中"）。现在行只是布局容器，选中由名称按钮承担，
+                 删除键是它的**兄弟节点**；选中语义用 aria-current（不是 aria-pressed ——
+                 那是"开关按下"的意思，列表选中不是这东西）。 */
+              <div key={p.id} className={`dev-list-item${on ? ' is-on' : ''}`}>
+                <button
+                  type="button"
+                  className="dev-list-name"
+                  aria-current={on ? 'true' : undefined}
+                  title={p.name}
+                  onClick={() => select(p)}
+                  /* 唯一保留的内联：只重置浏览器给 <button> 的默认外观（灰底 + 2px outset 边框 +
+                     居中），排版仍由 `.dev-list-name` 负责。CSS 里没有可复用的「裸按钮」类，
+                     而 src/styles/ 不在本批 inScope —— 回执「本批不做清单」里已写明补法。 */
+                  style={{ background: 'none', border: 0, textAlign: 'left' }}
+                >
+                  {p.name || '未命名页面'}
+                </button>
+                <span className="dev-list-count">{p.elements.length} 个元素</span>
+                <button
+                  className="btn btn-ghost btn-sm dev-list-del"
+                  onClick={() => removePage(p)}
+                  title="删除这个页面"
+                  aria-label={`删除页面 ${p.name}`}
+                >
+                  <Icons.trash size={13} />
+                </button>
+              </div>
+            );
+          })}
         </div>
-        {loading
-          ? <div className="text-sm text-muted" style={{ padding: '8px 12px' }}>正在读加密库…</div>
-          : items.length === 0
-            ? (
-              <div className="text-sm text-muted" style={{ padding: '8px 12px' }}>
-                还没有元素库页面。点上面「新建页面」，填页面名与地址，再加元素。
-              </div>
-            )
-            : (
-              <div style={{ maxHeight: 520, overflow: 'auto', padding: '0 8px 8px' }}>
-                {items.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`tdg-type${p.id === activeId ? ' is-on' : ''}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => select(p)}
-                      style={{ flex: 1, textAlign: 'left', background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: '4px 0' }}
-                      title={p.name}
-                    >
-                      <span className="tdg-type-label">{p.name || '未命名页面'}</span>
-                      <span className="tdg-type-hint">{p.elements.length} 个元素</span>
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => removePage(p)}
-                      title="删除这个页面"
-                      aria-label={`删除页面 ${p.name}`}
-                    >
-                      <Icons.trash size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
       </Panel>
 
       {/* ---- 右：编辑 + 生成 ---- */}
@@ -284,7 +293,7 @@ export function ElementLibTab({
                 title="页面基础信息"
                 meta={draft.name || '未命名'}
                 tools={
-                  <div className="tool-inline" style={{ gap: 8 }}>
+                  <div className="tool-inline">
                     <button className="btn btn-secondary btn-sm" onClick={() => void savePage()} disabled={busy}>
                       <Icons.check size={13} /> 保存页面
                     </button>
@@ -297,9 +306,9 @@ export function ElementLibTab({
                 {busy && <BusyProgress active label="处理中…" />}
                 {/* [C-25]：裁剪必须让用户看见，不许静默丢；提示会一直留到下次保存 */}
                 {trimWarn && (
-                  <div className="dev-banner is-warn" role="status" style={{ marginBottom: 8 }}><Icons.clock size={14} /><div className="text-sm">{trimWarn}</div></div>
+                  <div className="dev-banner is-warn" role="status"><Icons.clock size={14} /><div className="text-sm">{trimWarn}</div></div>
                 )}
-                <div className="grid2" style={{ gap: 12 }}>
+                <div className="grid2">
                   <Field label="页面名" hint="页面内唯一；也是 Java 类名的种子">
                     <input
                       value={draft.name}
@@ -335,13 +344,13 @@ export function ElementLibTab({
                 </div>
 
                 {err && (
-                  <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+                  <div className="dev-banner is-error mt-8" role="alert">
                     <Icons.bug size={14} />
                     <div className="text-sm">{err}</div>
                   </div>
                 )}
 
-                <div className="tool-inline" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
+                <div className="tool-inline mt-16">
                   <span className="dev-tag is-unknown">
                     <Icons.list size={13} />
                     {draft.elements.length}/{MAX_ELEMENTS} 个元素
@@ -364,7 +373,7 @@ export function ElementLibTab({
                 />
 
                 {genErr && (
-                  <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+                  <div className="dev-banner is-error mt-8" role="alert">
                     <Icons.bug size={14} />
                     <div className="text-sm">{genErr}</div>
                   </div>
@@ -373,7 +382,7 @@ export function ElementLibTab({
 
               {files.length > 0 && (
                 <Panel title="生成的 Page Object" meta={`${files.length} 个文件`}>
-                  <div className="dev-banner is-info" style={{ marginBottom: 8 }}>
+                  <div className="dev-banner is-info">
                     <Icons.check size={14} />
                     <div className="text-sm">
                       生成只到预览为止，保存要你自己点（会弹系统保存框）。元素定位器里的引号 / 反斜杠已按 Java 规则转义。
@@ -385,7 +394,7 @@ export function ElementLibTab({
                     onSave={(f, n) => void saveFile(f, n)}
                   />
                   {Object.keys(savedAt).length > 0 && (
-                    <div className="text-sm text-muted" style={{ marginTop: 6 }}>
+                    <div className="text-sm text-muted mt-8">
                       已保存：{Object.entries(savedAt).map(([p, abs]) => `${p.split('/').pop()} → ${abs}`).join('；')}
                     </div>
                   )}

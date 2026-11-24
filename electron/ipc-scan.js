@@ -18,21 +18,39 @@ const path = require('path');
 const { ipcMain, dialog, shell } = require('electron');
 const { SCAN_PACKS, rulesOf, matchRules, isInsideRoot } = require('./scan-rules');
 const { decodeTextBuffer } = require('./text-encoding');
+const {
+  FINDINGS_DETAIL_CAP,
+  createFindingCollector,
+  createScanGuards,
+  SKIP_DIRS,
+  SCAN_MAX_FILES,
+  SCAN_MAX_DEPTH,
+  SCAN_TIMEOUT_MS,
+} = require('./scan-collect');
 
-/** C-54：遍历必须跳过的目录名 */
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'release', 'build', 'target', '.venv', 'vendor', 'out']);
-
-/** C-54：后缀白名单（白名单外不进统计） */
+/**
+ * C-54：后缀白名单（白名单外不进统计）
+ *
+ * 目录跳过清单 `SKIP_DIRS`（含 v16 新增的 `coverage`）与三个上限已挪到 `electron/scan-collect.js`：
+ * 那份是纯函数模块，单测能直接断言「清单里到底有谁」；本文件只做遍历与 IO。
+ */
 const SCAN_EXTS = new Set([
   '.java', '.kt', '.groovy', '.py', '.js', '.jsx', '.ts', '.tsx',
   '.xml', '.yml', '.yaml', '.json', '.properties', '.txt', '.md', '.sql',
 ]);
 
 const MAX_FILE_BYTES = 1024 * 1024; // C-53 单文件 1 MB
-const MAX_FILES = 2000; // C-53 maxFiles ∈ [1, 2000]，缺省 2000
-const MAX_FINDINGS = 300; // C-53
-const MAX_DEPTH = 12; // C-53
-const TIMEOUT_MS = 60000; // C-53
+const MAX_FILES = SCAN_MAX_FILES; // C-53 maxFiles ∈ [1, 2000]，缺省 2000
+/**
+ * 单次扫描**明细**上限（C-53 v16：2000）。
+ *
+ * 别和「落库上限」混成一个数：历史记录里每条只留前 300 条明细（渲染层
+ * `SCAN_HISTORY_FINDINGS_CAP`，契约 C-29），因为 `scanRuns` 整个集合只有 1536 KB，
+ * 2000 × 203 B ≈ 396 KB/条会让 20 条历史只能留 3 条。
+ */
+const MAX_FINDINGS_DETAIL = FINDINGS_DETAIL_CAP; // 2000
+const MAX_DEPTH = SCAN_MAX_DEPTH; // C-53
+const TIMEOUT_MS = SCAN_TIMEOUT_MS; // C-53
 const YIELD_EVERY = 32; // C-51/C-55：每 32 个文件让出事件循环，取消消息才进得来
 
 const PACKS = ['audit', 'coverage'];
@@ -95,7 +113,9 @@ function registerScanIpc(deps = {}) {
 
   /**
    * `scan:run` —— 阻塞式 invoke（C-55），只读遍历 + 匹配。
-   * data: `{ root, pack, files, fileList, bytes, skippedSymlinks, truncated, truncatedReason?, counts, findings, ms }`
+   * data: `{ root, pack, files, fileList, bytes, skippedSymlinks, skippedByGuard, truncated,
+   *          truncatedReason?, counts, suppressed, totalFindings, findings, ms }`
+   *       （v16：`totalFindings` 必给、明细上限 2000；v17：`skippedByGuard` 必给，S-03）
    */
   ipcMain.handle('scan:run', async (_event, payload = {}) => {
     const started = Date.now();
@@ -123,22 +143,20 @@ function registerScanIpc(deps = {}) {
       const maxFiles = clampMaxFiles(opts.maxFiles);
 
       const fileList = [];
-      const findings = [];
-      const counts = { high: 0, medium: 0, low: 0 };
+      // v16：命中收集 / 总数计数 / 截断原因分流全部交给纯函数模块（可单测），这里只做遍历与 IO
+      const collector = createFindingCollector({ maxFindings: MAX_FINDINGS_DETAIL });
+      // S-03：v16 的两个守卫（coverage 目录 / 产物路径）当时是静默丢文件的，用户读到「0 命中」会误判干净。
+      // 这个计数器把「被守卫挡掉多少」如实回传（照 skippedSymlinks 的做法）。
+      const guards = createScanGuards();
       let bytes = 0;
       let skippedSymlinks = 0;
-    let suppressed = 0; // RC-01：被每规则上限折掉的命中总数
-      let truncated = false;
-      let truncatedReason = '';
-      const markTruncated = (reason) => { truncated = true; if (!truncatedReason) truncatedReason = reason; };
-
-      const stack = [{ dir: rootReal, depth: 0 }];
       let filesRead = 0;
       let stop = false;
 
+      const stack = [{ dir: rootReal, depth: 0 }];
       while (stack.length && !stop) {
         if (state && state.canceled) return { success: false, canceled: true };
-        if (Date.now() - started > TIMEOUT_MS) { markTruncated('timeout'); break; }
+        if (Date.now() - started > TIMEOUT_MS) { collector.markTruncated('timeout'); break; }
 
         const cur = stack.pop();
         let entries;
@@ -156,8 +174,9 @@ function registerScanIpc(deps = {}) {
           if (ent.isSymbolicLink()) { skippedSymlinks += 1; continue; }
 
           if (ent.isDirectory()) {
-            if (SKIP_DIRS.has(ent.name)) continue;
-            if (cur.depth + 1 > MAX_DEPTH) { markTruncated('depth'); continue; }
+            // C-54：目录守卫（含 coverage）——被跳过的目录计入 skippedByGuard，不再静默
+            if (guards.skipDir(ent.name)) continue;
+            if (cur.depth + 1 > MAX_DEPTH) { collector.markTruncated('depth'); continue; }
             stack.push({ dir: abs, depth: cur.depth + 1 });
             continue;
           }
@@ -169,7 +188,13 @@ function registerScanIpc(deps = {}) {
           try { real = fs.realpathSync(abs); } catch { continue; }
           if (!isInsideRoot(rootReal, real)) return { success: false, error: ERR.escape };
 
-          if (filesRead >= maxFiles) { markTruncated('max-files'); stop = true; break; }
+          const rel = path.relative(rootReal, abs).split(path.sep).join('/');
+          // C-54 v16：压缩/打包产物**不进统计**——既不占 maxFiles 预算、不进 fileList、不跑规则。
+          // 这些命中的 snippet 是压缩后的一行，用户读到也没法下手（本仓库 run/ 下的 exceljs.min-*.js）；
+          // S-03：挡掉多少要回传（skippedByGuard），否则「0 命中」会被当成仓库干净。
+          if (guards.skipFile(rel)) continue;
+
+          if (filesRead >= maxFiles) { collector.markTruncated('max-files'); stop = true; break; }
 
           let size = 0;
           try { size = fs.statSync(abs).size; } catch { continue; }
@@ -177,40 +202,23 @@ function registerScanIpc(deps = {}) {
           try {
             const r = readCapped(abs, size);
             buf = r.buf;
-            if (r.capped) markTruncated('file-size');
+            if (r.capped) collector.markTruncated('file-size');
           } catch {
             continue; // 单个文件读不了就跳过，不整单失败
           }
 
           filesRead += 1;
           bytes += buf.length;
-          const rel = path.relative(rootReal, abs).split(path.sep).join('/');
           fileList.push(rel);
 
           const text = decodeTextBuffer(buf).text;
           const { hits, suppressed: perFileSuppressed } = matchRules(text, rel, ruleIds);
-          // RC-01：每规则上限折掉的命中要**可见**——计数回传 + 置 truncated，
-          // 否则用户以为看到的是全部（这正是这轮反复打的「静默折叠」）。
-          if (perFileSuppressed > 0) {
-            suppressed += perFileSuppressed;
-            if (!truncatedReason) markTruncated('findings');
-            else truncated = true;
-          }
-          for (const h of hits) {
-            if (findings.length >= MAX_FINDINGS) { markTruncated('findings'); stop = true; break; } // RC-02：外层也要停，不能继续扫完
-            const finding = {
-              ruleId: h.ruleId,
-              severity: h.severity,
-              title: h.title,
-              file: rel,
-              line: h.line,
-              snippet: h.snippet,
-            };
-            if (h.method) finding.method = h.method;
-            if (h.path) finding.path = h.path;
-            findings.push(finding);
-            if (counts[h.severity] != null) counts[h.severity] += 1;
-          }
+          // RC-01：每规则上限折掉的命中要**可见**——计数回传。
+          // v16：折叠只置 `suppressed` 原因，**不再**冒充 `findings`（折叠 ≠ 明细被砍）。
+          if (perFileSuppressed > 0) collector.addSuppressed(perFileSuppressed);
+          // v16：明细到 2000 条后**不停止扫描**——collector 继续计数 `totalFindings` 与 `counts`，
+          // 所以「到底命中多少」是算得出来的真数，不是「物理上不可知」。
+          collector.addHits(hits, rel);
 
           // 按批让出事件循环：取消/超时才进得来（C-51/C-55）
           if (filesRead % YIELD_EVERY === 0) {
@@ -222,8 +230,9 @@ function registerScanIpc(deps = {}) {
       }
 
       if (state && state.canceled) return { success: false, canceled: true };
-      if (Date.now() - started > TIMEOUT_MS) markTruncated('timeout');
+      if (Date.now() - started > TIMEOUT_MS) collector.markTruncated('timeout');
 
+      const snap = collector.snapshot();
       return {
         success: true,
         data: {
@@ -233,12 +242,18 @@ function registerScanIpc(deps = {}) {
           fileList,
           bytes,
           skippedSymlinks,
-          truncated,
-          ...(truncatedReason ? { truncatedReason } : {}),
-          counts,
-          // RC-01：被每规则上限折掉的命中总数（配合 truncated/truncatedReason 一起看）
-          suppressed,
-          findings,
+          // S-03：被目录守卫与产物 negative 挡掉的条目数（目录按 1 计；不递归数内部文件）
+          ...guards.snapshot(),
+          truncated: snap.truncated,
+          ...(snap.truncatedReason ? { truncatedReason: snap.truncatedReason } : {}),
+          // counts 覆盖**全量**命中（含明细已满后只计数的那些），与 totalFindings 同源：
+          // counts.high+medium+low === totalFindings（契约 C-30 v16 的可断言不变量）
+          counts: snap.counts,
+          // RC-01：被每规则上限折掉的命中总数（v16：只挂在 suppressed 原因上，不再冒充 findings）
+          suppressed: snap.suppressed,
+          // v16：全仓命中总数（明细被砍也照样算得出来）；未到明细上限时 === findings.length
+          totalFindings: snap.totalFindings,
+          findings: snap.findings,
           ms: Date.now() - started,
         },
       };
@@ -291,5 +306,14 @@ function registerScanIpc(deps = {}) {
 module.exports = {
   registerScanIpc,
   // 供体检/回归脚本复用的常量（不是通道）
-  SCAN_LIMITS: { MAX_FILE_BYTES, MAX_FILES, MAX_FINDINGS, MAX_DEPTH, TIMEOUT_MS, SKIP_DIRS, SCAN_EXTS },
+  SCAN_LIMITS: {
+    MAX_FILE_BYTES,
+    MAX_FILES,
+    // v16：这是**明细**上限（2000）；落库上限是渲染层的 SCAN_HISTORY_FINDINGS_CAP = 300
+    MAX_FINDINGS: MAX_FINDINGS_DETAIL,
+    MAX_DEPTH,
+    TIMEOUT_MS,
+    SKIP_DIRS,
+    SCAN_EXTS,
+  },
 };

@@ -33,8 +33,8 @@ export function ElementTable({
                       />
                     )
                     : (
-                      <div className="dev-scroll" style={{ maxHeight: 360, marginTop: 8 }}>
-                        <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <div className="dev-scroll is-short mt-8">
+                        <table className="tbl">
                           <thead>
                             <tr>
                               <th scope="col" style={{ width: 140 }}>名称</th>

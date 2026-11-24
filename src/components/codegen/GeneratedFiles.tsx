@@ -8,8 +8,9 @@
  */
 
 import React, { useState } from 'react';
-import { Icons } from '../ui';
+import { Icons, CodeBlock } from '../ui';
 import { copyPlain } from '../../utils/clipboard';
+import { langFromPath } from '../../utils/codeHighlight';
 import type { GeneratedFile } from '../../utils/codegen/escape';
 
 /* ================================================================
@@ -88,11 +89,16 @@ export function GeneratedFilesView({
         </div>
       )}
 
-      <div className="dev-scroll" style={{ maxHeight: 420 }}>
-        <pre className="tb-pre">{file.content}</pre>
-      </div>
+      {/* 代码块自带 `.dev-scroll`（`.dev-scroll > .dev-code` 的 max-height:none 依赖 pre 是
+          它的直接子元素，包装不能交给调用方 —— 见 ui.tsx 里 CodeBlock 的注释）。
+          所以这里不再包一层、也不再写内联 maxHeight。 */}
+      <CodeBlock code={file.content} lang={langFromPath(file.path)} />
 
-      <div className="tool-inline" style={{ marginTop: 8, flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+      {/* `.tool-inline` 自带 display:flex / align-items:center / gap:8 / flex-wrap:wrap
+          （pages.css:820），原来那四行内联里只有 marginTop 是它没覆盖的 → 换 `.mt-8`。
+          「撑开两侧」用既有工具类 `.flex-1`（原来那个 `spacer` 类在三份样式表里没有任何
+          规则，是死类名，去掉不丢东西）。 */}
+      <div className="tool-inline mt-8">
         <span className="dev-tag is-unverified">
           <Icons.bug size={13} />
           未编译验证
@@ -100,7 +106,7 @@ export function GeneratedFilesView({
         <span className="text-sm text-muted">
           生成物没有走本机 javac，能打开不等于能编译（golden 通过 ≠ 编译通过，[C-106]）。
         </span>
-        <span className="spacer" style={{ flex: 1 }} />
+        <span className="flex-1" />
         <button className="btn btn-ghost btn-sm" onClick={() => void copyPlain(file.content)}>
           <Icons.copy size={13} /> 复制此文件
         </button>
@@ -108,7 +114,8 @@ export function GeneratedFilesView({
           <Icons.download size={13} /> 保存此文件
         </button>
       </div>
-      <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+      {/* 原来是内联 marginTop:4（不在 8 的格上）→ `.mt-8`，与全站间距口径一致 */}
+      <div className="text-sm text-muted mt-8">
         {file.path}
         {files.length > 1 ? ' · 多文件请逐个保存（本版本不打包 zip）' : ''}
       </div>

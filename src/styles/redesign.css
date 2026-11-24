@@ -8967,6 +8967,12 @@ html[data-bg='image'] .pg-sub {
       强调交给底部条（::after 仍是 var(--accent)，图形 3:1 门限）。
       ⚠️ 只改 .is-active：非激活态 .tab2 的 --text-3 一个字没动 ——
       复跑取证：两套主题下非激活页签的 computed color 与改前**逐字相同**。
+      ❌ **1.34.0（W8 / t5）起上面这两句作废**（评审 C8：注释与代码相反，比没注释更坏）：
+      非激活页签现在是 `color: var(--text-1); font-weight: 500` —— 见本文件 1.34.0 段
+      `.tabs .tab2:not(.is-active)`（见 9053 行）。推翻它的理由：页签透明化后 `.tabs`
+      直接压在 `--glass-canvas`（仅 10% 不透明 ≈ 压在背景图上），--text-3 浅色最差 3.05:1、
+      --text-2 只有 3.84:1，都不到 4.5；--text-1 是 10.37:1。本段 1.33.1 的改动本身**没有**
+      被推翻（`.is-active` 仍是 --text-1），作废的只是「非激活态一个字没动过」这句断言。
       ⚠️ 这不是 t4 记的 K1（K1 是「激活页签**加深底** --glass-active」）：本段没加任何背景，
       K1 仍然没做。
 
@@ -8996,4 +9002,273 @@ html[data-bg='image'][data-theme='light'] .tbl td,
 html[data-bg='image'][data-theme='light'] .tbl th,
 html[data-bg='image'][data-theme='light'] .tbl .cell-mono {
   color: var(--text-1);
+}
+
+/* ================================================================
+   1.34.0（W8，t5）开发辅助四页视觉统一：页签透明化 / 代码区实底 /
+   左侧普通列表 / 大表滚动收编
+   ----------------------------------------------------------------
+   依据：docs/acceptance/W8-视觉口径.md（t1 定稿，本段逐条照落，不改方向）。
+
+   为什么不改 pages.css：AGENTS.md —— 新增/修复样式一律写在最后加载的
+   redesign.css 末尾并注明原因，不在前面三份样式表里猜优先级。`.tabs` 在
+   pages.css 被声明 3 次（479 边框+圆角 / 1667 底边 / 2053 滚动条），改前面
+   任何一处都会漏掉另一处，表现就是「改了没效果」。
+
+   约束（三条静态债预算都顶格，本段一条都不新增）：不新增 token、不写色值
+   字面量、不加优先级声明；也没有 backdrop-filter / filter / transform /
+   contain / z-index（scripts/check-stacking.js 在盯）。
+   ================================================================ */
+
+/* ---- 1) 页签透明化：下划线式页签，不是胶囊组 ----
+   现状是三层叠加：pages.css:479 给了 border + 10px 圆角（上/左/右三边）、
+   :1667 又给 border-bottom（同文件后加载，只盖住下边）、本文件 7973 在背景图
+   模式下给每个 .tab2 上了 --glass-control 药丸底 —— 页签于是变成一排实心胶囊，
+   与 docs/agents/visual-system.md:16「.tabs > .tab2 是下划线式（不是胶囊）」相反。
+
+   做法：只留 1px 底边作基线，去上/左/右与圆角；玻璃模式把 .tab2 的背景收回
+   transparent。特异性 `html[data-bg='image'] .tabs .tab2` = (0,3,1) 高于 7973 的
+   (0,2,1)，因此不需要任何优先级声明。
+
+   文字为什么必须是 --text-1：`.tabs` 直接压在 `.content-area`（--glass-canvas，
+   只有 10% 不透明 ≈ 等于直接压在背景图上）。按 docs/视觉-开发辅助.md §1.5 的
+   推算，浅色 + 深色背景图下 --text-2 只有 3.84、--text-3 只有 3.05，都不到 4.5；
+   --text-1 是 10.37。激活与非激活因此同色，层级改由「字重 500/620 + 2px accent
+   下划线」承担（pages.css:1686-1711、本文件 960），符合 WCAG 1.4.1 不只靠颜色。
+
+   hover 底色是刻意补的：去掉药丸底后，pages.css:1698 的 `.tab2:hover` 只有字色
+   变化，而字色已被上面提到 --text-1 → hover 会完全失去反馈（1.32.x 的 K2 同类）。
+   这里给一个 6% accent 透明底，与 `.tbl tbody tr:hover` / `.dev-list-item:hover`
+   同一档，alpha < 1 不进扫描判据。 */
+.tabs {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+html[data-bg='image'] .tabs .tab2 {
+  background-color: transparent;
+  color: var(--text-1);
+}
+.tabs .tab2:not(.is-active) {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.tabs .tab2:not(.is-active):hover {
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* ---- 2) 代码区 .dev-code：刻意实底（不玻璃）+ 语法高亮 7 类 ----
+   为什么代码区刻意实底（这是设计，不是漏修）：高亮的每个语义色都要在一个稳定
+   底上过 4.5:1。压 --glass-input-soft 后的合成底（浅色 + 深色背景图 ≈ 219/219/220）
+   下，四个稳定色相实测只有 --ok 3.63 / --warn 3.25 / --bad 3.85 / --info 3.91
+   （docs/acceptance/W8-视觉口径.md §2.3 的反证表），上色即等于关掉高亮。与
+   .codelab-editor「代码/终端区保持深色实底」同一口径（本文件 8054 的注释）。
+   所以它进 scripts/ui-glass-opaque-scan.js 的 WHITELIST 并写 why。
+
+   ⚠️ 必须写 `html[data-bg='image']` 前缀：本文件 8060-8065 那条
+   `:is(..., .tb-pre, ...) { background-color: var(--glass-input-soft) }` 里有一条
+   `.json-pane pre`（一个类 + 一个类型），`:is()` 取参数里**最具体**的那个 →
+   整条是 **(0,2,2)**，不是 (0,2,1)。只写 `.dev-code`（0,1,0）会被它压掉；
+   写成 `html[data-bg='image'] .dev-code`（0,2,1）**也压不过它** —— 1.34.1（t20）实测：
+   背景图模式下 `.dev-code` 的 computed background 一直是 `--glass-input-soft`
+   （`color(srgb 0.0588 0.0706 0.0745 / 0.54)`），即「刻意实底」在玻璃模式下**从来没成立过**，
+   而白名单又因为代码块不进 DOM 从未被走到 —— 两个漏洞叠在一起，那条保护一直是装饰品。
+   现在用 `pre.dev-code`（一个类型 + 一个类）= (0,2,2)，与 8060 打平后靠**末尾顺序**胜出。
+   改这一处时同时补了扫描脚本的「白名单必须命中一次」自证（scripts/ui-glass-opaque-scan.js
+   的 WHITELIST_MUST_HIT），今后这条规则一旦失效，门禁会直接红。
+
+   配色 0 新增 token；--warn 与 --accent 块内禁用：--warn 在浅色 --surface-inset
+   上只有 4.27；--accent 有 6 套预设 + data-accent='image' 从背景图采样
+   （本文件 7877-7882），跨档 3.51~8.24 不稳定，历史上已有 1.05:1 的事故（8963）。
+   以下 7 个 tok-* 类名是给 frontend tokenizer 的固定契约，别改名。 */
+.dev-code {
+  background-color: var(--surface-inset);
+  color: var(--text-1);
+}
+html[data-bg='image'] pre.dev-code {
+  background-color: var(--surface-inset);
+}
+/* 行号槽：装饰位不是正文（--text-3 在 --surface-inset 上实测深 6.16 / 浅 4.93） */
+.dev-code-ln {
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  text-align: right;
+}
+/* 关键字 / 修饰符（蓝=最主流关键字色） */
+.dev-code .tok-kw { color: var(--info); font-weight: 600; }
+/* 注解 @Test / @FindBy：与关键字同族合并（4 个稳定色相不够分 7 类），
+   单独留一个类名是为了 tokenizer 能如实打标，不改变颜色 */
+.dev-code .tok-ann { color: var(--info); font-weight: 600; }
+/* 类型 String / int / By / Response */
+.dev-code .tok-type { color: var(--ok); }
+/* 字符串字面量（红=Xcode 系字面量色；代价：块内 --bad 不再表示错误） */
+.dev-code .tok-str { color: var(--bad); }
+/* 数字字面量：与字符串同族，靠 tabular-nums 与「无引号」区分 */
+.dev-code .tok-num { color: var(--bad); font-variant-numeric: tabular-nums; }
+/* 注释：--text-2（禁用 --text-3 —— 弱化文字，与「正文 ≥4.5」口径混淆） */
+.dev-code .tok-cmt { color: var(--text-2); font-style: italic; }
+/* 方法调用：4 色相已用尽，用字重分担（其后必跟 "(" 可辨） */
+.dev-code .tok-fn { color: var(--text-1); font-weight: 600; }
+
+/* ---- 3) 左侧页面列表：普通列表（不是数据生成器的类型卡） ----
+   为什么新建一套而不是复用 .tdg-type（本文件 4954-4988）：那是「测试数据生成器」
+   的两行类型卡（flex-column + 子标题），CodeGen 元素库借它做页面列表，改一处会
+   连带改数据生成器；而且它的选中态用 `color: var(--accent)`，accent 会随
+   data-accent='image' 从背景图采样（7877-7882），文字对比度不可控。
+   行规格对标 .tag-sidebar-item（2298-2365），交互对标 .api-side-v2 .api-list-item
+   （pages.css:5791-5850）：删除按钮只在 hover / 选中 / 键盘聚焦时显形。
+   全部背景透明或 alpha < 1 → 刻意不进玻璃登记表（登记表只负责「把实底换玻璃底」）。 */
+.dev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  max-height: 56vh;
+  overflow: auto;
+  background: transparent;
+}
+/* 行高走密度档（--d-control-h：默认 34 → 30 / compact 28 → 24 / cozy 40 → 36）；
+   border 常驻 transparent 是占位：选中时只换颜色不换尺寸，行不会跳动 */
+.dev-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: calc(var(--d-control-h) - 4px);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.dev-list-item:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: var(--line);
+}
+/* 选中：--accent-soft / --accent-line 两个 token 本身 alpha < 1 */
+.dev-list-item.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.dev-list-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 选中态文字用 --text-1 而不是 --accent：同上，accent 在取色模式下不可控 */
+.dev-list-item.is-on .dev-list-name {
+  color: var(--text-1);
+  font-weight: 600;
+}
+/* 计数：右对齐纯文本，不做胶囊底（普通列表不叠第二层实心块） */
+.dev-list-count {
+  flex: 0 0 auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+/* 删除按钮：默认透明，hover / 选中 / 键盘聚焦三态显形。
+   :focus-visible 那一态不能省 —— 只靠 hover 显形会把键盘用户挡在门外。 */
+.dev-list-del {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+.dev-list-item:hover .dev-list-del,
+.dev-list-item.is-on .dev-list-del,
+.dev-list-del:focus-visible {
+  opacity: 1;
+}
+
+/* ---- 4) 骨架收编：大表固定布局 + 滚动容器档位 ----
+   收编 t5 之前的内联写法：15 处 `style={{ tableLayout:'fixed', width:'100%' }}`
+   （如 AssetLedger.tsx:352）与 8 个内联 maxHeight（420/380/360/320/300/260/160）。
+   用 `table.tbl` 而不是 `.dev-scroll > .tbl`：后者本文件 8943 已有同选择器
+   （width:100%），同名选择器写两处会被 scripts/check-css-dup.js 计为重复；
+   `table.tbl` 同时把范围限定在「真表格」上。 */
+.dev-scroll > table.tbl {
+  table-layout: fixed;
+}
+/* 次要表（历史记录 / 环境信息）用矮档；默认仍是 .dev-scroll 的 56vh */
+.dev-scroll.is-short {
+  max-height: 300px;
+}
+
+/* ---- 5) 代码行 + 行号槽的对齐容器（frontend 在 t2 里实测出来的欠账） ----
+   为什么列宽必须是 `4ch` 而不是 `auto`：`auto` 下每个 grid 项各成一列，
+   1 位 / 2 位 / 3 位行号会把代码列的左缘推成三档，滚动一次行号列宽度变化就
+   整片错位。frontend 用真 CSS 探针量过：`4ch` 时 1/2/3 位行号下代码列左缘
+   恒为 49.1px。 */
+.dev-code-line {
+  display: grid;
+  grid-template-columns: 4ch 1fr;
+  gap: 8px;
+}
+/* `.tb-pre` 自带 max-height: 300px，而外层 `.dev-scroll` 是 56vh —— 两者叠加
+   会出**双滚动条**（内层滚到 300 就停、外层再滚一次）。代码块的滚动权归外层：
+   自己撑开、不设上限。 */
+.dev-scroll > .dev-code {
+  max-height: none;
+}
+/* ---- 6) 表格单元格里的输入框：消除「相邻输入框重叠」（用户截图的根因） ----
+   根因是**选择器缺位**，不是间距问题：全仓 75 条带 input 且声明 width/min-width 的
+   规则里 0 条命中 `.tbl` → 元素表里的输入框取 UA 固有宽度（`size=20` 折算 168/175/181px，
+   三档密度各一档）；而 `table-layout: fixed` 把「名称」「定位器」定死在 140px，减左右
+   各 16px padding 后内容盒只剩 108px → 每格溢出 60~73px；`.tbl` 又是 `border-spacing: 0`，
+   没有列间空隙吸收溢出，于是右邻输入框（`--input-bg` 不透明）把左邻的右边框盖住。
+   加这条后实测：名称 108 / 定位器 344 / 两框间隙 32px（= 16+16 单元格内边距），overlap 归零。
+
+   范围刻意限定 `.dev-scroll > .tbl`：四页之外的表单（登录页、设置页）不在这条之下，
+   不会被它改动。特异性 (0,3,1) 足够压过 UA 默认的 `input` 固有宽，不需要优先级声明。
+
+   ⚠️ 1.34.1（评审 C12）起 input 排除 checkbox / radio：那两个控件的尺寸由 UA 按
+   `--accent-color` 与字号画成固定方块，`width: 100%` 会把一个 13px 的勾选框拉满整列
+   （表格里将来放「全选」列就会踩）。当前四页还没有这种用法，属于提前埋好的边界。 */
+.dev-scroll > .tbl td > input:not([type='checkbox']):not([type='radio']),
+.dev-scroll > .tbl td > select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ================================================================
+   1.34.1（W8 / t9）侧栏滚动条主题化：用标准属性修「深色下一条亮白滚动条」
+   ----------------------------------------------------------------
+   缺陷链（全部实测，不是看图猜）：
+   1) 本文件 6125 给 .sidebar-nav-groups 写了 `scrollbar-width: thin`；
+   2) Chromium 121+ 起，**标准滚动条属性只要存在，该元素的 `::-webkit-scrollbar*`
+      整组就被忽略** —— 于是 6128-6137 那组「6px 宽 + --line 拇指 + hover --text-3」
+      全部失效（现状实测：滚动条实宽 10px，不是 6px）；
+   3) 全仓没有一处 `color-scheme` 声明（实测 getComputedStyle(html).colorScheme
+      = `normal`），所以系统绘制出来的滚动条就是浅色的 —— 深色主题下那条亮白轨道
+      就是这么来的（实测 scrollbarColor = `auto`）。
+   对照：`.content-area` 没有 scrollbar-width，它的 `::-webkit-scrollbar-thumb`
+   （global.css:71-73）仍然生效 —— 这解释了为什么全站只有侧栏这一条显眼。
+
+   修法：给同一个容器补**标准属性** `scrollbar-color`（与已存在的 scrollbar-width
+   配套，这是唯一能生效的路；继续加 webkit 规则不会生效）。
+   取值 `--text-3` 的判据是图形对比度（WCAG 1.4.11 要求 3:1）：标准属性没有 hover 态，
+   等于把原来「--line 常态 + --text-3 hover」压成一档，必须取**可见**的那一档：
+       对侧栏底 --surface-1：  --line 1.31:1 ✗   --line-strong 1.64:1 ✗   --text-3 6.12:1 ✓（深色）
+       浅色同理：              --line 1.20:1 ✗   --line-strong 1.50:1 ✗   --text-3 5.16:1 ✓
+   取前两档会得到「看起来没有滚动条」，与 6123 那句「nav 也要有可见的滚动提示」相反。
+   track 用 transparent：轨道不该有底色 —— 缺陷里那条亮白正是轨道。
+
+   范围只到这一个容器：`.content-area` 的滚动条是另一套规则（global.css:71-73），未动。
+   选择器写 `.sidebar .sidebar-nav-groups` 而不是 `.sidebar-nav-groups`：后者在 6124
+   已有一块，同一文件里同名选择器写两处会被 scripts/check-css-dup.js 计为重复。
+   特异性 (0,2,0) 高于 6124 的 (0,1,0)，不需要任何优先级声明。
+   不新增 token（只用既有 --text-3）、无色值字面量、不加优先级声明，
+   也没有 backdrop-filter / filter / transform / z-index。
+   ================================================================ */
+.sidebar .sidebar-nav-groups {
+  scrollbar-color: var(--text-3) transparent;
 }

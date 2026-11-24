@@ -68,7 +68,7 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
         title="① 取数"
         meta={data ? `${num(data.rows)} 行 · ${num(data.samples)} 样本` : undefined}
         tools={
-          <div className="tool-inline" style={{ gap: 8 }}>
+          <div className="tool-inline">
             <button className="btn btn-secondary btn-sm" onClick={() => void pickFile()} disabled={busy}>
               <Icons.folder size={13} /> 选择文件
             </button>
@@ -83,13 +83,13 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
         </Field>
 
         {err && (
-          <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-error mt-8" role="alert">
             <Icons.bug size={14} />
             <div className="text-sm">{err}</div>
           </div>
         )}
         {data?.truncated && (
-          <div className="dev-banner is-warn" style={{ marginTop: 8 }} role="status">
+          <div className="dev-banner is-warn mt-8" role="status">
             <Icons.bug size={14} />
             <div className="text-sm">
               已截断（{JTL_TRUNCATED_TEXT[data.truncatedReason || ''] || data.truncatedReason || '上限'}）：
@@ -99,9 +99,11 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
         )}
       </Panel>
 
+      {/* 面板编号：空态与结果块共用同一个 ② 标题。改前空态写「② 指标」、结果写「② 总览指标」+「③ 按接口」，
+          同一页会渲染出两个 ② 编号（视觉口径 §4「面板编号」的现存违规）。 */}
       {!data
         ? (
-          <Panel title="② 指标">
+          <Panel title="② 总览指标">
             <Empty
               icon={<Icons.chart size={22} />}
               title="还没有解析过 .jtl"
@@ -119,19 +121,20 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
                 <div className="home-stat"><b className={data.errorPct > 0 ? 'is-bad' : 'is-ok'}>{pct(data.errorPct)}</b><i>错误率 errorPct</i></div>
                 <div className="home-stat"><b>{ms(data.avg)}</b><i>平均 avg</i></div>
               </div>
-              <div className="home-stats" style={{ marginTop: 8 }}>
+              <div className="home-stats mt-8">
                 <div className="home-stat"><b>{ms(data.p50)}</b><i>P50</i></div>
                 <div className="home-stat"><b>{ms(data.p90)}</b><i>P90</i></div>
                 <div className="home-stat"><b>{ms(data.p95)}</b><i>P95</i></div>
                 <div className="home-stat"><b>{ms(data.p99)}</b><i>P99</i></div>
               </div>
-              <div className="tool-inline" style={{ flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+              <div className="tool-inline mt-8">
                 <span className="dev-tag is-ok"><Icons.clock size={13} /> TPS {typeof data.tps === 'number' ? data.tps.toFixed(1) : '—'}</span>
-                <span className="dev-tag is-unknown"><Icons.clock size={13} /> 时间跨度 {ms(data.spanMs)}</span>
-                <span className="dev-tag is-unknown"><Icons.list size={13} /> 最快 {ms(data.min)} / 最慢 {ms(data.max)}</span>
+                {/* 中性运行信息用 is-unverified；is-unknown 只留给「无法判定」（视觉口径 §4「三态标签」） */}
+                <span className="dev-tag is-unverified"><Icons.clock size={13} /> 时间跨度 {ms(data.spanMs)}</span>
+                <span className="dev-tag is-unverified"><Icons.list size={13} /> 最快 {ms(data.min)} / 最慢 {ms(data.max)}</span>
                 <span className="dev-tag is-heur"><Icons.list size={13} /> 有效行 {num(data.rows)}</span>
               </div>
-              <div className="text-sm text-muted" style={{ marginTop: 8 }}>
+              <div className="text-sm text-muted mt-8">
                 分位数按最近秩法（不用均值做达标依据）：样本少时分位数会跳变，看结论前先确认样本量。
               </div>
             </Panel>
@@ -140,7 +143,7 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
               title="③ 按接口"
               meta={`${labels.length} 个接口${labels.length > 10 ? ` · 显示前 ${shown.length}` : ''}`}
               tools={
-                <div className="tool-inline" style={{ gap: 8 }}>
+                <div className="tool-inline">
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as 'errorPct' | 'samples')} aria-label="按什么排序">
                     <option value="errorPct">按错误率排序</option>
                     <option value="samples">按样本数排序</option>
@@ -156,8 +159,8 @@ export function JtlTab({ addToast }: { addToast: (msg: string, type?: 'info' | '
               {labels.length === 0
                 ? <div className="text-sm text-muted">这份结果里没有带 label 的行。</div>
                 : (
-                  <div className="dev-scroll" style={{ maxHeight: 380 }}>
-                    <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <div className="dev-scroll">
+                    <table className="tbl">
                       <thead>
                         <tr>
                           <th scope="col">接口（label）</th>

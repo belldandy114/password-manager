@@ -23,6 +23,13 @@
 | 8 | 队长裁定（2026-11-23，见 §10） | ①tab 宿主 `PasswordManagerPage.tsx` 已在 t4 inScope（契约 §8-1），不推；②附件管理 tab **本批不进**门禁，两条既存泄漏进 backlog P1；④附件条口径 = **删路径文本 + 删「复制路径」**，只留「打开目录 / 更改目录」，笔记条补「更改目录」写 `settings.notesDir`（不许新增 IPC）；**新增：抽屉也纳入扫描**，锚点 `.drawer.entry-drawer` 背景必须逐字符等于 `var(--glass-modal)` |
 | 9 | 抽屉扫描怎么做 | 新增 `DRAWER_SCAN_EXPR` + `scanEntryDrawer()`（照 `scanCopyModal` 的骨架，每套主题一遍）：点卡片主体 → 等 `.drawer.entry-drawer` 可见且 opacity 1 → 收尾动画 → 稳定采样 → 扫 `.drawer.entry-drawer` 子树 → 量 `.drawer.entry-drawer` 的 `--glass-modal` 溯源 → 关闭并等消失（§10.2） |
 
+> ⚠️ **1.34.0（W8 / t5）起，本表与 §10.3 里「页签有玻璃底」的旧口径作废**：
+> 上表 9 条全部是「按类名 / 文案定位」的口径（`tab2` 必须是 `<button>`、`prep` 按文案点、
+> `pmTabs` 计数），**与页签底色无关，均继续有效**；被作废的是「`.tab2` 带 `--glass-control`
+> 玻璃底、可当玻璃锚点」这个理解 —— 1.34.0 把 `.tabs`/`.tab2` 透明化了，见 **§11**。
+> 特别是 §10.3 第 5 行「透明底元素不挂 `--glass-control` 锚点（会假红）」这条判据，从
+> 1.34.0 起**同样适用于 `.tab2`/`.tabs`**。
+
 ## 1. 基线实测
 
 ### 1.1 官方门禁现状（exit 0）
@@ -629,3 +636,131 @@ git status --porcelain    # 仅 docs/agents/entry-ux-next.md（契约）；本�
 > 注：本文落盘时 `git status` 已多出 `src/utils/__tests__/entryDetail.test.tsx` —— 那是 A 片在并行开工，
 > 与本基线无关（基线钉在 `dist` 14:38 那一份，见 §1.1）。
 
+
+## 11. 1.34.0（W8 / t5）页签透明化后的锚点迁移
+
+> 时间 2026-11-24｜执行 ui（t5）｜依据 `docs/acceptance/W8-视觉口径.md` §1.3 / §1.4
+> 改动文件：`src/styles/redesign.css`（末尾 1.34.0 段）、`scripts/ui-glass-opaque-scan.js`、本文。
+
+### 11.1 变的是什么
+
+`.tabs` / `.tab2` **不再是玻璃块**：`.tabs` 只留 1px 底边（去掉 `pages.css:479` 的上/左/右边框与
+10px 圆角），玻璃模式下 `html[data-bg='image'] .tabs .tab2` 的背景收回 `transparent`，
+非激活页签文字提到 `--text-1`（压在 `--glass-canvas` 上 `--text-2` 只有 3.84、`--text-3` 只有 3.05）。
+理由与实测见 W8-视觉口径 §1.3。
+
+### 11.2 两条锚点已改挂（原 `.pg .tabs .tab2.is-active` → `--glass-control`）
+
+| 单元 | 原锚点 | **新锚点** | 为什么 |
+|---|---|---|---|
+| 代码生成 · 元素库 → POM | `.pg .tabs .tab2.is-active` → `--glass-control` | **`.pg .tbl th` → `--glass-side`** | 页签已无底（alpha=0），`tokenMatch` 不可能等于 `--glass-control` → 必然假红。元素表是 `.tbl`（`ElementTable.tsx:37`），`redesign.css:7944` 的既有规则命中 |
+| 结果中心 · .jtl 指标 | 同上 | **`.pg input` → `--glass-input`** | 同上。**没有**用契约草稿里写的 `.pg .home-stat`：`.home-stat` 只在解析成功后挂载（`JtlTab.tsx:102-112` 的 `!data` 分支渲染 `<Empty>`），而扫描从不解析 .jtl → 那条锚点会永远 `found:0`，变成一条永远红且红得没意义的断言 |
+
+两条都已实跑验证：深浅两套各 `✓ ... ← var(--glass-side)` / `← var(--glass-input)`，alpha < 1。
+
+### 11.3 新增不变量 `TAB_STRIP_EXPR`（面积判据盖不到它）
+
+**为什么必须另写一条**：面积判据是「alpha ≥ 0.999 且面积 > 600px²」，而「页签透明化」的效果是
+**让块消失**，删掉透明规则也不会产出任何不透明块 —— 变异实测（§11.4）里那页仍是
+`不透明块 2 个（白名单 2 / 违规 0）`，面积判据完全绿。这就是「门禁在跑、一条没拦」的形态。
+
+断言三件事（每套主题在开发辅助四页各量一次，只量 `.pg .tabs`）：
+
+1. `.pg .tabs` 与 `.pg .tabs .tab2.is-active` 的 `backgroundColor` 都是 `rgba(0, 0, 0, 0)`；
+2. `.pg .tabs` 上/左/右边框 `0px`（`pages.css:479` 的圆角框被覆盖掉）；
+3. `.pg .tabs` 下边框仍 `1px`（下划线页签的基线，别连带删了）。
+
+### 11.4 变异验证（M-1.34.0，2026-11-24 实跑）
+
+| 步 | 动作 | 实测 |
+|---|---|---|
+| 1 | 基线（1.34.0 落地后） | `exit 0`，32 个组合 0 违规；不变量 `✓ light/dark .tabs 1086×35 底 rgba(0, 0, 0, 0) 边框 0px/0px/0px/1px 激活页签底 rgba(0, 0, 0, 0)` |
+| 2 | 变异：在 `redesign.css` 末尾追加 `html[data-bg='image'] .tabs .tab2{background-color:var(--glass-control)}` + `.tabs{border:1px solid var(--line);border-radius:10px}` | **`exit 1`，违规 2 条**（深浅各一条 `.pg .tabs 不变量`）；`✗ 边框 1px/1px/1px/1px 激活页签底 color(srgb 1 1 1 / 0.52)`（light）/ `… / 0.64`（dark）；**同一页的面积判据仍是 `0 违规`** → 证明这条断言不可省 |
+| 3 | 还原（字节级复原本，md5 与变异前一致）+ 重跑 | `exit 0`，不变量两套主题恢复 `✓` |
+
+### 11.5 今后禁止
+
+1. **不得再以 `.tab2` / `.tabs` 作玻璃 token 锚点**（`TARGETS` 的 `token:` 字段）——它们没有玻璃底，
+   只会得到假红。需要给某页加锚点时，选该页**确实被玻璃规则命中**的元素（`.pnl`→`--glass-card`、
+   `.tbl th`→`--glass-side`、`input/select`→`--glass-input`、`.home-stat`→`--glass-inset`，但注意
+   `.home-stat` 只在有数据时挂载，表单类页签用不了）。
+2. **不要为了消红把 `.tab2` 写进 `WHITELIST`**：白名单只放「本就该实心」的块（主按钮、徽标、图表色块、
+   代码区），放一个透明元素进去等于让白名单失真。
+3. 任何改动 `.tabs` / `.tab2` 底色的样式，必须同时跑 §11.4 的第 1 步与第 2 步（绿 → 红 → 绿）。
+
+### 11.6 变异跑完的收尾纪律（2026-11-24 补，队长要求）
+
+变异是**临时改仓库文件**，跑完必须证明改回去了。两个机械判据，缺一条就等于把透明化压掉还不知情
+（frontend 在本轮就抓到过一次 `redesign.css` 尾部留着 `MUTATION-TEMP` 的残留，页签圆角框与药丸底被
+恢复回来了）：
+
+```powershell
+# 1) 残留必须 0 命中（变异块用 `MUTATION-TEMP` / `MUTATION-TEMP-END` 包起来，便于 grep）
+Select-String -Path src/styles/*.css -Pattern 'MUTATION-TEMP'      # 期望：无输出
+# 2) 追加段之外不该有任何删除/修改行：中段出现删除行说明变异没恢复干净
+git diff --numstat -- src/styles/redesign.css                      # 期望：<n> 0 <file>（删除列为 0）
+git diff -U0 -- src/styles/redesign.css | Select-String '^-'       # 期望：只匹配到文件头 '---'
+```
+
+本轮实测：`MUTATION-TEMP` **0 命中**；`numstat = 224 0 src/styles/redesign.css`；`^-` 行只匹配到
+文件头。变异前后 `md5` 逐字节一致（`27FBB4C7…`），再跑一遍扫描 `exit 0`。
+
+### 11.7 回退纪律订正（review-arch R-06，2026-11-24 定向复核后）
+
+> ❌ **作废**：早前记的「本批**任一**单文件回退都会 `exit=1`」**只对 CSS 方向成立**；回**脚本**方向是
+> **静默绿**的。按下面这张表执行，别再按旧口径判断「能不能只回一半」。
+
+| 回退方向 | 实测结果 | 为什么 |
+|---|---|---|
+| 只回 **CSS**（撤掉 `.tabs` 透明化，或恢复 `pages.css:479` 的圆角框 + `redesign.css:7973` 的 `--glass-control` 药丸底） | **必红 `exit 1`** | `TAB_STRIP_EXPR` 断言 `.pg .tabs` 背景 `rgba(0,0,0,0)`、上/左/右边框 `0px`、下边框 `1px`；边框或药丸底一回来就红（§11.4 第 2 步实测 2 条违规，且**同页面面积判据仍是 0 违规**） |
+| 只回 **脚本**（撤掉 `WHITELIST` 的 `.dev-code` / `TAB_STRIP_EXPR` / `WHITELIST_MUST_HIT`，CSS 不动） | **静默绿 `exit 0`** | 少掉的断言没人替它说话：面积判据只能证明「没有白块」，**证明不了「某条规则被删」**。`.dev-code` 的实底在玻璃模式下本来就被 `:is(… .json-pane pre)` 的 (0,2,2) 压掉（§11.8），页签透明化也只是「更绿」—— 两种变化都不产出不透明块 |
+| 只回口径文档 | 绿（无门禁覆盖文档） | — |
+
+**结论：CSS + 扫描脚本 + 白名单 + 口径文档必须整批原子提交、原子回退。** 只回一半的中间态要么红
+（CSS 方向）、要么假绿（脚本方向），两种都不能当作「可发布状态」。
+
+### 11.8 `.dev-code` 白名单曾「永不命中」：两个漏洞叠加（t20 修复记录）
+
+review-arch 定向复核判定为阻断，实测确认，修复要点：
+
+1. **代码块不进 DOM**：`.dev-code` 只在点过「生成」之后渲染（`OpenApiTab.tsx:346` /
+   `ElementLibTab.tsx:383` 都是 `files.length > 0` 才挂 `GeneratedFilesView`），而扫描的代码生成单元
+   原来只切页签、不点生成 → `WHITELIST` 里那条「代码区 (.dev-code)」一次都没被走到（既不通过也不失败）。
+2. **就算进了 DOM 也不实底**：`redesign.css:8060-8065` 的
+   `html[data-bg='image'] :is(…, .tb-pre, .json-pane pre)` 里含 `.json-pane pre`（一个类 + 一个类型），
+   `:is()` 取参数里最具体的那个 → 整条是 **(0,2,2)**，而 1.34.0 写的 `html[data-bg='image'] .dev-code`
+   是 **(0,2,1)** → 玻璃模式下 `.dev-code` 的 computed background 一直是 `--glass-input-soft`
+   （实测 `color(srgb 0.0588 0.0706 0.0745 / 0.54)`）。改成 `pre.dev-code`（同为 (0,2,2)，靠末尾顺序胜出）
+   后实测为 `rgb(248,249,251)`（浅）/ `rgb(15,18,19)`（深）= `--surface-inset` 实底。
+
+修复机制（两层，缺一层就退回「装饰品」）：
+
+| 层 | 做法 | 判据 |
+|---|---|---|
+| 可达 | 「代码生成 · 元素库 → POM」单元 `prep` 里**点一次「生成 POM」**并等 `.dev-code` 出现；`min` 加 `devCode: 1` | 等不到就 `throw`，文案指名「生成失败/校验不通过会走 .dev-banner 分支」 |
+| 会喊 | `WHITELIST_MUST_HIT`：每套主题下清单里的条目至少命中 1 次，否则判违规 | 照 `TAB_STRIP_EXPR` 的范式（量不到就红），不再靠「元素没出现」蒙混 |
+
+变异实测（M-1.34.1，2026-11-24）：把 `.dev-code` 改回玻璃底 → **`exit 1`**，违规 2 条
+`(白名单未命中) .dev-code（生成代码区）`，且该单元的面积判据仍是「不透明块 3 个（白名单 3 / **违规 0**）」；
+恢复（md5 逐字节一致）→ `exit 0`，自证行 `✓ light/dark .dev-code（生成代码区）命中 1 次`。
+
+### 11.9 加白名单的固定检查项（2026-11-24 队长采纳）
+
+> **规则：`WHITELIST` 每加一条「本应实心」的声明，必须在同一次改动里同时登记进
+> `WHITELIST_MUST_HIT`，否则不许合入。**
+>
+> 理由就是 §11.8：白名单是**保护声明**，而面积判据只在元素真的进 DOM 时才走到它 ——
+> 元素不出现时它既不通过也不失败，等于装饰品。这条规则把「声明」和「必须被用到」绑成一件事，
+> 让「加了保护但没人用」在代码评审之前就先被门禁拦下。
+
+落地检查清单（改 `WHITELIST` 时逐条过）：
+
+| # | 检查 | 判据 |
+|---|---|---|
+| 1 | 新条目的 `id` 是否也出现在 `WHITELIST_MUST_HIT` 里？ | `grep -c "<id>" scripts/ui-glass-opaque-scan.js` ≥ 2（白名单 1 处 + 自证 1 处） |
+| 2 | 该元素在扫描周期内**一定会渲染**吗？ | 会 → 直接登记；不会（要点击/要数据）→ 先把单元 `prep` 补成能渲染它（§11.8 的做法），再登记 |
+| 3 | 变异能红吗？ | 临时把该元素改成半透明/或让它不渲染 → 必须 `exit 1` 且红在「白名单未命中」；恢复后 `exit 0` |
+| 4 | `why` 写清白名单依据没有？ | 必须能回答「玻璃化它为什么是错的」，不许只写「先放行」 |
+
+反例（本次就是）：1.34.0 加 `.dev-code` 白名单时只写了 `why`，没登记自证、也没让单元把代码块渲染出来
+→ 这条保护整整一轮评审都没被走到，直到 review-arch 人工读代码才发现。**人工评审不该替代门禁。**

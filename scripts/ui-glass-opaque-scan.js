@@ -119,6 +119,14 @@
  *      **逐字符等于** `var(--glass-*)` 的解析值（`.pnl`→`--glass-card`、`.tbl th`→`--glass-side`、
  *      `.tab2`→`--glass-control`）。只验 alpha<1 会被 `.pager` 那类基础半透明色骗过。
  *
+ * ⚠️ 1.34.0（W8 / t5）**页签透明化**：`.tabs`/`.tab2` 不再是玻璃块（`redesign.css` 末尾
+ *    1.34.0 段：`.tabs` 只留 1px 底边、玻璃模式下 `.tab2` 背景收回 transparent），于是
+ *    「`.tab2` = `--glass-control`」这两条锚点（单元 2 / 单元 8）**必然变红**，已改挂到
+ *    既有玻璃规则的落点（`.pg .tbl th`→`--glass-side`、`.pg input`→`--glass-input`）。
+ *    同时新增 `TAB_STRIP_EXPR` 不变量：面积判据只能证明「没有白块」，**证明不了**「药丸底
+ *    被收回了」（删掉透明规则扫描只会更绿），所以单独断言 `.pg .tabs` 与激活页签的背景为
+ *    `rgba(0, 0, 0, 0)`、上/左/右边框 0px、下边框 1px。变异验证（M-1.34.0）就靠它变红。
+ *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
  *   USE_PACKED=1 node scripts/ui-glass-opaque-scan.js # 打包版（先 npm run pack / npm run dist）
@@ -210,6 +218,44 @@ const WHITELIST = [
     test: (e) => /(^|\s)(bar-fill|chart-fill|chart-bar|donut-seg|progress-fill|dl-bar-fill|stat-bar-fill)(\s|$)/.test(e.cls),
     why: '图表色块与进度条填充：颜色就是数据，半透明后「占比」会被背景图干扰而读错',
   },
+  {
+    // 1.34.0（W8 / t5）：开发辅助四页的「生成代码区」。
+    //
+    // 这是**设计**，不是漏修 —— 与 .codelab-editor（redesign.css:8054 的注释）同一口径：
+    // 代码/终端区保持实底。理由是可读性硬约束：语法高亮的每个语义色都要在一个稳定底上
+    // 过 4.5:1。压 --glass-input-soft 后的合成底（浅色 + 深色背景图 ≈ 219/219/220）下，
+    // 四个稳定色相实测只有 --ok 3.63 / --warn 3.25 / --bad 3.85 / --info 3.91
+    // （docs/acceptance/W8-视觉口径.md §2.3 的反证表）—— 半透明即等于关掉高亮。
+    // 颜色全部走既有 token（--info/--ok/--bad/--text-1/--text-2/--text-3），0 新增令牌。
+    id: '代码区 (.dev-code)',
+    test: (e) => hasWord(e.cls, 'dev-code'),
+    why: '生成代码区的语法高亮需要稳定实底：压 --glass-input-soft 时四个语义色相在浅色主题'
+      + '（最差合成底 ≈ 219/219/220）只有 3.25~3.91，全部 <4.5:1，半透明会让高亮失效。'
+      + '与 .codelab-editor「代码/终端区保持实底」同口径（redesign.css:8054）。'
+      + '它不是待修项：改法若要玻璃化，等于同时删掉语法高亮。',
+  },
+];
+
+/**
+ * 白名单里「声明了就必须真被命中一次」的条目（1.34.1 / review-arch 阻断项）。
+ *
+ * 为什么需要这份清单：白名单是**保护声明**（「这个块本应实心」），而面积判据只在
+ * 元素真的出现在 DOM 里时才会走到白名单判定 —— 元素不出现，这条保护既不通过也不失败，
+ * 等于**装饰品**。1.34.0 的 `.dev-code` 就是这样：代码块只在点过「生成」后才挂载
+ * （`OpenApiTab.tsx:346` / `ElementLibTab.tsx:383` 都是 `files.length > 0` 才渲染
+ * `GeneratedFilesView`），而当时的扫描单元只切页签、不点生成 → 一次都没命中。
+ *
+ * 判据（照同文件 TAB_STRIP_EXPR 的范式：量不到就判红）：每套主题下，本清单里的每个
+ * 白名单条目至少要命中 1 次，否则整次扫描判违规。**加了这条之后，白名单再也不能
+ * 靠「元素没出现」蒙混过关** —— 要么命中，要么红。
+ */
+const WHITELIST_MUST_HIT = [
+  {
+    id: '代码区 (.dev-code)',
+    label: '.dev-code（生成代码区）',
+    why: '代码块只在点「生成 POM」之后才挂载（OpenApiTab.tsx:346 / ElementLibTab.tsx:383 都是 files.length>0）；'
+      + '扫描单元必须先把它渲染出来，否则「代码区刻意实底」这条保护永远不表态',
+  },
 ];
 
 /** 本轮补漏的通用类：确定性的验收锚点（面积判据受窗口尺寸影响，这些不受） */
@@ -242,9 +288,21 @@ const TARGETS = [
   // 这是本轮变异验证（M3）唯一能走通的那条通路。
   // `.pnl`→--glass-card（redesign.css:7863）；`.tbl th`→--glass-side（:7944/:8233）；
   // `.tab2`→--glass-control（:7973）。
+  //
+  // ⚠️ 1.34.0（W8 / t5）：**页签已经不是玻璃块了**，`.tab2` 不能再当玻璃锚点。
+  // 1.34.0 把 `.tabs`/`.tab2` 透明化（`.tabs` 只留 1px 底边、玻璃模式下 `.tab2`
+  // 的背景收回 transparent，见 redesign.css 末尾 1.34.0 段），所以原来挂在
+  // `.pg .tabs .tab2.is-active` 上的两条 `--glass-control` 锚点会**必然变红**
+  // （透明底 alpha=0，tokenMatch 不可能等于 --glass-control）。改挂既有玻璃规则的
+  // 落点：单元 2 → `.pg .tbl th`（元素表是 `.tbl`，ElementTable.tsx:37）；
+  // 单元 8 → `.pg input`（.jtl 取数框）。
+  // 为什么单元 8 不用契约里写的 `.home-stat`：`.home-stat` 只在**解析成功之后**才
+  // 挂载（JtlTab.tsx:102-112 是 `!data` 分支，渲染的是 <Empty>），而扫描从不解析
+  // .jtl 文件 → 锚点会永远 found:0，变成一条「永远红、且红得没意义」的断言。
+  // 页签透明化本身改用下面的 TAB_STRIP_INVARIANT 断言（面积判据盖不到「变透明」）。
   { sel: '.pg .pnl', label: '新页面板 .pnl（代码生成·OpenAPI）', token: '--glass-card',
     pages: ['代码生成 · OpenAPI → 骨架'] },
-  { sel: '.pg .tabs .tab2.is-active', label: '新页页签 .tab2.is-active（代码生成·元素库）', token: '--glass-control',
+  { sel: '.pg .tbl th', label: '新页表头 .tbl th（代码生成·元素库）', token: '--glass-side',
     pages: ['代码生成 · 元素库 → POM'] },
   { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检·代码体检）', token: '--glass-card',
     pages: ['代码体检 · 代码体检'] },
@@ -256,9 +314,42 @@ const TARGETS = [
     pages: ['资产台账 · 用例映射'] },
   { sel: '.pg .tbl th', label: '新页表头 .tbl th（结果中心·Allure）', token: '--glass-side',
     pages: ['结果中心 · Allure'] },
-  { sel: '.pg .tabs .tab2.is-active', label: '新页页签 .tab2.is-active（结果中心·.jtl）', token: '--glass-control',
+  { sel: '.pg input', label: '新页输入框 input（结果中心·.jtl）', token: '--glass-input',
     pages: ['结果中心 · .jtl 指标'] },
 ];
+
+/**
+ * 「页签必须透明」不变量（1.34.0 / W8，t5）。
+ *
+ * 为什么必须单独写一条：面积判据（alpha≥0.999 且 >600px²）只能证明「没有白块」，
+ * **证明不了「页签底被收回了」** —— 页签从药丸底变成透明，扫描只会变得更绿，
+ * 谁把 `html[data-bg='image'] .tabs .tab2{background-color:transparent}` 删掉，
+ * 面积判据也不会红（半透明的药丸底 alpha 远低于 0.999）。这就是「门禁在跑、
+ * 一条没拦」的典型形态（本文件 1.32.3 记过同类）。
+ *
+ * 断言三件事：
+ *   1. `.pg .tabs` 与 `.pg .tabs .tab2.is-active` 的背景都是 rgba(0, 0, 0, 0)；
+ *   2. `.pg .tabs` 的上/左/右边框为 0px（pages.css:479 的圆角框被覆盖掉）；
+ *   3. `.pg .tabs` 的下边框仍是 1px（下划线页签要有一条基线，别连带删了）。
+ *
+ * 只在开发辅助四页量（DEV_PAGE_LABEL）：别的页面没有 `.pg .tabs`，量到的是 null。
+ */
+const TAB_STRIP_EXPR = `(() => {
+  const info = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return { bg: cs.backgroundColor, bt: cs.borderTopWidth, bl: cs.borderLeftWidth,
+      br: cs.borderRightWidth, bb: cs.borderBottomWidth,
+      w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  const strip = info('.pg .tabs');
+  const act = info('.pg .tabs .tab2.is-active');
+  return { found: !!(strip && act), strip, act };
+})()`;
+/** 开发辅助四页的 label 前缀（TAB_STRIP_EXPR 只在这些页面上量） */
+const DEV_PAGE_LABEL = /^(代码生成|代码体检|资产台账|结果中心)/;
 
 /**
  * 要扫的页面与进入方式（都不依赖网络/账号：网址管理用预置样本条目，工具箱与笔记是本地页）。
@@ -319,9 +410,48 @@ const PAGES = [
   },
   {
     label: '代码生成 · 元素库 → POM', nav: '代码生成',
-    prep: (s) => clickText(s, '元素库 → POM', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devInputs: 1 },
-    hint: 'devInputs=0 说明元素库表单没渲染；devRows=0 说明 pomPages 造数没读到（元素表空态）',
+    // 1.34.1（review-arch 阻断项）：**这个单元必须点一次「生成 POM」**。
+    // 代码块只在 `files.length > 0` 之后才挂载（ElementLibTab.tsx:383 → GeneratedFilesView
+    // → ui.tsx:306 `<pre class="tb-pre dev-code">`），而扫描原来只切页签不点生成 → 白名单
+    // 「代码区 (.dev-code)」永远走不到，那条保护等于装饰。选「点生成」而不是「只加自证」的理由：
+    // 只加自证只会让门禁天天红（或逼我们删掉白名单 = 丢掉保护）；点生成才能真的把元素请进 DOM，
+    // 自证（WHITELIST_MUST_HIT）则负责「将来点不到时立刻喊」。两者一起才既可达又能表态。
+    prep: async (s) => {
+      const onTab = await clickText(s, '元素库 → POM', { root: '.pg .tabs' });
+      if (!onTab) return false;
+      // ⚠️ 等「生成 POM」这个按钮本身，而不是等 `.pnl`：左侧「页面」面板在 `loading` 期间就挂上了，
+      // 而右侧编辑面板要等 useCollection 读完、draft 自动选中第一条之后才渲染（ElementLibTab.tsx:56-62）——
+      // 第一版等 `.pnl` 就点，正好点在「还没有按钮」的那一刻，prep 返回 false（这就是本仓那类「等错了东西」）。
+      const hasGen = await s.waitFor({
+        expr: `[...document.querySelectorAll('[role=tabpanel] button')].some((b) => (b.textContent || '').includes('生成 POM'))`,
+      }, { timeout: 8000, throwOnTimeout: false });
+      if (hasGen !== true) {
+        throw new Error('「代码生成 · 元素库 → POM」等 8s 也没出现「生成 POM」按钮：'
+          + '多半是 pomPages 造数没读到（左侧列表空态 → 右侧是 .empty 占位，没有编辑面板）');
+      }
+      const onGen = await clickText(s, '生成 POM', { root: '[role=tabpanel]' });
+      if (!onGen) return false; // 按钮真的不在 → 交给调用方的通用「prep 点击落空」文案
+      const shown = await s.waitFor({ expr: `!!document.querySelector('.dev-code')` },
+        { timeout: 5000, throwOnTimeout: false });
+      if (shown !== true) {
+        throw new Error('「代码生成 · 元素库 → POM」点了「生成 POM」但 5s 内没有出现 .dev-code：'
+          + '白名单「代码区 (.dev-code)」会因此一次都命中不到（生成失败/校验不通过会走 .dev-banner 分支）。'
+          + '先看页面上有没有 is-error 横幅，再看造数 pomPages 是否通过 validatePage');
+      }
+      // ⚠️ 等成功 toast 自己消失再让扫描采样：点生成会弹「已生成 Page Object」（duration 3000ms，
+      // useToast.ts:15）。toast 是**浮层**、按本仓口径刻意不透明（redesign.css:8008 的「浮层类…
+      // 刻意不在此列」），留着它会被面积判据记成一条「白名单外的不透明块」—— 那是时序噪声，
+      // 不是这一页的玻璃缺陷。等它消失（≤8s）比给它加白名单更诚实：真·常驻不透明浮层仍会被拦。
+      const toastGone = await s.waitFor({ expr: `document.querySelectorAll('.toast').length === 0` },
+        { timeout: 8000, throwOnTimeout: false });
+      if (toastGone !== true) {
+        throw new Error('「代码生成 · 元素库 → POM」等 8s 后 .toast 仍在（3s 应自动消失）：'
+          + '要么 toast 定时器坏了，要么页面上叠了常驻浮层 —— 后者会让面积判据把浮层记成违规');
+      }
+      return true;
+    },
+    min: { devPanel: 1, devTabs: 2, devInputs: 1, devCode: 1 },
+    hint: 'devInputs=0 说明元素库表单没渲染；devCode=0 说明「生成 POM」后代码块没挂载（白名单会空转）',
   },
   {
     label: '代码体检 · 代码体检', nav: '代码体检',
@@ -643,7 +773,9 @@ const buildScanExpr = (rootSel) => `(() => {
     devSelects: document.querySelectorAll('[role=tabpanel] select').length,
     devTextareas: document.querySelectorAll('[role=tabpanel] textarea').length,
     devEmpty: document.querySelectorAll('[role=tabpanel] .empty').length,
-    devStats: document.querySelectorAll('[role=tabpanel] .home-stat').length };
+    devStats: document.querySelectorAll('[role=tabpanel] .home-stat').length,
+    // 1.34.1：生成代码区（只有点过「生成」才会出现），用来给 min 自证与日志
+    devCode: document.querySelectorAll('[role=tabpanel] .dev-code').length };
   // Chromium 的 computed backgroundColor 有两种序列化：rgba(r, g, b, a) 与 color(srgb r g b / a)
   const alphaOf = (c) => {
     const s = String(c || '').trim();
@@ -896,6 +1028,17 @@ function whitelistOf(e) {
   return WHITELIST.find((w) => w.test(e)) || null;
 }
 
+/**
+ * 白名单命中计数（1.34.1）。按主题分桶；页面 / 弹窗 / 抽屉三条扫描路径共用。
+ * 为什么放在模块作用域：`scanCopyModal` / `scanEntryDrawer` 是模块级函数，看不到主 IIFE 里的局部变量
+ * （第一版写成 IIFE 局部 → 运行时报 `noteWhitelistHit is not defined`）。
+ */
+const whitelistHit = {};
+const noteWhitelistHit = (theme, id) => {
+  whitelistHit[theme] = whitelistHit[theme] || {};
+  whitelistHit[theme][id] = (whitelistHit[theme][id] || 0) + 1;
+};
+
 const pad = (s, n) => String(s).padEnd(n);
 
 /**
@@ -1083,7 +1226,7 @@ async function scanCopyModal(session, ev, theme, violations) {
   const good = [];
   for (const r of rows) {
     const w = whitelistOf(r);
-    if (w) good.push({ r, w }); else bad.push(r);
+    if (w) { good.push({ r, w }); noteWhitelistHit(theme, w.id); } else bad.push(r);
   }
   console.log(`\n──── ${pageLabel}：不透明块 ${rows.length} 个（白名单 ${good.length} / 违规 ${bad.length}）`);
   console.log(`  · 弹窗自证：主题 ${theme} / 背景 ${res.ctx.bg} / 弹窗 ${modalCtx.w}×${modalCtx.h}`
@@ -1367,7 +1510,7 @@ async function scanEntryDrawer(session, ev, theme, violations) {
   const good = [];
   for (const r of rows) {
     const w = whitelistOf(r);
-    if (w) good.push({ r, w }); else bad.push(r);
+    if (w) { good.push({ r, w }); noteWhitelistHit(theme, w.id); } else bad.push(r);
   }
   console.log(`\n──── ${pageLabel}：不透明块 ${rows.length} 个（白名单 ${good.length} / 违规 ${bad.length}）`);
   console.log(`  · 抽屉自证：主题 ${theme} / 背景 ${res.ctx.bg} / 抽屉 ${drawerCtx.state.w}×${drawerCtx.state.h}`
@@ -1437,6 +1580,9 @@ async function scanEntryDrawer(session, ev, theme, violations) {
   const measured = {};
   /** 压暗遮罩在每套主题下的实测 opacity */
   const dim = {};
+  /** 1.34.0（W8/t5）：页签透明化不变量在每套主题下的实测值 */
+  const tabStrip = {};
+  /** 1.34.1：白名单命中计数用模块级的 `whitelistHit`（弹窗/抽屉函数看不到此处的局部变量） */
   let scanned = 0;
 
   try {
@@ -1634,7 +1780,7 @@ async function scanEntryDrawer(session, ev, theme, violations) {
         const good = [];
         for (const r of rows) {
           const w = whitelistOf(r);
-          if (w) good.push({ r, w }); else bad.push(r);
+          if (w) { good.push({ r, w }); noteWhitelistHit(theme, w.id); } else bad.push(r);
         }
         console.log(`\n──── ${page.label}：不透明块 ${rows.length} 个（白名单 ${good.length} / 违规 ${bad.length}）`);
         console.log(ctxLine);
@@ -1664,6 +1810,13 @@ async function scanEntryDrawer(session, ev, theme, violations) {
           const key = `${theme}`;
           measured[t.label] = measured[t.label] || {};
           if (!measured[t.label][key]) measured[t.label][key] = { ...m, page: page.label };
+        }
+        // 1.34.0（W8/t5）：页签透明化不变量。面积判据盖不到「药丸底被收回」这件事
+        // （透明不会产生任何不透明块，删掉规则也不会红），所以每套主题在开发辅助
+        // 四页的第一个页面上量一次：无底 + 上/左/右边框 0 + 下边框 1px。
+        if (!tabStrip[theme] && DEV_PAGE_LABEL.test(page.label)) {
+          const inv = await ev(TAB_STRIP_EXPR);
+          if (inv && inv.found) tabStrip[theme] = { ...inv, page: page.label };
         }
         // 压暗遮罩的实测 opacity：每套主题记第一次（页面不换它，取一次就够）
         if (!dim[theme]) {
@@ -1749,6 +1902,52 @@ async function scanEntryDrawer(session, ev, theme, violations) {
         }
       }
     }
+    // ── 1.34.1（review-arch 阻断项）白名单「必须命中一次」自证 ──
+    // 白名单是保护声明；元素不出现时面积判据根本走不到它 —— 既不通过也不失败 = 装饰品。
+    // 这里把「没命中」变成违规：要么命中，要么红。变异验证（M-1.34.1）就靠它。
+    console.log('\n════════ 白名单自证（声明了就必须真被命中一次，否则等于没装）');
+    for (const theme of THEMES) {
+      const bucket = whitelistHit[theme] || {};
+      for (const mh of WHITELIST_MUST_HIT) {
+        const n = bucket[mh.id] || 0;
+        if (n >= 1) {
+          console.log(`  \u2713 ${pad(theme, 6)} ${pad(mh.label, 30)} 命中 ${n} 次`);
+          continue;
+        }
+        violations.push({ theme, page: '(白名单未命中)', cls: mh.label, bg: '-', w: 0, h: 0, area: 0 });
+        console.log(`  \u2717 ${pad(theme, 6)} ${pad(mh.label, 30)} 命中 0 次 —— 这条白名单一次都没被走到`);
+        console.log(`      ↑ 保护等于没装：${mh.why}`);
+      }
+    }
+
+    // ── 1.34.0（W8/t5）页签透明化不变量：无底 + 上/左/右无边框 + 下边框 1px ──
+    // 为什么不能只靠「面积判据」：把药丸底换成 transparent 只会让扫描更绿，删掉那条
+    // 规则也不会产出任何 alpha≥0.999 的块 —— 没有这条断言，「页签透明化」等于没有回归保护。
+    console.log('\n════════ 页签透明化不变量（.pg .tabs 无底/无三边框/留 1px 底边；激活页签无底）');
+    const CLEAR = 'rgba(0, 0, 0, 0)';
+    for (const theme of THEMES) {
+      const inv = tabStrip[theme];
+      if (!inv) {
+        violations.push({ theme, page: '(未出现)', cls: '.pg .tabs 不变量', bg: '-', w: 0, h: 0, area: 0 });
+        console.log(`  \u2717 ${pad(theme, 6)} 四页里一个 .pg .tabs 都没量到，无法证明页签已透明`);
+        continue;
+      }
+      const s = inv.strip;
+      const a = inv.act;
+      const okBg = s.bg === CLEAR && a.bg === CLEAR;
+      const okBorder = s.bt === '0px' && s.bl === '0px' && s.br === '0px' && s.bb === '1px';
+      if (okBg && okBorder) {
+        console.log(`  \u2713 ${pad(theme, 6)} ${pad(`.tabs ${s.w}×${s.h}`, 18)} 底 ${pad(s.bg, 20)}`
+          + ` 边框 ${s.bt}/${s.bl}/${s.br}/${s.bb}  激活页签底 ${a.bg}（${inv.page}）`);
+        continue;
+      }
+      violations.push({ theme, page: inv.page, cls: '.pg .tabs 不变量', bg: s.bg, w: s.w, h: s.h, area: s.w * s.h });
+      console.log(`  \u2717 ${pad(theme, 6)} ${pad(`.tabs ${s.w}×${s.h}`, 18)} 底 ${pad(s.bg, 20)}`
+        + ` 边框 ${s.bt}/${s.bl}/${s.br}/${s.bb}  激活页签底 ${a.bg}（${inv.page}）`);
+      console.log('      ↑ 期望：.tabs/.tab2 背景 = rgba(0, 0, 0, 0)、上/左/右边框 0px、下边框 1px。'
+        + '说明 redesign.css 末尾 1.34.0 段被删了或被更具体的规则压掉');
+    }
+
     if (session.errors.length) {
       console.log(`\n页面未捕获异常 ${session.errors.length} 条：${JSON.stringify(session.errors.slice(0, 3))}`);
       violations.push({ theme: '-', page: '-', cls: '(页面异常)', bg: '-', w: 0, h: 0, area: 0 });

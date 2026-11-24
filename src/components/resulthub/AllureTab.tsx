@@ -92,7 +92,7 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
         title="① 取数"
         meta={data ? `${num(data.total)} 个用例 · ${num(data.ms)} ms` : undefined}
         tools={
-          <div className="tool-inline" style={{ gap: 8 }}>
+          <div className="tool-inline">
             <button className="btn btn-secondary btn-sm" onClick={() => void pickDir()} disabled={busy}>
               <Icons.folder size={13} /> 选择目录
             </button>
@@ -107,13 +107,13 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
         </Field>
 
         {err && (
-          <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-error mt-8" role="alert">
             <Icons.bug size={14} />
             <div className="text-sm">{err}</div>
           </div>
         )}
         {notice && (
-          <div className="dev-banner is-warn" role="status" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-warn mt-8" role="status">
             <Icons.clock size={14} />
             <div className="text-sm">{notice}</div>
           </div>
@@ -122,7 +122,7 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
 
       {!data
         ? (
-          <Panel title="② 结果">
+          <Panel title="② 用例分布">
             <Empty
               icon={<Icons.inbox size={22} />}
               title="还没有解析过结果目录"
@@ -144,11 +144,11 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
               </div>
 
               {/* [C-63] skippedFiles 与 skipped 是两个数：这里单独一行，文案不复用上面那条 */}
-              <div className="tool-inline" style={{ flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+              <div className="tool-inline mt-8">
                 <span className={`dev-tag ${skippedFiles > 0 ? 'is-unverified' : 'is-ok'}`}>
                   <Icons.clip size={13} /> 跳过的文件数 {skippedFiles}
                 </span>
-                <span className="dev-tag is-unknown">
+                <span className="dev-tag is-unverified">
                   <Icons.list size={13} /> 用例 skipped {num(data.skipped)}
                 </span>
                 <span className="text-sm text-muted">
@@ -158,7 +158,7 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
               </div>
 
               {skippedFiles > 0 && (
-                <div className="dev-banner is-warn" style={{ marginTop: 8 }} role="status">
+                <div className="dev-banner is-warn mt-8" role="status">
                   <Icons.clip size={14} />
                   <div className="text-sm">
                     本次导入跳过了 {skippedFiles} 个文件（附件/非结果文件，按 [C-61] 不读不解析）。
@@ -168,7 +168,7 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
               )}
 
               {data.truncated && (
-                <div className="dev-banner is-warn" style={{ marginTop: 8 }} role="status">
+                <div className="dev-banner is-warn mt-8" role="status">
                   <Icons.bug size={14} />
                   <div className="text-sm">
                     结果被截断（{TRUNCATED_TEXT[data.truncatedReason || ''] || data.truncatedReason || '上限'}）：下面的计数只覆盖已解析部分。
@@ -178,7 +178,7 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
             </Panel>
 
             <Panel title="③ flaky（失败/运行）" meta={`${flaky.length} 条`}>
-              <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+              <div className="text-sm text-muted mb-8">
                 「失败/运行」是本页的判断依据：<code>1/3</code> 是偶发、<code>3/3</code> 是必挂，两者的处置完全不同。
                 只跑过 1 次的用例永远不会被算成 flaky。
               </div>
@@ -193,8 +193,8 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
                   />
                 )
                 : (
-                  <div className="dev-scroll" style={{ maxHeight: 320 }}>
-                    <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <div className="dev-scroll">
+                    <table className="tbl">
                       <thead>
                         <tr>
                           <th scope="col">用例</th>
@@ -224,15 +224,15 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
             </Panel>
 
             <Panel title="④ 失败聚类" meta={`${clusters.length} 类 / ${clusterTotal} 次`}>
-              <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+              <div className="text-sm text-muted mb-8">
                 key 是**归一后的报错模式**（数字、堆栈、耗时都抹掉了），同一个根因会被归到一类；
                 「原文」是代表样本，展开可看最多 3 条对照 —— 如果同一类里原文差别很大，说明 key 抹过头了。
               </div>
               {clusters.length === 0
                 ? <div className="text-sm text-muted">没有失败用例，或失败信息为空。</div>
                 : (
-                  <div className="dev-scroll" style={{ maxHeight: 380 }}>
-                    <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <div className="dev-scroll">
+                    <table className="tbl">
                       <thead>
                         <tr>
                           <th scope="col">key（归一后的模式）</th>
@@ -267,11 +267,15 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
                               {open && (
                                 <tr>
                                   <td colSpan={4}>
-                                    <div style={{ display: 'grid', gap: 4 }}>
+                                    <div>
                                       {samples.length === 0
                                         ? <div className="text-sm text-muted">这条聚类没有对照样本。</div>
                                         : samples.map((s, i) => (
-                                          <code key={`${c.key}-${i}`} className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{s}</code>
+                                          // 证据原文用提示条承载（视觉口径 §4.3「证据原文可展开」）：
+                                          // 一条样本一个 .dev-banner，不再需要内联 grid/gap
+                                          <div className="dev-banner is-info" key={`${c.key}-${i}`}>
+                                            <code className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{s}</code>
+                                          </div>
                                         ))}
                                     </div>
                                   </td>
@@ -288,8 +292,8 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
 
             {envEntries.length > 0 && (
               <Panel title="⑤ 环境信息" meta={`${envEntries.length} 项`}>
-                <div className="dev-scroll" style={{ maxHeight: 160 }}>
-                  <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+                <div className="dev-scroll is-short">
+                  <table className="tbl">
                     <tbody>
                       {envEntries.map(([k, v]) => (
                         <tr key={k}><td style={{ width: 220 }}>{k}</td><td title={v} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</td></tr>
@@ -306,8 +310,8 @@ export function AllureTab({ addToast }: { addToast: (msg: string, type?: 'info' 
         {runs.length === 0
           ? <div className="text-sm text-muted">还没有历史记录。解析一次就会留一条（单集合最多 20 条，超出丢最旧）。</div>
           : (
-            <div className="dev-scroll" style={{ maxHeight: 260 }}>
-              <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+            <div className="dev-scroll is-short">
+              <table className="tbl">
                 <thead>
                   <tr>
                     <th scope="col" style={{ width: 110 }}>时间</th>

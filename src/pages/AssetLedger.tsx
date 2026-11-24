@@ -15,6 +15,7 @@ import {
   CASE_MAP_LIMITS, CASE_MAP_UNSUPPORTED_MSG, type CaseMapEntry, type ImportReport,
 } from '../utils/caseMaps';
 import { trimToCaps, capsOf, trimNotice } from '../utils/collectionTrim';
+import { scanCutState, coverageConditionText, conditionTone } from '../components/codeaudit/scanModel';
 import type { ApiRequest } from '../types';
 
 /**
@@ -29,9 +30,13 @@ import type { ApiRequest } from '../types';
  *    `dropped > 0` 时界面必须出现「历史记录已按上限裁剪，最早 N 条已清理」——
  *    静默丢数据是这类工具最不可接受的失败模式。
  *
- * 视觉：三态标签用 `.dev-tag`（`is-ok` / `is-fail` / `is-heur`），**不用 `.pill-*`**；
- * 大表一律套 `.dev-scroll`（`.pnl` 是 `overflow:hidden`，不套会把右侧列裁掉）；
- * 表格 `tableLayout:'fixed'` + 内联列宽。全页不写 css、不改 `src/types.ts`。
+ * 视觉（1.34.0 / W8 t7 收编）：三态标签用 `.dev-tag` —— `is-ok`（已覆盖）/ `is-fail`（未覆盖）/
+ * `is-unknown`（**只给**「无法判定」），中性运行信息走 `is-unverified`，**不用 `.pill-*`**；
+ * 大表一律套 `.dev-scroll`（`.pnl` 是 `overflow:hidden`，不套会把右侧列裁掉），
+ * 次要表用矮档 `.dev-scroll.is-short`（只有这两档）；
+ * 表格布局由 `redesign.css:9185` 的 `.dev-scroll > table.tbl { table-layout: fixed }` 收编，
+ * 页面里只留「列宽」这一个内容决策（`style={{width}}`），**不再写**内联 `tableLayout/width`、
+ * 也不写内联 `padding/margin/maxHeight/gap/gridTemplateColumns`。全页不写 css、不改 `src/types.ts`。
  */
 
 const TABS = [
@@ -45,7 +50,9 @@ type TabId = typeof TABS[number]['id'];
 const STATE_META: Record<CoverageState, { cls: string; label: string }> = {
   covered: { cls: 'is-ok', label: '已覆盖' },
   missing: { cls: 'is-fail', label: '未覆盖' },
-  unknown: { cls: 'is-heur', label: '无法判定' },
+  // `is-unknown` 是「无法判定」的**专属**档（redesign.css:8824）；改前这里借了 is-heur（= 启发式命中），
+  // 而覆盖率整体又占着 is-unknown，等于两个语义挤在一个类名上（视觉口径 §4「三态标签」）。
+  unknown: { cls: 'is-unknown', label: '无法判定' },
 };
 
 export function AssetLedger() {
@@ -103,6 +110,15 @@ interface ScanRunData {
   fileList?: string[];
   bytes?: number;
   skippedSymlinks?: number;
+  /** 同文件同规则被折叠掉的命中数（`[C-29]` v16 / 评审 C2：折叠 ≠ 截断） */
+  suppressed?: number;
+  /** 全仓命中总数（`[C-30]` v16）；旧主进程不给 → 缺失，界面不得兜 0 */
+  totalFindings?: number;
+  /**
+   * 目录/产物守卫跳过的条目数（评审 S-03）。**逐字用后端的字段名**；缺失（旧主进程）时按
+   * 「不显示」处理，不崩、不编数。
+   */
+  skippedByGuard?: number;
   truncated?: boolean;
   truncatedReason?: string;
   counts?: Record<string, number>;
@@ -137,8 +153,8 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
     }
     setBusy(true);
     setErr('');
-    setResult(null);
-    setScan(null);
+    // 刻意**不**清 result / scan：局部刷新保留旧矩阵 + 顶部 BusyProgress（视觉口径 §4「空态/加载」）。
+    // 清空会让用户以为「第二次跑出来是空的」——与 AuditTab.tsx:setData(null) 是同一类违规。
     setSavedNotice('');
     try {
       // 1) 接口集合（分母的来源）：apiRequests 是接口调试页维护的那份
@@ -230,15 +246,36 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
     return filter ? result.items.filter((i) => i.state === filter) : result.items;
   }, [result, filter]);
 
+  /**
+   * 本次运行的截断 / 折叠判据与文案（第 1 轮评审 C2）。
+   *
+   * 判据与代码体检页是**同一份实现**（`scanModel.scanCutState`）：`suppressed` 只是折叠、
+   * 不是截断，所以它既不会让 `coverageCut` 变真，也不会让这里出现「覆盖统计可能偏低」。
+   * 文案走 `coverageConditionText`（覆盖矩阵口径：分子是接口覆盖，不是命中数）。
+   * 内部枚举名（`suppressed` / `file-size`…）在那一层就转成中文了，页面拿不到原文。
+   */
+  const conditionInput = {
+    truncated: !!scan?.truncated,
+    reason: scan?.truncatedReason,
+    suppressed: Math.max(0, Math.floor(Number(scan?.suppressed ?? 0) || 0)),
+    findingsLength: Array.isArray(scan?.findings) ? scan.findings.length : 0,
+    totalFindings: typeof scan?.totalFindings === 'number' && Number.isFinite(scan.totalFindings) ? scan.totalFindings : NaN,
+    files: Number(scan?.files) || 0,
+    skippedSymlinks: Math.max(0, Math.floor(Number(scan?.skippedSymlinks ?? 0) || 0)),
+    skippedByGuard: typeof scan?.skippedByGuard === 'number' ? scan.skippedByGuard : undefined,
+  };
+  const scanCut = scanCutState(conditionInput);
+  const scanCondition = scan ? coverageConditionText(conditionInput) : '';
+
   return (
     <div>
       {busy && <BusyProgress active label="扫描代码并比对接口…" />}
 
       <Panel
-        title="① 取数与运行"
+        title="① 取数"
         meta={scan ? `扫描 ${scan.files ?? 0} 个文件 · ${scan.ms ?? 0} ms` : undefined}
         tools={
-          <div className="tool-inline" style={{ gap: 8 }}>
+          <div className="tool-inline">
             <button className="btn btn-secondary btn-sm" onClick={() => void pickRoot()} disabled={busy}>
               <Icons.folder size={13} /> 选择目录
             </button>
@@ -248,7 +285,7 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
           </div>
         }
       >
-        <div className="grid2" style={{ gap: 12 }}>
+        <div className="grid2">
           <Field label="代码目录" hint="扫描根目录：只读、只抽路径原文，不改任何文件">
             <input value={root} onChange={(e) => setRoot(e.target.value)} placeholder="先用「选择目录」挑一个" />
           </Field>
@@ -257,21 +294,21 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
           </Field>
         </div>
 
-        <div className="text-sm text-muted" style={{ marginTop: 6 }}>
+        <div className="text-sm text-muted mt-8">
           接口集合来自「接口调试」的 apiRequests（当前 {endpointCount || '—'} 个）；代码引用来自扫描
           <code> pack=coverage </code>
           的取数规则（Spring 注解 / 链式调用 / requests / 路径字面量）。
         </div>
 
         {err && (
-          <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-error mt-8" role="alert">
             <Icons.bug size={14} />
             <div className="text-sm">{err}</div>
           </div>
         )}
 
         {savedNotice && (
-          <div className="dev-banner is-info" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-info mt-8">
             <Icons.check size={14} />
             <div className="text-sm">{savedNotice}</div>
           </div>
@@ -281,17 +318,19 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
       {result && (
         <Panel title="② 覆盖矩阵" meta={`${result.summary.total} 个接口`}>
           {/* 三态统计：**永远同时给分子/分母**（[C-32] 禁止只给百分比） */}
-          <div className="tool-inline" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          <div className="tool-inline mb-8">
             <span className="dev-tag is-ok">
               <Icons.check size={13} /> 已覆盖 {result.summary.covered}/{result.summary.total}
             </span>
             <span className="dev-tag is-fail">
               <Icons.close size={13} /> 未覆盖 {result.summary.missing}/{result.summary.total}
             </span>
-            <span className="dev-tag is-heur">
+            <span className="dev-tag is-unknown">
               <Icons.bug size={13} /> 无法判定 {result.summary.undetermined}/{result.summary.total}
             </span>
-            <span className="dev-tag is-unknown">
+            {/* 覆盖率是**中性信息**（不是「无法判定」也不是「未验证」）：占 is-unverified，
+                把 is-unknown 腾给真正的「无法判定」档（视觉口径 §4「三态标签」） */}
+            <span className="dev-tag is-unverified">
               <Icons.chart size={13} /> 覆盖率 {coveragePercent(result.summary)}%（{result.summary.covered}/{result.summary.total}）
             </span>
             <span className={`dev-tag ${assertCoverageConsistency(result.summary) ? 'is-fail' : 'is-ok'}`}>
@@ -305,20 +344,22 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
             )}
           </div>
 
-          {scan && (scan.truncated || scan.skippedSymlinks) ? (
-            <div className="dev-banner is-warn" style={{ marginBottom: 8 }}>
+          {/* 本次运行条件：与体检页同一套六分流（`scanModel.coverageConditionText` 是唯一实现）。
+              改前三处口径错误（评审 C2）：① 把 `suppressed` 当「截断」报「覆盖统计可能偏低」——
+              折叠只是同文件同规则超出上限，一条明细都没少，说偏低是假警报；② 把 `suppressed`
+              这种内部枚举名直接拼给用户看；③ `skippedSymlinks` 与「截断」混成一句。
+              现在：覆盖被砍（is-warn）才说「覆盖统计可能偏低」；折叠 / 明细到顶 / 跳过符号链接 / 守卫跳过条目
+              都是**「说清这次扫的范围」**，一律 is-info（语气档统一由 `scanModel.conditionTone` 决定，
+              与体检页同一份实现，不在 JSX 里各写一份判断），全部中文、不出现任何枚举值。 */}
+          {scan && scanCondition ? (
+            <div className={`dev-banner ${conditionTone(scanCut)}`} role="status">
               <Icons.bug size={14} />
-              <div className="text-sm">
-                {scan.files ?? 0} 个文件
-                {scan.skippedSymlinks ? `，跳过 ${scan.skippedSymlinks} 个符号链接` : ''}
-                {scan.truncated ? `，结果被截断（${scan.truncatedReason || '上限'}）` : ''}
-                —— 覆盖统计可能偏低，先看这条再决定要不要补用例。
-              </div>
+              <div className="text-sm">{scanCondition}</div>
             </div>
           ) : null}
 
           {result.warnings.length > 0 && (
-            <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+            <div>
               {result.warnings.map((w) => (
                 <div className="dev-banner is-warn" key={w}>
                   <Icons.bug size={14} />
@@ -328,7 +369,7 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
             </div>
           )}
 
-          <div className="tool-inline" style={{ gap: 8, marginBottom: 8 }}>
+          <div className="tool-inline mb-8">
             <select value={filter} onChange={(e) => setFilter(e.target.value as '' | CoverageState)} aria-label="按状态筛选">
               <option value="">全部（{result.items.length}）</option>
               <option value="covered">只看已覆盖（{result.summary.covered}）</option>
@@ -348,8 +389,8 @@ function CoverageTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'su
               />
             )
             : (
-              <div className="dev-scroll" style={{ maxHeight: 460 }}>
-                <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+              <div className="dev-scroll">
+                <table className="tbl">
                   <thead>
                     <tr>
                       <th scope="col" style={{ width: 78 }}>方法</th>
@@ -535,17 +576,17 @@ function CaseMapTab({
         title="① 导入 / 统计"
         meta={loading ? '加载中…' : `${summary.total}/${CASE_MAP_LIMITS.maxItems}`}
         tools={
-          <div className="tool-inline" style={{ gap: 8 }}>
+          <div className="tool-inline">
             <button className="btn btn-secondary btn-sm" onClick={() => void importCsv()} disabled={busy || loading}>
               <Icons.upload size={13} /> 导入 CSV
             </button>
           </div>
         }
       >
-        <div className="tool-inline" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <div className="tool-inline mb-8">
           <span className="dev-tag is-ok"><Icons.list size={13} /> 共 {summary.total} 条</span>
-          <span className="dev-tag is-unknown"><Icons.folder size={13} /> 映射到文件 {summary.file}</span>
-          <span className="dev-tag is-unknown"><Icons.terminal size={13} /> 映射到方法 {summary.method}</span>
+          <span className="dev-tag is-unverified"><Icons.folder size={13} /> 映射到文件 {summary.file}</span>
+          <span className="dev-tag is-unverified"><Icons.terminal size={13} /> 映射到方法 {summary.method}</span>
           <span className="dev-tag is-unverified"><Icons.upload size={13} /> CSV 来源 {summary.csv}</span>
           <span className="dev-tag is-unverified"><Icons.pencil size={13} /> 手工维护 {summary.manual}</span>
         </div>
@@ -557,21 +598,21 @@ function CaseMapTab({
         </div>
 
         {err && (
-          <div className="dev-banner is-error" role="alert" style={{ marginTop: 8 }}>
+          <div className="dev-banner is-error mt-8" role="alert">
             <Icons.bug size={14} />
             <div className="text-sm">{err}</div>
           </div>
         )}
 
         {notice && (
-          <div className="dev-banner is-warn" style={{ marginTop: 8 }} role="status">
+          <div className="dev-banner is-warn mt-8" role="status">
             <Icons.clock size={14} />
             <div className="text-sm">{notice}</div>
           </div>
         )}
 
         {report && (
-          <div className="dev-banner is-info" style={{ marginTop: 8 }} role="status">
+          <div className="dev-banner is-info mt-8" role="status">
             <Icons.check size={14} />
             <div className="text-sm">
               导入结果：数据行 {report.rows} 行 → 新增 {report.added} / 更新 {report.updated}（其中合并 {report.merged}）/
@@ -583,7 +624,7 @@ function CaseMapTab({
       </Panel>
 
       <Panel title={draft.id ? '② 编辑映射' : '② 新增映射'} meta={draft.caseNo || undefined}>
-        <div className="grid2" style={{ gap: 12 }}>
+        <div className="grid2">
           <Field label="用例编号（必填）" hint="集合内唯一；重复导入时按它更新">
             <input value={draft.caseNo} onChange={(e) => setDraft({ ...draft, caseNo: e.target.value })} placeholder="TC-001" maxLength={CASE_MAP_LIMITS.caseNo} />
           </Field>
@@ -597,7 +638,7 @@ function CaseMapTab({
             <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="对应哪条流程" maxLength={CASE_MAP_LIMITS.note} />
           </Field>
         </div>
-        <div className="tool-inline" style={{ gap: 8, marginTop: 8 }}>
+        <div className="tool-inline mt-8">
           <button className="btn btn-primary btn-sm" onClick={() => void submitDraft()} disabled={busy}>
             <Icons.check size={13} /> {draft.id ? '保存修改' : '新增映射'}
           </button>
@@ -613,7 +654,7 @@ function CaseMapTab({
         title="③ 映射清单"
         meta={`${filtered.length}/${items.length}`}
         tools={
-          <div className="tool-inline" style={{ gap: 8 }}>
+          <div className="tool-inline">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -635,8 +676,8 @@ function CaseMapTab({
               />
             )
             : (
-              <div className="dev-scroll" style={{ maxHeight: 460 }}>
-                <table className="tbl" style={{ tableLayout: 'fixed', width: '100%' }}>
+              <div className="dev-scroll">
+                <table className="tbl">
                   <thead>
                     <tr>
                       <th scope="col" style={{ width: 120 }}>用例编号</th>
@@ -655,14 +696,14 @@ function CaseMapTab({
                         <td title={it.caseTitle} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.caseTitle || '—'}</td>
                         <td title={it.target.ref} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.target.ref}</td>
                         <td>
-                          <span className={`dev-tag ${it.target.kind === 'method' ? 'is-ok' : 'is-unknown'}`}>
+                          <span className={`dev-tag ${it.target.kind === 'method' ? 'is-ok' : 'is-unverified'}`}>
                             {it.target.kind === 'method' ? '方法' : '文件'}
                           </span>
                         </td>
                         <td><span className={`dev-tag ${it.source === 'csv' ? 'is-unverified' : 'is-heur'}`}>{it.source === 'csv' ? 'CSV' : '手工'}</span></td>
                         <td>{it.updatedAt ? formatRecent(it.updatedAt) : '—'}</td>
                         <td>
-                          <div className="tool-inline" style={{ gap: 4 }}>
+                          <div className="tool-inline">
                             <button className="btn btn-ghost btn-sm" onClick={() => editRow(it)} title="编辑" aria-label={`编辑 ${it.caseNo}`}>
                               <Icons.pencil size={13} />
                             </button>

@@ -7,6 +7,9 @@ import {
   IconTag, IconInbox, IconFolder, IconPhoto, IconPinned, IconUser, IconPaperclip,
 } from '@tabler/icons-react';
 
+import { highlightCode, HIGHLIGHT_FOLD_LINES } from '../utils/codeHighlight';
+import type { CodeLang } from '../utils/codeHighlight';
+
 /* ================================================================
    工作台页面共用的 UI 原子组件
    —— 统一页面骨架、面板、表格、徽标、图标按钮，
@@ -247,6 +250,93 @@ export function Field({
       {children}
       {hint && <span className="field-label" style={{ fontWeight: 400 }}>{hint}</span>}
     </div>
+  );
+}
+
+/* ---------------- 代码块（语法高亮） ---------------- */
+
+/**
+ * 代码块：`.tb-pre.dev-code` + 7 个 `tok-*` 语义类（配色全在 CSS，见 redesign.css 的 1.34.0 段）。
+ *
+ * 三个不能随手改的实现细节（契约 docs/acceptance/W8-组件契约.md §1.6）：
+ *
+ * 1) 行容器是 `<span class="dev-code-line">`，**不是 `<div>`**：`<pre>` 的内容模型是 phrasing
+ *    content，`<div>` 塞进去是非法 HTML（浏览器照渲染，但 validator / SSR 会炸，也容易在
+ *    review 里被当成笔误改回去）。`display:grid` 由 CSS 给，所以 span 也能排成两列。
+ * 2) `.dev-scroll` 由**本组件**包：`.dev-scroll > .dev-code { max-height: none }` 这条规则
+ *    依赖 `<pre>` 是 `.dev-scroll` 的**直接子元素**；把包装留给调用方，那条 CSS 会静默失效，
+ *    于是 `.tb-pre` 自带的 `max-height:300px` 与 `.dev-scroll` 的 56vh 叠成双滚动条
+ *    （这正是 1.34.0 之前生成代码区的老毛病）。
+ * 3) 超过 `maxLines` 行**必须写清「显示了多少 / 一共多少」并给展开按钮**：契约 [C-09]
+ *    「禁止静默截断」的同源要求 —— 只给前 400 行而不说，用户会以为文件就这么长。
+ *    折叠条的显隐看「原文是否长于阈值」而不是 `hl.folded`，否则展开后按钮消失、收不回去。
+ *
+ * 行号关掉时（`showLineNumbers={false}`）仍占着 `.dev-code-line` 的左列：CSS 是固定的
+ * `4ch 1fr` 两列网格，少一个子元素会把代码挤到 4ch 那一列去。这里**不补内联样式**绕开它。
+ */
+export function CodeBlock({
+  code,
+  lang,
+  showLineNumbers = true,
+  maxLines = HIGHLIGHT_FOLD_LINES,
+}: {
+  code: string;
+  /** 语言名或未知字符串（未知 → 纯文本，不抛错）；通常传 `langFromPath(file.path)` */
+  lang?: CodeLang | string;
+  showLineNumbers?: boolean;
+  /** 折叠阈值；展开全部时内部传 Infinity */
+  maxLines?: number;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
+  const cap = expanded ? Number.POSITIVE_INFINITY : maxLines;
+  const hl = React.useMemo(
+    () => highlightCode(code, lang, { maxLines: cap }),
+    [code, lang, cap],
+  );
+  /**
+   * 折叠条的显隐看「原文是否长于阈值」，**不看 `hl.folded`**：
+   * `folded` 在展开后会变 false（此时没有截断），若拿它当条件，展开那一刻按钮就消失，
+   * 用户再也收不回去 —— 一次性单向操作。
+   */
+  const hasMore = hl.totalLines > maxLines;
+
+  return (
+    <>
+      <div className="dev-scroll">
+        <pre className="tb-pre dev-code">
+          {hl.lines.map((line) => (
+            <span className="dev-code-line" key={line.no}>
+              <span className="dev-code-ln" aria-hidden={showLineNumbers ? undefined : true}>
+                {showLineNumbers ? line.no : ''}
+              </span>
+              <span>
+                {line.tokens.map((t, i) => (
+                  t.cls ? <span key={i} className={t.cls}>{t.text}</span> : t.text
+                ))}
+              </span>
+            </span>
+          ))}
+        </pre>
+      </div>
+      {hasMore && (
+        <div className="dev-banner is-info">
+          <Icons.list size={14} />
+          <div className="text-sm">
+            {expanded
+              ? `已全部展开（共 ${hl.totalLines} 行）`
+              : `已显示前 ${maxLines} 行（共 ${hl.totalLines} 行）`}
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? '收起' : '展开全部'}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
