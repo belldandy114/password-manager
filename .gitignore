@@ -67,3 +67,7 @@ scripts/.tmp-bg.png
 # Agent 团队运行态（任务图/成员会话/邮箱）与评审回归过程产物：本机协作用，不进公开仓库
 .agent-teams/
 .reviews/
+# JMeter 非 GUI 运行残留：当 spawn 的 cwd 落在仓库内时会生成（2026-11-24 事故：jmeter.log 被 git add -A 收进仓库）
+/jmeter.log
+*.jtl
+*-engine.log
