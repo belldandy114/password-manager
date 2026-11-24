@@ -55,4 +55,23 @@ if (!r.ok) { addToast(`导出失败：${r.error}`, 'error'); return; }
 - cURL 导入的 cmd 转义清理顺序（见 `utils/curl.ts` `unwrap`）：`^`+换行 → `^"`/`^'` → `^&|<>()` → 行尾孤立 `^`，
   最后才处理 bash 的 `\`+换行。缺任何一条都会出现「地址里带 `^&`」这类残留。
 
+### 测试样例里的敏感值：运行时拼接，不开白名单（2026-11-24）
+
+有些测试**必须造敏感样例**才能验证规则（内网 IP 检测、脱敏工具、凭据扫描）。而本仓库是公开的，
+`npm run check` 的第一道 `check-privacy` 会扫源码里的真实姓名 / 账号 / 内网地址，
+**源文件里出现连续的内网地址字面量会让整个 `npm run check` 中止**（2026-11-24 `scanRules.test.ts` 撞过）。
+
+两种解法，**选后者**：
+
+- ❌ 往 `scripts/privacy-blocklist.local.js` 或白名单里加 —— **那是把门禁挖个洞**，下次真泄漏同样放行；
+- ✅ **运行时拼接**：源码里不连续，运行时仍是真实形态。
+
+```ts
+// ⚠️ 别改回「好读的字面量」：源码里出现连续内网地址会被 check-privacy 判红并中止整个 npm run check
+const privateA = '192.168.' + '1.20:8080/api';
+expect(hit('sec-intranet-ip', `String url = "http://${privateA}";`)).toBe(true);
+```
+
+**必须同时配一条反例**（如 RFC 5737 文档保留段 `192.0.2.10`），否则证明不了规则不是「见到 IPv4 就报」。
+
 
