@@ -133,7 +133,11 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
   };
 
   const reveal = async (f: ScanFinding) => {
-    const r = await window.electronAPI.scanReveal({ file: f.file, line: f.line });
+    // `f.file` 是**相对本次扫描 root 的路径**，必须把 root 一起传：
+    // 主进程按 root 拼绝对路径（打包版的 cwd 不是仓库根，靠 cwd 解析必然失败，S-06）
+    const scanRoot = data?.root || '';
+    if (!scanRoot) { addToast('还没扫描过，无法定位（请先跑一次体检）', 'error'); return; }
+    const r = await window.electronAPI.scanReveal({ root: scanRoot, file: f.file, line: f.line });
     if (!r.success) { addToast(r.error || '定位失败', 'error'); return; }
     setRevealed(`${f.file}:${f.line}`);
   };

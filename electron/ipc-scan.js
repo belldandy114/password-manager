@@ -259,16 +259,31 @@ function registerScanIpc(deps = {}) {
   });
 
   /**
-   * `scan:reveal { file, line? }` —— C-16 第 3 条的**唯一豁免**通道：
-   * 不传 root、不做包含性校验；主进程只做 ① 非空 + 存在性校验 ② `shell.showItemInFolder`
-   * ③ 返回 `{}`。**禁止**读内容、解析、执行、把路径写进日志（所以这里没有 console）。
+   * `scan:reveal { root, file, line? }` —— 在文件管理器里定位一条命中。
+   *
+   * **必须传 root**（本次扫描的根）：`file` 是**相对 root 的路径**，主进程拼成绝对路径后再校验。
+   * 早期版本直接拿 `file` 做 `fs.existsSync`，等于按**主进程自己的 cwd** 解析：
+   * dev 下 cwd 恰好是仓库根，所以「碰巧能用」；**打包版的 cwd 是应用安装目录**，
+   * 于是「定位」按钮必然报「文件不存在」——S-06 就是这个 bug（dev 能过、打包必挂）。
+   * 所以这里**不再有 cwd 兜底**：没给 root 就明确报错，给了就只认 root。
+   *
+   * 安全边界（C-16 第 3 条的唯一豁免通道）：只做 ① root 必填 + 包含性校验（`../` 越界拒绝，
+   * 沿 C-56 的「路径越界」文案）② 存在性校验 ③ `shell.showItemInFolder`
+   * ④ 返回 `{}`。**禁止**读内容、解析、执行、把路径写进日志（所以这里没有 console）。
    * `line` 只留给 UI 侧提示，不传给系统。
    */
   ipcMain.handle('scan:reveal', async (_event, payload = {}) => {
+    const root = String((payload && payload.root) || '').trim();
     const file = String((payload && payload.file) || '').trim();
+    // 缺 root = 调用方没按契约传参 → 明确报错，绝不退回 cwd（那正是 S-06 的成因）
+    if (!root) return { success: false, error: '缺少扫描根目录：请重新扫描后再定位（定位需要扫描时的目录）' };
     if (!file) return { success: false, error: ERR.revealMissing(file) };
-    if (!fs.existsSync(file)) return { success: false, error: ERR.revealMissing(file) };
-    shell.showItemInFolder(file);
+    const rootAbs = path.resolve(root);
+    const full = path.isAbsolute(file) ? path.resolve(file) : path.resolve(rootAbs, file);
+    // 越界拒绝：`../../etc/passwd` 之类一律不认（C-56）
+    if (!isInsideRoot(rootAbs, full)) return { success: false, error: ERR.escape };
+    if (!fs.existsSync(full)) return { success: false, error: ERR.revealMissing(file) };
+    shell.showItemInFolder(full);
     return { success: true, data: {} };
   });
 }

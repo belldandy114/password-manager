@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { resolve, isAbsolute } from 'path';
 import {
   RULES, SCAN_PACKS, matchRules, isInsideRoot, stripComments, rulesOf, MAX_HITS_PER_RULE,
 } from '../../../electron/scan-rules.js';
@@ -383,5 +384,30 @@ describe('isInsideRoot：root 归属校验（C-16 第 1 条，纯字符串判前
   it('空 root / 空 target 一律 false（不许把空串当「都在里面」）', () => {
     expect(isInsideRoot('', 'C:\\a')).toBe(false);
     expect(isInsideRoot(root, '')).toBe(false);
+  });
+});
+/**
+ * S-06：`scan:reveal` 的路径解析。
+ *
+ * 老实现直接 `fs.existsSync(f.file)` —— 按**主进程自己的 cwd** 解析。
+ * dev 下 cwd 恰好是仓库根所以「碰巧能用」，**打包版的 cwd 是安装目录**，
+ * 于是「定位」按钮必然报「文件不存在」。修法：主进程用「本次扫描 root + 相对路径」拼绝对路径。
+ * 这里锁两件事：拼出来是绝对路径且在根内；`../` 越界必须被拒（C-56 文案在 handler 侧）。
+ */
+describe('S-06：scan:reveal 的 root + rel 拼接与越界拒绝', () => {
+  const root = process.platform === 'win32' ? 'C:\\work\\proj' : '/work/proj';
+
+  it('root + 相对路径 → 绝对路径，且仍在根内（与 cwd 无关）', () => {
+    for (const rel of ['src/utils/a.ts', 'a.ts', 'src/deep/x/y.java']) {
+      const full = resolve(root, rel);
+      expect(isAbsolute(full)).toBe(true);
+      expect(isInsideRoot(root, full)).toBe(true);
+    }
+  });
+
+  it('越界 rel（../ 各种写法）一律判为根外', () => {
+    for (const rel of ['../outside.txt', 'src/../../outside.txt', '../../Windows/win.ini', '..\\outside.txt']) {
+      expect(isInsideRoot(root, resolve(root, rel))).toBe(false);
+    }
   });
 });

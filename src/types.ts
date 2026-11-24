@@ -1633,7 +1633,12 @@ export interface ElectronAPI {
   scanRun: (opts: { root: string; pack: 'audit' | 'coverage'; ruleIds?: string[]; maxFiles?: number; token?: string })
     => Promise<{ success: boolean; data?: ScanRunResult; error?: string; canceled?: boolean }>;
   scanCancel: (token: string) => Promise<{ success: boolean; data?: { canceled: boolean }; error?: string }>;
-  scanReveal: (payload: { file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
+  /**
+   * 在文件管理器里定位一条命中。`file` 是**相对 `root` 的路径**，**必须**传本次扫描的 root：
+   * 主进程 `path.resolve(root, file)` 后再校验（越界拒绝）。缺 root 会明确报错——
+   * 早期版本按主进程 cwd 解析，dev 碰巧能用、打包版必挂（S-06）。
+   */
+  scanReveal: (payload: { root: string; file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
 
   gitProbe: (payload: { root: string }) => Promise<{ success: boolean; data?: GitProbeResult; error?: string }>;
   gitDiff: (payload: { root: string; scope: 'unstaged' | 'staged' | 'head' })
