@@ -164,61 +164,72 @@ export function EntryDetailDrawer({
             <div>
               <dt>网址</dt>
               <dd>
-                <span className="cell-mono entry-detail-url" title={entry.url}>{entry.url || '—'}</span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label="复制网址"
-                  disabled={!entry.url}
-                  onClick={() => void copyText(entry.url, '网址')}
-                >复制</button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label="打开网址"
-                  disabled={!entry.url}
-                  onClick={() => {
-                    if (!entry.url) return;
-                    if (onOpen) onOpen(entry.url);
-                    else void openUrlInDefaultBrowser(entry.url);
-                  }}
-                ><Icons.extern size={12} /> 打开</button>
+                <span className="cell-mono entry-detail-url entry-detail-val" title={entry.url}>{entry.url || '—'}</span>
+                <span className="entry-detail-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm entry-detail-icon"
+                    aria-label="复制网址"
+                    title="复制网址"
+                    disabled={!entry.url}
+                    onClick={() => void copyText(entry.url, '网址')}
+                  ><Icons.copy size={13} /></button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm entry-detail-icon"
+                    aria-label="打开网址"
+                    title="用默认浏览器打开"
+                    disabled={!entry.url}
+                    onClick={() => {
+                      if (!entry.url) return;
+                      if (onOpen) onOpen(entry.url);
+                      else void openUrlInDefaultBrowser(entry.url);
+                    }}
+                  ><Icons.extern size={13} /></button>
+                </span>
               </dd>
             </div>
 
             <div>
               <dt>用户名</dt>
               <dd>
-                <span className="cell-mono" title={entry.username}>{entry.username || '—'}</span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label="复制用户名"
-                  disabled={!entry.username}
-                  onClick={() => void copyText(entry.username, '用户名')}
-                >复制</button>
+                <span className="cell-mono entry-detail-val" title={entry.username}>{entry.username || '—'}</span>
+                <span className="entry-detail-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm entry-detail-icon"
+                    aria-label="复制用户名"
+                    title="复制用户名"
+                    disabled={!entry.username}
+                    onClick={() => void copyText(entry.username, '用户名')}
+                  ><Icons.copy size={13} /></button>
+                </span>
               </dd>
             </div>
 
             <div>
               <dt>密码</dt>
               <dd>
-                <span className="cell-mono entry-detail-pwd">
+                <span className="cell-mono entry-detail-pwd entry-detail-val">
                   {showPassword ? (entry.password || '—') : MASK}
                 </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                  onClick={() => setShowPassword(v => !v)}
-                >{showPassword ? '隐藏' : '显示'}</button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label="复制密码"
-                  disabled={!entry.password}
-                  onClick={() => void copySecret(entry.password, '密码')}
-                >复制</button>
+                <span className="entry-detail-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm entry-detail-icon"
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    title={showPassword ? '隐藏密码' : '显示密码'}
+                    onClick={() => setShowPassword(v => !v)}
+                  >{showPassword ? <Icons.eyeOff size={13} /> : <Icons.eye size={13} />}</button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm entry-detail-icon"
+                    aria-label="复制密码"
+                    title="复制密码（剪贴板稍后自动清空）"
+                    disabled={!entry.password}
+                    onClick={() => void copySecret(entry.password, '密码')}
+                  ><Icons.copy size={13} /></button>
+                </span>
               </dd>
             </div>
 
@@ -276,11 +287,12 @@ export function EntryDetailDrawer({
                         <span className="role-acc-value" title={a.username}>{a.username || '--'}</span>
                         <button
                           type="button"
-                          className="btn btn-ghost btn-sm"
+                          className="btn btn-ghost btn-sm entry-detail-icon"
                           aria-label={`复制「${role}」的账号`}
+                          title="复制账号"
                           disabled={!a.username}
                           onClick={() => void copyText(a.username, `${role}-账号`)}
-                        >复制</button>
+                        ><Icons.copy size={13} /></button>
                       </div>
                       <div className="role-acc-line">
                         <span className="role-acc-label">密码</span>
@@ -289,18 +301,19 @@ export function EntryDetailDrawer({
                         </span>
                         <button
                           type="button"
-                          className="btn btn-ghost btn-sm"
+                          className="btn btn-ghost btn-sm entry-detail-icon"
                           title={visible ? '隐藏密码' : '显示密码'}
                           aria-label={`${visible ? '隐藏' : '显示'}「${role}」的密码`}
                           onClick={() => toggleAccount(a.id)}
-                        >{visible ? '隐藏' : '显示'}</button>
+                        >{visible ? <Icons.eyeOff size={13} /> : <Icons.eye size={13} />}</button>
                         <button
                           type="button"
-                          className="btn btn-ghost btn-sm"
+                          className="btn btn-ghost btn-sm entry-detail-icon"
                           aria-label={`复制「${role}」的密码`}
+                          title="复制密码（剪贴板稍后自动清空）"
                           disabled={!a.password}
                           onClick={() => void copySecret(a.password, `${role}-密码`)}
-                        >复制</button>
+                        ><Icons.copy size={13} /></button>
                       </div>
                     </div>
                   );

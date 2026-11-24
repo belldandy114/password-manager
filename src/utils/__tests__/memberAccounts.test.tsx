@@ -112,6 +112,18 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 const ROWS = (root: ParentNode) => [...root.querySelectorAll('.mem-acc-table tbody tr')] as HTMLElement[];
+
+/** 1.32.8：所属网址改成可搜索下拉后，选条目 = 聚焦 + 输入关键字 + 点候选 */
+function pickEntry(dlg: HTMLElement, keyword: string) {
+  const combo = dlg.querySelector('input[role="combobox"][aria-label="所属网址"]') as HTMLInputElement;
+  fireEvent.focus(combo);
+  fireEvent.change(combo, { target: { value: keyword } });
+  const item = ([...dlg.querySelectorAll('.entry-picker-item')] as HTMLElement[])
+    .find(i => (i.textContent || '').includes(keyword));
+  if (!item) throw new Error(`候选里没有「${keyword}」`);
+  fireEvent.mouseDown(item);
+  return combo;
+}
 const dialog = () => document.querySelector('[role="dialog"]') as HTMLElement | null;
 
 /* ============================ A. 纯口径 ============================ */
@@ -297,7 +309,7 @@ describe('成员账号：新增 / 编辑 / 删除写回 entry.accounts', () => {
     const save = within(dlg).getByRole('button', { name: '保存' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true); // 所属网址必填
 
-    fireEvent.change(within(dlg).getByLabelText('所属网址'), { target: { value: 'e-b' } });
+    pickEntry(dlg, '支付网关');
     expect(save.disabled).toBe(false);
     fireEvent.change(within(dlg).getByLabelText('角色'), { target: { value: '审计' } });
     fireEvent.change(within(dlg).getByLabelText('账号'), { target: { value: 'audit@b' } });
@@ -371,7 +383,7 @@ describe('成员账号：保存失败不改本地状态', () => {
     const { container } = render(<Harness />);
     fireEvent.click(within(container).getByRole('button', { name: '新增成员账号' }));
     const dlg = await waitFor(dialog) as HTMLElement;
-    fireEvent.change(within(dlg).getByLabelText('所属网址'), { target: { value: 'e-b' } });
+    pickEntry(dlg, '支付网关');
     fireEvent.change(within(dlg).getByLabelText('角色'), { target: { value: '审计' } });
     fireEvent.change(within(dlg).getByLabelText('账号'), { target: { value: 'audit@b' } });
     fireEvent.click(within(dlg).getByRole('button', { name: '保存' }));
@@ -395,7 +407,7 @@ describe('成员账号：与卡片账号弹窗同源（双向可见）', () => {
     const { container } = render(<Harness />);
     fireEvent.click(within(container).getByRole('button', { name: '新增成员账号' }));
     const dlg = await waitFor(dialog) as HTMLElement;
-    fireEvent.change(within(dlg).getByLabelText('所属网址'), { target: { value: 'e-a' } });
+    pickEntry(dlg, '合同管理系统');
     fireEvent.change(within(dlg).getByLabelText('角色'), { target: { value: '审计' } });
     fireEvent.change(within(dlg).getByLabelText('账号'), { target: { value: 'audit@a-new' } });
     fireEvent.change(within(dlg).getByLabelText('密码'), { target: { value: 'P@ss!' } });
@@ -528,5 +540,57 @@ describe('成员账号接线守卫：CSS 规则与组件挂点类名一致', () 
     for (const cls of visual) {
       expect(`${cls} → ${REDESIGN_CSS.indexOf(`.${cls}`)}`).not.toContain('→ -1');
     }
+  });
+});
+
+/* ==================================================================
+   1.32.8：新增成员账号弹窗的「所属网址」改可搜索下拉
+   用户反馈：85 个网址用原生 select 只能滚。禁用 <datalist>（Chromium 会崩）。
+   ================================================================== */
+
+describe('成员账号：所属网址可搜索下拉', () => {
+  const openDialog = async () => {
+    stubElectronApi();
+    const { container } = render(<Harness />);
+    await waitFor(() => expect(ROWS(container).length).toBeGreaterThan(0));
+    fireEvent.click(within(container).getByRole('button', { name: /新增/ }));
+    const dlg = await waitFor(() => document.querySelector('.modal') as HTMLElement);
+    return { container, dlg };
+  };
+
+  it('用 combobox 取代原生 select，且没有 <datalist>', async () => {
+    const { dlg } = await openDialog();
+    const combo = dlg.querySelector('input[role="combobox"][aria-label="所属网址"]');
+    expect(combo).toBeTruthy();
+    expect(dlg.querySelector('select[aria-label="所属网址"]')).toBeNull();
+    expect(document.querySelector('datalist')).toBeNull();
+  });
+
+  it('输入关键字只留匹配项；无匹配给「没有匹配的网址」', async () => {
+    const { dlg } = await openDialog();
+    const combo = dlg.querySelector('input[role="combobox"]') as HTMLInputElement;
+    fireEvent.focus(combo);
+    fireEvent.change(combo, { target: { value: '合同' } });
+    const items = [...dlg.querySelectorAll('.entry-picker-item')] as HTMLElement[];
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every(i => (i.textContent || '').includes('合同'))).toBe(true);
+
+    fireEvent.change(combo, { target: { value: '不存在的网址xyz' } });
+    expect(dlg.textContent).toContain('没有匹配的网址');
+  });
+
+  it('选中候选项后写入所属网址（保存按钮随之可用）', async () => {
+    const { dlg } = await openDialog();
+    const combo = dlg.querySelector('input[role="combobox"]') as HTMLInputElement;
+    fireEvent.focus(combo);
+    fireEvent.change(combo, { target: { value: '合同' } });
+    const first = dlg.querySelector('.entry-picker-item') as HTMLElement;
+    const picked = first.textContent || '';
+    fireEvent.mouseDown(first);
+
+    const chosen = dlg.querySelector('.entry-picker-chosen') as HTMLElement;
+    expect(chosen.textContent).toBe(picked);
+    const save = within(dlg).getByRole('button', { name: /^保存$/ }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
   });
 });

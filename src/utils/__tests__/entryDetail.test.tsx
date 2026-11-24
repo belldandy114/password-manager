@@ -263,18 +263,18 @@ describe('抽屉：内容与安全口径', () => {
     const { container } = renderDrawer();
     const row = [...container.querySelectorAll('.role-acc-row')]
       .find(r => (r.textContent || '').includes('管理员')) as HTMLElement;
-    const copyBtn = [...row.querySelectorAll('button')]
-      .find(b => (b.textContent || '').trim() === '复制') as HTMLButtonElement;
-    // 第一行是账号、第二行是密码：取密码那行的复制
+    // 1.32.8：角色账号的按钮也换成图标，按 aria-label 定位（文字已为空）
     const pwdRow = [...row.querySelectorAll('.role-acc-line')]
       .find(l => (l.textContent || '').includes('密码')) as HTMLElement;
-    fireEvent.click([...pwdRow.querySelectorAll('button')]
-      .find(b => (b.textContent || '').trim() === '复制') as HTMLButtonElement);
+    const pwdCopy = pwdRow.querySelector('button[aria-label*="复制"]') as HTMLButtonElement;
+    expect(pwdCopy).toBeTruthy();
+    expect((pwdCopy.textContent || '').trim()).toBe('');
+    expect(pwdCopy.querySelector('svg')).toBeTruthy();
+    fireEvent.click(pwdCopy);
 
     await waitFor(() => expect(calls('clipboardCopy').length).toBe(1));
     expect((calls('clipboardCopy')[0].args[0] as { text: string }).text).toBe('RootPw!');
     expect((calls('clipboardCopy')[0].args[0] as { delay: number }).delay).toBeGreaterThan(0);
-    expect(copyBtn).toBeTruthy();
   });
 
   it('URL / 用户名复制走普通通道（不承诺清空剪贴板）', async () => {
@@ -508,5 +508,39 @@ describe('抽屉接线守卫：CSS 选择器必须与组件根类名一致', () 
 
     // 选择器能真的选中它（而不是只靠 className 字符串巧合）
     expect(container.querySelector('.drawer.entry-drawer')).toBe(root);
+  });
+});
+
+/* ==================================================================
+   1.32.8 体验修：信息行对齐 + 复制/显示/隐藏改图标
+   用户反馈：①几行信息没对齐，用户名一长就把「复制」挤出抽屉；②文字按钮太占位。
+   ================================================================== */
+
+describe('条目详情抽屉：信息行布局与图标按钮', () => {
+  it('复制 / 打开 / 显示隐藏 全部是带 aria-label 的图标按钮，不再有文字按钮', () => {
+    const { container } = renderDrawer();
+    for (const label of ['复制网址', '打开网址', '复制用户名', '显示密码', '复制密码']) {
+      const btn = container.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement;
+      expect(btn, `缺少 ${label} 按钮`).toBeTruthy();
+      expect(btn.textContent || '').toBe('');   // 图标按钮：没有可见文字
+      expect(btn.getAttribute('title')).toBeTruthy();
+      expect(btn.querySelector('svg')).toBeTruthy();
+    }
+    // 值/动作两个容器都在：值负责省略，动作固定宽度不收缩
+    expect(container.querySelectorAll('.entry-detail-val').length).toBeGreaterThanOrEqual(3);
+    expect(container.querySelectorAll('.entry-detail-actions').length).toBe(3);
+  });
+
+  it('CSS 守卫：值收敛 + 动作不收缩 + 抽屉内单列（改规则或删规则必须红）', () => {
+    const css = readFileSync('src/styles/redesign.css', 'utf8');
+    const block = (sel: string) => {
+      const i = css.indexOf(sel);
+      return i < 0 ? '' : css.slice(i, css.indexOf('}', i));
+    };
+    const val = block('.entry-detail-val {');
+    expect(val).toContain('min-width: 0');
+    expect(val).toContain('text-overflow: ellipsis');
+    expect(block('.entry-detail-actions {')).toContain('flex: 0 0 auto');
+    expect(block('.entry-drawer .drawer-kv {')).toContain('grid-template-columns: 1fr');
   });
 });

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PasswordEntry, EntryAccount, VaultData } from '../types';
 import { useStore } from '../store/useStore';
 import { Modal } from './Modal';
@@ -336,16 +336,11 @@ export function MemberAccountsTab({
           <>
             <div className="form-group">
               <label>所属网址 *</label>
-              <select
-                aria-label="所属网址"
+              <EntryPicker
+                options={entryOptions}
                 value={draft.entryId}
-                onChange={e => patchDraft({ entryId: e.target.value })}
-              >
-                <option value="">请选择网址</option>
-                {entryOptions.map(e => (
-                  <option key={e.id} value={e.id}>{e.name}</option>
-                ))}
-              </select>
+                onChange={id => patchDraft({ entryId: id })}
+              />
               <div className="input-hint">账号属于某一条网址；改这里等于把它挂到另一个条目上</div>
             </div>
             <div className="form-group">
@@ -395,6 +390,83 @@ export function MemberAccountsTab({
       </Modal>
 
       {confirmNode}
+    </div>
+  );
+}
+
+/* ---------------- 可搜索的「所属网址」下拉 ----------------
+   用户反馈：原生 <select> 在 85 个网址里滚着找太费劲，要能搜索。
+   ⚠️ 不能用 <datalist>（AGENTS.md：Chromium 会直接崩，0xC0000005 无 JS 报错），
+   所以这里自己做 combobox：输入框过滤 + 列表 + 键盘上下/回车/ESC。 */
+function EntryPicker({ options, value, onChange }: {
+  options: { id: string; name: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const selected = options.find(o => o.id === value);
+  const list = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    return k ? options.filter(o => o.name.toLowerCase().includes(k)) : options;
+  }, [options, q]);
+
+  // 点外面收起（mousedown 早于 blur，避免"选了但没生效"）
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) { setOpen(false); setQ(''); }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const choose = (id: string) => { onChange(id); setOpen(false); setQ(''); };
+
+  return (
+    <div className="entry-picker" ref={wrapRef}>
+      <input
+        type="text"
+        role="combobox"
+        aria-label="所属网址"
+        aria-expanded={open}
+        aria-controls="entry-picker-list"
+        aria-autocomplete="list"
+        autoComplete="off"
+        placeholder={selected ? selected.name : '输入关键字搜索网址'}
+        value={open ? q : ''}
+        onFocus={() => { setOpen(true); setQ(''); setActive(0); }}
+        onChange={e => { setQ(e.target.value); setOpen(true); setActive(0); }}
+        onKeyDown={e => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive(i => Math.min(i + 1, Math.max(list.length - 1, 0))); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(i => Math.max(i - 1, 0)); }
+          else if (e.key === 'Enter') {
+            if (open && list[active]) { e.preventDefault(); choose(list[active].id); }
+          } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); setQ(''); }
+        }}
+      />
+      {selected && !open && (
+        <span className="entry-picker-chosen" title={selected.name}>{selected.name}</span>
+      )}
+      {open && (
+        <ul className="entry-picker-list" id="entry-picker-list" role="listbox" aria-label="网址候选">
+          {list.length === 0
+            ? <li className="entry-picker-empty">没有匹配的网址</li>
+            : list.map((o, i) => (
+              <li
+                key={o.id}
+                role="option"
+                aria-selected={o.id === value}
+                className={`entry-picker-item${i === active ? ' is-active' : ''}${o.id === value ? ' is-selected' : ''}`}
+                onMouseDown={e => { e.preventDefault(); choose(o.id); }}
+                onMouseEnter={() => setActive(i)}
+              >{o.name}</li>
+            ))}
+        </ul>
+      )}
     </div>
   );
 }

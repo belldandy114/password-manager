@@ -8608,3 +8608,120 @@ html[data-bg='image'] .mem-acc-bar {
 html[data-bg='image'] .role-acc-row {
   background-color: var(--glass-inset);
 }
+
+/* ================================================================
+   1.32.8（体验修）：条目详情抽屉的信息行对齐 + 图标按钮
+   ----------------------------------------------------------------
+   用户反馈（1.32.0 实机）：①网址/用户名/密码/标签几行没对齐，用户名一长
+   就把「复制」挤出抽屉；②「复制 / 显示 / 隐藏」用文字按钮占位太大，统一改图标。
+
+   做法：
+   - .drawer-kv 默认是两列网格（pages.css:2141），长 URL / 长账号在 460px 抽屉里
+     根本放不下 → 抽屉内改成单列，每行「标签 值 动作」三段；
+   - 值走 --val 收敛（min-width:0 + 省略号），动作固定不收缩，所以再长也不会把按钮挤走；
+   - 图标按钮只改尺寸与间隙，颜色/底仍走 .btn-ghost 既有令牌；无新色值。
+   ⚠️ 只作用于 .entry-drawer，不动 BugDrawer 的 .drawer-kv。 */
+.entry-drawer .drawer-kv {
+  grid-template-columns: 1fr;
+  gap: 6px 0;
+}
+/* 每行 = 网格「标签 52px | 值 + 动作 1fr」，垂直居中：
+   图标按钮 24px、文字行高 ~15px，用 top 对齐必然差半个行高（1.32.8 实测 5px），
+   网格 + align-items:center 让标签文字与值/图标共享同一条中心线。 */
+.entry-drawer .drawer-kv > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.entry-drawer .drawer-kv dt {
+  display: flex;
+  align-items: center;
+  line-height: 1.2;
+}
+.entry-drawer .drawer-kv dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: visible;
+  white-space: normal;
+}
+.entry-detail-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-detail-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.entry-detail-icon {
+  padding: 2px 4px;
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 备注/时间这类多行值不省略，按行折 */
+.entry-drawer .entry-detail-notes {
+  white-space: pre-wrap;
+  overflow: visible;
+}
+
+/* 成员账号弹窗的「所属网址」可搜索下拉（1.32.8 体验修）
+   原生 <select> 在 85 个网址里只能滚，用户要求可搜索；禁用 <datalist>（会让 Chromium 崩）。
+   浮层档位与既有下拉一致：普通模式卡面实底，背景图模式走 --glass-overlay。 */
+.entry-picker { position: relative; }
+.entry-picker input { width: 100%; }
+.entry-picker-chosen {
+  position: absolute;
+  left: 10px;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+}
+.entry-picker-list {
+  position: absolute;
+  z-index: var(--z-toolbar-menu);
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow);
+}
+html[data-bg='image'] .entry-picker-list {
+  background-color: var(--glass-overlay);
+  box-shadow: var(--glass-overlay-shadow);
+}
+.entry-picker-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entry-picker-item.is-active { background: var(--bg-hover); color: var(--text-1); }
+.entry-picker-item.is-selected { color: var(--accent-text, var(--accent)); }
+.entry-picker-empty { padding: 8px; font-size: var(--fs-sm); color: var(--text-muted); }
