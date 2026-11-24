@@ -24,6 +24,20 @@ const LANGS = [
   { id: 'html', label: 'HTML', hint: '在本页 iframe 里预览，console 回显到「控制台」' },
 ];
 
+/**
+ * 这条记录是不是「断言库」的自定义片段。
+ *
+ * `codeSnippets` 被两个页面共用：本页的代码调试片段、断言库的自定义断言片段（带 `kind:'assert'`，
+ * 契约 [C-97] 与 notes 的 `kind='sql'` 同模式）。判据只有一个字段，所以这里就地写一行，
+ * **不 import `utils/assertions`**：那个模块会连带打进 37 条内置种子，把 CodeLab 这个
+ * 懒加载 chunk（约 13 KB）明显撑大，只为一个 `kind === 'assert'` 不值得。
+ * 判据本身与 `assertions.ts` 的 `isAssertRow` 保持一致（改一方必须同步另一方）。
+ */
+function isAssertSnippet(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  return (row as { kind?: unknown }).kind === 'assert';
+}
+
 const SAMPLES: Record<string, string> = {
   javascript: `// JavaScript（Node）
 const list = [1, 2, 3, 4, 5];
@@ -115,7 +129,17 @@ export function CodeLab() {
   const [previewUrl, setPreviewUrl] = useState('');
   const [outTab, setOutTab] = useState<'preview' | 'console'>('console');
   // 片段库：存在 vault 里（跟着加密库走，换机器导库就带走）
-  const [snips, setSnips] = useState<CodelabSnippet[]>([]);
+  //
+  // ⚠️ codeSnippets 是**两个页面共用**的集合：本页的「代码调试片段」和断言库的「自定义断言片段」
+  // （后者带 `kind:'assert'`，与 notes 的 `kind='sql'` 同模式，见契约 [C-97]）。
+  // 所以这里存**全量**（allSnips），页面上只用过滤后的 snips；写回时必须走 writeSnips ——
+  // 它会把 kind='assert' 的条目原样带回去。**不许**把过滤后的数组直接 wsSet：
+  // 那会让用户在代码调试里保存一次就把断言库清空，而且不报错（下次打开才发现）。
+  const [allSnips, setAllSnips] = useState<unknown[]>([]);
+  const snips = useMemo(
+    () => allSnips.filter((r) => !isAssertSnippet(r)) as CodelabSnippet[],
+    [allSnips],
+  );
   const [snipOpen, setSnipOpen] = useState(false);
   const [snipName, setSnipName] = useState('');
   const [savingSnip, setSavingSnip] = useState(false);
@@ -138,10 +162,10 @@ export function CodeLab() {
     return () => { alive = false; };
   }, []);
 
-  // 片段库：进页面读一次；保存成功后用返回值覆盖本地状态，避免再拉一次
+  // 片段库：进页面读一次（读全量，显示时过滤掉断言片段）
   const loadSnips = useCallback(async () => {
     const r = await window.electronAPI.wsGet('codeSnippets');
-    if (r.success && Array.isArray(r.data)) setSnips(r.data as CodelabSnippet[]);
+    if (r.success && Array.isArray(r.data)) setAllSnips(r.data);
   }, []);
 
   useEffect(() => { void loadSnips(); }, [loadSnips]);
@@ -162,32 +186,57 @@ export function CodeLab() {
     addToast(`已载入片段「${hit.name || '未命名'}」`, 'success');
   }, [cmdSignal, snips, addToast]);
 
+  /**
+   * 写 codeSnippets 的**唯一出口**（保存 / 删除都必须走这里）。
+   *
+   * 做法（数据保全优先）：先重新读全量（不信本地副本：断言库可能在本次会话里刚写过），
+   * 只让 mutate 改「本页管的」那些片段，再把 `kind:'assert'` 的外来条目**原样拼回末尾**再整体写回。
+   * 所以 CodeLab 保存/删除多少次，断言库的条数与内容都不变（[C-97] 的 kind 语义不被破坏）。
+   *
+   * 读不到全量时**直接放弃这次写入**：宁可保存失败让用户重试，也不能拿半份数据覆盖整个集合。
+   */
+  const writeSnips = useCallback(async (mutate: (mine: CodelabSnippet[]) => CodelabSnippet[]): Promise<boolean> => {
+    const fresh = await window.electronAPI.wsGet('codeSnippets');
+    if (!fresh.success || !Array.isArray(fresh.data)) {
+      addToast(fresh.error || '读取片段库失败，本次未写入（避免覆盖断言片段）', 'error');
+      return false;
+    }
+    const all = fresh.data as unknown[];
+    const foreign = all.filter(isAssertSnippet); // 外来的断言片段：一个字段都不动
+    const mine = all.filter(r => !isAssertSnippet(r)) as CodelabSnippet[];
+    const next = [...mutate(mine), ...foreign];
+    const r = await window.electronAPI.wsSet('codeSnippets', next);
+    if (!r.success) { addToast(r.error || '写入片段库失败', 'error'); return false; }
+    setAllSnips(next);
+    return true;
+  }, [addToast]);
+
   const saveSnip = useCallback(async () => {
     const name = snipName.trim() || `${LANGS.find(l => l.id === lang)?.label || lang} 片段 ${snips.length + 1}`;
     if (!code.trim()) { addToast('代码是空的', 'error'); return; }
     setSavingSnip(true);
     const now = new Date().toISOString();
-    const same = snips.find(s => s.name === name && s.lang === lang);
-    const next: CodelabSnippet[] = same
-      ? snips.map(s => (s.id === same.id ? { ...s, code, updatedAt: now } : s))
-      : [
-        { id: `cs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, lang, code, createdAt: now, updatedAt: now },
-        ...snips,
-      ];
-    const r = await window.electronAPI.wsSet('codeSnippets', next);
+    let updated = false;
+    const ok = await writeSnips((mine) => {
+      const same = mine.find(s => s.name === name && s.lang === lang);
+      updated = !!same;
+      return same
+        ? mine.map(s => (s.id === same.id ? { ...s, code, updatedAt: now } : s))
+        : [
+          { id: `cs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name, lang, code, createdAt: now, updatedAt: now },
+          ...mine,
+        ];
+    });
     setSavingSnip(false);
-    if (!r.success) { addToast(r.error || '保存片段失败', 'error'); return; }
-    setSnips(next);
+    if (!ok) return;
     setSnipName('');
-    addToast(same ? '片段已更新' : '片段已保存到加密库', 'success');
-  }, [addToast, code, lang, snipName, snips]);
+    addToast(updated ? '片段已更新' : '片段已保存到加密库', 'success');
+  }, [addToast, code, lang, snipName, snips.length, writeSnips]);
 
   const deleteSnip = useCallback(async (id: string) => {
-    const next = snips.filter(s => s.id !== id);
-    const r = await window.electronAPI.wsSet('codeSnippets', next);
-    if (!r.success) { addToast(r.error || '删除失败', 'error'); return; }
-    setSnips(next);
-  }, [addToast, snips]);
+    // 失败的提示已经在 writeSnips 里出过（读不到保护 + 写失败），这里不需要再判一次
+    await writeSnips((mine) => mine.filter(s => s.id !== id));
+  }, [writeSnips]);
 
   useEffect(() => {
     const offOut = window.electronAPI.onCodelabOutput(({ stream, line }) => {

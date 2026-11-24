@@ -1,3 +1,18 @@
+import type { JtlAnalyzeResult } from '../electron/jmeter-args';
+import type { JmxPlan } from '../electron/jmx-script';
+
+/** 脚本库「接口集合 → 批量 .jmx」的落盘结果（契约 §2.7） */
+export interface JmxCreateBatchResult {
+  /** 相对脚本库根的路径（POSIX 分隔符） */
+  rel: string;
+  name: string;
+  path: string;
+  interfaces: number;
+  bytes: number;
+  /** 带 CSV 参数化时才有；copied 与 JMX 里写的文件名逐字一致 */
+  csv?: { source: string; copied: string; rows: number };
+}
+
 export interface CustomField {
   id: string;
   name: string;
@@ -267,7 +282,11 @@ export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'e
   /** 环境巡检历史（1.25.0：从 localStorage 迁进加密库） */
   | 'envProbes'
   /** 测试数据生成器的数据集（1.25.0） */
-  | 'tdgDatasets';
+  | 'tdgDatasets'
+  /** 本地测试资产工作站（13 项）：元素库 / 代码体检记录 / 覆盖台账 / 用例映射 / Allure 历史。
+   *  键名与 electron/vault-schema.js 的 VAULT_COLLECTIONS 逐字一致——**caseMaps 是复数**，
+   *  少个 s 不会报错，只会静默返回空数组（契约 C-18）。 */
+  | 'pomPages' | 'scanRuns' | 'coverageRuns' | 'caseMaps' | 'allureRuns';
 
 export interface ZentaoConfig {
   id: string;
@@ -1323,6 +1342,7 @@ export interface ElectronAPI {
   jmxlibValidate: (rel: string) => Promise<{ success: boolean; data?: JmxInspectResult; error?: string }>;
   jmxlibMarkRun: (rel: string, payload: { ok: boolean; reportDir?: string; durationMs?: number; threads?: number; loops?: number; stats?: { samples: number; errors: number; errorPct: number; avg: number } | null }) =>
     Promise<{ success: boolean; error?: string }>;
+  jmxlibCreateBatch: (rel: string, plan: JmxPlan) => Promise<{ success: boolean; data?: JmxCreateBatchResult; error?: string }>;
   casesPreview: (rel: string) => Promise<{ success: boolean; data?: CasesPreview; error?: string }>;
   casesSearch: (q: string, limit?: number) =>
     Promise<{ success: boolean; data?: { hits: CasesSearchHit[] }; error?: string }>;
@@ -1404,6 +1424,7 @@ export interface ElectronAPI {
   jmeterStop: () => Promise<{ success: boolean; error?: string }>;
   jmeterStatus: () => Promise<{ success: boolean; data?: { runId: string } | null }>;
   jmeterOpenPath: (target: string) => Promise<{ success: boolean; error?: string }>;
+  jmeterAnalyzeJtl: (payload: { path: string }) => Promise<{ success: boolean; data?: JtlAnalyzeResult; error?: string }>;
   // 应用日志（排障用：出问题让用户点「打开日志」即可）
   /** 旧版本数据恢复（改名后新库已建、旧库仍在时用） */
   dataLegacyInfo: () => Promise<{ success: boolean; data?: { legacyDir: string; found: string[]; currentHasVault: boolean } }>;
@@ -1451,6 +1472,32 @@ export interface ElectronAPI {
   browserDetect: () => Promise<{ id: string; name: string }[]>;
   browserGetKnown: () => Promise<{ id: string; name: string }[]>;
   browserOpen: (data: { browser: string; url: string }) => Promise<{ success: boolean; error?: string }>;
+
+  /* ---- 本地测试资产工作站（W1 只接线，业务在 W2-A/W5/W6） ----
+   * 通道契约：docs/契约-本地测试资产工作站.md §2.2–§2.5。
+   * `data` 在 W1 阶段用 unknown 占位（占位 handler 只回 error），
+   * 收窄到 ScanRunResult / GitDiffResult / AllureParseResult / Tdg* 由 W2-A/W5/W6 负责（契约 C-46）。
+   * 取消语义统一 { success:false, canceled:true }（C-03）。 */
+  scanPickRoot: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
+  scanRules: () => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  scanRun: (opts: { root: string; pack: 'audit' | 'coverage'; ruleIds?: string[]; maxFiles?: number; token?: string })
+    => Promise<{ success: boolean; data?: unknown; error?: string; canceled?: boolean }>;
+  scanCancel: (token: string) => Promise<{ success: boolean; data?: { canceled: boolean }; error?: string }>;
+  scanReveal: (payload: { file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
+
+  gitProbe: (payload: { root: string }) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  gitDiff: (payload: { root: string; scope: 'unstaged' | 'staged' | 'head' })
+    => Promise<{ success: boolean; data?: unknown; error?: string }>;
+
+  allurePickDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
+  allureParse: (payload: { dir: string; maxFiles?: number }) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+
+  tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
+    => Promise<{ success: boolean; data?: unknown; error?: string; canceled?: boolean }>;
+  tdgWriteAppend: (writerId: string, rows: string[])
+    => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  tdgWriteFinish: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  tdgWriteAbort: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
 }
 
 declare global {

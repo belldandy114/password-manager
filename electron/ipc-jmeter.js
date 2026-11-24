@@ -15,15 +15,20 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const { ipcMain, dialog, shell, app } = require('electron');
 const {
-  pickPaths, buildJmeterArgs,
+  pickPaths, buildJmeterArgs, stamp,
+  pickJmeterLogPath, canWriteDir,
   validateJmxPath, validateOutDir, validateJmeterPath,
   parseSummary, parseJtl,
+  parseJtlRows, computeMetrics,
   decodeOutputLine, validateJavaHome,
 } = require('./jmeter-args');
 
 const IS_WIN = process.platform === 'win32';
 /** 单次运行最多缓存多少行日志（界面只显示最近这些，完整日志已落盘） */
 const MAX_LOG_LINES = 4000;
+/** 5.2 `.jtl` 指标：单文件上限与行上限（契约 §2.6 / C-72） */
+const MAX_JTL_BYTES = 256 * 1024 * 1024;
+const MAX_JTL_ROWS = 2000000;
 
 /** 当前正在跑的任务（同一时间只允许一个） */
 let current = null;
@@ -342,6 +347,17 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
     }
 
     let args;
+    // JMeter 引擎自己的 jmeter.log 默认落在进程 cwd，而 cwd 现在是 JMX 所在目录（C-75 第 3 条）
+    // → 不钉住就会往用户脚本库里扔日志。这里定到 jtl 同目录；目录不可写就退化（不传 -j），
+    // 绝不能让「日志放不下」把压测本身弄失败。
+    const logDir = path.dirname(paths.jtlPath);
+    const logPick = pickJmeterLogPath(logDir, stamp());
+    let jmeterLogPath = '';
+    if (logPick.ok && canWriteDir(logDir)) {
+      jmeterLogPath = logPick.path;
+    } else {
+      console.log(`[jmeter] 日志目录不可写或不可用，回退为不传 -j：${logDir}`);
+    }
     try {
       args = buildJmeterArgs({
         jmxPath: opts.jmxPath,
@@ -351,6 +367,7 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
         threads: opts.threads,
         loops: opts.loops,
         extraArgs: opts.extraArgs,
+        logPath: jmeterLogPath,
       });
     } catch (e) {
       return { success: false, error: e.message };
@@ -376,9 +393,12 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
     try {
       // Windows 的 .bat 必须经 cmd.exe 启动，否则 spawn 直接 EINVAL
       const isScript = IS_WIN && /\.(bat|cmd)$/i.test(jmeterPath);
+      // cwd = **JMX 所在目录**（契约 C-75 第 3 条 / C-73 的唯一例外）：
+      // CSV Data Set Config 里写的是相对文件名，cwd 落在别处时相对路径可能按进程 CWD 解析，换目录就废。
+      const runCwd = opts.jmxPath ? path.dirname(opts.jmxPath) : path.dirname(jmeterPath);
       child = isScript
-        ? spawn('cmd.exe', ['/c', jmeterPath, ...args], { windowsHide: true, cwd: path.dirname(jmeterPath), env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
-        : spawn(jmeterPath, args, { windowsHide: true, cwd: path.dirname(jmeterPath), env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+        ? spawn('cmd.exe', ['/c', jmeterPath, ...args], { windowsHide: true, cwd: runCwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn(jmeterPath, args, { windowsHide: true, cwd: runCwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       return { success: false, error: `启动 JMeter 失败：${e.message}` };
     }
@@ -542,6 +562,61 @@ function registerJmeterIpc({ loadSettings, saveSettings, getWindow, dataDir }) {
     if (patch.outDir !== undefined) s.jmeterOutDir = String(patch.outDir || '');
     saveSettings(s);
     return { success: true };
+  });
+
+  /**
+   * 5.2 `.jtl` 指标扩展（契约 §2.6 / C-70–C-73）：只读，分析**一个** `.jtl` 结果文件。
+   * 纯函数在 electron/jmeter-args.js：parseJtlRows（行级）+ computeMetrics（指标）。
+   * 本 handler 只做「读文件 + 三道闸（存在/大小/行数）+ 错误文案」。
+   * 注意：不返回 skippedFiles —— 本通道只分析一个文件，没有「被跳过的文件」这回事（契约 v4 注）。
+   */
+  ipcMain.handle('jmeter:analyze-jtl', async (_event, payload = {}) => {
+    try {
+      const filePath = String((payload && payload.path) || '').trim();
+      if (!filePath) return { success: false, error: `文件不存在：${filePath}` };
+      let stat;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        return { success: false, error: `文件不存在：${filePath}` };
+      }
+      if (!stat.isFile()) return { success: false, error: `文件不存在：${filePath}` };
+      if (stat.size > MAX_JTL_BYTES) return { success: false, error: '文件太大（> 256 MB），请改用 JMeter HTML 报告' };
+
+      // 256 MB 以内一次性读入；行数由 parseJtlRows 逐行给出，不额外复制一份文本
+      const parsed = parseJtlRows(fs.readFileSync(filePath, 'utf8'));
+      if (!parsed) return { success: false, error: '不是 JMeter .jtl（缺少 elapsed/success 列）' };
+
+      const capped = parsed.rows.length > MAX_JTL_ROWS;
+      const rows = capped ? parsed.rows.slice(0, MAX_JTL_ROWS) : parsed.rows;
+      const m = computeMetrics(rows);
+
+      const truncated = capped || m.truncated;
+      const reason = capped ? 'rows' : m.truncatedReason;
+      return {
+        success: true,
+        data: {
+          samples: m.samples,
+          errors: m.errors,
+          errorPct: m.errorPct,
+          avg: m.avg,
+          min: m.min,
+          max: m.max,
+          p50: m.p50,
+          p90: m.p90,
+          p95: m.p95,
+          p99: m.p99,
+          tps: m.tps,
+          spanMs: m.spanMs,
+          rows: m.samples,
+          byLabel: m.byLabel,
+          truncated,
+          ...(truncated && reason ? { truncatedReason: reason } : {}),
+        },
+      };
+    } catch (e) {
+      return { success: false, error: `解析失败：${e.message}` };
+    }
   });
 }
 

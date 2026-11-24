@@ -297,6 +297,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmxlibMetaSet: (rel, meta) => ipcRenderer.invoke('jmxlib:meta-set', { rel, meta }),
   jmxlibValidate: (rel) => ipcRenderer.invoke('jmxlib:validate', { rel }),
   jmxlibMarkRun: (rel, payload) => ipcRenderer.invoke('jmxlib:mark-run', { rel, ...payload }),
+  jmxlibCreateBatch: (rel, plan) => ipcRenderer.invoke('jmxlib:create-batch', { rel, plan }),
   onCasesChanged: (cb) => {
     const h = () => cb();
     ipcRenderer.on('cases:changed', h);
@@ -369,6 +370,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterStop: () => ipcRenderer.invoke('jmeter:stop'),
   jmeterStatus: () => ipcRenderer.invoke('jmeter:status'),
   jmeterOpenPath: (p) => ipcRenderer.invoke('jmeter:open-path', p),
+  jmeterAnalyzeJtl: (p) => ipcRenderer.invoke('jmeter:analyze-jtl', p),
+
+  /* ---- 本地测试资产工作站：代码体检 / Git 影响面 / Allure / 十万级流式造数 ----
+   * W1 只接线（通道契约见 docs/契约-本地测试资产工作站.md §2.2–§2.5）；
+   * 入参一律原样转发、不在这里做默认值与 clamp（clamp 只在主进程，C-08）。
+   * 本批不引入任何推送型通道，所以这里没有 on* 监听（C-50）。 */
+  scanPickRoot: () => ipcRenderer.invoke('scan:pick-root'),
+  scanRules: () => ipcRenderer.invoke('scan:rules'),
+  scanRun: (opts) => ipcRenderer.invoke('scan:run', opts),
+  scanCancel: (token) => ipcRenderer.invoke('scan:cancel', { token }),
+  scanReveal: (payload) => ipcRenderer.invoke('scan:reveal', payload),
+  gitProbe: (payload) => ipcRenderer.invoke('git:probe', payload),
+  gitDiff: (payload) => ipcRenderer.invoke('git:diff', payload),
+  allurePickDir: () => ipcRenderer.invoke('allure:pick-dir'),
+  allureParse: (payload) => ipcRenderer.invoke('allure:parse', payload),
+  tdgWriteStart: (payload) => ipcRenderer.invoke('tdg:write-start', payload),
+  // rows 必须逐字传数组：拼接与转义在渲染层、分隔符在主进程 tdg-write.js，别在这里 join（C-68）
+  tdgWriteAppend: (writerId, rows) => ipcRenderer.invoke('tdg:write-append', { writerId, rows }),
+  tdgWriteFinish: (writerId) => ipcRenderer.invoke('tdg:write-finish', { writerId }),
+  tdgWriteAbort: (writerId) => ipcRenderer.invoke('tdg:write-abort', { writerId }),
   // 运行输出（流式）：返回取消订阅函数
   // 应用日志（排障）
   dataLegacyInfo: () => ipcRenderer.invoke('data:legacy-info'),

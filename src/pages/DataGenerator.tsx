@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
-import { Page, PageHead, Panel, Icons } from '../components/ui';
+import { Page, PageHead, Panel, Icons, BusyProgress } from '../components/ui';
 import { Modal } from '../components/Modal';
 import { useConfirm } from '../components/confirm';
 import { useToast } from '../hooks/useToast';
@@ -13,6 +13,15 @@ import { generateData, deduplicate } from '../utils/tdg';
 import { exportData } from '../utils/tdg/export';
 import { GENERATORS, GROUPS } from '../utils/tdg/catalog';
 import { REGEX_PRESETS } from '../utils/tdg/regexGenerator';
+import {
+  BATCH_MAX_ROWS,
+  FORMAT_CAPABILITIES,
+  batchSizes,
+  capabilityOf,
+  decidePath,
+  progressPercent,
+  clampStreamRows,
+} from '../utils/tdg/batch';
 import type {
   GenerateConfig, GenerateResultItem, GeneratorId, ExportFormat,
   IdCardType, LongTextParams, DateParams, IpParams, BoundaryParams,
@@ -57,6 +66,164 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(raw);
 }
 
+/* ================================================================
+   十万级流式导出（2.2 / W3-C）—— 主体循环
+   ----------------------------------------------------------------
+   放在模块级、不依赖 React 状态：
+     · 组件里点「开始导出」只是「选路径 → 调它 → 把结果翻译成界面文案」；
+     · 真机验收可以直接 `import` 它跑 10 万行（只绕过原生保存框，其余全是生产代码路径）；
+     · 批次之间 `await` 让出主线程 —— 不同步等的话「取消」按钮点不动、窗口也卡。
+   取消 / 失败 / 卸载都必须 abort：`tdg:write-abort` 删掉 `.part`，
+   正式文件只在 `tdg:write-finish` 的 rename 那一刻出现（契约 C-65）。
+   ================================================================ */
+
+export interface StreamExportOptions {
+  /** 已选好的目标路径（原生保存框在调用方弹，本函数不弹） */
+  savePath: string;
+  /** 目标行数（> 5000；上限 1,000,000 由 decidePath 保证） */
+  total: number;
+  format: ExportFormat;
+  /** 生成参数（`count` 由本函数按批覆盖，调用方给的那份不会被改） */
+  baseConfig: GenerateConfig;
+  /** 跨批去重（开启时用同一个 Set 贯穿全程，避免批与批之间出现重复值） */
+  dedupe: boolean;
+  /** 是否写「后 N 位」列（决定 csv/json 的 columns） */
+  hasLastN: boolean;
+  /** 取消标志：调用方持有，本函数在批次之间检查 */
+  signal: { canceled: boolean };
+  onProgress?: (done: number, total: number) => void;
+  /** writer 建立/结束时交给调用方（组件用它做卸载清理） */
+  onWriter?: (writerId: string | null) => void;
+}
+
+export type StreamExportResult =
+  | { ok: true; rows: number; path: string; ms: number; short: boolean }
+  | { ok: false; canceled: true; rows: number }
+  | { ok: false; error: string; rows: number };
+
+/** 一批结果 → 主进程要的行：CSV/JSON 传数组行（多列），TXT 传字符串行 */
+function streamRowsFor(
+  items: GenerateResultItem[],
+  format: ExportFormat,
+  hasLastN: boolean,
+): (string | string[])[] {
+  return items.map((it) => {
+    if (format === 'txt') return hasLastN && it.last6 ? `${it.value}\t${it.last6}` : it.value;
+    return hasLastN
+      ? [String(it.id), it.type, it.value, it.last6 || '']
+      : [String(it.id), it.type, it.value];
+  });
+}
+
+export async function streamExport(opts: StreamExportOptions): Promise<StreamExportResult> {
+  const { savePath, total, format, baseConfig, dedupe, hasLastN, signal } = opts;
+  const sizes = batchSizes(total);
+  const seen = dedupe ? new Set<string>() : null;
+  const columns = format === 'txt'
+    ? undefined
+    : (hasLastN ? ['序号', '数据类型', '内容', '后N位'] : ['序号', '数据类型', '内容']);
+
+  let writerId = '';
+  let done = 0;
+  let stalls = 0;
+  const t0 = Date.now();
+  const abort = async () => {
+    if (!writerId) return;
+    const id = writerId;
+    writerId = '';
+    opts.onWriter?.(null);
+    try { await window.electronAPI.tdgWriteAbort(id); } catch { /* 已结束就忽略 */ }
+  };
+
+  try {
+    for (let i = 0; i < sizes.length; i++) {
+      // 1) 造数（同步）→ 序列化；去重跨批共用一个 Set
+      let items = generateData({ ...baseConfig, count: sizes[i] });
+      if (seen) {
+        items = items.filter((it) => {
+          const key = String(it.value);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
+      const rows = streamRowsFor(items, format, hasLastN);
+
+      // 2) 首批：建 writer（表头在前缀里写，所以 columns 必须在 append 之前定下来）
+      if (i === 0) {
+        const start = await window.electronAPI.tdgWriteStart({
+          savePath,
+          format: format as 'csv' | 'json' | 'txt',
+          columns,
+          // CSV 带 BOM：Excel 打开中文不乱码（契约 [C-68] 明确允许 bom:true）
+          bom: format === 'csv',
+        });
+        if (!start.success) {
+          return start.canceled
+            ? { ok: false, canceled: true, rows: 0 }
+            : { ok: false, error: start.error || '无法开始写入', rows: 0 };
+        }
+        writerId = String((start.data as { writerId?: string } | undefined)?.writerId || '');
+        if (!writerId) return { ok: false, error: '无法开始写入：主进程没有返回 writerId', rows: 0 };
+        opts.onWriter?.(writerId);
+      }
+
+      // 3) 追加这一批
+      if (rows.length) {
+        // types.ts 把 rows 声明成 string[]，但主进程的 rowBody 明确支持「数组行」
+        // （多列 CSV / JSON 对象必须传数组，否则整行会被当成一个单元格再转义一遍）。
+        // types.ts 属 W1 冻结、本批不碰，这里就地窄化一次并注明（建议 W4/W5 修正类型）。
+        const appended = await window.electronAPI.tdgWriteAppend(writerId, rows as unknown as string[]);
+        if (!appended.success) {
+          await abort();
+          return { ok: false, error: appended.error || '写入失败', rows: done };
+        }
+        done += rows.length;
+        stalls = 0;
+        opts.onProgress?.(done, total);
+      } else {
+        // 整批都被去重掉了：该类型可用值已耗尽，别死循环
+        stalls += 1;
+        if (stalls >= 3) break;
+      }
+
+      if (signal.canceled) {
+        await abort();
+        return { ok: false, canceled: true, rows: done };
+      }
+      // 让出主线程：不同步等的话「取消」按钮点不动，窗口会卡
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    if (signal.canceled) {
+      await abort();
+      return { ok: false, canceled: true, rows: done };
+    }
+    if (!done) {
+      await abort();
+      return { ok: false, error: '没有可写入的行：该类型的可用值不足（开了去重时更明显），请关掉去重或换类型', rows: 0 };
+    }
+
+    // 4) 收尾：fsync + rename（正式文件在这一刻才出现）
+    const fin = await window.electronAPI.tdgWriteFinish(writerId);
+    writerId = '';
+    opts.onWriter?.(null);
+    if (!fin.success) return { ok: false, error: fin.error || '收尾失败', rows: done };
+    const data = fin.data as { path?: string; rows?: number; ms?: number } | undefined;
+    const rows = data?.rows ?? done;
+    return {
+      ok: true,
+      rows,
+      path: data?.path || savePath,
+      ms: data?.ms ?? (Date.now() - t0),
+      short: rows < total,
+    };
+  } catch (e) {
+    await abort();
+    return { ok: false, error: '导出失败：' + (e instanceof Error ? e.message : String(e)), rows: done };
+  }
+}
+
 export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => void }) {
   const { toasts, addToast, removeToast } = useToast();
   const seedApiBody = useStore(s => s.seedApiBody);
@@ -69,6 +236,19 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
   const [busy, setBusy] = useState(false);
   const [items, setItems] = useState<GenerateResultItem[]>([]);
   const [format, setFormat] = useState<ExportFormat>('csv');
+
+  /* ---- 十万级流式导出（2.2 / W3-C）：与上面的单次导出走两套状态，互不影响 ---- */
+  /** 目标行数（默认 10 万；clamp 到 1..1,000,000，超出在按钮上就禁用） */
+  const [streamRows, setStreamRows] = useState(100000);
+  /** 流式格式：只有 csv/json/txt 可选（能力矩阵见 utils/tdg/batch.ts） */
+  const [streamFormat, setStreamFormat] = useState<ExportFormat>('csv');
+  const [streaming, setStreaming] = useState(false);
+  const [streamDone, setStreamDone] = useState(0);
+  const [streamMsg, setStreamMsg] = useState('');
+  /** 取消标志（可变对象，交给 streamExport 在批次之间检查）；真正的收尾（删 .part）在 streamExport 里做 */
+  const cancelSignalRef = useRef<{ canceled: boolean }>({ canceled: false });
+  /** 当前 writer：页面卸载/切走时必须 abort，否则半成品会留在磁盘上 */
+  const writerRef = useRef<string | null>(null);
 
   // ---- 参数（各类型独立，切走再切回来还在） ----
   const [idCard, setIdCard] = useState({
@@ -115,6 +295,17 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
   }, []);
 
   useEffect(() => { void loadDatasets(); }, [loadDatasets]);
+
+  /**
+   * 离开页面时收掉还在写的 writer：不 abort 的话 `.part` 会留在用户目录里，
+   * 而主进程只在 `will-quit` 与「显式 abort」时清理（[C-65]）。
+   */
+  useEffect(() => () => {
+    const id = writerRef.current;
+    if (!id) return;
+    writerRef.current = null;
+    void window.electronAPI.tdgWriteAbort(id).catch(() => { /* 已结束就忽略 */ });
+  }, []);
 
   const active = GENERATORS.find(g => g.id === type)!;
 
@@ -313,6 +504,85 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
     } catch (e) {
       addToast('导出失败：' + (e instanceof Error ? e.message : String(e)), 'error');
     }
+  };
+
+  /* ================================================================
+     十万级流式导出（2.2 / W3-C）
+     ----------------------------------------------------------------
+     边界写死（与 src/utils/tdg/batch.ts 的单测互相看住）：
+       · ≤ 5000 行 → 只走上面的 `doExport`（原路径，6 种格式行为一字不改）；
+       · > 5000 行 → 只有 csv/json/txt 能流式；xlsx/md/sql 在**点之前**就禁用并给原因；
+       · 每批 ≤ 5000 行、单文件 ≤ 1,000,000 行；每批之间 `await` 一次让出主线程，
+         否则用户点「取消」时主线程被同步造数占着，取消请求根本进不来。
+     取消语义（[C-03]）：取消**不是错误**，调 `tdgWriteAbort` 删掉 `.part`，
+     正式文件自始至终没出现过（主进程 write-finish 才 rename）。
+     ================================================================ */
+  const streamPlan = useMemo(
+    () => decidePath(clampStreamRows(streamRows), streamFormat),
+    [streamRows, streamFormat],
+  );
+
+  /** 这一批结果里会不会有「后 N 位」列：按配置判定（不看首批数据，避免首批为空时表头抖一下） */
+  const streamHasLastN = type === 'idCard'
+    ? idCard.lastDigits > 0
+    : type === 'phone'
+      ? phoneLastDigits > 0
+      : false;
+
+  /**
+   * 点「开始导出」：先选路径（原生保存框只能在这里弹），再把重活交给 `streamExport`。
+   *
+   * 为什么把循环抽到模块级函数里：这段逻辑（切批 / 去重 / 进度 / 取消 / 收尾）是最容易错的部分，
+   * 而它**必须在真机上跑十万行**才能证明不卡、不留残留。抽成不依赖 React 状态的函数后，
+   * 真机探针可以直接 `import('/src/pages/DataGenerator.tsx')` 调它跑 10 万行，
+   * 只把「原生保存框」这一步让过去（CDP 驱动不了系统模态框），其余全是生产代码路径。
+   */
+  const runStream = async () => {
+    if (streaming) return;
+    if (streamPlan.path !== 'stream') { setStreamMsg(streamPlan.reason); return; }
+
+    // 1) 先让用户选路径：取消 = 什么都不做（不建 .part、不弹错）
+    const pick = await window.electronAPI.dialogSaveFile({
+      defaultName: `测试数据-${localDay()}-${streamPlan.total}.${streamFormat}`,
+      filters: [{ name: streamFormat.toUpperCase(), extensions: [streamFormat] }],
+    });
+    if (pick.canceled || !pick.filePath) return;
+
+    cancelSignalRef.current.canceled = false;
+    setStreaming(true);
+    setStreamMsg('');
+    setStreamDone(0);
+
+    const res = await streamExport({
+      savePath: pick.filePath,
+      total: streamPlan.total,
+      format: streamFormat,
+      baseConfig: buildConfig(),
+      dedupe,
+      hasLastN: streamHasLastN,
+      signal: cancelSignalRef.current,
+      onProgress: (done) => setStreamDone(done),
+      onWriter: (id) => { writerRef.current = id; },
+    });
+
+    setStreaming(false);
+    if (res.ok) {
+      setStreamDone(res.rows);
+      setStreamMsg(
+        `${res.short
+          ? `值域不足，实际写入 ${res.rows.toLocaleString('en-US')} 行（目标 ${streamPlan.total.toLocaleString('en-US')}）`
+          : `已导出 ${res.rows.toLocaleString('en-US')} 行`}`
+        + ` · ${Math.max(1, Math.round(res.ms / 1000))} 秒 · ${res.path}`,
+      );
+      addToast(res.short ? `已导出 ${res.rows} 行（不足目标）` : `已导出 ${res.rows} 行`, 'success');
+      return;
+    }
+    if ('canceled' in res) {
+      // 取消不是错误（[C-03]）：只给中性提示，不弹红
+      setStreamMsg(`已取消：已删掉半成品，目录里没有留下文件（已写 ${res.rows.toLocaleString('en-US')} 行后取消）`);
+      return;
+    }
+    setStreamMsg(res.error || '导出失败');
   };
 
   /**
@@ -773,6 +1043,104 @@ export function DataGenerator({ onNavigate }: { onNavigate: (page: string) => vo
                       只显示前 {preview.length} 条，导出/复制仍包含全部 {items.length} 条
                     </div>
                   )}
+                </div>
+              )}
+            </Panel>
+
+            {/* 十万级流式导出（2.2）：> 5000 行改走主进程分批写盘。
+                放在「结果」面板下面，和上面的单次「导出」明确分开——
+                两套路径的能力不同，混在一个下拉里用户会以为 XLSX 也能导 10 万行。 */}
+            <Panel
+              title="大批量导出（> 5,000 行）"
+              meta={streaming ? `${progressPercent(streamDone, streamPlan.path === 'stream' ? streamPlan.total : streamRows)}%` : undefined}
+            >
+              <div className="tool-inline" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                <div className="tool-field" style={{ minWidth: 140 }}>
+                  <label htmlFor="tdg-stream-rows">目标行数</label>
+                  <input
+                    id="tdg-stream-rows"
+                    type="number"
+                    min={1}
+                    max={1_000_000}
+                    step={1000}
+                    value={streamRows}
+                    disabled={streaming}
+                    onChange={(e) => setStreamRows(clampStreamRows(Number(e.target.value)))}
+                    aria-label="大批量导出的目标行数"
+                  />
+                </div>
+                <div className="tool-field">
+                  <label htmlFor="tdg-stream-format">格式</label>
+                  <select
+                    id="tdg-stream-format"
+                    value={streamFormat}
+                    disabled={streaming}
+                    onChange={(e) => setStreamFormat(e.target.value as ExportFormat)}
+                    aria-label="大批量导出格式"
+                  >
+                    {/* 能流式的三种可直接选；其余三种渲染成 disabled 并带原因（不静默隐藏，
+                        否则用户会以为「这里没有 XLSX」而不是「XLSX 不支持大批量」） */}
+                    {FORMAT_CAPABILITIES.map((cap) => (
+                      <option
+                        key={cap.format}
+                        value={cap.format}
+                        disabled={!cap.stream}
+                        title={cap.stream ? undefined : cap.reason}
+                      >
+                        {cap.format.toUpperCase()}
+                        {cap.stream ? '（至 100 万行）' : '（仅单次 ≤5000 行）'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="tool-field" style={{ justifyContent: 'flex-end' }}>
+                  <label aria-hidden="true">&nbsp;</label>
+                  {streaming ? (
+                    <button className="btn btn-danger btn-sm" onClick={() => { cancelSignalRef.current.canceled = true; }}>
+                      取消导出
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => void runStream()}
+                      disabled={streamPlan.path !== 'stream'}
+                      title={streamPlan.path === 'stream' ? undefined : streamPlan.reason}
+                    >
+                      开始导出
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 进度：按批推进的真实计数（不是假进度条），同时给屏读一个 aria-live */}
+              {streaming && (
+                <div className="text-sm" style={{ marginBottom: 6 }} role="status" aria-live="polite">
+                  已完成 {streamDone.toLocaleString('en-US')} / {streamPlan.path === 'stream' ? streamPlan.total.toLocaleString('en-US') : '-'}
+                  {streamPlan.path === 'stream' ? `（${streamPlan.batches} 批，每批 ≤ ${BATCH_MAX_ROWS.toLocaleString('en-US')} 行）` : ''}
+                </div>
+              )}
+              <BusyProgress active={streaming} label={streaming ? '正在分批写盘…' : undefined} />
+
+              {/* 能力矩阵：写进 UI，别让用户点了才失败 */}
+              <div className="dev-banner is-info" style={{ marginTop: 8 }}>
+                <Icons.list size={14} />
+                <div className="text-sm">
+                  支持大批量：<b>CSV / JSON / TXT</b>（至 1,000,000 行，每批 ≤ 5,000 行，可中途取消）。
+                  XLSX / MD / SQL 只走上面的单次导出（≤ 5,000 行）——{capabilityOf('xlsx').reason}
+                </div>
+              </div>
+
+              {streamPlan.path !== 'stream' && (
+                <div className="dev-banner is-warn" style={{ marginTop: 8 }} role="status">
+                  <Icons.bug size={14} />
+                  <div className="text-sm">{streamPlan.reason}</div>
+                </div>
+              )}
+
+              {streamMsg && (
+                <div className="dev-banner is-info" style={{ marginTop: 8 }} role="status">
+                  <Icons.check size={14} />
+                  <div className="text-sm">{streamMsg}</div>
                 </div>
               )}
             </Panel>

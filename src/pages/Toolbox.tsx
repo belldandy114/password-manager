@@ -10,6 +10,22 @@ import { diffTexts } from '../utils/textDiff';
 import { cronFromText } from '../utils/cron';
 import { validateIdCard } from '../utils/idCard';
 import { JsonTool } from '../components/toolbox/JsonTool';
+import { generatePojo } from '../utils/codegen/pojo';
+import {
+  ASSERTION_SEED,
+  CATEGORY_LABELS,
+  FRAMEWORK_LABELS,
+  filterAssertions,
+  mergeAssertions,
+  rowsToAssertions,
+  removeAssertionRow,
+  toAssertionRow,
+  validateAssertionInput,
+  type AssertionCategory,
+  type AssertionFramework,
+  type CustomAssertionRow,
+} from '../utils/assertions';
+import { useConfirm } from '../components/confirm';
 
 /* =============================================================
    工具箱：按用途分组的小工具集合（全部本地计算，数据不出本机）
@@ -28,7 +44,9 @@ const RedactTool = lazy(() => import('../components/toolbox/RedactTool').then(m 
 const LogTool = lazy(() => import('../components/toolbox/LogTool').then(m => ({ default: m.LogTool })));
 
 type ToolId = 'timestamp' | 'encode' | 'hash' | 'regex' | 'regexExtract' | 'jsonRepair' | 'jsonExtract' | 'aes' | 'cron' | 'timezone' | 'urlParams' | 'diff' | 'validate'
-  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media' | 'redact' | 'log';
+  | 'yaml' | 'jsonDiff' | 'idGen' | 'sql' | 'jwt' | 'sign' | 'timeline' | 'media' | 'redact' | 'log'
+  // 1.33.0（W2）：代码生成分组（既有 22 个 id 一个没动，只追加）
+  | 'pojoGen' | 'assertionLib';
 
 interface ToolDef { id: ToolId; label: string; icon: React.ReactNode; desc: string }
 
@@ -79,6 +97,15 @@ const TOOL_GROUPS: Array<{ title: string; tools: ToolDef[] }> = [
       { id: 'validate', label: '数据校验', icon: <Icons.check size={13} />, desc: '身份证（含校验位）/ 手机号 / 银行卡 / 统一社会信用代码' },
       { id: 'media', label: '图片/二维码', icon: <Icons.db size={13} />, desc: '生成二维码、图片与 base64 互转' },
       { id: 'redact', label: '脱敏 / 还原', icon: <Icons.lock size={13} />, desc: '手机号 / 身份证 / 银行卡 / 邮箱 / IP 一键打码，可生成映射还原' },
+    ],
+  },
+  {
+    // 1.33.0（W2）：代码生成。追加在末尾而不是插到中间 —— 既有 22 个工具的 id 与顺序
+    // 一个都不能动（回归脚本按 id 与顺序点工具，用户的肌肉记忆也按顺序找）。
+    title: '代码生成',
+    tools: [
+      { id: 'pojoGen', label: 'JSON → POJO', icon: <Icons.db size={13} />, desc: '按 JSON 响应体生成 Java 模型类（Lombok 可选）；类型冲突与全 null 字段会给出告警' },
+      { id: 'assertionLib', label: '断言库', icon: <Icons.check size={13} />, desc: 'RestAssured / Playwright / JUnit / Hamcrest 断言片段，检索后由外壳「复制结果」带走' },
     ],
   },
 ];
@@ -1349,6 +1376,346 @@ function ValidateTool() {
   );
 }
 
+/* ---------------- JSON → POJO（1.3，W2） ----------------
+ * 生成逻辑全在 utils/codegen/pojo.ts（纯函数 + 5 组 golden），这里只做输入 / 告警展示。
+ * 结果不自己摆复制按钮：`useToolResult` 交给外壳的统一「复制结果 / 导出」。
+ */
+function PojoGenTool() {
+  const [json, setJson] = useToolState('json', '');
+  const [rootName, setRootName] = useToolState('rootName', 'ApiResponse');
+  const [packageName, setPackageName] = useToolState('packageName', 'model');
+  const [lombok, setLombok] = useToolState('lombok', true);
+  const [useBigDecimal, setUseBigDecimal] = useToolState('useBigDecimal', true);
+
+  const result = useMemo(() => {
+    if (!json.trim()) return null;
+    return generatePojo({ json, rootName: rootName || 'Root', packageName, lombok, useBigDecimal });
+  }, [json, rootName, packageName, lombok, useBigDecimal]);
+
+  const content = result && result.ok ? result.files[0].content : '';
+  const fileName = result && result.ok ? result.files[0].path : '';
+  useToolResult(content);
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-inline" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+        <div className="tool-field" style={{ minWidth: 180 }}>
+          <label htmlFor="pojo-root">根类名</label>
+          <input
+            id="pojo-root"
+            value={rootName}
+            onChange={e => setRootName(e.target.value)}
+            placeholder="ApiResponse"
+            aria-label="根类名"
+          />
+        </div>
+        <div className="tool-field" style={{ minWidth: 180 }}>
+          <label htmlFor="pojo-pkg">包名</label>
+          <input
+            id="pojo-pkg"
+            value={packageName}
+            onChange={e => setPackageName(e.target.value)}
+            placeholder="model"
+            aria-label="包名"
+          />
+        </div>
+        <label className="json-chk">
+          <input type="checkbox" checked={lombok} onChange={e => setLombok(e.target.checked)} />
+          Lombok @Data
+        </label>
+        <label className="json-chk" title="关掉则小数用 Double；金额/汇率建议保持 BigDecimal">
+          <input type="checkbox" checked={useBigDecimal} onChange={e => setUseBigDecimal(e.target.checked)} />
+          小数用 BigDecimal
+        </label>
+      </div>
+
+      <div className="tool-field">
+        <label htmlFor="pojo-json">JSON 响应体</label>
+        <textarea
+          id="pojo-json"
+          rows={10}
+          value={json}
+          onChange={e => setJson(e.target.value)}
+          aria-label="JSON 响应体"
+          placeholder={'{\n  "code": 200,\n  "data": { "items": [ { "id": 1, "name": "alpha" } ] }\n}'}
+        />
+      </div>
+
+      {!json.trim() && (
+        <p className="text-sm text-muted" style={{ marginTop: 8 }}>
+          粘贴一段真实响应体即可生成 Java 类：整数 → Long、小数 → BigDecimal、布尔 → Boolean、
+          字符串 → String、null → Object（全 null 的字段会给告警）。只生成本地代码，不发网络请求。
+        </p>
+      )}
+
+      {result && !result.ok && (
+        <div className="dev-banner is-error" role="alert">
+          <Icons.close size={14} />
+          <div>{result.error}</div>
+        </div>
+      )}
+
+      {result && result.ok && result.warnings.length > 0 && (
+        <div className="dev-banner is-warn">
+          <Icons.bug size={14} />
+          <div>
+            <b>推断时有 {result.warnings.length} 处需要留意</b>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+              {result.warnings.map((w, i) => <li key={i} className="text-sm">{w}</li>)}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {content && (
+        <div className="tool-result">
+          <div className="text-sm text-muted" style={{ marginBottom: 4 }}>
+            {fileName} · {content.split('\n').length - 1} 行（右上「复制结果 / 导出」带走整份源码）
+          </div>
+          <pre className="tb-pre">{content}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- 断言库（1.4，W2） ----------------
+ * 检索 / 合并规则全在 utils/assertions.ts（纯函数 + 单测）。
+ * 内置种子只读（不落库、无删除按钮）；用户自定义片段存既有 codeSnippets 集合并带 kind:'assert'。
+ * 复制走外壳：选中一条 → useToolResult(code) → 外壳「复制结果」= 逐字符同一份 code（[C-99]）。
+ */
+function AssertionLibTool() {
+  const [query, setQuery] = useToolState('q', '');
+  const [framework, setFramework] = useToolState<'all' | AssertionFramework>('framework', 'all');
+  const [category, setCategory] = useToolState<'all' | AssertionCategory>('category', 'all');
+  const [selectedId, setSelectedId] = useToolState('selectedId', '');
+  const [name, setName] = useToolState('name', '');
+  const [code, setCode] = useToolState('code', '');
+
+  const [rows, setRows] = useState<unknown[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+  const [formErr, setFormErr] = useState('');
+  const [savedMsg, setSavedMsg] = useState('');
+  const { ask, confirmNode } = useConfirm();
+
+  const load = useCallback(async () => {
+    try {
+      const r = await window.electronAPI.wsGet('codeSnippets');
+      if (r.success && Array.isArray(r.data)) {
+        setRows(r.data);
+        setLoadErr('');
+      } else {
+        // 未解锁 / 读失败都走这里：只影响「自定义片段」，种子照常可用
+        setRows([]);
+        setLoadErr(r.error || '读取自定义片段失败');
+      }
+    } catch (e) {
+      setRows([]);
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const custom = useMemo(() => rowsToAssertions(rows), [rows]);
+  // 合并（种子在前原序 + 自定义在后按 updatedAt 降序）后统一过滤：
+  // 过滤逻辑只有 assertions.ts 里的那一份，页面不另写匹配规则。
+  const allSnippets = useMemo(() => mergeAssertions(ASSERTION_SEED, custom), [custom]);
+  const list = useMemo(
+    () => filterAssertions(
+      allSnippets,
+      query,
+      framework === 'all' ? undefined : framework,
+      { category: category === 'all' ? undefined : category },
+    ),
+    [allSnippets, query, framework, category],
+  );
+
+  // 选中状态从「全量」里找，不从未过滤的列表里找：切换筛选条件时已选片段不会突然清空
+  const selected = useMemo(() => allSnippets.find(s => s.id === selectedId) || null, [allSnippets, selectedId]);
+  useToolResult(selected ? selected.code : '');
+
+  const save = async () => {
+    const problem = validateAssertionInput({ name, code });
+    if (problem) { setFormErr(problem); return; }
+    const row = toAssertionRow({
+      name,
+      code,
+      framework: framework === 'all' ? undefined : framework,
+      category: category === 'all' ? undefined : category,
+      tags: [framework === 'all' ? '自定义' : FRAMEWORK_LABELS[framework]],
+    });
+    const next = [...rows, row];
+    try {
+      const r = await window.electronAPI.wsSet('codeSnippets', next);
+      if (!r.success) { setFormErr(`保存失败：${r.error || '未知原因'}`); return; }
+      setRows(next);
+      setName('');
+      setCode('');
+      setFormErr('');
+      setSavedMsg('已存为自定义片段（存在加密库里，重启仍在）');
+    } catch (e) {
+      setFormErr(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const removeCustom = (row: CustomAssertionRow) => {
+    ask({
+      title: '删除自定义片段',
+      message: `确定删除「${row.name}」？内置片段不受影响。`,
+      confirmText: '删除',
+      onOk: async () => {
+        const next = removeAssertionRow(rows, row.id);
+        const r = await window.electronAPI.wsSet('codeSnippets', next);
+        if (r.success) {
+          setRows(next);
+          setSavedMsg('已删除');
+          if (selectedId === row.id) setSelectedId('');
+        } else {
+          setFormErr(`删除失败：${r.error || '未知原因'}`);
+        }
+      },
+    });
+  };
+
+  const customIds = new Set(custom.map(c => c.id));
+
+  return (
+    <div className="tool-panel">
+      <div className="tool-inline" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+        <div className="tool-field" style={{ minWidth: 240, flex: '1 1 240px' }}>
+          <label htmlFor="as-q">检索（标题 / 标签 / 代码）</label>
+          <input
+            id="as-q"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="例如：状态码 / schema / visible / 可见"
+            aria-label="检索断言片段"
+          />
+        </div>
+        <div className="tool-field">
+          <label htmlFor="as-fw">框架</label>
+          <select id="as-fw" value={framework} onChange={e => setFramework(e.target.value as 'all' | AssertionFramework)}>
+            <option value="all">全部</option>
+            {(Object.keys(FRAMEWORK_LABELS) as AssertionFramework[]).map(fw => (
+              <option key={fw} value={fw}>{FRAMEWORK_LABELS[fw]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="tool-field">
+          <label htmlFor="as-cat">用途</label>
+          <select id="as-cat" value={category} onChange={e => setCategory(e.target.value as 'all' | AssertionCategory)}>
+            <option value="all">全部</option>
+            {(Object.keys(CATEGORY_LABELS) as AssertionCategory[]).map(c => (
+              <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-sm text-muted" style={{ alignSelf: 'flex-end', paddingBottom: 6 }}>
+          命中 {list.length} 条（内置只读，不可删）
+        </div>
+      </div>
+
+      {loadErr && (
+        <div className="dev-banner is-warn" role="status">
+          <Icons.bug size={14} />
+          <div>自定义片段读不到：{loadErr}。内置片段仍可用。</div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-sm text-muted">正在读自定义片段…</div>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-muted" style={{ marginTop: 8 }}>
+          没有匹配的片段。检索只做「标题 / 标签 / 代码」的不区分大小写子串匹配（不做模糊或拼音），
+          清空检索词或换框架再看。
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {list.map(s => {
+            const isCustom = customIds.has(s.id);
+            const active = s.id === selectedId;
+            return (
+              <div
+                key={s.id}
+                // 选中态只改边框颜色（不铺底色）：背景图模式下铺一块实底/半透明块最容易出白斑，
+                // 而边框属于图形元素，语义色 3:1 就够。
+                style={{
+                  border: `1px solid ${active ? 'var(--accent-line)' : 'var(--line)'}`,
+                  borderRadius: 'var(--r-sm)',
+                  padding: '8px 10px',
+                }}
+              >
+                <div className="tool-inline" style={{ alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setSelectedId(s.id)}
+                    aria-pressed={active}
+                    title="选中后由右上角「复制结果」复制这段代码"
+                  >
+                    {active ? '✓ 已选中' : '选中'}
+                  </button>
+                  <b className="text-sm">{s.title}</b>
+                  <span className="chip">{FRAMEWORK_LABELS[s.framework]}</span>
+                  <span className="chip">{CATEGORY_LABELS[s.category]}</span>
+                  {isCustom && <span className="chip">自定义</span>}
+                  {isCustom && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => {
+                        const row = rows.find(r => (r as { id?: string }).id === s.id);
+                        if (row) removeCustom(row as CustomAssertionRow);
+                      }}
+                    >
+                      删除
+                    </button>
+                  )}
+                </div>
+                <pre className="tb-pre" style={{ marginTop: 6 }}>{s.code}</pre>
+                {s.note && <div className="text-sm text-muted" style={{ marginTop: 4 }}>{s.note}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Panel title="存为自己的片段" collapsible defaultOpen={false}>
+        <div className="tool-field">
+          <label htmlFor="as-name">标题</label>
+          <input id="as-name" value={name} onChange={e => setName(e.target.value)} placeholder="例如：订单金额字段断言" aria-label="自定义片段标题" />
+        </div>
+        <div className="tool-field">
+          <label htmlFor="as-code">代码</label>
+          <textarea id="as-code" rows={5} value={code} onChange={e => setCode(e.target.value)} aria-label="自定义片段代码" placeholder='assertThat(page.locator("#submit")).isEnabled();' />
+        </div>
+        {formErr && (
+          <div className="dev-banner is-error" role="alert">
+            <Icons.close size={14} />
+            <div>{formErr}</div>
+          </div>
+        )}
+        {savedMsg && (
+          <div className="dev-banner is-info" role="status">
+            <Icons.check size={14} />
+            <div>{savedMsg}</div>
+          </div>
+        )}
+        <div className="tool-inline">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => void save()}>保存片段</button>
+          <span className="text-sm text-muted">存进加密库的 codeSnippets 集合（带 kind=assert），内置种子不落库</span>
+        </div>
+      </Panel>
+      {confirmNode}
+    </div>
+  );
+}
+
 /* ---------------- 页面 ---------------- */
 export function Toolbox() {
   const { toasts, addToast, removeToast } = useToast();
@@ -1486,6 +1853,8 @@ export function Toolbox() {
       case 'media': return <MediaTool />;
       case 'redact': return <RedactTool />;
       case 'log': return <LogTool />;
+      case 'pojoGen': return <PojoGenTool />;
+      case 'assertionLib': return <AssertionLibTool />;
       default: return null;
     }
   };

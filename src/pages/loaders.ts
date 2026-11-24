@@ -29,6 +29,15 @@ export const PAGE_LOADERS = {
   perfTest: () => import('./PerfTest').then(m => ({ default: m.PerfTest })),
   codeLab: () => import('./CodeLab').then(m => ({ default: m.CodeLab })),
   cases: () => import('./Cases').then(m => ({ default: m.Cases })),
+  // 1.33.0：本地测试资产工作站 4 个新页（开发辅助分组）。key 名 = 侧栏 NavItem.id =
+  // App.renderPage 的 case，三处必须逐字一致（拼错的表现是「点开落到网址管理」，
+  // 因为 renderPage 的 default 分支是 PasswordManagerPage）。
+  // 挂进这张表而不是直接写进 App 的 lazy()：只有从这里取，侧栏悬停预取（prefetchPage）才覆盖到它们；
+  // 页面组件一律命名导出（m.Xxx），没有 default 导出。
+  codeGen: () => import('./CodeGen').then(m => ({ default: m.CodeGen })),
+  codeAudit: () => import('./CodeAudit').then(m => ({ default: m.CodeAudit })),
+  assetLedger: () => import('./AssetLedger').then(m => ({ default: m.AssetLedger })),
+  resultHub: () => import('./ResultHub').then(m => ({ default: m.ResultHub })),
 } as const;
 
 export type PageKey = keyof typeof PAGE_LOADERS;

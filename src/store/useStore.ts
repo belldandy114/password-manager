@@ -52,6 +52,13 @@ interface AppState {
   snippetSeed: { text: string; at: number } | null;
   /** 「全局搜索选中某个测试数据类型」的预选种子，测试数据页挂载后消费 */
   dataGeneratorSeed: { type: string; at: number } | null;
+  /**
+   * 「接口调试 → 代码生成」的原文种子（1.33.0）。
+   * 只带一段文本（响应体原文 / OpenAPI 片段），代码生成页消费后清空；与 apiBodyText 同模式，
+   * 区别是接收方不同（那边填接口调试的请求体，这边落到「接口 → 骨架」页签的输入框）。
+   * 类型就地定义在这里、不进 src/types.ts：它是渲染层内部的 UI 种子，不属于 IPC 契约。
+   */
+  codegenSeed: { text: string; at: number } | null;
 
   // Actions
   signalNewEntry: (seed?: Partial<PasswordEntry>) => void;
@@ -67,6 +74,9 @@ interface AppState {
   consumeSnippetSeed: () => void;
   seedDataGenerator: (type: string) => void;
   consumeDataGeneratorSeed: () => void;
+  /** 把一段原文交给代码生成页（接口调试「去生成测试骨架」用） */
+  seedCodeGen: (text: string) => void;
+  consumeCodeGenSeed: () => void;
   /** 工具箱跳转意图：命令面板/接口调试「在工具箱打开某个工具」并带初始文本 */
   toolboxIntent: { tool: string; text?: string; at: number } | null;
   /** 用例库：从工作台「最近用例」跳过去并直接打开某个文件 */
@@ -150,6 +160,7 @@ export const useStore = create<AppState>((set, get) => ({
   apiBodyText: null,
   snippetSeed: null,
   dataGeneratorSeed: null,
+  codegenSeed: null,
   toolboxIntent: null,
   casesIntent: null,
   navigateTo: null,
@@ -217,6 +228,8 @@ export const useStore = create<AppState>((set, get) => ({
   consumeSnippetSeed: () => set({ snippetSeed: null }),
   seedDataGenerator: (type) => set({ dataGeneratorSeed: { type, at: Date.now() } }),
   consumeDataGeneratorSeed: () => set({ dataGeneratorSeed: null }),
+  seedCodeGen: (text) => set({ codegenSeed: { text, at: Date.now() } }),
+  consumeCodeGenSeed: () => set({ codegenSeed: null }),
   openToolboxTool: (tool, text) => set({ toolboxIntent: { tool, text, at: Date.now() } }),
   consumeToolboxIntent: () => set({ toolboxIntent: null }),
   openCase: (rel) => set({ casesIntent: { rel, at: Date.now() } }),

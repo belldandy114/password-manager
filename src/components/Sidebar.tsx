@@ -5,6 +5,7 @@ import {
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
   IconHome2, IconCode,
+  IconFileCode, IconShieldCheck, IconListDetails, IconChartDots,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -209,6 +210,11 @@ const apiIcon = nav(IconApi);
 const settingsIcon = nav(IconSettings);
 const lockIcon = nav(IconLock);
 const bellIcon = nav(IconBell);
+// 1.33.0：开发辅助 4 个新页的图标（都避开既有 13 项已用的图标，免得两个入口看起来是同一个东西）
+const codeGenIcon = nav(IconFileCode);
+const auditIcon = nav(IconShieldCheck);
+const ledgerIcon = nav(IconListDetails);
+const resultHubIcon = nav(IconChartDots);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -239,6 +245,13 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '开发辅助',
     items: [
+      // 1.33.0：本地测试资产工作站 4 页（代码生成 / 代码体检 / 资产台账 / 结果中心）。
+      // 放在「代码调试 / 测试数据 / 工具箱」之前：新能力在上、手边老工具在下；
+      // 既有 3 项一项不删、不改顺序 —— 回归脚本按文案点侧栏，换位会点错。
+      { id: 'codeGen', label: '代码生成', icon: codeGenIcon },
+      { id: 'codeAudit', label: '代码体检', icon: auditIcon },
+      { id: 'assetLedger', label: '资产台账', icon: ledgerIcon },
+      { id: 'resultHub', label: '结果中心', icon: resultHubIcon },
       { id: 'codeLab', label: '代码调试', icon: terminalIcon },
       { id: 'dataGenerator', label: '测试数据', icon: dataGenIcon },
       { id: 'toolbox', label: '工具箱', icon: toolboxIcon },

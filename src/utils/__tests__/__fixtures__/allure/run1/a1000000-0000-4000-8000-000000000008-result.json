@@ -1,0 +1,108 @@
+{
+  "uuid": "a1000000-0000-4000-8000-000000000008",
+  "historyId": "a2b3c4d5e6f708192a3b4c5d6e7f8096",
+  "testCaseId": "a2b3c4d5e6f708192a3b4c5d6e7f8096",
+  "name": "shouldHandlePaymentCallback",
+  "fullName": "com.example.qa.api.CallbackTest.shouldHandlePaymentCallback",
+  "status": "broken",
+  "statusDetails": {
+    "known": false,
+    "muted": false,
+    "flaky": false,
+    "message": "java.net.ConnectException: Connection refused: https://callback.example.com/pay/notify",
+    "trace": "java.net.ConnectException: Connection refused\n\tat java.base/sun.nio.ch.Net.pollConnect(Native Method)\n\tat com.example.qa.api.CallbackTest.shouldHandlePaymentCallback(CallbackTest.java:41)"
+  },
+  "stage": "finished",
+  "start": "2026-11-18T02:03:00.000Z",
+  "stop": "2026-11-18T02:03:02.000Z",
+  "labels": [
+    {
+      "name": "package",
+      "value": "com.example.qa.api"
+    },
+    {
+      "name": "testClass",
+      "value": "CallbackTest"
+    },
+    {
+      "name": "testMethod",
+      "value": "shouldHandlePaymentCallback"
+    },
+    {
+      "name": "suite",
+      "value": "CallbackTest"
+    },
+    {
+      "name": "parentSuite",
+      "value": "fixture-suite"
+    },
+    {
+      "name": "subSuite",
+      "value": "api"
+    },
+    {
+      "name": "framework",
+      "value": "junit5"
+    },
+    {
+      "name": "language",
+      "value": "java"
+    },
+    {
+      "name": "host",
+      "value": "qa-fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1"
+    },
+    {
+      "name": "severity",
+      "value": "blocker"
+    },
+    {
+      "name": "tag",
+      "value": "payment"
+    },
+    {
+      "name": "tag",
+      "value": "callback"
+    }
+  ],
+  "links": [],
+  "parameters": [],
+  "steps": [
+    {
+      "name": "准备测试数据",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:03:00.000Z",
+      "stop": "2026-11-18T02:03:00.500Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "调用接口 Callback",
+      "status": "failed",
+      "stage": "finished",
+      "start": "2026-11-18T02:03:00.500Z",
+      "stop": "2026-11-18T02:03:01.500Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "断言响应",
+      "status": "broken",
+      "stage": "finished",
+      "start": "2026-11-18T02:03:01.500Z",
+      "stop": "2026-11-18T02:03:02.000Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    }
+  ],
+  "attachments": [],
+  "description": "合成夹具用例（非真实运行）：com.example.qa.api.CallbackTest.shouldHandlePaymentCallback"
+}

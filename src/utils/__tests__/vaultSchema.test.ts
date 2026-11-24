@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  declaredVersion, migrateVault, normalizeVault, VAULT_COLLECTIONS, VAULT_SCHEMA_VERSION,
+  declaredVersion, migrateVault, normalizeVault, VAULT_COLLECTIONS, VAULT_SCHEMA_VERSION, MIGRATIONS,
 } from '../../../electron/vault-schema.js';
 
 /**
@@ -91,7 +91,8 @@ describe('vault-schema.migrateVault 版本迁移', () => {
     const { vault, from, to, applied, future } = migrateVault({ entries: [{ id: 'a' }] });
     expect(from).toBe(1);
     expect(to).toBe(VAULT_SCHEMA_VERSION);
-    expect(applied).toEqual([1, 2]);
+    // v1 → v2 → v3 → v4：每加一版迁移步这里都要跟着多一步（契约 C-41）
+    expect(applied).toEqual([1, 2, 3]);
     expect(future).toBe(false);
     expect(vault.schemaVersion).toBe(VAULT_SCHEMA_VERSION);
     expect(vault.entries).toEqual([{ id: 'a' }]);
@@ -110,7 +111,7 @@ describe('vault-schema.migrateVault 版本迁移', () => {
         { id: 'a3', system: '对不上的系统', role: '临时', username: 'tmp', password: 'z' },
       ],
     });
-    expect(applied).toEqual([2]);
+    expect(applied).toEqual([2, 3]);
     const ents = vault.entries as Array<{ accounts?: Array<{ username: string }> }>;
     expect(ents[0].accounts).toHaveLength(1);
     expect(ents[0].accounts![0].username).toBe('admin');
@@ -189,5 +190,48 @@ describe('vault-schema.migrateVault 版本迁移', () => {
     const second = migrateVault(first.vault);
     expect(second.applied).toEqual([]);
     expect(second.vault.history).toEqual(first.vault.history);
+  });
+});
+
+/**
+ * 本地测试资产工作站（契约 C-18 / C-40 ~ C-44）：
+ * 5 个新集合全部靠「追加 + bump 版本 + 恒等迁移」落地，结构一步都没搬。
+ * 这组用例锁三件事：版本号真的是 4、恒等迁移不改数据、降级打开不丢新集合。
+ */
+describe('vault-schema v3 → v4（本地测试资产工作站的 5 个集合）', () => {
+  const NEW_KEYS = ['pomPages', 'scanRuns', 'coverageRuns', 'caseMaps', 'allureRuns'];
+
+  it('当前结构版本是 4，且 MIGRATIONS[3] 是恒等迁移', () => {
+    expect(VAULT_SCHEMA_VERSION).toBe(4);
+    expect(typeof MIGRATIONS[3]).toBe('function');
+  });
+
+  it('v3 库升到 v4：to === 4、applied 含 3、数据一个字节都不动', () => {
+    const entries = [{ id: 'a', name: 'X系统' }];
+    const { vault, from, to, applied, future } = migrateVault({ schemaVersion: 3, entries });
+    expect(from).toBe(3);
+    expect(to).toBe(4);
+    expect(applied).toEqual([3]);
+    expect(future).toBe(false);
+    expect(vault.entries).toEqual(entries);
+    expect(vault.schemaVersion).toBe(4);
+  });
+
+  it('5 个新集合在 VAULT_COLLECTIONS 末尾，且缺失时补成空数组', () => {
+    for (const key of NEW_KEYS) {
+      expect(VAULT_COLLECTIONS).toContain(key);
+    }
+    // 只追加不插序：末尾 5 项就是它们
+    expect(VAULT_COLLECTIONS.slice(-5)).toEqual(NEW_KEYS);
+    const v = normalizeVault({});
+    for (const key of NEW_KEYS) {
+      expect(v[key]).toEqual([]);
+    }
+  });
+
+  it('更高版本的库归一化时保留 caseMaps（降级安全 + 键名是复数）', () => {
+    const v = normalizeVault({ schemaVersion: 99, caseMaps: [{ id: 'x' }] });
+    expect(v.schemaVersion).toBe(99);
+    expect(v.caseMaps).toEqual([{ id: 'x' }]);
   });
 });

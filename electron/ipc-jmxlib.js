@@ -13,11 +13,29 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { safeName, resolveInside, uniqueName, MAX_FOLDER_DEPTH } = require('./cases-paths');
-const { inspectJmx, isJmxName, buildJmxTemplate } = require('./jmx-script');
+const { inspectJmx, isJmxName, buildJmxTemplate, buildJmxFromPlan, validateCsvTable } = require('./jmx-script');
+const { parseCsv } = require('./csv');
+const { decodeTextBuffer } = require('./text-encoding');
 
 const CONFIG_NAME = 'jmxlib.json';
 const META_KEYS = ['outDir', 'threads', 'loops', 'note', 'params'];
 const MAX_RUNS = 20;
+/** CSV 参数文件上限（契约 §2.7 通道表：CSV ≤ 50 MB、≤ 1,000,000 行） */
+const MAX_CSV_BYTES = 50 * 1024 * 1024;
+const MAX_CSV_ROWS = 1000000;
+
+/**
+ * buildJmxFromPlan 的 reason → 契约 C-77 的文案（单一映射点；bad-url 复用既有串，不新增措辞）
+ */
+const PLAN_ERROR_TEXT = {
+  'no-interface': () => '至少填一个接口',
+  'too-many-interfaces': () => '接口最多 50 个',
+  'threads-out-of-range': () => '线程数或循环数超出范围（1–100000）',
+  'think-time-out-of-range': () => '思考时间超出范围（0–60000 ms）',
+  'bad-url': (d) => `地址格式不对，例如 https://example.com/api/login（${d || '地址不可解析'}）`,
+  'bad-csv-var': (d) => `CSV 变量名不合法：${d || ''}`,
+  'bad-assert-code': () => '断言状态码必须是 3 位数字',
+};
 
 module.exports = { registerJmxLibIpc };
 
@@ -437,6 +455,128 @@ function registerJmxLibIpc(deps) {
       writeConfig({ root: cfg.root, items });
       return { success: true, data: { lastRun: items[key].lastRun } };
     } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  /**
+   * 接口集合 → 批量 `.jmx`（契约 §2.7 / C-75〜C-77）。
+   *
+   * 落盘顺序**写死，不许调换**（C-75 第 2 条：任一步失败磁盘零新增）：
+   *   ① build（纯函数，不碰盘）→ ② inspectJmx 结构检查 → ③ CSV 校验（存在/大小/parseCsv/列与行）
+   *   → ④ 定最终文件名（uniqueName）→ 需要时用最终 CSV 名重建并复检 → ⑤ 复制 CSV → ⑥ 临时文件 + rename
+   *
+   * CSV 相对路径（C-75 四条）：JMX 内只写**文件名**；源文件只在生成时读一次；
+   * 复制进脚本库同目录；`csv.copied` 与 JMX 里写的文件名逐字一致。
+   *
+   * @returns {Promise<{success: boolean, data?: { rel: string, name: string, path: string, interfaces: number,
+   *   bytes: number, csv?: { source: string, copied: string, rows: number } }, error?: string }> }
+   */
+  ipcMain.handle('jmxlib:create-batch', async (_event, { rel, plan } = {}) => {
+    /** 本次已落盘的文件；失败时逐个删掉，保证「任一步失败磁盘零新增」 */
+    const created = [];
+    const cleanup = () => {
+      for (const f of created.splice(0).reverse()) {
+        try { fs.unlinkSync(f); } catch { /* 已经不在了 */ }
+      }
+    };
+    try {
+      const cfg = readConfig();
+      if (!cfg.root) return { success: false, error: '还没有设置脚本库目录' };
+      const depth = String(rel || '').split('/').filter(Boolean).length;
+      if (depth >= MAX_FOLDER_DEPTH) return { success: false, error: '最多两级：请在根目录或一级目录新建脚本' };
+      const { target: dir, error } = resolveInside(cfg.root, rel);
+      if (error) return { success: false, error };
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return { success: false, error: '目标目录不存在' };
+
+      const p = plan && typeof plan === 'object' ? plan : {};
+
+      // ① build（纯函数：先把结构算出来，一个字节都不写）
+      let built = buildJmxFromPlan(p);
+      if (!built.ok) return { success: false, error: (PLAN_ERROR_TEXT[built.reason] || (() => '参数不合法'))(built.detail) };
+
+      // ② 结构检查（不合格直接返回，磁盘零新增）
+      const checked = inspectJmx(built.xml);
+      if (!checked.ok) return { success: false, error: `生成的 JMX 未通过结构检查：${checked.error}` };
+
+      // ③ CSV 校验：存在 → 大小 → parseCsv → 列与数据行（全在写盘之前）
+      let csvInfo = null;
+      const csvSource = String(p.csvFile || '').trim();
+      if (built.csvFileName && csvSource) {
+        if (!fs.existsSync(csvSource) || !fs.statSync(csvSource).isFile()) return { success: false, error: `CSV 文件不存在：${csvSource}` };
+        const csvSize = fs.statSync(csvSource).size;
+        if (csvSize > MAX_CSV_BYTES) return { success: false, error: 'CSV 太大（> 50 MB）' };
+        let table;
+        try {
+          table = parseCsv(decodeTextBuffer(fs.readFileSync(csvSource)).text);
+        } catch (e) {
+          return { success: false, error: `CSV 无法解析：${e.message}` };
+        }
+        const v = validateCsvTable(table, p.csvVars);
+        if (!v.ok) return { success: false, error: v.reason === 'missing-column' ? `CSV 缺少列：${v.detail}` : 'CSV 没有数据行' };
+        if (v.rows > MAX_CSV_ROWS) return { success: false, error: 'CSV 太大（> 50 MB）' };
+        csvInfo = { table, rows: v.rows };
+      }
+
+      // ④ 最终文件名：.jmx 与 CSV 各走 uniqueName（C-76：禁止覆盖已有脚本）
+      const checkedName = safeName(p.name || built.name || '批量脚本');
+      if (checkedName.error) return { success: false, error: checkedName.error };
+      const withExt = isJmxName(checkedName.name) ? checkedName.name : `${checkedName.name}.jmx`;
+      const existing = fs.readdirSync(dir);
+      const jmxName = uniqueName(existing, withExt);
+
+      let csvCopied = '';
+      if (built.csvFileName) {
+        csvCopied = uniqueName([...existing, jmxName], built.csvFileName);
+        if (csvCopied !== built.csvFileName) {
+          // 重名加了后缀：JMX 里写的文件名必须跟着改，否则「脚本能跑但读错文件」（C-76）
+          built = buildJmxFromPlan({ ...p, csvFile: csvCopied });
+          if (!built.ok) return { success: false, error: (PLAN_ERROR_TEXT[built.reason] || (() => '参数不合法'))(built.detail) };
+          const recheck = inspectJmx(built.xml);
+          if (!recheck.ok) return { success: false, error: `生成的 JMX 未通过结构检查：${recheck.error}` };
+        }
+      }
+
+      // ⑤ 复制 CSV（第一个真正落盘的动作；失败也不留 .jmx）
+      if (csvInfo) {
+        const csvTarget = path.join(dir, csvCopied);
+        try {
+          fs.copyFileSync(csvSource, csvTarget);
+          created.push(csvTarget);
+        } catch (e) {
+          cleanup();
+          return { success: false, error: `CSV 复制失败：${e.message}` };
+        }
+      }
+
+      // ⑥ 原子写 .jmx：临时文件 + rename（写完才出现在库里）
+      const jmxTarget = path.join(dir, jmxName);
+      const tmp = `${jmxTarget}.tmp`;
+      try {
+        fs.writeFileSync(tmp, built.xml, 'utf8');
+        created.push(tmp);
+        fs.renameSync(tmp, jmxTarget);
+        created.splice(created.indexOf(tmp), 1); // tmp 已经变成正式文件，不再是残留
+      } catch (e) {
+        cleanup(); // 删掉 tmp 与已复制的 CSV
+        return { success: false, error: `磁盘写入失败：${e.message}` };
+      }
+
+      const relOut = path.relative(cfg.root, jmxTarget).split(path.sep).join('/');
+      created.length = 0; // 成功：产物保留
+      return {
+        success: true,
+        data: {
+          rel: relOut,
+          name: jmxName,
+          path: jmxTarget,
+          interfaces: built.interfaces,
+          bytes: Buffer.byteLength(built.xml, 'utf8'),
+          ...(csvInfo ? { csv: { source: csvSource, copied: csvCopied, rows: csvInfo.rows } } : {}),
+        },
+      };
+    } catch (e) {
+      cleanup();
       return { success: false, error: e.message };
     }
   });

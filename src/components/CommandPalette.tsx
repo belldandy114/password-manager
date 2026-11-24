@@ -84,6 +84,11 @@ export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
+  // 1.33.0：开发辅助 4 个新页。不登记的话命令面板搜不到新页面，会被当成「页面没做」
+  { page: 'codeGen', label: '代码生成' },
+  { page: 'codeAudit', label: '代码体检' },
+  { page: 'assetLedger', label: '资产台账' },
+  { page: 'resultHub', label: '结果中心' },
   { page: 'settings', label: '设置' },
 ];
 PAGES.push(...PAGES_MORE);
@@ -159,13 +164,16 @@ export function CommandPalette({
       const allNotes = pick(nt);
       // SQL 片段已并入笔记，但旧集合保留作兜底：两处合成一份不重复的片段列表，
       // 普通笔记只取非 SQL 的，避免同一条内容在搜索里出现两遍。
+      //
+      // codeSnippets 同理但更严：它是「代码调试片段」与「断言库自定义片段」（kind='assert'）共用的集合，
+      // 命令面板只该列出前者 —— 断言片段的入口在断言库工具里（会跳 codeLab 载入编辑器，语义不对）。
       setExtra({
         snippets: mergeSqlViews(allNotes, pick(sn)),
         notes: plainNotes(allNotes),
         apiRequests: pick(rq),
         environments: pick(ev),
         apiHistory: pick(hs),
-        codeSnippets: pick(cs),
+        codeSnippets: pick(cs).filter((s: { kind?: unknown }) => s?.kind !== 'assert'),
         integrations: pick(ig),
         ztPresets: pick(zp),
         apiEnvs: pick(ae),

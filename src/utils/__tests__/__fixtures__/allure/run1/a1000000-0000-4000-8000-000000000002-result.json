@@ -1,0 +1,106 @@
+{
+  "uuid": "a1000000-0000-4000-8000-000000000002",
+  "historyId": "b1c2d3e4f5a60718293a4b5c6d7e8f91",
+  "testCaseId": "b1c2d3e4f5a60718293a4b5c6d7e8f91",
+  "name": "shouldCreateOrder",
+  "fullName": "com.example.qa.api.CreateOrderTest.shouldCreateOrder",
+  "status": "passed",
+  "statusDetails": {
+    "known": false,
+    "muted": false,
+    "flaky": false
+  },
+  "stage": "finished",
+  "start": "2026-11-18T02:00:04.000Z",
+  "stop": "2026-11-18T02:00:06.000Z",
+  "labels": [
+    {
+      "name": "package",
+      "value": "com.example.qa.api"
+    },
+    {
+      "name": "testClass",
+      "value": "CreateOrderTest"
+    },
+    {
+      "name": "testMethod",
+      "value": "shouldCreateOrder"
+    },
+    {
+      "name": "suite",
+      "value": "CreateOrderTest"
+    },
+    {
+      "name": "parentSuite",
+      "value": "fixture-suite"
+    },
+    {
+      "name": "subSuite",
+      "value": "api"
+    },
+    {
+      "name": "framework",
+      "value": "junit5"
+    },
+    {
+      "name": "language",
+      "value": "java"
+    },
+    {
+      "name": "host",
+      "value": "qa-fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1"
+    },
+    {
+      "name": "severity",
+      "value": "blocker"
+    },
+    {
+      "name": "tag",
+      "value": "smoke"
+    },
+    {
+      "name": "tag",
+      "value": "order"
+    }
+  ],
+  "links": [],
+  "parameters": [],
+  "steps": [
+    {
+      "name": "准备测试数据",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:04.000Z",
+      "stop": "2026-11-18T02:00:04.500Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "调用接口 CreateOrder",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:04.500Z",
+      "stop": "2026-11-18T02:00:05.500Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "断言响应",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:05.500Z",
+      "stop": "2026-11-18T02:00:06.000Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    }
+  ],
+  "attachments": [],
+  "description": "合成夹具用例（非真实运行）：com.example.qa.api.CreateOrderTest.shouldCreateOrder"
+}

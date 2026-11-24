@@ -1642,6 +1642,10 @@ const { registerToolsIpc } = require('./ipc-tools');
 const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
 const { registerJmxLibIpc } = require('./ipc-jmxlib');
+const { registerScanIpc } = require('./ipc-scan');   // 本地测试资产工作站（13 项）：4 个新 IPC 域，W1 只接线
+const { registerGitIpc } = require('./ipc-git');
+const { registerAllureIpc } = require('./ipc-allure');
+const { registerTdgIpc } = require('./ipc-tdg');
 const { registerSystemIpc } = require('./ipc-system');
 const { registerCodelabIpc } = require('./ipc-codelab');
 const { registerPreviewScheme, registerPreviewProtocol, registerPreviewIpc } = require('./codelab-preview');
@@ -2265,6 +2269,10 @@ function setupIpcHandlers() {
   // JMeter 非 GUI 运行：需要窗口引用（推送流式日志）与设置读写
   registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow, dataDir: DATA_DIR });
   registerJmxLibIpc({ ipcMain, dialog, shell, getWindow: () => mainWindow, dataDir: DATA_DIR });
+  registerScanIpc({ getMainWindow: () => mainWindow });   // W1 只接线（占位）：业务分别落在 W5 / W6-B / W6-A / W2-B
+  registerGitIpc();
+  registerAllureIpc({ getMainWindow: () => mainWindow });
+  registerTdgIpc({ getMainWindow: () => mainWindow });
 
 }
 

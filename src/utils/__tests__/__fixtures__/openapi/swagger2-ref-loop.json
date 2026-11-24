@@ -1,0 +1,76 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Order API",
+    "version": "0.9.0"
+  },
+  "host": "api.example.com",
+  "basePath": "/shop",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "securityDefinitions": {
+    "apiKeyAuth": {
+      "type": "apiKey",
+      "name": "X-API-Key",
+      "in": "header"
+    }
+  },
+  "security": [{ "apiKeyAuth": [] }],
+  "paths": {
+    "/orders": {
+      "post": {
+        "operationId": "createOrder",
+        "tags": ["orders"],
+        "parameters": [
+          { "name": "X-Trace", "in": "header", "type": "string", "default": "trace-1" },
+          { "name": "body", "in": "body", "schema": { "$ref": "#/definitions/Order" } }
+        ],
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/orders/{orderId}": {
+      "parameters": [
+        { "name": "orderId", "in": "path", "required": true, "type": "string" }
+      ],
+      "get": {
+        "operationId": "getOrder",
+        "tags": ["orders"],
+        "parameters": [
+          { "name": "expand", "in": "query", "type": "string" }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "operationId": "replaceOrder",
+        "tags": ["orders"],
+        "parameters": [
+          { "name": "body", "in": "body", "schema": { "$ref": "#/definitions/Order" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  },
+  "definitions": {
+    "Order": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customer": { "$ref": "#/definitions/Customer" }
+      }
+    },
+    "Customer": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "orders": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Order" }
+        }
+      }
+    },
+    "Unused": {
+      "type": "object",
+      "properties": { "ghost": { "$ref": "#/definitions/DoesNotExist" } }
+    }
+  }
+}

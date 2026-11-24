@@ -1,0 +1,102 @@
+{
+  "uuid": "a1000000-0000-4000-8000-000000000003",
+  "historyId": "c1d2e3f4a5b60718293a4b5c6d7e8f92",
+  "testCaseId": "c1d2e3f4a5b60718293a4b5c6d7e8f92",
+  "name": "shouldFilterByKeyword",
+  "fullName": "com.example.qa.api.SearchTest.shouldFilterByKeyword",
+  "status": "passed",
+  "statusDetails": {
+    "known": false,
+    "muted": false,
+    "flaky": false
+  },
+  "stage": "finished",
+  "start": "2026-11-18T02:00:07.000Z",
+  "stop": "2026-11-18T02:00:08.000Z",
+  "labels": [
+    {
+      "name": "package",
+      "value": "com.example.qa.api"
+    },
+    {
+      "name": "testClass",
+      "value": "SearchTest"
+    },
+    {
+      "name": "testMethod",
+      "value": "shouldFilterByKeyword"
+    },
+    {
+      "name": "suite",
+      "value": "SearchTest"
+    },
+    {
+      "name": "parentSuite",
+      "value": "fixture-suite"
+    },
+    {
+      "name": "subSuite",
+      "value": "api"
+    },
+    {
+      "name": "framework",
+      "value": "junit5"
+    },
+    {
+      "name": "language",
+      "value": "java"
+    },
+    {
+      "name": "host",
+      "value": "qa-fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1"
+    },
+    {
+      "name": "severity",
+      "value": "normal"
+    },
+    {
+      "name": "tag",
+      "value": "search"
+    }
+  ],
+  "links": [],
+  "parameters": [],
+  "steps": [
+    {
+      "name": "准备测试数据",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:07.000Z",
+      "stop": "2026-11-18T02:00:07.250Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "调用接口 Search",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:07.250Z",
+      "stop": "2026-11-18T02:00:07.750Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "断言响应",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-18T02:00:07.750Z",
+      "stop": "2026-11-18T02:00:08.000Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    }
+  ],
+  "attachments": [],
+  "description": "合成夹具用例（非真实运行）：com.example.qa.api.SearchTest.shouldFilterByKeyword"
+}

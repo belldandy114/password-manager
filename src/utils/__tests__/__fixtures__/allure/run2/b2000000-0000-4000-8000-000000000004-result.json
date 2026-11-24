@@ -1,0 +1,106 @@
+{
+  "uuid": "b2000000-0000-4000-8000-000000000004",
+  "historyId": "d1e2f3a4b5c60718293a4b5c6d7e8f93",
+  "testCaseId": "d1e2f3a4b5c60718293a4b5c6d7e8f93",
+  "name": "shouldTimeoutAfter3s",
+  "fullName": "com.example.qa.api.ApiClientTest.shouldTimeoutAfter3s",
+  "status": "passed",
+  "statusDetails": {
+    "known": false,
+    "muted": false,
+    "flaky": false
+  },
+  "stage": "finished",
+  "start": "2026-11-19T02:01:00.000Z",
+  "stop": "2026-11-19T02:01:03.000Z",
+  "labels": [
+    {
+      "name": "package",
+      "value": "com.example.qa.api"
+    },
+    {
+      "name": "testClass",
+      "value": "ApiClientTest"
+    },
+    {
+      "name": "testMethod",
+      "value": "shouldTimeoutAfter3s"
+    },
+    {
+      "name": "suite",
+      "value": "ApiClientTest"
+    },
+    {
+      "name": "parentSuite",
+      "value": "fixture-suite"
+    },
+    {
+      "name": "subSuite",
+      "value": "api"
+    },
+    {
+      "name": "framework",
+      "value": "junit5"
+    },
+    {
+      "name": "language",
+      "value": "java"
+    },
+    {
+      "name": "host",
+      "value": "qa-fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1"
+    },
+    {
+      "name": "severity",
+      "value": "critical"
+    },
+    {
+      "name": "tag",
+      "value": "api"
+    },
+    {
+      "name": "tag",
+      "value": "timeout"
+    }
+  ],
+  "links": [],
+  "parameters": [],
+  "steps": [
+    {
+      "name": "准备测试数据",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-19T02:01:00.000Z",
+      "stop": "2026-11-19T02:01:00.750Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "调用接口 ApiClient",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-19T02:01:00.750Z",
+      "stop": "2026-11-19T02:01:02.250Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    },
+    {
+      "name": "断言响应",
+      "status": "passed",
+      "stage": "finished",
+      "start": "2026-11-19T02:01:02.250Z",
+      "stop": "2026-11-19T02:01:03.000Z",
+      "steps": [],
+      "attachments": [],
+      "parameters": []
+    }
+  ],
+  "attachments": [],
+  "description": "合成夹具用例（非真实运行）：com.example.qa.api.ApiClientTest.shouldTimeoutAfter3s"
+}

@@ -1,0 +1,102 @@
+openapi: 3.0.3
+info:
+  title: Pet Store API
+  version: 1.4.2
+servers:
+  - url: https://petstore.example.com/v1
+security:
+  - bearerAuth: []
+paths:
+  /pets:
+    # path 级参数：三个方法都要继承（operation 级同名参数应覆盖它）
+    parameters:
+      - name: X-Tenant
+        in: header
+        schema:
+          type: string
+        example: demo
+    get:
+      operationId: listPets
+      tags:
+        - pets
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+          example: 20
+      responses:
+        '200':
+          description: OK
+    post:
+      operationId: createPet
+      tags:
+        - pets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '201':
+          description: Created
+  /pets/{petId}:
+    parameters:
+      - name: petId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getPet
+      tags:
+        - pets
+      parameters:
+        - name: verbose
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+    delete:
+      operationId: deletePet
+      tags:
+        - pets
+      # 显式关闭鉴权（`security: []`）——这个接口不该出现 Authorization 头
+      security: []
+      responses:
+        '204':
+          description: No content
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Pet:
+      allOf:
+        - $ref: '#/components/schemas/PetBase'
+        - type: object
+          properties:
+            tags:
+              type: array
+              items:
+                type: string
+            status:
+              type: string
+              enum:
+                - available
+                - pending
+                - sold
+            createdAt:
+              type: string
+              format: date-time
+    PetBase:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string

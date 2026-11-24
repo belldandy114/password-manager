@@ -21,8 +21,8 @@ const { app, ipcMain, dialog, shell } = require('electron');
 const { parseMultipartLine } = require('./multipart');
 const { decodeTextBuffer, encodingLabel } = require('./text-encoding');
 
-/** file:read-text 允许的文本扩展名与大小上限（脱敏工具按列处理用） */
-const TEXT_EXTS = ['.csv', '.tsv', '.txt', '.json', '.log', '.md', '.sql'];
+/** file:read-text 允许的文本扩展名与大小上限（脱敏工具按列处理用；.yaml/.yml 供 1.1 导入 OpenAPI YAML） */
+const TEXT_EXTS = ['.csv', '.tsv', '.txt', '.json', '.log', '.md', '.sql', '.yaml', '.yml'];
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 
 const apiJar = new Map(); // origin -> Map(name -> { value, expiresAt })

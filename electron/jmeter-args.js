@@ -50,13 +50,20 @@ function pickPaths({ jmxPath, outDir, mode = 'log', stampStr }) {
  * 拼 JMeter 参数（不含 jmeter.bat 本身）。
  * 线程数/循环数是「临时覆盖」——通过 -J 传属性，脚本里要用 ${__P(threads,默认值)} 才生效。
  */
-function buildJmeterArgs({ jmxPath, jtlPath, mode = 'log', reportDir, threads, loops, extraArgs }) {
+function buildJmeterArgs({ jmxPath, jtlPath, mode = 'log', reportDir, threads, loops, extraArgs, logPath }) {
   if (!jmxPath) throw new Error('缺少 .jmx 脚本路径');
   if (!jtlPath) throw new Error('缺少 jtl 输出路径');
   if (!MODES.includes(mode)) throw new Error(`未知模式：${mode}`);
   if (mode === 'report' && !reportDir) throw new Error('报告模式缺少报告目录');
 
   const args = ['-n', '-t', String(jmxPath), '-l', String(jtlPath)];
+
+  // -j：把 **JMeter 引擎自己的** jmeter.log 钉到指定路径。
+  // 为什么必须有：spawn 的 cwd 已经改成 JMX 所在目录（C-75 第 3 条，CSV 相对路径才能解析），
+  // 而 JMeter 默认把 jmeter.log 写进进程 cwd —— 不传 -j 就会往用户的脚本库里扔日志文件，每次运行还可能互相覆盖。
+  // 传空/空白视为「不指定」，保持旧行为（调用方在目录不可写时就是这么退化的）。
+  const log = String(logPath == null ? '' : logPath).trim();
+  if (log) args.push('-j', log);
 
   const asPositiveInt = (v) => {
     const n = Number(v);
@@ -76,6 +83,40 @@ function buildJmeterArgs({ jmxPath, jtlPath, mode = 'log', reportDir, threads, l
     }
   }
   return args;
+}
+
+/**
+ * JMeter 引擎日志（`-j`）的目标路径：`<dir>/jmeter-<时间戳>-engine.log`。
+ *
+ * 纯函数（不碰盘）：目录能不能写由调用方用 `canWriteDir()` 探，探不到就不传 `-j`。
+ * 名字里带 `-engine` 是刻意的：应用自己还会把捕获的 stdout 写成 `<outDir>/jmeter-<时间戳>.log`
+ * （见 ipc-jmeter.js 的 logPath），两个同名会互相覆盖，引擎日志就白留了。
+ *
+ * @param {string} dir jtl 同目录
+ * @param {string} [stampStr] 时间戳（缺省用 stamp()）
+ * @returns {{ ok: true, path: string } | { ok: false, reason: 'no-dir' }}
+ */
+function pickJmeterLogPath(dir, stampStr) {
+  const d = String(dir == null ? '' : dir).trim();
+  if (!d) return { ok: false, reason: 'no-dir' };
+  return { ok: true, path: path.join(d, `jmeter-${stampStr || stamp()}-engine.log`) };
+}
+
+/**
+ * 目录可写探测（不创建任何文件）。不可写/不存在一律 false —— 调用方据此退化为不传 `-j`，
+ * 绝不能让「日志放不下」把压测本身弄失败。
+ * @param {string} dir
+ * @returns {boolean}
+ */
+function canWriteDir(dir) {
+  const d = String(dir == null ? '' : dir).trim();
+  if (!d) return false;
+  try {
+    fs.accessSync(d, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 校验 .jmx：存在 + 扩展名正确 */
@@ -141,46 +182,99 @@ function parseSummary(text) {
 }
 
 /**
- * 解析 JMeter CSV 结果（jtl 默认就是 CSV）。
- * 只依赖表头名字，不靠列序，避免「改了 save config 就解析错」。
+ * 解析 JMeter CSV 结果（jtl 默认就是 CSV）的**表头**：按表头名字取列下标，不靠列序。
+ * 契约 [C-71]：缺 elapsed / success 任一 → null（与 parseJtl 的失败条件一致）。
+ * @param {string} line 表头行
+ * @returns {{ elapsed: number, success: number, code: number, label: number, ts: number } | null}
  */
-function parseJtl(csvText) {
-  const text = String(csvText || '');
+function parseJtlHeader(line) {
+  const text = String(line == null ? '' : line);
   if (!text.trim()) return null;
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const header = splitCsvLine(text).map((h) => h.trim().toLowerCase());
+  const at = (name) => header.indexOf(name);
+  const idx = {
+    elapsed: at('elapsed'),
+    success: at('success'),
+    code: at('responsecode'),
+    label: at('label'),
+    ts: at('timestamp'),
+  };
+  if (idx.elapsed < 0 || idx.success < 0) return null;
+  return idx;
+}
+
+/**
+ * 解析一行数据 → 行对象。空行 / 列不足 / elapsed 非有限数 → null（坏行由调用方丢弃）。
+ * 缺 ts / code / label 列时给 0 / '' / ''，不报错。
+ * @param {string} line
+ * @param {{ elapsed: number, success: number, code: number, label: number, ts: number } | null} header
+ * @returns {{ elapsed: number, ok: boolean, code: string, label: string, ts: number } | null}
+ */
+function parseJtlRow(line, header) {
+  if (!header) return null;
+  const text = String(line == null ? '' : line);
+  if (!text.trim()) return null;
+  const cols = splitCsvLine(text);
+  if (cols.length <= Math.max(header.elapsed, header.success)) return null;
+  const elapsed = Number(cols[header.elapsed]);
+  if (!Number.isFinite(elapsed)) return null;
+  return {
+    elapsed,
+    ok: String(cols[header.success]).trim().toLowerCase() === 'true',
+    code: header.code >= 0 ? String(cols[header.code]).trim() : '',
+    label: header.label >= 0 ? String(cols[header.label]).trim() : '',
+    // ts 列可能是空串或脏值：统一收敛成 0，聚合时按「没有时间戳」处理
+    ts: header.ts >= 0 ? Number(cols[header.ts]) || 0 : 0,
+  };
+}
+
+/**
+ * 整段文本 → { header, rows }。
+ * 文本空 / 不足两行 / 表头不合格 / 零有效行 → null（**不返回空数组冒充成功**，
+ * 否则 UI 会显示「跑完了 0 个样本」而不是「这不是 .jtl」）。
+ * @param {string} text
+ * @returns {{ header: { elapsed: number, success: number, code: number, label: number, ts: number },
+ *            rows: { elapsed: number, ok: boolean, code: string, label: string, ts: number }[] } | null}
+ */
+function parseJtlRows(text) {
+  const src = String(text == null ? '' : text);
+  if (!src.trim()) return null;
+  const lines = src.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return null;
-
-  const header = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase());
-  const idx = (name) => header.indexOf(name);
-  const iElapsed = idx('elapsed');
-  const iSuccess = idx('success');
-  const iCode = idx('responsecode');
-  const iLabel = idx('label');
-  const iTs = idx('timestamp');
-  if (iElapsed < 0 || iSuccess < 0) return null;
-
+  const header = parseJtlHeader(lines[0]);
+  if (!header) return null;
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = splitCsvLine(lines[i]);
-    if (cols.length <= Math.max(iElapsed, iSuccess)) continue;
-    const elapsed = Number(cols[iElapsed]);
-    if (!Number.isFinite(elapsed)) continue;
-    rows.push({
-      elapsed,
-      ok: String(cols[iSuccess]).trim().toLowerCase() === 'true',
-      code: iCode >= 0 ? String(cols[iCode]).trim() : '',
-      label: iLabel >= 0 ? String(cols[iLabel]).trim() : '',
-      ts: iTs >= 0 ? Number(cols[iTs]) : 0,
-    });
+    const row = parseJtlRow(lines[i], header);
+    if (row) rows.push(row);
   }
-  if (!rows.length) return null;
+  return rows.length ? { header, rows } : null;
+}
 
-  const durations = rows.map(r => r.elapsed).sort((a, b) => a - b);
+/** 最近秩法分位：升序数组取 ceil(p/100*n)-1 下标，n=1 时取唯一值（契约 C-70） */
+function rankOf(sorted, p) {
+  const n = sorted.length;
+  if (!n) return 0;
+  return sorted[Math.min(n - 1, Math.max(0, Math.ceil((p / 100) * n) - 1))];
+}
+
+/**
+ * 行数组 → 聚合统计（私有）。parseJtl 的唯一出口，保证 12 个字段与重构前逐字一致。
+ * @param {{ rows: { elapsed: number, ok: boolean, code: string, label: string, ts: number }[] } | null} parsed
+ * @returns {null | { samples: number, errors: number, errorPct: number, avg: number, min: number, max: number,
+ *   p90: number, p95: number, p99: number, wallMs: number, tps: number,
+ *   topErrorCode: { code: string, count: number } | null }}
+ */
+function aggregate(parsed) {
+  if (!parsed) return null;
+  const { rows } = parsed;
+
+  const durations = rows.map((r) => r.elapsed).sort((a, b) => a - b);
   const sum = durations.reduce((a, b) => a + b, 0);
-  const errors = rows.filter(r => !r.ok).length;
-  const tsList = rows.map(r => r.ts).filter(Boolean);
+  const errors = rows.filter((r) => !r.ok).length;
+  const tsList = rows.map((r) => r.ts).filter(Boolean);
   const wallMs = tsList.length > 1 ? Math.max(...tsList) - Math.min(...tsList) : 0;
-  const pct = (p) => durations[Math.min(durations.length - 1, Math.max(0, Math.ceil((p / 100) * durations.length) - 1))];
+  const pct = (p) => rankOf(durations, p);
 
   // 出错最多的 responseCode（方便判断是 500 还是 401）
   const codeCount = new Map();
@@ -200,6 +294,94 @@ function parseJtl(csvText) {
     wallMs,
     tps: wallMs > 0 ? Number((rows.length / (wallMs / 1000)).toFixed(2)) : 0,
     topErrorCode: topErrorCode ? { code: topErrorCode[0], count: topErrorCode[1] } : null,
+  };
+}
+
+/**
+ * 解析 JMeter CSV 结果（jtl 默认就是 CSV）。
+ * **对外签名与 12 个返回字段一个不许改**（ipc-jmeter.js 的 stats 消费方与 PerfTest 的趋势图在用）；
+ * 内部改为复用行级解析：`aggregate(parseJtlRows(text))`（契约 C-73：不许把行解析复制成第二份）。
+ * @param {string} csvText
+ * @returns {ReturnType<typeof aggregate>}
+ */
+function parseJtl(csvText) {
+  return aggregate(parseJtlRows(csvText));
+}
+
+/** byLabel 默认最多返回多少个接口（契约 C-09/C-70 的 `labels` 截断） */
+const MAX_BY_LABEL = 100;
+
+/**
+ * 行数组 → 指标（契约 C-70 / C-71）。空数组返回全 0，不抛。
+ * - 分位：最近秩法（与 parseJtl 同算法，保证同一份 .jtl 两个通道口径一致）
+ * - spanMs：时间戳极差，沿用既有 `wallMs` 语义（**不改名**，下游已在用）；ts 缺失或只有 1 行 → 0 且 tps 0
+ * - byLabel：按 label 分组，排序 errors 降序 → samples 降序 → label 升序（确定性，[C-10]）
+ * @param {{ elapsed: number, ok: boolean, code: string, label: string, ts: number }[]} rows
+ * @param {{ maxLabels?: number }} [opts]
+ */
+function computeMetrics(rows, opts = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const empty = {
+    samples: 0, errors: 0, errorPct: 0, avg: 0, min: 0, max: 0,
+    p50: 0, p90: 0, p95: 0, p99: 0, spanMs: 0, tps: 0,
+    byLabel: [], truncated: false,
+  };
+  if (!list.length) return empty;
+
+  const durations = list.map((r) => r.elapsed).sort((a, b) => a - b);
+  const sum = durations.reduce((a, b) => a + b, 0);
+  const errors = list.filter((r) => !r.ok).length;
+  const tsList = list.map((r) => r.ts).filter(Boolean);
+  const spanMs = tsList.length > 1 ? Math.max(...tsList) - Math.min(...tsList) : 0;
+
+  // byLabel 分组
+  const groups = new Map();
+  for (const r of list) {
+    const key = String(r.label == null ? '' : r.label);
+    let g = groups.get(key);
+    if (!g) { g = { label: key, durations: [], errors: 0 }; groups.set(key, g); }
+    g.durations.push(r.elapsed);
+    if (!r.ok) g.errors += 1;
+  }
+  const all = [...groups.values()].map((g) => {
+    g.durations.sort((a, b) => a - b);
+    const n = g.durations.length;
+    return {
+      label: g.label,
+      samples: n,
+      errors: g.errors,
+      errorPct: Number(((g.errors / n) * 100).toFixed(2)),
+      p90: rankOf(g.durations, 90),
+    };
+  });
+  // errors 降序 → samples 降序 → label 升序（同值必须给二级键，否则两次调用顺序可能不同）
+  all.sort((a, b) => (b.errors - a.errors) || (b.samples - a.samples) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+
+  // maxLabels 缺省 100；给了就 clamp 到 [1,100]（0 / 负数 / 非数字都不会被当成「无限」）
+  const raw = opts && opts.maxLabels;
+  const wanted = Number(raw);
+  const maxLabels = raw === undefined || raw === null || !Number.isFinite(wanted)
+    ? MAX_BY_LABEL
+    : Math.max(1, Math.min(Math.floor(wanted), MAX_BY_LABEL));
+  const byLabel = all.slice(0, maxLabels);
+  const truncated = all.length > byLabel.length;
+
+  return {
+    samples: list.length,
+    errors,
+    errorPct: Number(((errors / list.length) * 100).toFixed(2)),
+    avg: Math.round(sum / list.length),
+    min: durations[0],
+    max: durations[durations.length - 1],
+    p50: rankOf(durations, 50),
+    p90: rankOf(durations, 90),
+    p95: rankOf(durations, 95),
+    p99: rankOf(durations, 99),
+    spanMs,
+    tps: spanMs > 0 ? Number((list.length / (spanMs / 1000)).toFixed(2)) : 0,
+    byLabel,
+    truncated,
+    ...(truncated ? { truncatedReason: 'labels' } : {}),
   };
 }
 
@@ -273,5 +455,7 @@ module.exports = {
   MODES, stamp, scriptBase, pickPaths, buildJmeterArgs,
   validateJmxPath, validateOutDir, validateJmeterPath,
   parseSummary, parseJtl, splitCsvLine,
+  parseJtlHeader, parseJtlRow, parseJtlRows, computeMetrics, MAX_BY_LABEL,
+  pickJmeterLogPath, canWriteDir,
   decodeOutputLine, javaExeInHome, validateJavaHome,
 };

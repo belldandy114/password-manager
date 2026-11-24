@@ -1,0 +1,10 @@
+[
+  {
+    "path": "src/test/java/api/petstore/BaseTest.java",
+    "file": "BaseTest.java"
+  },
+  {
+    "path": "src/test/java/api/petstore/PetStoreApiTest.java",
+    "file": "PetStoreApiTest.java"
+  }
+]

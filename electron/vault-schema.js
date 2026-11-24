@@ -36,13 +36,21 @@ const VAULT_COLLECTIONS = [
   'envProbes',
   // 1.25.0：测试数据生成器的数据集（存配置，不存生成结果）
   'tdgDatasets',
+  // 本地测试资产工作站（13 项）：元素库 / 代码体检记录 / 覆盖台账 / 用例映射 / Allure 历史。
+  // **键名是全复数**（`caseMaps` 不是 `caseMap`）——单数会让 ws:get 走「无效的数据类型」或返回空数组，
+  // normalizeVault 也会把未知键直接丢掉，表现是「页面永远空着」，属静默失效（契约 C-18）。
+  'pomPages',
+  'scanRuns',
+  'coverageRuns',
+  'caseMaps',
+  'allureRuns',
 ];
 
 /**
  * 当前库结构版本。**只许往上加，不许改历史值** ——
  * 已经把 v1 迁到 v2 的库，改动 v2 的定义就等于让它们的数据对不上号。
  */
-const VAULT_SCHEMA_VERSION = 3;
+const VAULT_SCHEMA_VERSION = 4;
 
 /**
  * 迁移表：key = 源版本，value = 把该版本的结构升到「下一版」的纯函数。
@@ -109,6 +117,18 @@ const MIGRATIONS = {
     next.entries = entries;
     return next;
   },
+
+  /**
+   * v3 → v4：只新增集合，结构无搬移；加这一步是为了让降级打开能命中 future 分支。
+   *
+   * 为什么「什么都不做」也要留一步（契约 C-41）：本次只往 VAULT_COLLECTIONS 追加了
+   * pomPages / scanRuns / coverageRuns / caseMaps / allureRuns，一个既有字节都不动，
+   * 所以本步是恒等函数。它的唯一作用是让库里的 schemaVersion 真的涨到 4 ——
+   * 旧版应用（版本 3）读 4 的库时 declaredVersion > 当前版本，会走 migrateVault 的 future 分支
+   * 与 normalizeVault 的「保留未知字段」分支，5 个新集合才不会在降级往返里被洗掉（C-43）。
+   * **恒等也要有返回值**：migrateVault 的循环会为所有 v3 老库实实在在调用一次。
+   */
+  3: (v) => v,
 };
 
 /**

@@ -1,0 +1,90 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Event API",
+    "version": "2.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://{env}.example.com",
+      "variables": {
+        "env": { "default": "sandbox" }
+      }
+    }
+  ],
+  "webhooks": {
+    "orderCreated": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  },
+  "paths": {
+    "/events/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": ["string", "null"] }
+        }
+      ],
+      "get": {
+        "operationId": "getEvent",
+        "tags": ["events"],
+        "callbacks": {
+          "onEvent": {
+            "{$request.body#/callbackUrl}": {
+              "post": { "responses": { "200": { "description": "OK" } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/events": {
+      "post": {
+        "operationId": "createEvent",
+        "tags": ["events"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/UserEvent" },
+                  { "$ref": "#/components/schemas/SystemEvent" }
+                ],
+                "discriminator": { "propertyName": "kind" }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UserEvent": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["user"] },
+          "userId": { "type": "integer" }
+        }
+      },
+      "SystemEvent": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["system"] }
+        }
+      }
+    }
+  }
+}

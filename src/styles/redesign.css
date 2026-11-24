@@ -8719,3 +8719,225 @@ html[data-bg='image'] .entry-picker-list {
    （它会和占位符两份文字重叠），关闭态直接用 input.value 显示已选名称。
    SQL 更新时间列的宽度直接在 1.32.4 段的 .sql-table 规则里改，不再追加同选择器覆盖
    （否则前面那条会被 check-css-dup 判成死声明）。 */
+
+/* ================================================================
+   1.33.0（2026-11-24，t10）玻璃体系补漏三件：进度条登记 / 三态标签 / 六类次级文字对比度
+   ----------------------------------------------------------------
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css 末尾并注明原因，
+   不在前面三份样式表里猜优先级。
+   依据：docs/视觉-开发辅助.md（t4 的 F5 / F7 / §6 / §10.3）与队长批准的 A1（全站玻璃模式）。
+
+   本段只做四件事，**不新增 token、不写透明度百分比（tokens.css R3）、不给任何容器加
+   backdrop-filter / filter / transform / contain**（tokens.css R2、scripts/check-stacking.js 在盯）：
+
+   1) .busy-progress 进玻璃登记表（t4 的 A2）
+   2) 新增 .dev-tag 三态/四态结论标签（t4 的 A3-1），替代不能用于结论的 .pill-*
+   3) 六类次级文字在背景图模式下提到 4.5:1（t4 的 A1）
+   4) 新增 .dev-banner（页内提示条）与 .dev-scroll（大表滚动容器）（t4 的 A3-2 / A3-3，
+      也是 t3 提的阻塞项：新页的「截断/错误」提示与大表都要靠这两个类承载）
+
+   刻意未做：t4 的 A4「玻璃模式下给激活页签加深底」
+   （html[data-bg='image'] .tabs .tab2.is-active { background-color: var(--glass-active) }）。
+   按队长决定记为已知瑕疵 K1：它要动 .tabs .tab2.is-active 的底，影响面是 5 个既有页面
+   （网址管理 / 笔记与附件 / 缺陷管理 / 用例库 / 工具箱），需要单独立项评审，
+   本批不做，也不在此处留半条规则。
+
+   对比度统一口径（与 docs/视觉-开发辅助.md §13 一致，**不是**抽象色对）：
+     背景 = blend(dim, dimAlpha, blend(imagePixel, 0.32, canvas))   ← 背景图 + 压暗遮罩
+            → blend(glassBase, glassAlpha)                          ← 再叠一层玻璃 token
+     前景 = 文字 token 自身的色值
+     比值 = (max(L1,L2) + 0.05) / (min(L1,L2) + 0.05)，L = WCAG 相对亮度
+     取最深/最浅两个极端背景图：深色主题取「纯白图」（玻璃被冲淡 → 浅字最差），
+     浅色主题取「纯黑图」（玻璃被压暗 → 深字最差）。
+   ================================================================ */
+
+/* ---- 1) 长任务进度条：实底 → 玻璃 ----
+   现状：.busy-progress 是 `background: var(--surface-0)` 的实底 + position: sticky（本文件
+   第 15 节「长任务不确定进度条」），在背景图模式下是一条全宽不透明带。ui-glass-opaque-scan.js
+   的判据是「backgroundColor alpha ≥ 0.999 且面积 > 600 px²」，这条带子面积远超阈值，必红；
+   而新页的长任务（十万条造数、Allure 解析）每次都会把它显示出来。
+
+   档位选 --glass-input-soft，不选 --glass-inset（两个都满足判据，选前者有两条理由）：
+   - **token 语义**：--glass-input-soft 是「结果区 / 日志区 / 目录条」（tokens.css:177），
+     进度条正是「条」；--glass-inset 是「内嵌小块（统计卡 / KPI / chip）」，是块不是条。
+   - **视觉重量**：它 sticky 在内容顶部，alpha 更低（深 54% / 浅 42%，对比 inset 的 66% / 55%）
+     才不会在正文上方压出一条像工具栏的实带。
+   - 对比度也够：.busy-progress-label 是 --text-2 / 11.5px，压 --glass-input-soft 最差
+     深色 6.56、浅色 4.71，都过 4.5。（inset 是 6.93 / 4.93，余量更大但换来上面两条代价。）
+
+   ⚠️ 本块只有 background-color：不碰它基础规则里的 position: sticky 与 z-index，
+   也不加任何会新建层叠上下文的属性。
+   ⚠️ 新起一条 :is(...) 而不是改 1.30.1 段中间那 4 个 :is(...) 列表：AGENTS.md 要求追加在末尾；
+   而且同一段选择器写两处会被 check-css-dup 计为「同名选择器重复」。
+   ⚠️ 单条也用 :is(...) 形态（与 1.30.1 / 1.32.0 的登记段同形）：以后再有「结果 / 日志 / 状态条」
+   类的实底容器，直接往里加一行即可，不必再开新块。 */
+html[data-bg='image'] :is(
+  .busy-progress
+) {
+  background-color: var(--glass-input-soft);
+}
+
+/* ---- 2) .dev-tag：三态 / 四态结论标签 ----
+   为什么要有它：新页（CodeGen / CodeAudit / AssetLedger / ResultHub）的每一行结论都要标
+   「已确认 / 启发式命中 / 无法判定 / 未验证」，而现有两个标签都不能用：
+   - .pill-*（pages.css:174-214）是「语义色文字 + 13~14% 同色底」，压 --glass-card 实算
+     深色 2.83–4.38、浅色 2.78–4.41 —— 四态在浅色两套背景图与「深色 + 亮图」下全部 < 4.5；
+     其中 .pill-info 取 --accent，而 accent 有 6 套可选档（本文件 967-979），换档就是另一组数，
+     不可作为达标的依据。
+   - .pill-mute 的底是 --bg-input **实底**，玻璃模式下就是一块实心白片（扫描判违规）。
+
+   设计口径：**文字固定 --text-2，语义色只出现在 3px 左边条与 14px 图标上**；
+   颜色之外还有「图标形状 + 固定文案」两个通道，不靠颜色单独传达含义（WCAG 1.4.1）。
+   与 .pill-* 的关系是**不替代**：.pill-* 继续用于非结论性的弱标记（标签、环境等），
+   凡是「这一行的结论是什么」，一律用 .dev-tag。
+
+   对比度（落在 --glass-card 上，深浅两套各自最差背景图）：
+     文字 --text-2               深色 6.12 / 浅色 4.66            → 正文 ≥4.5 ✓
+     图标与左边条（图形门限 3:1）  --ok 4.49/3.59  --warn 5.52/3.21
+                                  --bad 3.69/3.81  --info 4.18/3.87
+                                  → 最差 3.21（浅色 --warn）≥3.0 ✓
+   .is-unverified 刻意不染语义色（左条 --line-strong 纯装饰、图标 --text-2）：
+   「还没有结论」不该看起来像某种结论。 */
+.dev-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 6px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.dev-tag > svg { flex: 0 0 auto; }
+
+/* 已确认：确定命中 / 已覆盖 */
+.dev-tag.is-ok { border-left-color: var(--ok); }
+.dev-tag.is-ok > svg { color: var(--ok); }
+/* 启发式命中：静态扫描给出、非语法树结论（页面须常驻「启发式检查，非语法树分析」说明） */
+.dev-tag.is-heur { border-left-color: var(--warn); }
+.dev-tag.is-heur > svg { color: var(--warn); }
+/* 无法判定：必须同行给出原因（契约 [C-32]），不许只给颜色 */
+.dev-tag.is-unknown { border-left-color: var(--info); }
+.dev-tag.is-unknown > svg { color: var(--info); }
+/* 未验证：还没跑 / 没有数据。中性档，不染语义色 */
+.dev-tag.is-unverified { border-left-color: var(--line-strong); }
+.dev-tag.is-unverified > svg { color: var(--text-2); }
+/* 确定失败：覆盖矩阵 missing / 已确认的硬问题（与「未验证」不是同一件事，故分两档） */
+.dev-tag.is-fail { border-left-color: var(--bad); }
+.dev-tag.is-fail > svg { color: var(--bad); }
+
+/* ---- 3) 六类次级文字：玻璃模式下提到 4.5:1 ----
+   问题：.pg-sub / .pnl-meta / .empty-desc / .empty-hint / .home-stat i / .tbl .cell-mono
+   用的都是 --text-3（深/浅两套取值见 tokens.css:31 与 :240）。它压实底时是 6.3:1
+   （tokens.css:31 的注释），但压「玻璃 + 背景图」会掉到 AA 以下 —— 与 1.32.1 表头、
+   1.32.2 分页条是同一条判据、同一类修法。
+
+   12 个实测/推算值（口径见本段开头；取该元素所在玻璃层，深浅各取最差背景图）：
+
+     类（所在玻璃层）              深色 改前 → 改后            浅色 改前 → 改后
+     .pg-sub（--glass-canvas）      4.09 → 10.23（--text-1）    3.05 → 10.37（--text-1）
+     .pnl-meta（--glass-side）      4.99 →  6.37（--text-2）    3.68 →  4.62（--text-2）
+     .empty-desc（--glass-card）    4.79 →  6.12（--text-2）    3.70 →  4.66（--text-2）
+     .empty-hint（--glass-card）    4.79 →  6.12（--text-2）    3.70 →  4.66（--text-2）
+     .home-stat i（--glass-inset）  5.43 →  6.93（--text-2）    3.92 →  4.93（--text-2）
+     .tbl .cell-mono（--glass-card）4.79 →  6.12（--text-2）    3.70 →  4.66（--text-2）
+
+   为什么 .pg-sub 要分两条（这是本段唯一一处「同一属性写两遍」，原因是底不同）：
+   页面头部的 .pg-sub 底是 --glass-canvas（**只有 10% 不透明**，约等于直接压在图上），
+   --text-2 在「浅色 + 深色背景图」下只有 **3.84**，仍不到 4.5；--text-1 是 10.23 / 10.37。
+   层级改由字号与字重承载（.pg-title 18.5px/600 vs .pg-sub 12.3px/400），不再靠颜色之差 ——
+   压玻璃时用浅一档的颜色去换对比度是更糟的交易。
+   其余位置的 .pg-sub（底是 card / side / modal，40–90% 不透明）用 --text-2 就够（最差 4.66）。
+   另外五类都在 .pnl 系玻璃上（card / side / inset，40–66% 不透明），--text-2 最差 4.62 也够。
+
+   特异性安排（保证与书写顺序无关，也不靠优先级声明压人）：
+     A1a `html[data-bg='image'] :is(...五类...)`  → (0,3,1)
+     A1b `html[data-bg='image'] .pg-sub`          → (0,2,1)
+     A1c `html[data-bg='image'] .pg-head .pg-sub` → (0,3,1) 高于 A1b，页面头部落到 --text-1
+   三条都高于 pages.css 的 `.tbl .cell-mono`(0,2,0)、`.pnl-meta`(0,1,0) 与本文件的 `.pg-sub`(0,1,0)。
+
+   ⚠️ 只作用于 html[data-bg='image']：**不改全局 --text-3**（那会让没设背景图的全站配色整体漂移，
+   tokens.css:29-31 的 6.3:1 是设计值）；普通模式逐像素不变。
+   ⚠️ .empty-hint 里的 kbd 自带 `color: var(--text-2)` + 实底（`.empty-hint kbd`），
+   它命中的是子元素、不受本条影响。 */
+html[data-bg='image'] :is(.pnl-meta, .empty-desc, .empty-hint, .home-stat i, .tbl .cell-mono) {
+  color: var(--text-2);
+}
+/* 页面头部的副标题：底是 --glass-canvas（10% 不透明），--text-2 只有 3.84，必须到 --text-1 */
+html[data-bg='image'] .pg-head .pg-sub {
+  color: var(--text-1);
+}
+/* 其余位置的 .pg-sub（弹窗、面板内）：底有 40% 以上不透明，--text-2 达标（最差 4.66） */
+html[data-bg='image'] .pg-sub {
+  color: var(--text-2);
+}
+
+/* ---- 4) .dev-banner：页内提示条（错误 / 截断 / 启发式说明） ----
+   t4 的 A3-2，也是 t3 的阻塞项：新页的「目录不可读 / 解析失败 / 命中 412 条只展示 300 条 /
+   启发式检查非语法树」都要一条常驻提示，而现有 .zt-banner.is-warn（pages.css:6488）是
+   「9% 语义色底 + 语义色文字」，压玻璃实测 3.27–4.38，小字不达 4.5；.pill-* 同理。
+
+   二选一的口径：**不带底色**（background: transparent），因此**不进**玻璃登记表 ——
+   登记表是「把实底换成玻璃底」，这个类没有底可换；硬加玻璃底会把正文压到 4.25 一档
+   （浅色下 10% 语义色底 + --text-2 的实算），反而更差。
+   区分靠「3px 左边条（语义色，图形门限 3:1）+ 同色图标 + 文案」，不靠底色，也不靠颜色单独传达。
+   对比度：正文 --text-1 压 --glass-card 最差 深 11.99 / 浅 12.59；左边条与图标取语义色，
+   最差 深 3.69（--bad）/ 浅 3.21（--warn），与 .dev-tag 同一组实测值。 */
+.dev-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--line-strong);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+.dev-banner > svg { flex: 0 0 auto; margin-top: 2px; }
+/* 阻断级错误 */
+.dev-banner.is-error { border-left-color: var(--bad); }
+.dev-banner.is-error > svg { color: var(--bad); }
+/* 可自愈的告警（目录不可读 / 解析部分失败） */
+.dev-banner.is-warn { border-left-color: var(--warn); }
+.dev-banner.is-warn > svg { color: var(--warn); }
+/* 信息类（截断提示 / 启发式说明 / 「不支持 xmind」这类边界声明） */
+.dev-banner.is-info { border-left-color: var(--info); }
+.dev-banner.is-info > svg { color: var(--info); }
+/* 右侧动作槽（「重试」「取消」「仍然继续」等次级按钮贴右） */
+.dev-banner .dev-banner-act {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* ---- 5) .dev-scroll：大表滚动容器 ----
+   t4 的 A3-3，也是 t3 的阻塞项：.pnl 基础规则是 `overflow: hidden`（pages.css:1534-1537），
+   大表（体检 findings ≤300 条、覆盖矩阵 ≤5000 条）直接塞进 .pnl-body 时，超出面板宽度的列
+   会被直接裁掉、且没有任何滚动条 —— 1.30.2 实测过一次（748px 面板里表格取到 816px，
+   操作列被裁），不是理论风险。
+
+   **overflow 组合（哪一层滚、哪一层裁）**：
+   - `.pnl` = `overflow: hidden` → **只裁不滚**，它的职责是圆角与边界，不承担滚动；
+   - `.dev-scroll`（.pnl-body 内） = `overflow: auto` → **横向与纵向都在这一层滚**；
+     `max-height: 56vh` 把纵向滚动限制在面板内，避免整页被一张长表撑到几千像素；
+   - `.dev-scroll > .tbl` = `width: 100%` → 表格至少占满容器。表格内容比容器宽时，auto 布局
+     会让表格保持 min-content 宽度自然溢出，横向滚动条就出现在 `.dev-scroll` 上；
+     若某页给表格用了 `table-layout: fixed`（列宽定死），则表格不会溢出、也就不会出现横向
+     滚动 —— 两种口径二选一，写页面时按「列少用 fixed 取整齐、列多用 auto 取可滚」决定；
+   - `.tbl th` 是 `position: sticky; top: 0`（pages.css:1627），sticky 相对**最近的滚动容器**
+     定位，正好落在 `.dev-scroll` 上 → 表头随纵向滚动吸附，不需要额外处理。
+   `min-width: 0` 是给 flex 父级用的：不加的话 `.dev-scroll` 会被内容顶宽、把 .pnl 撑破而不是滚动。 */
+.dev-scroll {
+  overflow: auto;
+  max-height: 56vh;
+  min-width: 0;
+  min-height: 0;
+}
+.dev-scroll > .tbl { width: 100%; }

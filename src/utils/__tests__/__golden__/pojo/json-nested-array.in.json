@@ -1,0 +1,21 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "total": 2,
+    "items": [
+      {
+        "id": 1,
+        "name": "alpha",
+        "tags": ["x", "y"],
+        "owner": { "uid": 7, "email": "a@example.com" }
+      },
+      {
+        "id": 2,
+        "name": "beta",
+        "tags": ["z"],
+        "owner": { "uid": 8, "email": "b@example.com" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "records": [
+    { "code": 200, "amount": 12, "flag": true, "label": "first" },
+    { "code": "OK", "amount": 12.5, "flag": false, "label": "second" },
+    { "code": 500, "amount": 13, "flag": true, "label": "third" }
+  ]
+}

@@ -39,6 +39,12 @@ const Cases = lazy(PAGE_LOADERS.cases);
 // 所以这里直接给 import 路径；补进 loaders 之后侧栏的悬停预取才生效（功能不受影响，
 // 点开时 lazy 会自己 import，只是少了预取那一次预热）。
 const SqlSnippets = lazy(PAGE_LOADERS.sqlSnippets);
+// 1.33.0：本地测试资产工作站 4 个新页（开发辅助分组）。和其它页一样从 PAGE_LOADERS 取，
+// 这样侧栏悬停预取才指向同一份 import 路径；写成 `lazy(() => import('./CodeGen'))` 就没有预取了。
+const CodeGen = lazy(PAGE_LOADERS.codeGen);
+const CodeAudit = lazy(PAGE_LOADERS.codeAudit);
+const AssetLedger = lazy(PAGE_LOADERS.assetLedger);
+const ResultHub = lazy(PAGE_LOADERS.resultHub);
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -489,6 +495,12 @@ function App() {
       case 'perfTest': return <PerfTest />;
     case 'codeLab': return <CodeLab />;
       case 'cases': return <Cases />;
+      // 1.33.0：开发辅助 4 个新页（本批只有接线与空壳，页面内是「待实现（W2–W6）」）。
+      // 这 4 个 case 与 pages/loaders.ts 的 4 个 key、侧栏 NavItem.id 逐字同名。
+      case 'codeGen': return <CodeGen />;
+      case 'codeAudit': return <CodeAudit />;
+      case 'assetLedger': return <AssetLedger />;
+      case 'resultHub': return <ResultHub />;
       default: return <PasswordManagerPage />;
     }
   };
