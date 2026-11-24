@@ -127,6 +127,7 @@ function registerScanIpc(deps = {}) {
       const counts = { high: 0, medium: 0, low: 0 };
       let bytes = 0;
       let skippedSymlinks = 0;
+    let suppressed = 0; // RC-01：被每规则上限折掉的命中总数
       let truncated = false;
       let truncatedReason = '';
       const markTruncated = (reason) => { truncated = true; if (!truncatedReason) truncatedReason = reason; };
@@ -187,9 +188,16 @@ function registerScanIpc(deps = {}) {
           fileList.push(rel);
 
           const text = decodeTextBuffer(buf).text;
-          const { hits } = matchRules(text, rel, ruleIds);
+          const { hits, suppressed: perFileSuppressed } = matchRules(text, rel, ruleIds);
+          // RC-01：每规则上限折掉的命中要**可见**——计数回传 + 置 truncated，
+          // 否则用户以为看到的是全部（这正是这轮反复打的「静默折叠」）。
+          if (perFileSuppressed > 0) {
+            suppressed += perFileSuppressed;
+            if (!truncatedReason) markTruncated('findings');
+            else truncated = true;
+          }
           for (const h of hits) {
-            if (findings.length >= MAX_FINDINGS) { markTruncated('findings'); break; }
+            if (findings.length >= MAX_FINDINGS) { markTruncated('findings'); stop = true; break; } // RC-02：外层也要停，不能继续扫完
             const finding = {
               ruleId: h.ruleId,
               severity: h.severity,
@@ -228,6 +236,8 @@ function registerScanIpc(deps = {}) {
           truncated,
           ...(truncatedReason ? { truncatedReason } : {}),
           counts,
+          // RC-01：被每规则上限折掉的命中总数（配合 truncated/truncatedReason 一起看）
+          suppressed,
           findings,
           ms: Date.now() - started,
         },

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { parseAllure, normalizeMessage, TRUNCATED_REASONS } from '../../../electron/allure-parse.js';
+import { parseAllure, normalizeMessage, TRUNCATED_REASONS, pickReason } from '../../../electron/allure-parse.js';
 
 /**
  * 模块 5.1 Allure 结果解析（契约 C-38 flaky / C-39 聚类 / C-61〜C-64 结构）。
@@ -396,5 +396,32 @@ describe('上限与截断（C-62）', () => {
     const c = r.cases[0];
     expect(c.name.length).toBeLessThanOrEqual(300);
     expect((c.message || '').length).toBeLessThanOrEqual(500);
+  });
+});
+/**
+ * RC-03：`pickReason` 的排序 bug —— `indexOf` 对未知值返回 **-1**，
+ * 比任何合法值的下标都小，于是「一个拼错/新增的 reason」会**压过 `timeout`**，
+ * 界面就显示了契约里不存在的截断原因（而且把真正更严重的原因盖掉）。
+ */
+describe('RC-03：pickReason 未知值必须最低优先级', () => {
+  it('未知值不压过任何合法值（timeout / files / flaky 都赢它）', () => {
+    expect(pickReason('timeout', 'read-error')).toBe('timeout');
+    expect(pickReason('read-error', 'timeout')).toBe('timeout');
+    expect(pickReason('files', 'read-error')).toBe('files');
+    expect(pickReason('read-error', 'flaky')).toBe('flaky');
+  });
+
+  it('两个都是未知值时保留先到的那个（不返回 undefined）', () => {
+    expect(pickReason('read-error', 'legacy-x')).toBe('read-error');
+    expect(pickReason('legacy-x', 'read-error')).toBe('legacy-x');
+  });
+
+  it('合法值之间仍按契约优先级 timeout > files > file-size > cases > flaky', () => {
+    expect(pickReason('flaky', 'cases')).toBe('cases');
+    expect(pickReason('cases', 'file-size')).toBe('file-size');
+    expect(pickReason('file-size', 'files')).toBe('files');
+    expect(pickReason('files', 'timeout')).toBe('timeout');
+    expect(pickReason(undefined, 'timeout')).toBe('timeout');
+    expect(pickReason('timeout', undefined)).toBe('timeout');
   });
 });

@@ -945,65 +945,154 @@ export interface HotkeyInfo {
 }
 
 /**
- * Allure 解析结果（契约 §2.4 / `[C-45]` 的固定命名）。
- * `truncatedReason` 只有这 5 个取值；多类同时触顶只报一个，优先级
- * `timeout > files > file-size > cases > flaky`。
+ * Allure 解析结果的**真源**是 `electron/allure-parse.d.ts`（纯函数层）。
+ * 这里只 `export type` 复用，**不再各写一份字段表**——t62 之前就是两处各写一份，
+ * 结果漂移（d.ts 缺 `root`/`ms`、types.ts 缺 `ok`/`error`），谁都以为自己是准的。
  */
-export type AllureTruncatedReason = 'timeout' | 'files' | 'file-size' | 'cases' | 'flaky';
+export type {
+  AllureCase,
+  AllureCluster,
+  AllureFlaky,
+  AllureTruncatedReason,
+} from '../electron/allure-parse';
+import type { AllureParseResult as AllureParserOutput } from '../electron/allure-parse';
 
 /**
- * 失败聚类的一簇（契约 `[C-39]` v12）。
- * **`key` 表达模式**（已抹掉所有数字，保留 URL 主机端口/扩展名/HTTP 状态码）；
- * **诊断信息在 `sample` / `samples`**（都是未归一原文）。
+ * `allure:parse` 的 data：主进程在纯函数输出上**补了 `root` / `ms`**
+ * （见 `electron/ipc-allure.js` 的成功分支），所以这里做一次 Omit + 补字段，
+ * 不重复声明 `cases`/`clusters` 等字段。
  */
-export interface AllureCluster {
-  key: string;
-  count: number;
-  /** 1 条代表：该簇里出现次数最多的原文（≤500） */
-  sample: string;
-  /** 最多 3 条不同原文（每 ≤500），用于确认「同一类不同值」或发现 key 抹过头 */
-  samples: string[];
+export type AllureParseResult = Omit<AllureParserOutput, 'ok' | 'error'> & { root: string; ms: number };
+
+/* ------------------------------------------------------------------ *
+ * 本地测试资产工作站：结果类型（契约 C-45 / C-46）
+ * **字段以主进程实际返回为准**（electron/ipc-scan.js、ipc-git.js、ipc-tdg.js），
+ * 不照契约旧稿抄——旧稿与实现已经对不上（如 `files` 是 number 不是列表）。
+ * ------------------------------------------------------------------ */
+
+export type ScanSeverity = 'high' | 'medium' | 'low';
+
+/** `scan:rules` 的规则元信息（= `electron/scan-rules.js` 的 `rulesOf()` 输出，逐字段一致） */
+export interface ScanRuleMeta {
+  id: string;
+  severity: ScanSeverity;
+  title: string;
+  desc: string;
+  category: string;
+  /** true = coverage 包规则：命中要产出 `{ method, path }` */
+  keyFrom: boolean;
 }
 
-/** flaky 用例：`fail/runs` 是给用户看的分母 */
-export interface AllureFlaky {
-  name: string;
-  fullName: string;
-  runs: number;
-  pass: number;
-  fail: number;
+export interface ScanPack {
+  id: 'audit' | 'coverage';
+  label: string;
+  rules: ScanRuleMeta[];
 }
 
-export interface AllureCase {
-  name: string;
-  fullName: string;
-  status: 'passed' | 'failed' | 'broken' | 'skipped';
-  durationMs: number;
-  retries: number;
-  runs: number;
-  pass: number;
-  fail: number;
-  flaky: boolean;
-  message?: string;
+/** `scan:rules` → `{ packs }` */
+export interface ScanRulesResult {
+  packs: ScanPack[];
 }
 
-export interface AllureParseResult {
+/** `scan:run` 的一条命中 */
+export interface ScanFinding {
+  ruleId: string;
+  severity: ScanSeverity;
+  title: string;
+  /** 相对 root 的 POSIX 路径 */
+  file: string;
+  /** 1-based；整文件级规则为 0 */
+  line: number;
+  /** 只含命中行原文，≤200 字符 */
+  snippet: string;
+  /** coverage 包：HTTP 方法（拿不到时为 `ANY`） */
+  method?: string;
+  /** coverage 包：抽取到的路径原文（未归一化） */
+  path?: string;
+}
+
+/** `scan:run` 的截断原因（属 `[C-09]` 的 10 值枚举） */
+export type ScanTruncatedReason = 'files' | 'file-size' | 'depth' | 'max-files' | 'findings' | 'timeout';
+
+/** `scan:run` 的 data（11 个字段 + 可选 truncatedReason） */
+export interface ScanRunResult {
   root: string;
-  total: number;
-  passed: number;
-  failed: number;
-  broken: number;
-  skipped: number;
-  retries: number;
-  /** 没参与统计的**文件数**（含坏 JSON）；与 `skipped`（用例状态数）是两个概念 */
-  skippedFiles: number;
-  cases: AllureCase[];
-  environment: Record<string, string>;
-  clusters: AllureCluster[];
-  flaky: AllureFlaky[];
+  pack: 'audit' | 'coverage';
+  /** 真正读过的**文件数**（不是列表）；等于 `fileList.length` */
+  files: number;
+  /** 读过的文件相对路径（POSIX 分隔符），供 UI 展示 */
+  fileList: string[];
+  bytes: number;
+  /** 因是符号链接而跳过、未参与统计的条目数（`[C-54]` 必填） */
+  skippedSymlinks: number;
   truncated: boolean;
-  truncatedReason?: AllureTruncatedReason;
+  truncatedReason?: ScanTruncatedReason;
+  counts: { high: number; medium: number; low: number };
+  /**
+   * 被**每规则上限**（`MAX_HITS_PER_RULE` = 3 条/规则/文件）折叠掉、没有出现在 `findings` 里的命中总数
+   * （RC-01：折叠必须可见，否则用户以为看到的就是全部）。
+   *
+   * **运行时每个包都会给**（`audit` / `coverage` 都走同一个返回对象，无折叠时为 0，
+   * 见 `electron/ipc-scan.js` 的 `data.suppressed`），所以用「可选 + `?? 0`」而不是必填：
+   * 渲染层若连到旧版主进程（不带这个字段）也不会因为类型报错而炸。
+   * 与 `suppressed > 0` 配套看的是 `truncated` / `truncatedReason: 'findings'`。
+   */
+  suppressed?: number;
+  findings: ScanFinding[];
   ms: number;
+}
+
+/** `git:probe` → `{ isRepo, branch, head, dirty }` */
+export interface GitProbeResult {
+  isRepo: boolean;
+  branch: string;
+  head: string;
+  dirty: boolean;
+}
+
+/** `git:diff` 的一条改动文件（`origPath` 只在 renamed 时出现） */
+export interface GitDiffFile {
+  path: string;
+  origPath?: string;
+  /** untracked | added | deleted | modified | staged-modified | renamed（二进制再加 `-binary`） */
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+/** `git:diff` → `{ root, scope, files, truncated }` */
+export interface GitDiffResult {
+  root: string;
+  scope: 'unstaged' | 'staged' | 'head';
+  files: GitDiffFile[];
+  truncated: boolean;
+}
+
+/** `tdg:write-start` → `{ writerId, path }` */
+export interface TdgWriteStartResult {
+  writerId: string;
+  path: string;
+}
+
+/** `tdg:write-append` → `{ rows, bytes }`（本批实际写入的行数与字节数） */
+export interface TdgAppendResult {
+  rows: number;
+  bytes: number;
+}
+
+/** `tdg:write-finish` → `{ path, rows, bytes, ms }` */
+export interface TdgFinishResult {
+  path: string;
+  rows: number;
+  bytes: number;
+  ms: number;
+}
+
+/** `tdg:write-abort` → `{ removed, path }`（取消语义 `{ success:false, canceled:true }` 的 data） */
+export interface TdgAbortResult {
+  /** `.part` 文件之前是否存在并被删掉 */
+  removed: boolean;
+  path: string;
 }
 
 export interface ElectronAPI {
@@ -1535,27 +1624,26 @@ export interface ElectronAPI {
   browserGetKnown: () => Promise<{ id: string; name: string }[]>;
   browserOpen: (data: { browser: string; url: string }) => Promise<{ success: boolean; error?: string }>;
 
-  /* ---- 本地测试资产工作站（W1 只接线，业务在 W2-A/W5/W6） ----
-   * 通道契约：docs/契约-本地测试资产工作站.md §2.2–§2.5。
-   * `data` 在 W1 阶段用 unknown 占位（占位 handler 只回 error），
-   * 收窄到 ScanRunResult / GitDiffResult / AllureParseResult / Tdg* 由 W2-A/W5/W6 负责（契约 C-46）。
+  /* ---- 本地测试资产工作站 ----
+   * 通道契约：docs/契约-本地测试资产工作站.md §2.2–§2.5；`data` 已按 C-46 全部收窄（t62），
+   * 具体类型见本文件上方「本地测试资产工作站：结果类型」段——**字段以主进程实际返回为准**。
    * 取消语义统一 { success:false, canceled:true }（C-03）。 */
   scanPickRoot: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
-  scanRules: () => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  scanRules: () => Promise<{ success: boolean; data?: ScanRulesResult; error?: string }>;
   scanRun: (opts: { root: string; pack: 'audit' | 'coverage'; ruleIds?: string[]; maxFiles?: number; token?: string })
-    => Promise<{ success: boolean; data?: unknown; error?: string; canceled?: boolean }>;
+    => Promise<{ success: boolean; data?: ScanRunResult; error?: string; canceled?: boolean }>;
   scanCancel: (token: string) => Promise<{ success: boolean; data?: { canceled: boolean }; error?: string }>;
   scanReveal: (payload: { file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
 
-  gitProbe: (payload: { root: string }) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  gitProbe: (payload: { root: string }) => Promise<{ success: boolean; data?: GitProbeResult; error?: string }>;
   gitDiff: (payload: { root: string; scope: 'unstaged' | 'staged' | 'head' })
-    => Promise<{ success: boolean; data?: unknown; error?: string }>;
+    => Promise<{ success: boolean; data?: GitDiffResult; error?: string }>;
 
   allurePickDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
   allureParse: (payload: { dir: string; maxFiles?: number }) => Promise<{ success: boolean; data?: AllureParseResult; error?: string }>;
 
   tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
-    => Promise<{ success: boolean; data?: unknown; error?: string; canceled?: boolean }>;
+    => Promise<{ success: boolean; data?: TdgWriteStartResult; error?: string; canceled?: boolean }>;
   /**
    * 追加一批行。`rows` 的元素有两种形态，与主进程 `electron/tdg-write.js` 的 `rowBody` 对齐：
    * - **数组行 = 多列/多字段**：`['1', '姓名', '张三']` → 主进程按格式展开（CSV 逐格按 RFC4180 转义后逗号拼接、
@@ -1564,9 +1652,9 @@ export interface ElectronAPI {
    * - **标量行 = 单列**：`'hello'` → 该行只有一个字段（TXT 的一行、CSV 的单格）。
    */
   tdgWriteAppend: (writerId: string, rows: (string | string[])[])
-    => Promise<{ success: boolean; data?: unknown; error?: string }>;
-  tdgWriteFinish: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
-  tdgWriteAbort: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+    => Promise<{ success: boolean; data?: TdgAppendResult; error?: string }>;
+  tdgWriteFinish: (writerId: string) => Promise<{ success: boolean; data?: TdgFinishResult; error?: string }>;
+  tdgWriteAbort: (writerId: string) => Promise<{ success: boolean; data?: TdgAbortResult; error?: string }>;
 }
 
 declare global {

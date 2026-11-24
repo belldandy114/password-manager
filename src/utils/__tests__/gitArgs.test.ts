@@ -24,17 +24,18 @@ const NUL = '\x00';
 const z = (...segs: string[]): string => segs.join(NUL) + NUL;
 
 describe('命令白名单（C-57）：参数只能由本模块产出', () => {
-  it('probe 的三条命令逐字正确', () => {
+  it('probe 的三条命令逐字正确（前 6 个是 S-03 的 -c 前缀，命令体从第 7 个开始）', () => {
     const p = buildProbeArgs();
-    expect(p.branch).toEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
-    expect(p.head).toEqual(['rev-parse', '--short', 'HEAD']);
-    expect(p.status).toEqual(['status', '--porcelain', '-z']);
+    expect(p.branch.slice(6)).toEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(p.head.slice(6)).toEqual(['rev-parse', '--short', 'HEAD']);
+    expect(p.status.slice(6)).toEqual(['status', '--porcelain', '-z']);
   });
 
   it('diff 的三种 scope 逐字正确（scope 只影响后缀）', () => {
-    expect(buildDiffArgs('unstaged')).toEqual({ ok: true, args: ['diff', '--numstat', '-z'] });
-    expect(buildDiffArgs('staged')).toEqual({ ok: true, args: ['diff', '--numstat', '-z', '--cached'] });
-    expect(buildDiffArgs('head')).toEqual({ ok: true, args: ['diff', '--numstat', '-z', 'HEAD'] });
+    // 前 6 个是 S-03 的 -c 前缀（见下面「S-03」用例），这里只看命令体
+    expect((buildDiffArgs('unstaged') as { args: string[] }).args.slice(6)).toEqual(['diff', '--numstat', '-z']);
+    expect((buildDiffArgs('staged') as { args: string[] }).args.slice(6)).toEqual(['diff', '--numstat', '-z', '--cached']);
+    expect((buildDiffArgs('head') as { args: string[] }).args.slice(6)).toEqual(['diff', '--numstat', '-z', 'HEAD']);
   });
 
   it('未知 scope 被拒绝，且错误串是 C-60 的文案（不拼进命令）', () => {
@@ -47,10 +48,10 @@ describe('命令白名单（C-57）：参数只能由本模块产出', () => {
   it('返回的是防御性拷贝：调用方改了不影响下一次（避免被拼进额外参数）', () => {
     const a = buildProbeArgs();
     a.branch.push('push');
-    expect(buildProbeArgs().branch).toEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(buildProbeArgs().branch.slice(6)).toEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
     const d = buildDiffArgs('head') as { ok: true; args: string[] };
     d.args.push('--force');
-    expect((buildDiffArgs('head') as { ok: true; args: string[] }).args).toEqual(['diff', '--numstat', '-z', 'HEAD']);
+    expect((buildDiffArgs('head') as { ok: true; args: string[] }).args.slice(6)).toEqual(['diff', '--numstat', '-z', 'HEAD']);
   });
 
   it('全部白名单命令里没有任何写命令（commit/push/checkout/stash/reset/clean/config 一个都不许有）', () => {
@@ -227,5 +228,45 @@ describe('mergeDiff：状态字母 + 行数合并，2000 截断', () => {
 
   it('空改动 → files 空、truncated false', () => {
     expect(mergeDiff({ statusEntries: [], numstatEntries: [] })).toEqual({ files: [], truncated: false });
+  });
+});
+/**
+ * 安全评审 **S-03**：`git status` / `git diff` 会读**仓库自己的** `.git/config`。
+ * 别人发来的仓库里写一条 `core.fsmonitor=/path/to/evil`（或 `core.hooksPath`、`diff.external`），
+ * 你跑一次体检就执行了别人的程序。所以每次调用都前置三个 `-c` 禁用项，
+ * 而且**必须在子命令之前**（`git -c k=v status`）——顺序错了等于没禁用。
+ */
+describe('S-03：每次 git 调用都前置三个 -c 禁执行项', () => {
+  const EXPECT_PREFIX = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=', '-c', 'diff.external='];
+
+  it('三个禁用项的字面量就是这三对（直接盯字面量：常量被改名/挪位置也照样抓得住）', () => {
+    const A = buildProbeArgs();
+    expect(A.status.filter((a: string) => a === '-c')).toHaveLength(3);
+    expect(A.status).toContain('core.fsmonitor=false');
+    expect(A.status).toContain('core.hooksPath=');
+    expect(A.status).toContain('diff.external=');
+  });
+
+  it('buildProbeArgs 的三条命令都以这三个 -c 开头', () => {
+    const A = buildProbeArgs() as unknown as Record<string, string[]>;
+    for (const key of ['branch', 'head', 'status']) {
+      expect(A[key].slice(0, 6)).toEqual(EXPECT_PREFIX);
+    }
+  });
+
+  it('buildDiffArgs 三个 scope 都以这三个 -c 开头，且子命令跟在后面', () => {
+    for (const scope of GIT_SCOPES) {
+      const r = buildDiffArgs(scope);
+      expect(r.ok).toBe(true);
+      expect((r as { ok: true; args: string[] }).args.slice(0, 6)).toEqual(EXPECT_PREFIX);
+      expect((r as { ok: true; args: string[] }).args[6]).toBe('diff');
+    }
+  });
+
+  it('所有 git 调用共 4 条，无一漏掉前缀（逐条核对，不是抽样）', () => {
+    const A = buildProbeArgs();
+    const all = [A.branch, A.head, A.status, ...GIT_SCOPES.map((s) => (buildDiffArgs(s) as { ok: true; args: string[] }).args)];
+    expect(all).toHaveLength(6);
+    for (const args of all) expect(args.slice(0, 6)).toEqual(EXPECT_PREFIX);
   });
 });

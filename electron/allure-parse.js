@@ -42,11 +42,21 @@ const STATUS_ORDER = { failed: 0, broken: 1, skipped: 2, passed: 3 };
  */
 const TRUNCATED_REASONS = Object.freeze(['timeout', 'files', 'file-size', 'cases', 'flaky']);
 
-/** 按优先级挑一个 reason（index 越小优先级越高） */
+/**
+ * 按优先级挑一个 reason（index 越小优先级越高）。
+ *
+ * **未知取值视为最低优先级**（`indexOf` 返回 `-1`，比任何合法值都小——
+ * 直接用 `indexOf` 比较会让一个拼错的 reason 压过 `timeout`，界面就报了个不存在的截断原因）。
+ * RC-03 修的就是这个：未知值排到最后，合法值优先；两个都未知时保留先到的那个。
+ */
+const rankOfReason = (r) => {
+  const i = TRUNCATED_REASONS.indexOf(r);
+  return i < 0 ? Number.POSITIVE_INFINITY : i;
+};
 const pickReason = (a, b) => {
   if (!a) return b;
   if (!b) return a;
-  return TRUNCATED_REASONS.indexOf(a) <= TRUNCATED_REASONS.indexOf(b) ? a : b;
+  return rankOfReason(a) <= rankOfReason(b) ? a : b;
 };
 
 const isResultFile = (name) => RESULT_RE.test(String(name || ''));
@@ -331,5 +341,6 @@ module.exports = {
   MAX_SAMPLE,
   MAX_SAMPLES_PER_CLUSTER,
   TRUNCATED_REASONS,
+  rankOfReason,
   pickReason,
 };

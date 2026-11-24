@@ -40,6 +40,19 @@ const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 const DOC_FILE_RE = /\.(?:md|txt)$/i;
 
 /**
+ * **只体检代码、不体检文档**的规则族（RC-04 / RC-06）。
+ *
+ * `.md` / `.txt` 进 `SCAN_EXTS` 的初衷是扫文档里的**硬编码 URL / token**（`sec-*`），
+ * 不是把文档当测试代码/覆盖证据：
+ *   - `ui-*`：README 里写「`div > div > div` 很脆」是说明文字（t58）；
+ *   - `assert-*`：文档里写「这条用例以前没有断言」不是缺陷（RC-04）；
+ *   - `cov-*`：**危害最大**——文档里的示例路径会被当成「已覆盖」证据，
+ *     假 covered 比假 missing 更危险，它让用户以为测过了而漏测（RC-06）。
+ * `sec-*` **不在此列**：文档里出现真内网地址/token 必须报，那正是扫文档的目的。
+ */
+const CODE_ONLY_RULE_RE = /^(?:ui|assert|cov)-/;
+
+/**
  * coverage 规则的 HTTP method 归一：
  *   - 命名组 `method` 有值 → 大写（`.get(` / `requests.post(`）；
  *   - `@XxxMapping` → 注解名大写（`RequestMapping` → ANY）；
@@ -58,7 +71,6 @@ const RULES = [
   // ---------------- UI 自动化反模式 ----------------
   {
     id: 'ui-hard-sleep',
-    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -68,7 +80,6 @@ const RULES = [
   },
   {
     id: 'ui-abs-xpath',
-    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'high',
@@ -78,7 +89,6 @@ const RULES = [
   },
   {
     id: 'ui-deep-css',
-    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -88,7 +98,6 @@ const RULES = [
   },
   {
     id: 'ui-fragile-locator',
-    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -100,7 +109,6 @@ const RULES = [
   },
   {
     id: 'ui-text-locator',
-    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'low',
@@ -350,10 +358,11 @@ function matchRules(text, filePath, ruleIds) {
   const codeText = codeLines.join('\n');
 
   const hits = [];
+  let suppressed = 0; // RC-01：被 MAX_HITS_PER_RULE 折掉的命中条数（必须能回传给用户）
   for (const rule of RULES) {
     if (wanted && !wanted.has(rule.id)) continue;
-    // 扩展名守卫：ui-* 只体检代码，不体检文档（见 DOC_FILE_RE 注释）
-    if (rule.skipFor && rule.skipFor.test(String(filePath || ''))) continue;
+    // 扩展名守卫：ui-* / assert-* / cov-* 只体检代码，不体检文档（见 CODE_ONLY_RULE_RE 注释）
+    if (CODE_ONLY_RULE_RE.test(rule.id) && DOC_FILE_RE.test(String(filePath || ''))) continue;
 
     if (rule.kind === 'file') {
       if (typeof rule.detect === 'function' && rule.detect(codeText)) {
@@ -370,13 +379,18 @@ function matchRules(text, filePath, ruleIds) {
     }
 
     let n = 0;
-    for (let i = 0; i < codeLines.length && n < MAX_HITS_PER_RULE; i += 1) {
+    for (let i = 0; i < codeLines.length; i += 1) {
       const line = codeLines[i];
       if (!line.trim()) continue;
       if (rule.negative && rule.negative.test(line)) continue;
       if (rule.requires && !rule.requires.test(line)) continue;
       const m = rule.pattern.exec(line);
       if (!m) continue;
+      // RC-01：超过每规则上限的命中**不能静默消失**——计数并回传，让界面能说「还有 N 条没展示」
+      if (n >= MAX_HITS_PER_RULE) {
+        suppressed += 1;
+        continue;
+      }
       const snippet = String(rawLines[i] == null ? '' : rawLines[i]).trim().slice(0, SNIPPET_MAX);
       const hit = {
         ruleId: rule.id,
@@ -398,7 +412,7 @@ function matchRules(text, filePath, ruleIds) {
   }
 
   hits.sort((a, b) => (SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]) || (a.line - b.line));
-  return { ok: true, hits };
+  return { ok: true, hits, suppressed };
 }
 
 /**

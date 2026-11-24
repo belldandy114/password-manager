@@ -174,7 +174,7 @@ function buildJmxTemplate(opts) {
           <stringProp name="HTTPSampler.port">${xmlEscape(port)}</stringProp>
           <stringProp name="HTTPSampler.protocol">${u.protocol === 'https:' ? 'https' : 'http'}</stringProp>
           <stringProp name="HTTPSampler.path">${xmlEscape(pathWithQuery)}</stringProp>
-          <stringProp name="HTTPSampler.method">${method}</stringProp>
+          <stringProp name="HTTPSampler.method">${xmlEscape(method)}</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
@@ -209,6 +209,27 @@ module.exports = { inspectJmx, isJmxName, JMX_EXTS, buildJmxTemplate };
 // ---------------------------------------------------------------------------
 
 const MAX_INTERFACES = 50;
+
+/**
+ * HTTPSampler.method 的**方法白名单**（安全评审 S-02）。
+ *
+ * 为什么必须是白名单而不是「转义一下就行」：`method` 来自 **OpenAPI spec（外部材料）**，
+ * 原样拼进 XML 的 `<stringProp name="HTTPSampler.method">` 后，一个
+ * `GET</stringProp><JSR223Sampler>…</JSR223Sampler>` 就能让生成的 `.jmx` 在 JMeter 里
+ * **执行任意代码**——而脚本还会被提交进仓库、交接给别人。
+ * 导入一份恶意 spec → 生成 JMX → 跑一次 = 中招。所以这里按「外部材料不可信」处理：
+ * 只允许这张表里的方法，其余**整体拒绝**（返回 `bad-method`，绝不降级成 GET 静默放行）。
+ */
+const ALLOWED_HTTP_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+
+/** 方法归一 + 白名单校验：返回 `{ ok:true, method }` 或 `{ ok:false, detail }`（detail 是原始值，便于报错） */
+function normalizeHttpMethod(raw) {
+  const rawText = String(raw == null ? '' : raw);
+  const upper = rawText.trim().toUpperCase();
+  if (!upper) return { ok: true, method: 'GET' }; // 缺省 GET（与既有行为一致）
+  if (!ALLOWED_HTTP_METHODS.includes(upper)) return { ok: false, detail: rawText.slice(0, 120) };
+  return { ok: true, method: upper };
+}
 const THREADS_RANGE = [1, 100000];
 const THINK_TIME_RANGE = [0, 60000];
 const CSV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -241,7 +262,9 @@ ${indent}</HeaderManager>`;
 function samplerXml(iface, index, plan, indent = '        ') {
   const raw = String(iface.url || '').trim();
   const u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `http://${raw}`);
-  const method = String(iface.method || 'GET').toUpperCase();
+  // 纵深防御：即使调用方绕过校验，这里也只可能是白名单值，且仍做 XML 转义（S-02）
+  const normalized = normalizeHttpMethod(iface.method);
+  const method = normalized.ok ? normalized.method : 'GET';
   const port = u.port || (u.protocol === 'https:' ? '443' : '80');
   const pathWithQuery = `${u.pathname || '/'}${u.search || ''}`;
   const body = String(iface.body == null ? '' : iface.body);
@@ -266,7 +289,7 @@ ${indent}  <stringProp name="HTTPSampler.domain">${xmlEscape(u.hostname)}</strin
 ${indent}  <stringProp name="HTTPSampler.port">${xmlEscape(port)}</stringProp>
 ${indent}  <stringProp name="HTTPSampler.protocol">${u.protocol === 'https:' ? 'https' : 'http'}</stringProp>
 ${indent}  <stringProp name="HTTPSampler.path">${xmlEscape(pathWithQuery)}</stringProp>
-${indent}  <stringProp name="HTTPSampler.method">${method}</stringProp>
+${indent}  <stringProp name="HTTPSampler.method">${xmlEscape(method)}</stringProp>
 ${indent}  <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
 ${indent}  <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
 ${indent}  <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
@@ -330,6 +353,13 @@ function buildJmxFromPlan(plan) {
     } catch {
       return { ok: false, reason: 'bad-url', detail: String((it && it.name) || raw) };
     }
+  }
+
+  // 方法白名单（S-02）：**任何一个接口的 method 不在白名单就整体拒绝**，不生成半份脚本。
+  // 这里必须在拼 XML 之前拦——`method` 来自外部 spec，拼进去就是代码执行入口。
+  for (const it of interfaces) {
+    const checked = normalizeHttpMethod(it && it.method);
+    if (!checked.ok) return { ok: false, reason: 'bad-method', detail: checked.detail };
   }
 
   // CSV：只取文件名（不写绝对路径、不写 ..）；变量名必须能当 JMeter 变量用
@@ -419,7 +449,7 @@ function validateCsvTable(table, csvVars) {
 
 module.exports = {
   inspectJmx, isJmxName, JMX_EXTS, buildJmxTemplate,
-  buildJmxFromPlan, validateCsvTable, MAX_INTERFACES,
+  buildJmxFromPlan, validateCsvTable, MAX_INTERFACES, ALLOWED_HTTP_METHODS, normalizeHttpMethod,
 };
 
 

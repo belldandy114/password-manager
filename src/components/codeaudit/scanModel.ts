@@ -9,33 +9,22 @@
 
 
 
-/** `scan:run` 返回（types.ts 里是 unknown，在此收窄：契约 [C-46]） */
-export interface ScanRunData {
-  root?: string;
-  pack?: string;
-  files?: number;
-  fileList?: string[];
-  bytes?: number;
-  skippedSymlinks?: number;
-  truncated?: boolean;
-  truncatedReason?: string;
-  counts?: { high?: number; medium?: number; low?: number };
-  findings?: ScanFinding[];
-  ms?: number;
-}
+import type { ScanFinding, ScanPack, ScanRuleMeta, ScanRunResult } from '../../types';
 
-export interface ScanFinding {
-  ruleId: string;
-  severity: 'high' | 'medium' | 'low' | string;
-  title: string;
-  file: string;
-  line: number;
-  snippet?: string;
-}
-
-/** `scan:rules` 的规则包（`{ packs: [{id,label,rules[]}] }`） */
-export interface ScanRule { id: string; severity: string; title: string; desc: string; category?: string; keyFrom?: boolean }
-export interface ScanPack { id: string; label: string; rules: ScanRule[] }
+/**
+ * 这里**不再本地复制 IPC 返回的接口**：`scan:run` / `scan:rules` 的 data 在 `src/types.ts` 里有唯一真源
+ * （t62 落地 [C-46]）。本地副本的问题不是「多写几行」，而是它会和真源漂移——A1 就是漂移的结果：
+ * 本地把 severity 写成 `'high' | 'medium' | 'low' | string`，那个 `| string` 把类型闸门彻底废掉
+ * （`counts.mid` 因此也能编译通过），而真源 `ScanSeverity` 一直是三级联合。
+ *
+ * 历史数据里可能出现的非法 severity（如 v13 的 `mid`）**不靠放宽类型兼容**：
+ * 读取边界窄化——`summarizeSeverity` 认不出的落 `other` 档，`readHistoryCounts` 把老 `mid` 读成 medium。
+ */
+export type { ScanFinding, ScanPack };
+/** `scan:run` 的 data（官方类型 `ScanRunResult`；保留旧名字给页面 import） */
+export type ScanRunData = ScanRunResult;
+/** `scan:rules` 的一条规则（官方类型 `ScanRuleMeta`） */
+export type ScanRule = ScanRuleMeta;
 
 /** `scanRuns` 集合的一条（契约 §1.3） */
 export interface ScanRunRecord {
@@ -94,7 +83,9 @@ export function summarizeSeverity(findings: ScanFinding[]): Record<SeverityKey, 
  * 读取时按 **medium** 处理；**键缺失返回 null**，界面显示 `—`。
  * 不用 `|| 0` 兜底：把「没有这个数」显示成 0，会让用户以为那次扫描真的没有中危。
  */
-export function readHistoryCounts(c: Record<string, unknown> | undefined): Record<SeverityKey, number | null> {
+export function readHistoryCounts(raw: unknown): Record<SeverityKey, number | null> {
+  // 读取边界：vault 里的老记录形状不可信，先收成普通对象，再逐键窄化（缺失 → null，不兜 0）
+  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const medium = num(c?.medium);
   const legacyMid = num(c?.mid);

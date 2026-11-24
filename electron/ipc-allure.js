@@ -119,7 +119,11 @@ function registerAllureIpc(deps = {}) {
         text = decodeTextBuffer(fs.readFileSync(abs)).text;
       } catch (e) {
         // C-63：读取失败的 result 计入 skippedFiles，不整体失败
-        if (isResultFile(name)) { skippedFiles += 1; markTruncated('read-error'); continue; }
+        // RC-03：`truncatedReason` 只能用契约枚举里的值（`[C-09]` 的 10 个），
+      // 原来这里的 `'read-error'` 不在枚举内 → 界面会显示一个不存在的截断原因。
+      // 读失败意味着「结果集里少了这个文件」，归入 `files`（文件层面的不完整），
+      // 具体次数仍由 `skippedFiles` 如实给出。
+      if (isResultFile(name)) { skippedFiles += 1; markTruncated('files'); continue; }
         return { success: false, error: ERR.readFailed(name, e.message) };
       }
       files.push({ name, text });

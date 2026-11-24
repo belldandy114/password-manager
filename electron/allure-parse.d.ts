@@ -45,6 +45,14 @@ export declare function pickReason(a?: string, b?: string): string;
 
 export type AllureTruncatedReason = 'timeout' | 'files' | 'file-size' | 'cases' | 'flaky';
 
+/**
+ * **Allure 解析结果的唯一真源（契约 C-46 / t62 合一）**。
+ *
+ * 这份接口描述的是**纯函数层** `parseAllure()` 的返回（含 `ok` / `error`，没有 `root` / `ms`）。
+ * `src/types.ts` 只做 `import type` 复用 + `Omit<'ok'|'error'> & { root; ms }` 补上通道字段，
+ * **不再另写一份字段表**——t62 之前两处各写一份，字段漂移成「d.ts 缺 root/ms、types.ts 缺 ok/error」。
+ * 改字段只改这里。
+ */
 export interface AllureParseResult {
   ok: boolean;
   error?: string;

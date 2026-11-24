@@ -7,6 +7,7 @@ import {
   capsOf,
   trimNotice,
   COLLECTION_CAPS,
+  TOTAL_COLLECTION_BYTES,
 } from '../collectionTrim';
 
 /**
@@ -179,5 +180,25 @@ describe('集合上限常量与提示文案', () => {
   it('trimNotice 用 [C-25] 的原话，dropped=0 时返回空串（不提示就别提示）', () => {
     expect(trimNotice(0)).toBe('');
     expect(trimNotice(3)).toBe('历史记录已按上限裁剪，最早 3 条已清理');
+  });
+
+  /**
+   * [C-24] v15：总量上限 4 MB → **6 MB**。
+   *
+   * 为什么改：五个集合的单集合上限相加 = 512 + 1536×3 + 1024 = **6144 KB = 6 MB**，
+   * 原来的 4 MB 在物理上就不可能满足（五个集合全满即违约）。提到 6 MB 只是让约束自洽。
+   *
+   * 这条断言同时钉住「它**不是**跨集合求和的运行时校验」：`TOTAL_COLLECTION_BYTES` 的唯一用处是
+   * `capsOf()` 对未知键的兜底。真要加总量校验得单独实现并配测试，现在没有——写在这里免得下次
+   * 有人把常量当成"已经有了总量约束"。
+   */
+  it('TOTAL_COLLECTION_BYTES = 6 MB（= 五个集合上限之和），且只作未知键兜底', () => {
+    expect(TOTAL_COLLECTION_BYTES).toBe(6 * 1024 * 1024);
+    // 单集合上限之和恰等于它：4 MB 时和就已经超了，这正是改成 6 MB 的原因
+    const sum = Object.values(COLLECTION_CAPS).reduce((s, c) => s + c.maxBytes, 0);
+    expect(sum).toBe(TOTAL_COLLECTION_BYTES);
+    // 只影响未知键；已知键的字节上限不受影响
+    expect(capsOf('notAKey').maxBytes).toBe(TOTAL_COLLECTION_BYTES);
+    expect(capsOf('scanRuns').maxBytes).toBe(1536 * 1024);
   });
 });

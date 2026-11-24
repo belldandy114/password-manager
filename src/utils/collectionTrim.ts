@@ -191,10 +191,21 @@ export const COLLECTION_CAPS: Record<string, Required<Pick<TrimCaps, 'maxBytes'>
   allureRuns: { maxItems: 20, maxBytes: 1024 * KB },
 };
 
-/** 5 个集合合计明文上限（[C-24]：≤ 4 MB） */
-export const TOTAL_COLLECTION_BYTES = 4 * MB;
+/**
+ * 「未知集合」的字节兜底上限（[C-24] v15：**6 MB**）。
+ *
+ * ⚠️ 这个常量**不是**"5 个集合合计的运行时校验"——**代码里没有任何跨集合求和**。
+ * 它目前只有一个用处：`capsOf()` 遇到 `COLLECTION_CAPS` 里没有的键时，回落到这个字节上限
+ * （不裁条数、只按字节裁）。所以它挡住的是「将来新增集合忘了登记上限」，不是「总量超了」。
+ *
+ * 为什么从 4 MB 改成 6 MB（v15）：五个集合的单集合上限相加
+ * = 512 + 1536 × 3 + 1024 = **6144 KB = 6 MB**，4 MB 在物理上就不可能满足（全满即违约）。
+ * 提到 6 MB 只是让契约自洽；**没有**因此新增求和校验——要真做总量约束得单独实现并配测试，
+ * 现在没有，就不假装有。
+ */
+export const TOTAL_COLLECTION_BYTES = 6 * MB;
 
-/** 取某个集合的上限；未知键回落到「不裁条数、4 MB 字节」这种保守值 */
+/** 取某个集合的上限；未知键回落到「不裁条数、6 MB 字节」这种保守值 */
 export function capsOf(key: string): TrimCaps {
   return COLLECTION_CAPS[key] || { maxBytes: TOTAL_COLLECTION_BYTES };
 }

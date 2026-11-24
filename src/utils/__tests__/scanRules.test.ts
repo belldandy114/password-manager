@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  RULES, SCAN_PACKS, matchRules, isInsideRoot, stripComments, rulesOf,
+  RULES, SCAN_PACKS, matchRules, isInsideRoot, stripComments, rulesOf, MAX_HITS_PER_RULE,
 } from '../../../electron/scan-rules.js';
 
 /**
@@ -128,11 +128,39 @@ describe('扩展名守卫（t58）：ui-* 不扫文档、sec-* 仍扫文档', ()
     }
   });
 
-  it('assert-* 也不该拿文档当测试代码（README 里写「这条用例没有断言」不是缺陷）', () => {
-    const doc = '## 说明\n这个接口以前没有断言，只 assert 了状态码。';
-    expect(ids(doc, 'NOTES.md').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
-    // 同样的内容放进 .py 测试文件就得报
-    expect(ids('requests.post("http://example.com/x")\n', 'test_x.py')).toContain('assert-no-assertion');
+  // RC-05：这条以前是**假测试**——用的是「碰巧匹配不到任何规则」的文档文本，
+  // 把守卫去掉照样绿，等于什么都没证明。现在改成同一段代码在两个扩展名上的成对断言：
+  // 去掉守卫后 `.md` 侧必然命中（变红），证明它真的在测守卫。
+  const NO_ASSERT_CODE = 'requests.post("http://example.com/x")\n';
+  it('assert-* 拿文档当测试代码是误报：同一段内容 .py 命中、.md 不命中', () => {
+    expect(ids(NO_ASSERT_CODE, 'test_x.py')).toContain('assert-no-assertion'); // 先证规则本身有效
+    expect(ids(NO_ASSERT_CODE, 'NOTES.md').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
+    expect(ids(NO_ASSERT_CODE, 'README.txt').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
+  });
+
+  // RC-06：cov-* 的假 covered 比假 missing 更危险（让用户以为测过了而漏测）
+  it('cov-* 五条在文档里都不命中，同一段代码在 .java/.ts/.py 上必须命中（逐条成对）', () => {
+    const samples: { ruleId: string; code: string; file: string }[] = [
+      { ruleId: 'cov-spring-mapping', code: '  @GetMapping("/api/users/{id}")', file: 'UserController.java' },
+      { ruleId: 'cov-restassured', code: 'given().when().get("/api/users")', file: 'UserApiTest.java' },
+      { ruleId: 'cov-python-requests', code: 'requests.get("/api/users")', file: 'test_users.py' },
+      { ruleId: 'cov-url-literal', code: 'given().when().url("/api/users")', file: 'UserApiTest.java' },
+      { ruleId: 'cov-path-literal', code: 'const p = "/api/users";', file: 'apiPaths.ts' },
+    ];
+    for (const s of samples) {
+      expect(ids(s.code, s.file)).toContain(s.ruleId);          // 代码里必须命中
+      expect(ids(s.code, 'README.md')).not.toContain(s.ruleId); // 文档里必须跳过
+      expect(ids(s.code, 'NOTES.txt')).not.toContain(s.ruleId);
+    }
+  });
+
+  // RC-01：每规则上限的折叠必须可见（否则用户以为看到的是全部）
+  it('RC-01：超过每规则上限的命中计入 suppressed，而不是静默消失', () => {
+    const many = Array.from({ length: 5 }, (_, i) => `Thread.sleep(${1000 + i * 1000});`).join('\n');
+    // suppressed 已在 electron/scan-rules.d.ts 声明（t67），不再需要局部强转
+    const r = matchRules(many, 'Load.spec.ts');
+    expect(r.hits.filter(h => h.ruleId === 'ui-hard-sleep').length).toBe(MAX_HITS_PER_RULE);
+    expect(r.suppressed ?? 0).toBe(5 - MAX_HITS_PER_RULE);
   });
 });
 describe('硬编码敏感（正例 / 反例）', () => {

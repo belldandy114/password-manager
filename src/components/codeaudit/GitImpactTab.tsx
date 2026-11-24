@@ -13,23 +13,21 @@ import { useCollection } from '../../hooks/useCollection';
 import { gitImpact, NO_CASE_MAP_NOTICE, isDefiniteVia } from '../../utils/gitImpact';
 import type { GitImpactResult } from '../../utils/gitImpact';
 import type { CaseMapEntry } from '../../utils/caseMaps';
+import type { GitDiffFile, GitProbeResult } from '../../types';
 
 /* ================================================================
    页签②：Git 影响面
    ================================================================ */
 
 
-/** `git:diff` 的文件项 */
-interface GitFile { path: string; status: string; additions: number; deletions: number; origPath?: string }
-interface GitProbe { isRepo: boolean; branch?: string; head?: string; dirty?: boolean }
 const SCOPE_LABEL: Record<string, string> = { unstaged: '未暂存（工作区）', staged: '已暂存（索引）', head: '对比 HEAD' };
 
 export function GitImpactTab({ addToast }: { addToast: (msg: string, type?: 'info' | 'success' | 'error') => void }) {
   const { items: caseMaps, loading: mapsLoading } = useCollection<CaseMapEntry>('caseMaps');
   const [root, setRoot] = useState('');
-  const [probe, setProbe] = useState<GitProbe | null>(null);
+  const [probe, setProbe] = useState<GitProbeResult | null>(null);
   const [scope, setScope] = useState<'unstaged' | 'staged' | 'head'>('unstaged');
-  const [files, setFiles] = useState<GitFile[]>([]);
+  const [files, setFiles] = useState<GitDiffFile[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [impact, setImpact] = useState<GitImpactResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,7 +52,7 @@ export function GitImpactTab({ addToast }: { addToast: (msg: string, type?: 'inf
       setErr(p.error || '不是 git 仓库');
       return false;
     }
-    setProbe((p.data || {}) as GitProbe);
+    setProbe(p.data ?? null);
     setErr('');
     return true;
   }, []);
@@ -74,10 +72,11 @@ export function GitImpactTab({ addToast }: { addToast: (msg: string, type?: 'inf
       if (!ok) return;
       const r = await window.electronAPI.gitDiff({ root, scope });
       if (!r.success) { setErr(r.error || '读取改动失败'); return; }
-      const d = (r.data || {}) as { files?: GitFile[]; truncated?: boolean };
-      const list = Array.isArray(d.files) ? d.files : [];
+      // 官方类型 [C-46]：r.data 已经是 GitDiffResult
+      const d = r.data;
+      const list: GitDiffFile[] = d && Array.isArray(d.files) ? d.files : [];
       setFiles(list);
-      setTruncated(!!d.truncated);
+      setTruncated(!!d?.truncated);
       // 台账为空 → gitImpact 会返回 empty-maps，页面据此显示「算不出来」
       const res = gitImpact({ changedFiles: list, caseMaps });
       setImpact(res);

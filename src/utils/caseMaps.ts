@@ -115,7 +115,11 @@ export interface ImportReport {
   updated: number;
   skipped: number;
   invalid: number;
-  /** `updated` 里有多少是「同一个文件里重复的 caseNo 被合并」——给用户看「合并 N 条」用 */
+  /**
+   * 命中**已有集合**（本次导入之前就存在）里的条目、因而被覆盖的行数——给用户看「其中合并 N 条」用。
+   * 不含「本次导入自己新增」的条目（RC-07）：同一份 CSV 连导两次时，第二次全部命中已有集合，
+   * 所以 `added 0 / merged == 行数`；而首次导入即使文件内有重复 caseNo，`merged` 仍是 0。
+   */
   merged: number;
   /** 数据行数（不含表头） */
   rows: number;
@@ -226,7 +230,8 @@ export function dedupeByCaseNo(items: CaseMapEntry[]): CaseMapEntry[] {
  *
  * 语义（[C-35]）：
  * - 以 `caseNo` 为幂等键：已存在 → **覆盖 target/source/note 并更新 updatedAt**，不新增；
- * - **同一个 CSV 内部**重复的 caseNo 也合并（后者补足前者为空的字段），计入 `merged`；
+ * - **同一个 CSV 内部**重复的 caseNo 也合并（后者补足前者为空的字段），但**不计入 `merged`**；
+ * - `merged` 只统计「命中了本次导入之前就存在的条目」的行（RC-07），因此 `merged ≤ updated`；
  * - 行号为空的、注释行（首列以 `#` 开头）→ `skipped`；
  * - 缺 caseNo / 缺 target / 超长 → `invalid` 并记 errors。
  */
@@ -250,6 +255,10 @@ export function importCaseMapsCsv(text: string, existing: CaseMapEntry[], opts: 
   const now = opts.now || new Date().toISOString();
   const makeId = opts.makeId || ((i: number) => `cm-${Date.now()}-${i}`);
   const byNo = new Map(base.map((it) => [it.caseNo.trim(), it] as [string, CaseMapEntry]));
+  // RC-07：`merged` 只统计「命中了**已有集合**里的条目」。byNo 会随本文件的行不断长大，
+  // 所以必须先拍一张快照——否则同文件内后出现的 caseNo 会把自己文件里刚新增的那条算成「合并」，
+  // 表现为同一份 CSV 连导两次时「其中合并 N 条」虚高。
+  const existingNos = new Set(byNo.keys());
 
   dataRows.forEach((cells, index) => {
     const cell = (i: number): string => (i >= 0 && i < cells.length ? String(cells[i] ?? '').trim() : '');
@@ -293,7 +302,7 @@ export function importCaseMapsCsv(text: string, existing: CaseMapEntry[], opts: 
       }
       return;
     }
-    if (byNo.has(caseNo)) report.merged += 1;
+    if (existingNos.has(caseNo)) report.merged += 1;
 
     const prev = byNo.get(caseNo);
     const entry: CaseMapEntry = {

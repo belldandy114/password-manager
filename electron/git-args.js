@@ -26,6 +26,23 @@ const path = require('path');
 /** `git:diff` 允许的三种范围（C-57：scope 只影响后缀） */
 const GIT_SCOPES = Object.freeze(['unstaged', 'staged', 'head']);
 
+/**
+ * **每次 git 调用都前置的三个 `-c`**（安全评审 S-03）。
+ *
+ * `git status` / `git diff` 会读**仓库自己的** `.git/config`：
+ *   - `core.fsmonitor` 指向一个可执行程序 → 有人在你跑体检的仓库里设一条
+ *     `fsmonitor = /path/to/evil`，你 `git status` 一下就把别人的程序执行了；
+ *   - `core.hooksPath` 可把 hooks 指到别处（同理可执行）；
+ *   - `diff.external` 让 `git diff` 调外部 diff 程序。
+ * 威胁模型是「仓库不可信」（克隆来的、别人发来的 zip），不是「本机单用户」。
+ * 三个 `-c` 必须**在子命令之前**（`git -c k=v status`），所以拼在参数数组最前面。
+ */
+const GIT_SAFE_CONFIG = Object.freeze([
+  '-c', 'core.fsmonitor=false',
+  '-c', 'core.hooksPath=',
+  '-c', 'diff.external=',
+]);
+
 /** scope → `diff --numstat -z` 的后缀（unstaged 无后缀） */
 const DIFF_SUFFIX = Object.freeze({
   unstaged: Object.freeze([]),
@@ -49,9 +66,9 @@ const clone = (arr) => arr.slice();
  */
 function buildProbeArgs() {
   return {
-    branch: ['rev-parse', '--abbrev-ref', 'HEAD'],
-    head: ['rev-parse', '--short', 'HEAD'],
-    status: ['status', '--porcelain', '-z'],
+    branch: [...GIT_SAFE_CONFIG, 'rev-parse', '--abbrev-ref', 'HEAD'],
+    head: [...GIT_SAFE_CONFIG, 'rev-parse', '--short', 'HEAD'],
+    status: [...GIT_SAFE_CONFIG, 'status', '--porcelain', '-z'],
   };
 }
 
@@ -64,7 +81,7 @@ function buildProbeArgs() {
 function buildDiffArgs(scope) {
   const s = String(scope == null ? '' : scope);
   if (!GIT_SCOPES.includes(s)) return { ok: false, error: `未知的 diff 范围：${s}` };
-  return { ok: true, args: ['diff', '--numstat', '-z', ...clone(DIFF_SUFFIX[s])] };
+  return { ok: true, args: [...GIT_SAFE_CONFIG, 'diff', '--numstat', '-z', ...clone(DIFF_SUFFIX[s])] };
 }
 
 /** rename / copy 的两个状态字母（这两个才有第二段路径） */
@@ -236,6 +253,7 @@ module.exports = {
   DIFF_SUFFIX,
   MAX_FILES,
   WRITE_COMMANDS,
+  GIT_SAFE_CONFIG,
   buildProbeArgs,
   buildDiffArgs,
   parseStatusZ,

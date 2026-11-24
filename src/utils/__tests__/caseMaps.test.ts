@@ -142,6 +142,8 @@ describe('importCaseMapsCsv：计数与幂等语义（[C-35]）', () => {
     const second = importCaseMapsCsv(FIXTURE, first.items, { now: '2026-02-02T00:00:00.000Z', makeId: (i) => `new-${i}` });
     expect(second.report.added).toBe(0);
     expect(second.report.updated).toBe(4);
+    // RC-07 口径：merged 只统计「命中了已有集合里的条目」——这 4 行全部命中，所以是 4
+    expect(second.report.merged).toBe(4);
     expect(second.items).toHaveLength(4);
     // id 保持原样（不新增），updatedAt 更新
     expect(second.items.map((i) => i.id)).toEqual(first.items.map((i) => i.id));
@@ -158,9 +160,29 @@ describe('importCaseMapsCsv：计数与幂等语义（[C-35]）', () => {
     expect(r.items).toHaveLength(1);
     expect(r.report.added).toBe(1);
     expect(r.report.updated).toBe(1);
-    expect(r.report.merged).toBe(1);
+    // RC-07：merged 只统计「命中了已有集合里的条目」。这里第二条 TC-9 命中的是**本次刚新增**的那条，
+    // 不是已有集合 → 不计入 merged（否则「其中合并 N 条」会把本文件内的重复重复计一次）
+    expect(r.report.merged).toBe(0);
     expect(r.report.added + r.report.updated + r.report.skipped + r.report.invalid).toBe(r.report.rows);
     expect(r.items[0].target).toEqual({ kind: 'method', ref: 'src/B.java#m' });
+  });
+
+  it('同一份 CSV 连续导入两次：第一次「新增 4 / 合并 0」，第二次「新增 0 / 合并 4」', () => {
+    const csv = [
+      '用例编号,脚本',
+      'TC-A,src/A.java',
+      'TC-B,src/B.java',
+      'TC-C,src/C.java',
+      'TC-D,src/D.java',
+    ].join('\n');
+    const first = importCaseMapsCsv(csv, empty, { now: '2026-01-01T00:00:00.000Z', makeId: (i) => `id-${i}` });
+    expect(first.report).toMatchObject({ added: 4, updated: 0, merged: 0, invalid: 0 });
+
+    const second = importCaseMapsCsv(csv, first.items, { now: '2026-02-02T00:00:00.000Z', makeId: (i) => `new-${i}` });
+    // 第二次每一行都命中了已有集合里的条目 → 全部 merged，一条都没新增
+    expect(second.report).toMatchObject({ added: 0, updated: 4, merged: 4, invalid: 0 });
+    expect(second.items).toHaveLength(4);
+    expect(second.report.added + second.report.updated + second.report.skipped + second.report.invalid).toBe(second.report.rows);
   });
 
   it('注释行与空行：注释行计入 skipped，四数仍等于行数', () => {

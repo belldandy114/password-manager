@@ -40,8 +40,8 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
     void (async () => {
       const r = await window.electronAPI.scanRules();
       if (!r.success) { setRulesErr(r.error || '读取规则表失败'); return; }
-      const d = (r.data || {}) as { packs?: ScanPack[] };
-      const list = (d.packs || []).filter((p) => p.id === 'audit');
+      // 官方类型 [C-46]：r.data 已经是 ScanRulesResult，不需要本地断言
+      const list = (r.data?.packs || []).filter((p) => p.id === 'audit');
       setPacks(list);
       setRuleIds(list.flatMap((p) => p.rules.map((x) => x.id)));
     })();
@@ -70,29 +70,32 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
         setErr(r.error || '扫描失败');
         return;
       }
-      const d = (r.data || {}) as ScanRunData;
-      setData(d);
+      // 官方类型 [C-46]：r.data 已经是 ScanRunResult；用可选链保持「没拿到数据也不炸」的原语义
+      const d = r.data;
+      setData(d ?? null);
 
       // 落一条 scanRuns：**先裁剪再写**（[C-24]/[C-25]），dropped 必须说出来
       // 落库的 counts 同样由 findings 现算（[C-30] 同源约束）——不抄后端 counts，免得两处各算一份
-      const storedFindings = (d.findings || []).slice(0, FINDINGS_CAP);
+      const truncated = !!d?.truncated;
+      const truncatedReason = d?.truncatedReason;
+      const storedFindings = (d?.findings || []).slice(0, FINDINGS_CAP);
       const sev = summarizeSeverity(storedFindings);
       const counts = { high: sev.high, medium: sev.medium, low: sev.low };
       const record: ScanRunRecord = {
         id: newId('run-'),
         at: new Date().toISOString(),
-        root: d.root || root,
+        root: d?.root || root,
         pack: 'audit',
-        files: Number(d.files) || 0,
-        ...(typeof d.bytes === 'number' ? { bytes: d.bytes } : {}),
+        files: Number(d?.files) || 0,
+        ...(d && typeof d.bytes === 'number' ? { bytes: d.bytes } : {}),
         // [C-54] 写入时必填：取当次返回的 skippedSymlinks
-        skippedSymlinks: Number(d.skippedSymlinks) || 0,
-        truncated: !!d.truncated,
-        ...(d.truncatedReason ? { truncatedReason: d.truncatedReason } : {}),
+        skippedSymlinks: Number(d?.skippedSymlinks) || 0,
+        truncated,
+        ...(truncatedReason ? { truncatedReason } : {}),
         counts,
         findings: storedFindings,
         ruleIds,
-        ...(typeof d.ms === 'number' ? { ms: d.ms } : {}),
+        ...(d && typeof d.ms === 'number' ? { ms: d.ms } : {}),
       };
       const caps = capsOf('scanRuns');
       const cut = trimToCaps([record, ...runs], caps, { timeOf: (x) => (x as ScanRunRecord).at });
@@ -100,7 +103,7 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
       if (!wr.success) { addToast(wr.error || '保存体检记录失败', 'error'); return; }
       const msgs: string[] = [];
       if (cut.dropped) msgs.push(trimNotice(cut.dropped));
-      if (d.truncated) msgs.push(`本次扫描结果被截断（${d.truncatedReason || '上限'}），命中数可能偏少`);
+      if (truncated) msgs.push(`本次扫描结果被截断（${truncatedReason || '上限'}），命中数可能偏少`);
       if (msgs.length) setNotice(msgs.join('；'));
       const hit = counts.high + counts.medium + counts.low + sev.other;
       addToast(
@@ -315,7 +318,7 @@ export function AuditTab({ addToast }: { addToast: (msg: string, type?: 'info' |
                       <td>
                         {/* 老记录可能是 mid：按 medium 读；缺键显示 —（不兜 0） */}
                         {(() => {
-                          const c = readHistoryCounts(r.counts as unknown as Record<string, unknown>);
+                          const c = readHistoryCounts(r.counts);
                           return `${c.high ?? '—'} / ${c.medium ?? '—'} / ${c.low ?? '—'}`;
                         })()}
                       </td>

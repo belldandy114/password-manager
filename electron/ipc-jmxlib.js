@@ -32,6 +32,8 @@ const PLAN_ERROR_TEXT = {
   'too-many-interfaces': () => '接口最多 50 个',
   'threads-out-of-range': () => '线程数或循环数超出范围（1–100000）',
   'think-time-out-of-range': () => '思考时间超出范围（0–60000 ms）',
+  // S-02：方法不在白名单——文案必须指向真正的原因，不能笼统说「参数不合法」（那样用户会去查地址）
+  'bad-method': (d) => `不支持的 HTTP 方法：${d}（只允许 GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS）`,
   'bad-url': (d) => `地址格式不对，例如 https://example.com/api/login（${d || '地址不可解析'}）`,
   'bad-csv-var': (d) => `CSV 变量名不合法：${d || ''}`,
   'bad-assert-code': () => '断言状态码必须是 3 位数字',

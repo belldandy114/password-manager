@@ -56,6 +56,13 @@ export interface ScanHit {
 export interface ScanMatchResult {
   ok: true;
   hits: ScanHit[];
+  /**
+   * 被 `MAX_HITS_PER_RULE`（每规则 3 条）折叠掉、**没有出现在 `hits` 里**的命中条数。
+   * 运行时**总会给**（无折叠时为 0，见 `scan-rules.js` 的 `matchRules`）。
+   * 声明成可选是为了让**旧的主进程/旧缓存**也能对上这个类型；调用方取值用 `?? 0`。
+   * RC-01：折叠必须可见——用户要知道「还有 N 条没展示」。
+   */
+  suppressed?: number;
 }
 
 export declare const RULES: ScanRule[];

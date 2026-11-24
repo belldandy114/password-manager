@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { inspectJmx, isJmxName, buildJmxTemplate, buildJmxFromPlan, validateCsvTable } = require('../../../electron/jmx-script');
+const { inspectJmx, isJmxName, buildJmxTemplate, buildJmxFromPlan, validateCsvTable, ALLOWED_HTTP_METHODS } = require('../../../electron/jmx-script');
 
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.5">
@@ -297,5 +297,73 @@ describe('validateCsvTable：落盘前用 parseCsv 的结果做列校验', () =>
   it('只有表头没有数据行 → no-rows；空表 → no-rows', () => {
     expect(validateCsvTable([['账号']], [{ name: 'user', column: '账号' }])).toMatchObject({ ok: false, reason: 'no-rows' });
     expect(validateCsvTable([], [{ name: 'user', column: '账号' }])).toMatchObject({ ok: false, reason: 'no-rows' });
+  });
+});
+
+/**
+ * 安全评审 **S-02**：`HTTPSampler.method` 来自 OpenAPI spec（**外部材料**），
+ * 原样拼进 XML 就能塞 `<JSR223Sampler>` → JMeter 跑一次即执行任意代码，
+ * 而生成物还会进仓库、交接给别人。所以这里必须白名单 + 转义，不按「本机单用户」减轻。
+ */
+describe('S-02：method 白名单（防 JSR223 注入）', () => {
+  const mk = (method: string) => ({ threads: 10, loops: 1, interfaces: [{ name: '登录', url: 'https://example.com/api/login', method }] });
+  const INJECT = 'GET</stringProp><JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"><stringProp name="script">Runtime.getRuntime().exec("calc")</stringProp></JSR223Sampler><stringProp name="x">';
+
+  it('注入串被整体拒绝（reason=bad-method），输出里不含 JSR223Sampler', () => {
+    const r = buildJmxFromPlan(mk(INJECT));
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('bad-method');
+    expect(String(r.detail)).toContain('JSR223Sampler');
+    // 拒绝就是拒绝：**没有生成任何 XML**（xml 字段不存在），注入片段不可能进到脚本里
+    expect(r.xml).toBeUndefined();
+    // detail 只是给报错文案用的回显，且有长度上限——它不会流向 XML
+    expect(String(r.detail).length).toBeLessThanOrEqual(120);
+    expect(String(r.detail)).toContain('JSR223Sampler');
+  });
+
+  it('白名单 7 个方法都能生成，且 XML 里是原值（GET/POST/… 不需要转义也不许变形）', () => {
+    expect(Array.from(ALLOWED_HTTP_METHODS)).toEqual(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+    for (const m of Array.from(ALLOWED_HTTP_METHODS) as string[]) {
+      const r = buildJmxFromPlan({ threads: 10, loops: 1, interfaces: [{ url: 'https://example.com/api/x', method: m }] });
+      expect(r.ok).toBe(true);
+      expect(r.xml).toContain(`<stringProp name="HTTPSampler.method">${m}</stringProp>`);
+    }
+  });
+
+  it('小写/带空白按归一放行（get → GET），缺省仍是 GET', () => {
+    const lower = buildJmxFromPlan({ threads: 10, loops: 1, interfaces: [{ url: 'https://example.com/api/x', method: ' get ' }] });
+    expect(lower.ok).toBe(true);
+    expect(lower.xml).toContain('<stringProp name="HTTPSampler.method">GET</stringProp>');
+    const none = buildJmxFromPlan({ threads: 10, loops: 1, interfaces: [{ url: 'https://example.com/api/x' }] });
+    expect(none.ok).toBe(true);
+    expect(none.xml).toContain('<stringProp name="HTTPSampler.method">GET</stringProp>');
+  });
+
+  it('多接口里只要有一个方法非法 → 整体拒绝（绝不生成半份脚本）', () => {
+    const r = buildJmxFromPlan({
+      threads: 10,
+      loops: 1,
+      interfaces: [
+        { url: 'https://example.com/api/ok', method: 'POST' },
+        { url: 'https://example.com/api/bad', method: 'TRACE' },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('bad-method');
+    expect(r.detail).toBe('TRACE');
+  });
+
+  it('大小写混淆与非 ASCII 变体同样拒绝（LOOKALIKE 不许绕过）', () => {
+    for (const bad of ['GEТ', 'ＧＥＴ', 'GET ', 'GET\n', 'TRACE', 'CONNECT']) {
+      const r = buildJmxFromPlan({ threads: 10, loops: 1, interfaces: [{ url: 'https://example.com/a', method: bad }] });
+      if (bad === 'GET ' || bad === 'GET\n') {
+        // 首尾空白归一后是合法 GET —— 这是允许的（trim 后才比较，不会带入 XML）
+        expect(r.ok).toBe(true);
+        expect(r.xml).toContain('<stringProp name="HTTPSampler.method">GET</stringProp>');
+      } else {
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe('bad-method');
+      }
+    }
   });
 });
