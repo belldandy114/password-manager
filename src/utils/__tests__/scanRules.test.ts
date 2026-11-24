@@ -91,6 +91,50 @@ describe('UI 自动化反模式（正例 / 反例）', () => {
   });
 });
 
+describe('扩展名守卫（t58）：ui-* 不扫文档、sec-* 仍扫文档', () => {
+  // t55 集成验收报过一个真误报：`.md` 里写「div > div > div 这样的选择器很脆」这种**说明文字**，
+  // 被 `ui-deep-css` 当成「代码里有深层 CSS」。`.md` 进 SCAN_EXTS 的初衷是扫文档里的硬编码
+  // URL / token（sec-*），不是把文档当测试代码体检（ui-* / assert-*）。
+  const DOC_FILES = ['README.md', 'NOTES.txt'];
+
+  it('ui-deep-css 成对：同一段文本在 .md 不命中、在 .ts 必须命中', () => {
+    const text = '选择器写成 "div > div > div > span" 就会很脆';
+    for (const doc of DOC_FILES) expect(ids(text, doc)).not.toContain('ui-deep-css');
+    expect(ids(text, 'List.spec.ts')).toContain('ui-deep-css');
+  });
+
+  it('ui-* 五条在 .md / .txt 上都不匹配，而同一段代码在 .ts 上都命中（成对，不是抽样）', () => {
+    const samples: { ruleId: string; code: string }[] = [
+      { ruleId: 'ui-hard-sleep', code: 'Thread.sleep(3000);' },
+      { ruleId: 'ui-abs-xpath', code: 'driver.findElement(By.xpath("/html/body/div[3]/a"));' },
+      { ruleId: 'ui-deep-css', code: 'driver.findElement(By.cssSelector("div > div > div > span"));' },
+      { ruleId: 'ui-fragile-locator', code: "driver.findElement(By.xpath(\"//div[@id='list']/div[2]\"));" },
+      { ruleId: 'ui-text-locator', code: 'driver.findElement(By.linkText("提交订单")).click();' },
+    ];
+    for (const { ruleId, code } of samples) {
+      for (const doc of DOC_FILES) expect(ids(code, doc)).not.toContain(ruleId);
+      expect(ids(code, 'Case.java')).toContain(ruleId);
+    }
+  });
+
+  it('sec-* 保持全扩展名：文档里的硬编码 URL / token / 口令仍要报（这是扫 .md 的初衷）', () => {
+    const urlCode = 'String base = "https://jira.corp.example.cn:8080/rest/api";';
+    const tokenCode = 'String token = "abcd1234efgh5678";';
+    const pwdCode = 'String password = "P@ssw0rd!";';
+    for (const doc of DOC_FILES) {
+      expect(ids(urlCode, doc)).toContain('sec-hardcoded-url');
+      expect(ids(tokenCode, doc)).toContain('sec-token-literal');
+      expect(ids(pwdCode, doc)).toContain('sec-password-literal');
+    }
+  });
+
+  it('assert-* 也不该拿文档当测试代码（README 里写「这条用例没有断言」不是缺陷）', () => {
+    const doc = '## 说明\n这个接口以前没有断言，只 assert 了状态码。';
+    expect(ids(doc, 'NOTES.md').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
+    // 同样的内容放进 .py 测试文件就得报
+    expect(ids('requests.post("http://example.com/x")\n', 'test_x.py')).toContain('assert-no-assertion');
+  });
+});
 describe('硬编码敏感（正例 / 反例）', () => {
   it('sec-hardcoded-url：写死的内网地址命中', () => {
     expect(hit('sec-hardcoded-url', 'String base = "https://jira.corp.example.cn:8080/rest/api";')).toBe(true);

@@ -30,6 +30,16 @@ const HASH_COMMENT_EXTS = /\.(?:py|pyw|sh|bash|zsh|rb|pl|yml|yaml|properties|con
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 
 /**
+ * `ui-*`（UI 自动化反模式）**不扫文档**。
+ *
+ * `.md` / `.txt` 进 `SCAN_EXTS` 的初衷是扫文档里的**硬编码 URL / token**（`sec-*`），
+ * 不是把文档当测试代码体检：README 里写「`div > div > div` 这种选择器很脆」是**说明文字**，
+ * 报成 `ui-deep-css` 只会让用户觉得工具在胡说（t55 集成验收实测：allure/README.md:230 被误报）。
+ * 误报率决定这个功能会不会被用户直接关掉，所以这里按扩展名守卫，而不是靠改正则去凑。
+ */
+const DOC_FILE_RE = /\.(?:md|txt)$/i;
+
+/**
  * coverage 规则的 HTTP method 归一：
  *   - 命名组 `method` 有值 → 大写（`.get(` / `requests.post(`）；
  *   - `@XxxMapping` → 注解名大写（`RequestMapping` → ANY）；
@@ -48,6 +58,7 @@ const RULES = [
   // ---------------- UI 自动化反模式 ----------------
   {
     id: 'ui-hard-sleep',
+    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -57,6 +68,7 @@ const RULES = [
   },
   {
     id: 'ui-abs-xpath',
+    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'high',
@@ -66,6 +78,7 @@ const RULES = [
   },
   {
     id: 'ui-deep-css',
+    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -75,6 +88,7 @@ const RULES = [
   },
   {
     id: 'ui-fragile-locator',
+    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'medium',
@@ -86,6 +100,7 @@ const RULES = [
   },
   {
     id: 'ui-text-locator',
+    skipFor: DOC_FILE_RE, // 文档里的说明文字不算 UI 反模式（t58）
     pack: 'audit',
     category: 'ui',
     severity: 'low',
@@ -337,6 +352,8 @@ function matchRules(text, filePath, ruleIds) {
   const hits = [];
   for (const rule of RULES) {
     if (wanted && !wanted.has(rule.id)) continue;
+    // 扩展名守卫：ui-* 只体检代码，不体检文档（见 DOC_FILE_RE 注释）
+    if (rule.skipFor && rule.skipFor.test(String(filePath || ''))) continue;
 
     if (rule.kind === 'file') {
       if (typeof rule.detect === 'function' && rule.detect(codeText)) {
