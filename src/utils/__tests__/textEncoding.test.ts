@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decodeTextBuffer, encodingLabel } from '../../../electron/text-encoding.js';
+import { decodeTextBuffer, encodingLabel, bomPrefix } from '../../../electron/text-encoding.js';
 
 /** 把字符串按 GBK 编成字节（Node 的 Buffer 不支持 gbk，这里手工查表太麻烦，直接用已知字节） */
 const GBK_NAME_PHONE = Buffer.from([0xd0, 0xd5, 0xc3, 0xfb, 0x2c, 0xb5, 0xe7, 0xbb, 0xb0]); // 姓名,电话
@@ -68,5 +68,50 @@ describe('encodingLabel', () => {
   it('其它一律 UTF-8', () => {
     expect(encodingLabel('utf-8')).toBe('UTF-8');
     expect(encodingLabel('')).toBe('UTF-8');
+  });
+});
+
+/**
+ * `bomPrefix` —— `file:save-text` 的 BOM 决策（抽成纯函数就是为了在这里守住它）。
+ *
+ * 历史：这个通道曾经**无条件**加 BOM，导致保存 `.java` 被 javac 拒绝（`非法字符: '\ufeff'`）、
+ * `.md`/`.txt` 长期被连带污染。t40 改成显式参数，但决策留在 handler 里（require('electron')），
+ * 测试跑不到；t44 把它抽出来，让「默认不加 BOM」第一次有了自动化回归。
+ */
+describe('bomPrefix：只有严格 === true 才给 BOM', () => {
+  it('严格 true → \\uFEFF（且真的等价于 EF BB BF 三字节）', () => {
+    expect(bomPrefix(true)).toBe('\uFEFF');
+    expect(bomPrefix(true).length).toBe(1);
+    expect(bomPrefix(true).charCodeAt(0)).toBe(0xfeff);
+    expect(Array.from(Buffer.from(bomPrefix(true), 'utf8'))).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it('false / undefined / 不传参数 → 空串（默认不加 BOM）', () => {
+    expect(bomPrefix(false)).toBe('');
+    expect(bomPrefix(undefined)).toBe('');
+    expect(bomPrefix()).toBe('');
+  });
+
+  it('null → 空串（渲染层传 null 是常见的「没填」写法）', () => {
+    expect(bomPrefix(null)).toBe('');
+  });
+
+  it('数字 0 / 1 → 空串（不做数值真值判断，1 不等于 true）', () => {
+    expect(bomPrefix(0)).toBe('');
+    expect(bomPrefix(1)).toBe('');
+    expect(bomPrefix(NaN)).toBe('');
+  });
+
+  it("字符串 'true' / 'false' → 空串（**IPC 传字符串时不许被当真**）", () => {
+    expect(bomPrefix('true')).toBe('');
+    expect(bomPrefix('false')).toBe('');
+    expect(bomPrefix('TRUE')).toBe('');
+  });
+
+  it('空串 / 空白 / 对象 / 数组 → 空串（任何非严格 true 的假值/真值都不行）', () => {
+    expect(bomPrefix('')).toBe('');
+    expect(bomPrefix('   ')).toBe('');
+    expect(bomPrefix({})).toBe('');
+    expect(bomPrefix([])).toBe('');
   });
 });

@@ -4,7 +4,8 @@
  * 接口调试 / 通用存储 / 附件 / 密码历史 的 IPC。
  *
  * 从 main.js 的 setupIpcHandlers() 里搬出来，逐行保持原逻辑不变：
- *   - file:pick / file:save-text：文件对话框（导出 CSV 带 UTF-8 BOM，Excel 不乱码）；
+ *   - file:pick / file:save-text：文件对话框（`save-text` **默认不写 BOM**；给 Excel 打开的
+ *     CSV/TSV 类导出由调用方显式传 `bom: true`，否则源码文件会因 `\uFEFF` 编不过）；
  *   - ws:get / ws:set：给 snippets/notes/checklists 等扩展模块用的通用集合读写；
  *   - history:get：条目密码历史；
  *   - attachment:pick / open / delete：条目附件（会话密钥加密，落 attachments/<id>.enc）；
@@ -19,7 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { app, ipcMain, dialog, shell } = require('electron');
 const { parseMultipartLine } = require('./multipart');
-const { decodeTextBuffer, encodingLabel } = require('./text-encoding');
+const { decodeTextBuffer, encodingLabel, bomPrefix } = require('./text-encoding');
 
 /** file:read-text 允许的文本扩展名与大小上限（脱敏工具按列处理用；.yaml/.yml 供 1.1 导入 OpenAPI YAML） */
 const TEXT_EXTS = ['.csv', '.tsv', '.txt', '.json', '.log', '.md', '.sql', '.yaml', '.yml'];
@@ -120,15 +121,26 @@ function registerApiIpc(deps) {
     }
   });
 
-  /** 保存文本文件（导出 CSV 等）：带 UTF-8 BOM，Excel 打开不乱码 */
-  ipcMain.handle('file:save-text', async (_event, { content, defaultName, filters } = {}) => {
+  /**
+   * 保存文本文件。
+   *
+   * **默认不加 BOM**——这条通道是通用的（源码 / JSON / Markdown / 配置都会走它），
+   * 而 BOM 是「有偏好」的行为：加进 `.java` 会让 `javac` 直接报 `非法字符: '\ufeff'`，
+   * 用户拿到一个编不过的文件而界面还显示「保存成功」。
+   * 需要 BOM 的场景（给 Excel 打开的 CSV/TSV）由调用方**显式**传 `bom: true`——
+   * 不加 BOM 是中性，加了 BOM 是偏好，偏好必须由用工方声明。
+   *
+   * @param {{ content?: string, defaultName?: string, filters?: any[], bom?: boolean }} payload
+   */
+  ipcMain.handle('file:save-text', async (_event, { content, defaultName, filters, bom } = {}) => {
     try {
       const r = await dialog.showSaveDialog(getMainWindow(), {
         defaultPath: defaultName || 'export.csv',
         filters: filters || [{ name: 'CSV 文件', extensions: ['csv'] }],
       });
       if (r.canceled || !r.filePath) return { success: false, canceled: true };
-      fs.writeFileSync(r.filePath, '\uFEFF' + String(content ?? ''), 'utf8');
+      // 决策在 text-encoding.js 的纯函数里（t44 抽出，单测守着「默认不加 BOM」）
+      fs.writeFileSync(r.filePath, bomPrefix(bom) + String(content ?? ''), 'utf8');
       return { success: true, data: { file: r.filePath } };
     } catch (e) {
       return { success: false, error: e.message };

@@ -411,6 +411,7 @@ export function ZentaoSummary({
       buildText('csv'),
       `缺陷汇总-${localDay()}.csv`,
       [{ name: 'CSV', extensions: ['csv'] }],
+      { bom: true },
     );
     if (r.success) flash('已导出 CSV');
     else if (!r.canceled) flash(r.error || '导出失败');
@@ -470,6 +471,7 @@ export function ZentaoSummary({
       [head.map(esc).join(','), ...rows].join('\r\n'),
       `安全问题-${localDay()}.csv`,
       [{ name: 'CSV', extensions: ['csv'] }],
+      { bom: true },
     );
     if (r.success) flash(`已导出 ${secBugs.length} 条`);
     else if (!r.canceled) flash(r.error || '导出失败');

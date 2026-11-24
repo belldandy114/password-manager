@@ -170,10 +170,10 @@ export async function streamExport(opts: StreamExportOptions): Promise<StreamExp
 
       // 3) 追加这一批
       if (rows.length) {
-        // types.ts 把 rows 声明成 string[]，但主进程的 rowBody 明确支持「数组行」
-        // （多列 CSV / JSON 对象必须传数组，否则整行会被当成一个单元格再转义一遍）。
-        // types.ts 属 W1 冻结、本批不碰，这里就地窄化一次并注明（建议 W4/W5 修正类型）。
-        const appended = await window.electronAPI.tdgWriteAppend(writerId, rows as unknown as string[]);
+        // rows 是 (string | string[])[]：数组行给多列（CSV/JSON），字符串行给单列（TXT）。
+        // 这个形状现在在 types.ts 里就是对的（原先那里只写了 string[]，调用处只能靠一步
+        // unknown 双重强转骗过编译器 —— 那种强转一出现，类型检查就再也帮不上忙了）。
+        const appended = await window.electronAPI.tdgWriteAppend(writerId, rows);
         if (!appended.success) {
           await abort();
           return { ok: false, error: appended.error || '写入失败', rows: done };

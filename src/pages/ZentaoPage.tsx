@@ -715,7 +715,7 @@ export function ZentaoPage() {
   /** 导出当前筛选结果为 CSV（不受分页限制） */
   const exportCsv = async (list: ZentaoBug[], tag: string) => {
     if (list.length === 0) { setCopiedTip('没有可导出的数据'); setTimeout(() => setCopiedTip(''), 1600); return; }
-    const res = await window.electronAPI.saveText(bugsToCsv(list, form.baseUrl), `${tag}-${localDay()}.csv`);
+    const res = await window.electronAPI.saveText(bugsToCsv(list, form.baseUrl), `${tag}-${localDay()}.csv`, undefined, { bom: true });
     if (res.success) {
       setCopiedTip(`已导出 ${list.length} 条`);
       setTimeout(() => setCopiedTip(''), 1800);

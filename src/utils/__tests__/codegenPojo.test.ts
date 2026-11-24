@@ -10,19 +10,26 @@ import { generatePojo, type PojoInput } from '../codegen/pojo';
  * 5 个形态由 [C-105] 定：嵌套数组、类型冲突、全 null、lombok 开关、数字/布尔/日期字符串 + 空对象。
  * 比对口径按 [C-102]：`\r\n` 归一后 **`toBe` 逐字符相等**（不许 `toMatch` 之类的宽松断言）。
  *
- * 输入 JSON 放在同一目录（`<case>.in.json`）：本批 inScope 只开放了 `__golden__/pojo/`，
- * 没有 `__fixtures__/pojo/`（契约 [C-100] 的正式位置）。W4 建 `__fixtures__` 树时把这些 `.in.json`
- * 平移到 `__fixtures__/pojo/` 即可，golden 内容一个字都不用改。
+ * 目录职责按契约 [C-100]：**输入**在 `__fixtures__/pojo/<case>.in.json`、
+ * **期望输出**在 `__golden__/pojo/<case>.java`。（t36 把这 5 个 `.in.json` 从 `__golden__` 平移到
+ * `__fixtures__`，字节零改动，git 记为 rename。）
  *
  * 更新 golden：`UPDATE_GOLDEN=1 npx vitest run src/utils/__tests__/codegenPojo.test.ts`（[C-104]）。
  * 更新后**必须人工逐份复核**，不能默认「生成的就是对的」——golden 写错时测试永远是绿的。
  */
 
 const GOLDEN_DIR = path.join(process.cwd(), 'src', 'utils', '__tests__', '__golden__', 'pojo');
+const FIXTURE_DIR = path.join(process.cwd(), 'src', 'utils', '__tests__', '__fixtures__', 'pojo');
 const UPDATE = process.env.UPDATE_GOLDEN === '1';
 
+/** 读期望输出（.java，留在 __golden__/pojo） */
 function readText(file: string): string {
   return fs.readFileSync(path.join(GOLDEN_DIR, file), 'utf8');
+}
+
+/** 读输入 fixture（<case>.in.json，[C-100] 规定放 __fixtures__/pojo） */
+function readFixture(file: string): string {
+  return fs.readFileSync(path.join(FIXTURE_DIR, file), 'utf8');
 }
 
 /** [C-102]：比对前只做换行归一，别的任何「顺手美化」都不许有 */
@@ -69,7 +76,7 @@ const CASES: Case[] = [
 describe('generatePojo：5 种 JSON 形态的 golden 逐字比对', () => {
   for (const c of CASES) {
     it(`${c.name} → ${c.className}.java 零差异`, () => {
-      const json = readText(`${c.name}.in.json`);
+      const json = readFixture(`${c.name}.in.json`);
       const result = generatePojo({ ...c.input, json });
 
       expect(result.ok).toBe(true);
@@ -87,7 +94,7 @@ describe('generatePojo：5 种 JSON 形态的 golden 逐字比对', () => {
 
 describe('generatePojo：文件规范（[C-102]/[C-85]）', () => {
   it('LF 换行、恰好一个末尾换行、无行尾空格、无时间戳', () => {
-    const result = generatePojo({ rootName: 'ApiResponse', json: readText('json-nested-array.in.json'), lombok: true });
+    const result = generatePojo({ rootName: 'ApiResponse', json: readFixture('json-nested-array.in.json'), lombok: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const content = result.files[0].content;
@@ -102,8 +109,8 @@ describe('generatePojo：文件规范（[C-102]/[C-85]）', () => {
   });
 
   it('lombok:true → 类上 @Data；lombok:false → 生成 getter/setter', () => {
-    const on = generatePojo({ rootName: 'User', json: readText('json-lombok-off.in.json'), lombok: true });
-    const off = generatePojo({ rootName: 'User', json: readText('json-lombok-off.in.json'), lombok: false });
+    const on = generatePojo({ rootName: 'User', json: readFixture('json-lombok-off.in.json'), lombok: true });
+    const off = generatePojo({ rootName: 'User', json: readFixture('json-lombok-off.in.json'), lombok: false });
     expect(on.ok && off.ok).toBe(true);
     if (!on.ok || !off.ok) return;
 
@@ -116,7 +123,7 @@ describe('generatePojo：文件规范（[C-102]/[C-85]）', () => {
   });
 
   it('snake_case 键 → camelCase 字段 + @JsonProperty(原名)（[C-96]）', () => {
-    const r = generatePojo({ rootName: 'User', json: readText('json-lombok-off.in.json'), lombok: true });
+    const r = generatePojo({ rootName: 'User', json: readFixture('json-lombok-off.in.json'), lombok: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.files[0].content).toContain('@JsonProperty("user_id")');
@@ -125,7 +132,7 @@ describe('generatePojo：文件规范（[C-102]/[C-85]）', () => {
   });
 
   it('类名 PascalCase、字段 camelCase、嵌套类名不与外层重名', () => {
-    const r = generatePojo({ rootName: 'api response', json: readText('json-nested-array.in.json'), lombok: true });
+    const r = generatePojo({ rootName: 'api response', json: readFixture('json-nested-array.in.json'), lombok: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const content = r.files[0].content;
@@ -144,7 +151,7 @@ describe('generatePojo：文件规范（[C-102]/[C-85]）', () => {
 
 describe('generatePojo：类型推断与合并的告警（[C-94]/[C-95]）', () => {
   it('同名字段多类型：code（Long/String）合并为 String，amount（Long/BigDecimal）合并为 BigDecimal', () => {
-    const r = generatePojo({ rootName: 'RecordList', json: readText('json-type-conflict.in.json'), lombok: true });
+    const r = generatePojo({ rootName: 'RecordList', json: readFixture('json-type-conflict.in.json'), lombok: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const joined = r.warnings.join('\n');
@@ -156,7 +163,7 @@ describe('generatePojo：类型推断与合并的告警（[C-94]/[C-95]）', () 
   });
 
   it('全 null 字段 → Object，并逐条告警', () => {
-    const r = generatePojo({ rootName: 'UserProfile', json: readText('json-all-null.in.json'), lombok: true });
+    const r = generatePojo({ rootName: 'UserProfile', json: readFixture('json-all-null.in.json'), lombok: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const joined = r.warnings.join('\n');
@@ -168,8 +175,8 @@ describe('generatePojo：类型推断与合并的告警（[C-94]/[C-95]）', () 
   });
 
   it('useBigDecimal:false 时小数用 Double；缺省用 BigDecimal', () => {
-    const dbl = generatePojo({ rootName: 'ScalarMix', json: readText('json-scalar-mix.in.json'), lombok: true, useBigDecimal: false });
-    const dec = generatePojo({ rootName: 'ScalarMix', json: readText('json-scalar-mix.in.json'), lombok: true });
+    const dbl = generatePojo({ rootName: 'ScalarMix', json: readFixture('json-scalar-mix.in.json'), lombok: true, useBigDecimal: false });
+    const dec = generatePojo({ rootName: 'ScalarMix', json: readFixture('json-scalar-mix.in.json'), lombok: true });
     expect(dbl.ok && dec.ok).toBe(true);
     if (!dbl.ok || !dec.ok) return;
     expect(dbl.files[0].content).toContain('private Double ratio;');
@@ -191,7 +198,7 @@ describe('generatePojo：类型推断与合并的告警（[C-94]/[C-95]）', () 
   });
 
   it('日期字符串保持 String（[C-94] 没有 LocalDate）', () => {
-    const r = generatePojo({ rootName: 'User', json: readText('json-lombok-off.in.json'), lombok: true });
+    const r = generatePojo({ rootName: 'User', json: readFixture('json-lombok-off.in.json'), lombok: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.files[0].content).toContain('private String createdAt;');

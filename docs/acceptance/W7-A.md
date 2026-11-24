@@ -1,0 +1,317 @@
+# W7-A 玻璃门禁扩面 + 三项视觉实测（t54）
+
+> 执行：qa（attempt 562e0753-5afd-4d86-8a3b-6c114e2b1ae8）｜时间 2026-11-24｜HEAD `13d1228`（执行期工作树有他人未提交改动，见 §7）
+> 依据：`docs/验收-本地测试资产工作站.md` §5.1（AC-14 玻璃）/§5.2（AC-15 层叠）/§5.3（AC-16 对比度）/§5.4（AC-17 帧时间）
+> **结论先行**：8 个扫描单元全部登记、N = **32**、变异验证**双向都跑通**（红→还原→回基线）；
+> 但门禁**当前是红的**：**12 条真实违规**（`.pnl-meta` 实底）+ **5/12 组对比度不达标**（含深色页签 **1.05:1**）。
+> 这两类都是 `src/styles/` 的缺陷，**不在本任务 inScope**，需 CSS 负责人修后再复跑本页命令即可转绿。
+
+---
+
+## 0. 一句话回答队长的四个问题
+
+| 问题 | 答案 |
+|---|---|
+| N = 几？ | **32**（现有 16 + 新增 16）。日志原文：`扫描 32 个「主题 × 页面/弹窗」组合` |
+| 变异验证前后结论？ | **前（变异生效）= 违规 60 条**，含 8 个新单元的 `.pnl` 实底 + 8 条锚点红；**还原后 = 12 条**（回到变异前基线，不是 0）。另做一次 token 通路变异：12 → **20 条**（8 条锚点红） |
+| 有无页签扫不进去？ | **没有**。8 个页签全部扫到，且每个都有 `min` 自证（详见 §2 表）。4 个“表单态”页签是**空态但有真实面板/表单**，不是空页面（见 §8 限制说明） |
+| 对比度最差值？ | **1.05:1**（深色 `.tab2.is-active`：文字 `rgb(62,71,77)` / 底 `rgb(64,67,69)`）。次差 3.69:1（浅色 `.tbl` 正文） |
+
+---
+
+## 1. 登记了什么（`scripts/ui-glass-opaque-scan.js`）
+
+### 1.1 8 个扫描单元 = 4 页 × 2 页签
+
+页签是**互斥渲染**的（条件渲染），只登记 1 条就只扫到默认页签 —— 另一半页签永远在门禁视野外，属于「登记了等于没登记」。
+
+| # | PAGES label | nav（侧栏） | prep（点页签，限定在 `.pg .tabs`） | `min` 自证 | 锚点（TARGETS） |
+|---|---|---|---|---|---|
+| 1 | 代码生成 · OpenAPI → 骨架 | 代码生成 | `clickText(s,'OpenAPI → 骨架',{root:'.pg .tabs'})` | `devPanel 1 / devTabs 2 / devTextareas 1` | `.pg .pnl` → `--glass-card` |
+| 2 | 代码生成 · 元素库 → POM | 代码生成 | 同上（元素库） | `devPanel 1 / devTabs 2 / devInputs 1` | `.pg .tabs .tab2.is-active` → `--glass-control` |
+| 3 | 代码体检 · 代码体检 | 代码体检 | 同上（代码体检） | `devPanel 1 / devTabs 2 / devRows 1` | `.pg .pnl` → `--glass-card` |
+| 4 | 代码体检 · Git 影响面 | 代码体检 | 同上（Git 影响面） | `devPanel 1 / devTabs 2 / devInputs 1 / devSelects 1` | `.pg .pnl` → `--glass-card` |
+| 5 | 资产台账 · 覆盖矩阵 | 资产台账 | 同上（覆盖矩阵） | `devPanel 1 / devTabs 2 / devInputs 1` | `.pg .pnl` → `--glass-card` |
+| 6 | 资产台账 · 用例映射 | 资产台账 | 同上（用例映射） | `devPanel 1 / devTabs 2 / devRows 1` | `.pg .tbl th` → `--glass-side` |
+| 7 | 结果中心 · Allure | 结果中心 | 同上（Allure） | `devPanel 1 / devTabs 2 / devRows 1` | `.pg .tbl th` → `--glass-side` |
+| 8 | 结果中心 · .jtl 指标 | 结果中心 | 同上（.jtl 指标） | `devPanel 1 / devTabs 2 / devInputs 1` | `.pg .tabs .tab2.is-active` → `--glass-control` |
+
+**为什么 `prep` 要带 `root: '.pg .tabs'`**：`clickText` 只搜 `<button>` 且按文档顺序取第一个命中，而侧栏 `.nav-item` 也是 button 且文案可能同名（「代码体检」页的页签就叫「代码体检」）。不限定就会点到侧栏导航 —— 不报错，但 tab 没切，扫的还是默认页签。
+
+### 1.2 每个单元配三条判据（缺一条登记就退回老毛病）
+
+- **READY_PRED（与当前页签无关）**：`骨架屏消失 + .pg-title === 页面名 + .pg .tabs .tab2 === 2 + [role=tabpanel] === 1`。
+  不能写「目标页签已激活」——切 tab 是下一步 prep 的动作，用结果等前置条件会死锁（1.32.3 / 1.32.5 两次踩过）。
+- **APPLIED_PRED（prep 之后）**：`激活页签文案对 + tabpanel 里 .pnl ≥ 1 且（横幅/输入/多行框/表格/滚动容器/空态块）≥ 1`。
+  只判文案会漏「tab 切了但内容空着」。
+- **`min`（扫描时再卡一次下限）**：见上表。空页面扫出 0 违规 = 没测。
+
+### 1.3 ctx 新增自证计数（都限定在 `[role=tabpanel]` 里）
+
+`devTabs / devActiveTab / devPanel / devScroll / devTables / devRows / devBanners / devTags / devInputs / devSelects / devTextareas / devEmpty / devStats`
+
+为什么要限定在 tabpanel 内：同页里的**历史表**也会被算进来（t51 实测过 `301 = 300 findings + 1 历史行`），不限定自证值就不专属当前页签。
+这 12 项同时并入 `pageSig`（稳定采样签名）：新页上 `cards/rows/pagers/maRows` 恒 0，不并入签名的话「两次采样一致」只剩命中块列表这一半 = 新的假绿通道。
+
+### 1.4 新页造数（`opaque-dev-` 前缀，收尾按前缀删）
+
+5 个页签的数据来自 vault 集合，集合为空时渲染的是空态 —— 空页扫 0 违规没意义。造数最小字段：
+
+| 集合 | 条数 | 让哪个页签真的有行 |
+|---|---|---|
+| `pomPages` | 1 页 / 3 元素（css + text + role） | 代码生成 · 元素库（实测表格 3 行） |
+| `scanRuns` | 1 条（counts 三键 + 3 条 findings） | 代码体检 · 代码体检（历史表 1 行） |
+| `caseMaps` | 2 条（file / method 各一） | 资产台账 · 用例映射（表格 2 行） |
+| `allureRuns` | 1 条（flaky 带分母 runs/pass/fail + clusters 1 组） | 结果中心 · Allure（历史表 1 行） |
+
+日志原文：
+```
+（造数·新页）pomPages 1 条 / scanRuns 1 条 / caseMaps 2 条 / allureRuns 1 条 —— 元素库、体检历史、映射清单、Allure 历史读的就是这几个集合，空集合 = 空页 = 假绿
+```
+收尾原文：`（收尾）清掉造的数据：entries 25 → 0 条（删 25 条）/ notes 27 → 0 条` + `（收尾·新页）pomPages 1 → 0 / scanRuns 1 → 0 / caseMaps 2 → 0 / allureRuns 1 → 0 条`（残留判 0，非 0 会记违规）。
+
+---
+
+## 2. 分母与逐单元结果（两套主题各一遍）
+
+**N 的算法**：现有 6 个 PAGES + 抽屉扫描 + 弹窗扫描 = 8 组/主题；新增 8 个页签单元/主题 → 16 组/主题 × 2 主题 = **32**。
+日志原文：`扫描 32 个「主题 × 页面/弹窗」组合（面积 > 600px² 且背景 alpha >= 0.999 计为不透明块）`。
+判据：`N ≤ 16` 说明新页根本没进扫描 → 直接判失败。
+
+### 2.1 8 个新单元（light / dark 数值完全一致，故合并成一行）
+
+| 单元 | 不透明块 | 白名单 | 违规 | 页面自证（light，dark 同） |
+|---|---|---|---|---|
+| 代码生成 · OpenAPI → 骨架 | 2 | 2 | **0** | 面板 1 · 多行框 1 · 空态块 1 |
+| 代码生成 · 元素库 → POM | 4 | 2 | **2** | 面板 1 · 表格 1 · 行 3 · 输入 11 · 下拉 3 · 滚动 1 |
+| 代码体检 · 代码体检 | 3 | 2 | **1** | 面板 1 · 表格 1 · 行 1 · 横幅 1 · 输入 1 · 空态块 1 · 滚动 1 |
+| 代码体检 · Git 影响面 | 2 | 2 | **0** | 面板 1 · 输入 1 · 下拉 1 · 空态块 1 |
+| 资产台账 · 覆盖矩阵 | 2 | 2 | **0** | 面板 1 · 输入 2 · 空态块 1 |
+| 资产台账 · 用例映射 | 4 | 2 | **2** | 面板 1 · 表格 1 · 行 2 · 标签 9 · 输入 5 · 滚动 1 |
+| 结果中心 · Allure | 3 | 2 | **1** | 面板 1 · 表格 1 · 行 1 · 输入 1 · 空态块 1 · 滚动 1 |
+| 结果中心 · .jtl 指标 | 2 | 2 | **0** | 面板 1 · 输入 1 · 空态块 1 |
+
+原有 6 个单元 + 抽屉 + 弹窗：**0 违规**（与登记前一致，登记没有把老页判据带坏）。
+
+### 2.2 违规明细（12 条，全部 `.pnl-meta`）
+
+```
+✗ 违规 12 条：
+    [light] 代码生成 · 元素库 → POM      111×22(2432px²)  rgb(230, 232, 240)  pnl-meta
+    [light] 代码生成 · 元素库 → POM       47×22(1031px²)  rgb(230, 232, 240)  pnl-meta
+    [light] 代码体检 · 代码体检            41×22(896px²)   rgb(230, 232, 240)  pnl-meta
+    [light] 资产台账 · 用例映射            60×22(1302px²)  rgb(230, 232, 240)  pnl-meta
+    [light] 资产台账 · 用例映射            35×22(761px²)   rgb(230, 232, 240)  pnl-meta
+    [light] 结果中心 · Allure              41×22(896px²)   rgb(230, 232, 240)  pnl-meta
+    [dark]  同上 6 条，色值 rgb(18, 20, 30)
+```
+白名单**一条没加**（任务要求「有 whitelist 条目必须逐条打印为什么不算漏」；本轮新增 0 条，故无新增理由需打印；既有 6 类白名单条目的理由照旧逐条打印在 ✓ 行）。
+
+**这是真实缺陷，不是判据太严**：
+- `.pnl-meta` 的实底来自 `src/styles/pages.css:127-132` 的 `.pnl-meta { background: var(--bg-input) }`（`--bg-input` 是纯色）。
+- t10 在 `redesign.css:8868` 只补了**文字色**（`html[data-bg='image'] :is(.pnl-meta, …) { color: … }`），没补背景。
+- 老页上的 `.pnl-meta` 文案短（面积 < 600px²）因此从来没被面积判据抓到；新页的 meta 文案长（「40 条 · 高 14 / 中 13 / 低 13」「已展示 300 条（达到上限，实际可能更多）」），面积 761–2432px² → 越过阈值。
+- 修法（CSS 负责人）：在 `redesign.css` 的 `html[data-bg='image']` 段补一条 `html[data-bg='image'] .pnl-meta { background-color: var(--glass-inset); }`（或 transparent）。**这不在本任务 inScope（`src/styles/` 属 Out of scope），我没有动样式，也没有放宽判据/加白名单。**
+
+---
+
+## 3. 变异验证（双向，各跑一次）
+
+**注意一个坑（会浪费一次完整跑）**：脚本用 `PM_USE_DIST=1` 读 `dist/`，改 `src/styles/*.css` **必须重新 `npm run build:renderer`** 才生效。第一次我发现「扫描组合数没变」时就是漏了这一步，不是变异无效。
+
+### 3.1 M1：注释掉一条新页用到的玻璃规则 → 必须红
+
+改的是 `redesign.css:7863-7866` 的 `.pnl` 玻璃底（新页 4 个单元与老页都用它；新页刻意复用既有 token，见方案 ADR-7，所以「新页专属规则」并不存在）：
+
+```css
+html[data-bg='image'] .pnl {
+  /* W7-A（t54）变异验证（临时）：本条被注释掉 … 跑完必须还原 */
+  /* background: var(--glass-card); */
+  backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
+}
+```
+
+`npm run build:renderer` 后跑扫描，原文：
+
+```
+扫描 32 个「主题 × 页面/弹窗」组合（面积 > 600px² 且背景 alpha >= 0.999 计为不透明块）
+✗ 违规 60 条：
+    [light] SQL 片段  854×167(142605px²)  rgb(255, 255, 255)  pnl
+    [light] 代码生成 · OpenAPI → 骨架  1086×355(385632px²)  rgb(255, 255, 255)  pnl
+    [light] 代码生成 · 元素库 → POM  822×542(445768px²)  rgb(255, 255, 255)  pnl
+    [light] 代码体检 · 代码体检  1086×531(576887px²)  rgb(255, 255, 255)  pnl
+    [light] 代码体检 · Git 影响面  1086×355(385632px²)  rgb(255, 255, 255)  pnl
+    [light] 资产台账 · 覆盖矩阵  1086×355(385632px²)  rgb(255, 255, 255)  pnl
+    [light] 资产台账 · 用例映射  1086×296(321880px²)  rgb(255, 255, 255)  pnl
+    [light] 结果中心 · Allure  1086×355(385632px²)  rgb(255, 255, 255)  pnl
+    [light] 结果中心 · .jtl 指标  1086×355(385632px²)  rgb(255, 255, 255)  pnl
+    …（dark 同 30 条，色值 rgb(23, 27, 30)）
+    [light] 代码生成 · OpenAPI → 骨架  1086×291(315619px²)  rgb(255, 255, 255)  新页面板 .pnl（代码生成·OpenAPI）
+    …（8 条锚点红 = 4 个 .pnl 锚点单元 × 2 主题）
+```
+同时锚点段原文：
+```
+  ✗ light  新页面板 .pnl（代码生成·OpenAPI）   rgb(255, 255, 255)  alpha=1 —— 仍然全不透明
+  ✗ dark   新页面板 .pnl（代码生成·OpenAPI）   rgb(23, 27, 30)     alpha=1 —— 仍然全不透明
+```
+
+**判读**：12 → **60** 条，且违规清单里**逐个出现 8 个新单元的 `.pnl`**。如果新单元只是「登记了但没被扫」，这里只会多出老页的块 —— 现在 8 个新页全中，说明登记真的生效。
+
+### 3.2 还原：逐字节一致 + 回到基线
+
+```
+after-revert=CBF293EAB7F25B36C3FCF864A9D6A4F394E124FDCB15551E7EBE0DE9272EF2DE
+baseline  =CBF293EAB7F25B36C3FCF864A9D6A4F394E124FDCB15551E7EBE0DE9272EF2DE
+还原校验：逐字节一致 ✓
+```
+还原 + `npm run build:renderer` 后重跑：`✗ 违规 12 条`（= 变异前基线，12 条全部 `.pnl-meta`），`exit=1`。
+**「改回来必须变绿」这一步没有达成** —— 原因不是变异无效，而是这 12 条 `.pnl-meta` 缺陷（§2.2）。等 CSS 修完，同一条命令应当 `✓ 0 违规` + `exit=0`。
+
+### 3.3 M2/M3：token 通路变异（运行时注入，零改仓库字节）
+
+为什么要单独做这一次：`.pager` 那类基础底色天生 `alpha<1`，**只验 alpha 的判据拦不住「玻璃规则没命中」**。注入一个「半透明但不是那个 token」的底色，面积判据应当放过它，只有 token 溯源能抓到：
+
+```
+PM_SCAN_INJECT_CSS="html[data-bg='image'] .pnl{background:rgba(255,255,255,0.42) !important;backdrop-filter:none !important}" node scripts/ui-glass-opaque-scan.js
+```
+原文：
+```
+（变异）已注入临时实底 CSS：…background:rgba(255, 255, 255, 0.42) !important…
+  ✗ light  新页面板 .pnl（代码生成·OpenAPI）   rgba(255, 255, 255, 0.42)  alpha=0.42 —— 是半透明，但不是 var(--glass-card)（该 token 的 computed 值 color(srgb 1 1 1 / 0.4)）
+  ✗ dark   新页面板 .pnl（代码生成·OpenAPI）   rgba(255, 255, 255, 0.42)  alpha=0.42 —— 是半透明，但不是 var(--glass-card)（该 token 的 computed 值 color(srgb 0.0901961 0.105882 0.117647 / 0.52)）
+  …（共 8 条，4 个 `.pnl` 锚点单元 × 2 主题）
+✗ 违规 20 条（= 12 条 .pnl-meta + 8 条锚点）
+```
+**判读**：面积判据对 alpha 0.42 静默放过（这是它的设计），token 锚点把它抓了出来 —— 说明 8 条新锚点确实在跑，且能区分「半透明」与「半透明且来自正确 token」。
+
+### 3.4 队长举例的 `.busy-progress` 不适合当变异目标（记录一下）
+
+`.busy-progress` 只在 `busy` 状态渲染（`JtlTab.tsx:65` 的 `{busy && <BusyProgress …/>}`），而扫描是**静态浏览**、不触发任何解析动作 → 该元素根本不在 DOM 里，注释它的规则不会改变任何扫描结果。
+所以本轮变异目标选 `.pnl`（8 个新单元里 4 个的锚点、且是面积最大的块）。
+
+---
+
+## 4. 三项视觉实测
+
+### 4.1 层叠门（AC-15）：绿
+
+```
+> node scripts/check-stacking.js --self-test
+自测 10 项，失败 0 项
+✓ 门禁自测通过（能抓到容器自带上下文 + z-index，不误报纯浮层与纯容器）
+
+> node scripts/check-stacking.js
+扫描 4 份样式表 / 3449 条规则，其中容器类规则 445 条
+「容器 + 层叠上下文属性 + z-index」违规 0 条
+✓ 没有「容器自带层叠上下文 + z-index」的写法
+[exit=0]
+```
+（规则总数 3422 → 3449 是因为本轮期间 `redesign.css` 落了 t10 的 1.33.0 段，不是本任务改的。）
+
+### 4.2 对比度（AC-16）：6 组 × 2 主题 = 12 个实测值，5 个不达标
+
+方法：背景钉成两端（`.app-bg-img` 隐藏 + `.app-bg` 纯色 `#000` / `#fff`，`.app-bg-dim` 保留真实值），
+从文字色沿祖先链合成底色（含 `opacity`），按 WCAG 2.1 相对亮度算比值；每单元取两端**较差的**那个。
+测量脚本：一次性探针 `.tmp-w7a-visual.js`（`.tmp-*.js` 已 gitignore，跑完删除），口径与本页 §5 一致。
+
+| # | 取样容器 | light | dark | 阈值 | 判定 |
+|---|---|---|---|---|---|
+| 1 | 代码生成 · OpenAPI 面板 `.pnl` | 9.97:1（`#000`） | 10.68:1（`#fff`） | 4.5 | ✓ |
+| 2 | 代码生成 · 元素库 表 `.tbl` | **3.69:1**（`#000`） | 5.45:1 | 4.5 | ✗ light |
+| 3 | 代码体检 · 体检历史表 `.tbl` | **3.69:1** | 5.45:1 | 4.5 | ✗ light |
+| 4 | 代码体检 · Git 影响面 面板 `.pnl` | 9.97:1 | 10.68:1 | 4.5 | ✓ |
+| 5 | 资产台账 · 用例映射 表 `.tbl` | **3.69:1** | 5.45:1 | 4.5 | ✗ light |
+| 6 | 结果中心 · 页签 `.tab2.is-active` | **4.35:1** | **1.05:1** | 4.5 | ✗ 两套都不达标 |
+
+明细（探针原始输出）：
+```
+[对比度] light 代码生成 · 元素库 表 .tbl   最差 3.69:1（基色 #000）/ 文字 rgb(86, 95, 100) / 底 rgb(195, 195, 195) / 正文(4.5:1) ✗
+[对比度] light 结果中心 · 页签 .tab2.is-active  最差 4.35:1（基色 #000）/ 文字 rgb(62, 71, 77) / 底 rgb(175, 176, 176) ✗
+[对比度] dark  结果中心 · 页签 .tab2.is-active  最差 1.05:1（基色 #fff）/ 文字 rgb(62, 71, 77) / 底 rgb(64, 67, 69) ✗
+```
+
+**深色页签 1.05:1 单独复核过**（`.tmp-w7a-tabcolor.js`，一次性探针）：不是量错元素，也不是动画中间态 ——
+- `.pg .tabs .tab2.is-active` 的 `color` 在 light 与 dark 下**都是** `rgb(62, 71, 77)`（文字色没随主题翻转）；
+- 同一 `.tabs` 里的**非激活**页签是翻转的：light `rgb(101,110,118)` → dark `rgb(139,149,156)`；
+- 深色下它的玻璃底是 `color(srgb 0.0901961 0.105882 0.117647 / 0.64)`，合成后 `rgb(64,67,69)` → 1.05:1。
+- **老页面（网址管理）一模一样**：`[dark] 网址管理 active all = rgb(62,71,77)`。
+
+→ 这是**共享样式 `.tab2.is-active` 缺深色文字色**的既存缺陷（WCAG 1.4.3 级），**不是 4 个新页引入的**；登记新单元只是让它第一次被门禁量到。
+需要 CSS 负责人在 `html[data-theme='dark']` 下给 `.tab2.is-active` 补文字色（与 `.tab2` 非激活态同档 `--text-2`/`--text-1`），或把激活态改为「文字 `--text-1` + 底部条/背景强调」而不是染深色文字。
+
+### 4.3 帧时间（AC-17）：3 个页面全部 60fps，无退化
+
+方法：目标页前台可见 → 连续 rAF 采样 330 帧（丢前 30 帧预热）→ 采样过程中滚动一次 `.dev-scroll`（240px）→ 取帧间隔 p50/p95/max/长帧数。
+
+| 页面 | 帧数 | p50 | p95 | max | 均值 | fps | >50ms 长帧 | 判定（p50≤16.7 / p95≤20 / 长帧 0） |
+|---|---|---|---|---|---|---|---|---|
+| 代码体检 · 代码体检 | 299 | 16.7ms | 16.8ms | 16.8ms | 16.67ms | 60.0 | 0 | ✓ |
+| 资产台账 · 用例映射 | 299 | 16.7ms | 16.8ms | 16.9ms | 16.67ms | 60.0 | 0 | ✓ |
+| 结果中心 · Allure | 299 | 16.7ms | 16.8ms | 16.8ms | 16.67ms | 60.0 | 0 | ✓ |
+
+基线对照：仓库口径「60fps / 17ms」（`AGENTS.md` 性能约束、方案 §12.2-5）。三页实测均值 16.67ms = 满帧，玻璃常驻（`data-bg=image` + 默认压暗 0.42）下**未见退化**。
+注：rAF 被 vsync 钉在 60Hz，本判据能证明的是「没有掉帧/没有长任务阻塞」，不能测出 GPU 余量（要继续挖得用 `Tracing` 帧耗时，属后续）。
+
+---
+
+## 5. 怎么复跑（W7 之后任何人都能跑）
+
+```bash
+# 1) 必须先构建渲染层：脚本默认 PM_USE_DIST=1，读的是 dist/，不是 src/
+npm run build:renderer
+
+# 2) 玻璃不透明扫描（深浅两套主题在同一次运行里各扫一遍）
+node scripts/ui-glass-opaque-scan.js
+#   通过 = 末尾 "✓ 0 违规" 且 exit 0；末尾会打印 "扫描 32 个「主题 × 页面/弹窗」组合"
+#   N ≤ 16 说明新页没进扫描（登记被回退），必须当失败看
+
+# 3) 变异验证（证明新单元真的在被扫；每次改动扫描组合后都应做一次）
+#    M1：注释一条新页依赖的玻璃规则 → npm run build:renderer → 跑扫描 → 必须 exit 1 且违规里出现新页 label
+#        跑完必须还原并复验 SHA256 一致（本轮做法见 §3.2）
+#    M2/M3：零改仓库、走运行时注入（不需要 build）：
+PM_SCAN_INJECT_CSS="html[data-bg='image'] .pnl{background:rgba(255,255,255,0.42) !important}" node scripts/ui-glass-opaque-scan.js
+
+# 4) 层叠门
+node scripts/check-stacking.js --self-test && node scripts/check-stacking.js
+
+# 5) 对比度 + 帧时间（本轮用一次性探针；要长期化请另立 scripts/ 任务）
+node .tmp-w7a-visual.js      # 保留在工作区（`.tmp-*.js` 已 gitignore），可直接复跑
+node .tmp-w7a-tabcolor.js    # 复核 `.tab2.is-active` 文字色是否随主题翻转
+```
+
+**不需要 dev server**：应用走 `PM_USE_DIST=1` 直接加载 `dist/`（`scripts/lib/app.js` 的 `launch()` 默认值）。跑打包版用 `USE_PACKED=1`（需先 `npm run pack`）。
+**环境要求**：能起 Electron 窗口（有桌面/GPU）。无 GPU 的容器里 rAF 会被节流到 1Hz，帧时间会「看起来崩了」——那是环境问题，记 `未验证`，不要当回归。
+
+---
+
+## 6. 门禁结论（G-07 / G-08）
+
+| 门 | 结果 | 说明 |
+|---|---|---|
+| G-07 `ui-glass-opaque-scan` | **红（exit 1）** | 32 组合全扫到、变异双向可证；红灯来自 **12 条 `.pnl-meta` 实底**（§2.2）。修法在 CSS 侧，修完复跑即绿 |
+| G-08 `check-stacking` | **绿（exit 0）** | 自测 10/10、违规 0 |
+| AC-16 对比度 | **不达标 5/12** | 最差 1.05:1（深色页签，既存缺陷）；浅色表格正文 3.69:1 |
+| AC-17 帧时间 | **通过** | 3 页 60fps / p95 16.8ms / 长帧 0 |
+
+**两条需要在 W7 收口前解决的缺陷（都不在本任务 inScope）**：
+1. `.pnl-meta` 实底 → `pages.css:127-132` + `redesign.css` 缺 `html[data-bg='image'] .pnl-meta` 背景规则 → 12 条扫描违规。
+2. `.tab2.is-active` 深色文字色未翻转 → **1.05:1**（WCAG 1.4.3）→ 老页与新页同病。
+
+---
+
+## 7. 本轮产物与边界
+
+- 改动的只有 `scripts/ui-glass-opaque-scan.js`（inScope 内）与本文件。
+- **`src/styles/redesign.css` 在变异验证期间被临时改过，已还原并逐字节校验**（§3.2，SHA256 `CBF293…EF2DE`，`git diff --stat` 该文件为空）。
+- 对比度/帧时间/页签复核用的是两个一次性探针：`.tmp-w7a-visual.js`、`.tmp-w7a-tabcolor.js`（均 `.tmp-*.js`，已在 `.gitignore`、**不入库**），**留在工作区可直接复跑**；口径与数值都在本页留存。
+- 执行期工作树有他人未提交改动（`electron/`、`src/pages/` 等 20 余个文件），本任务未触碰；`HEAD=13d1228`。
+
+---
+
+## 8. 已知限制（不是放宽判据，是写清覆盖面）
+
+1. **4 个页签是「表单态」而非「数据态」**：代码生成·OpenAPI（粘贴区/空态）、代码体检·Git 影响面（需选仓库）、资产台账·覆盖矩阵（需选目录跑一次）、结果中心·.jtl（需选 .jtl 文件）。
+   它们扫的是**面板 + 表单 + 空态块**，`min` 卡的也是这些（`devInputs/devSelects/devTextareas/devEmpty`）。真正的数据表（findings 明细 300 行、覆盖矩阵 5000 行、.jtl 指标卡）**没有进本轮扫描**——那需要点系统对话框或跑真实解析，属 W7-B/后续专项。
+2. **代码体检的 findings 明细表不在视野**：`scan:run` 需要选目录（系统对话框），脚本里没法自动化；本轮只有历史表 1 行 + 空态。要让明细表进扫描，得给 `scanRun` 加一条可传入 root 的测试通道或先落一条带 findings 的历史记录并让页面支持「回看历史」。
+3. **对比度只抽 6 个容器**：按验收文档 AC-16 的 112 点全量口径，本轮只覆盖 12 个点（6 容器 × 2 主题 × 2 基色取最差）。全量要落到正式脚本 + 每页 P1–P7 七类取样点。
+4. **`.dev-tag` / `.dev-banner` 是刻意透明**（`redesign.css:8809`、`:8899` 都写了对比度理由），所以新页上它们不会出现在「不透明块」里 —— 不是漏扫。

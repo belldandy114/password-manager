@@ -183,7 +183,7 @@ export function RedactTool() {
     const ext = table.delimiter === '\t' ? 'tsv' : 'csv';
     const r = await window.electronAPI.saveText(tableOut.text, `${base}-脱敏.${ext}`, [
       { name: ext === 'tsv' ? 'TSV 文件' : 'CSV 文件', extensions: [ext] },
-    ]);
+    ], { bom: true });
     if (r.success) flash('已导出');
     else if (!r.canceled) flash(r.error || '导出失败');
   };

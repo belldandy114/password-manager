@@ -944,6 +944,68 @@ export interface HotkeyInfo {
   quicknoteIsDefault: boolean;
 }
 
+/**
+ * Allure 解析结果（契约 §2.4 / `[C-45]` 的固定命名）。
+ * `truncatedReason` 只有这 5 个取值；多类同时触顶只报一个，优先级
+ * `timeout > files > file-size > cases > flaky`。
+ */
+export type AllureTruncatedReason = 'timeout' | 'files' | 'file-size' | 'cases' | 'flaky';
+
+/**
+ * 失败聚类的一簇（契约 `[C-39]` v12）。
+ * **`key` 表达模式**（已抹掉所有数字，保留 URL 主机端口/扩展名/HTTP 状态码）；
+ * **诊断信息在 `sample` / `samples`**（都是未归一原文）。
+ */
+export interface AllureCluster {
+  key: string;
+  count: number;
+  /** 1 条代表：该簇里出现次数最多的原文（≤500） */
+  sample: string;
+  /** 最多 3 条不同原文（每 ≤500），用于确认「同一类不同值」或发现 key 抹过头 */
+  samples: string[];
+}
+
+/** flaky 用例：`fail/runs` 是给用户看的分母 */
+export interface AllureFlaky {
+  name: string;
+  fullName: string;
+  runs: number;
+  pass: number;
+  fail: number;
+}
+
+export interface AllureCase {
+  name: string;
+  fullName: string;
+  status: 'passed' | 'failed' | 'broken' | 'skipped';
+  durationMs: number;
+  retries: number;
+  runs: number;
+  pass: number;
+  fail: number;
+  flaky: boolean;
+  message?: string;
+}
+
+export interface AllureParseResult {
+  root: string;
+  total: number;
+  passed: number;
+  failed: number;
+  broken: number;
+  skipped: number;
+  retries: number;
+  /** 没参与统计的**文件数**（含坏 JSON）；与 `skipped`（用例状态数）是两个概念 */
+  skippedFiles: number;
+  cases: AllureCase[];
+  environment: Record<string, string>;
+  clusters: AllureCluster[];
+  flaky: AllureFlaky[];
+  truncated: boolean;
+  truncatedReason?: AllureTruncatedReason;
+  ms: number;
+}
+
 export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
@@ -1437,8 +1499,8 @@ export interface ElectronAPI {
   onUpdateAvailable: (cb: (payload: { current: string; latest: string; url: string; downloadUrl: string; notes?: string; assetName?: string; digest?: string }) => void) => () => void;
   onJmeterOutput: (cb: (payload: JmeterLogLine) => void) => () => void;
   onJmeterDone: (cb: (payload: JmeterDone) => void) => () => void;
-  /** 保存文本到文件（导出 CSV 等），自动加 BOM */
-  saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[]) =>
+  /** 保存文本到文件。**默认不写 BOM**；给 Excel 打开的 CSV/TSV 导出请传 `{ bom: true }` */
+  saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[], opts?: { bom?: boolean }) =>
     Promise<{ success: boolean; data?: { file: string }; error?: string; canceled?: boolean }>;
   /** 手动选择已下载的安装包（网络下不动时的兜底） */
   updatePickFile: () => Promise<{ success: boolean; data?: { file: string; size: number }; error?: string; canceled?: boolean }>;
@@ -1490,11 +1552,18 @@ export interface ElectronAPI {
     => Promise<{ success: boolean; data?: unknown; error?: string }>;
 
   allurePickDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
-  allureParse: (payload: { dir: string; maxFiles?: number }) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+  allureParse: (payload: { dir: string; maxFiles?: number }) => Promise<{ success: boolean; data?: AllureParseResult; error?: string }>;
 
   tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
     => Promise<{ success: boolean; data?: unknown; error?: string; canceled?: boolean }>;
-  tdgWriteAppend: (writerId: string, rows: string[])
+  /**
+   * 追加一批行。`rows` 的元素有两种形态，与主进程 `electron/tdg-write.js` 的 `rowBody` 对齐：
+   * - **数组行 = 多列/多字段**：`['1', '姓名', '张三']` → 主进程按格式展开（CSV 逐格按 RFC4180 转义后逗号拼接、
+   *   JSON 按 `columns` 组装成对象、TXT 制表符拼接）。多列 CSV 与 JSON 对象**必须**走这种，
+   *   否则整行会被当成一个单元格再转义一遍（引号、逗号全被包进同一个字段）。
+   * - **标量行 = 单列**：`'hello'` → 该行只有一个字段（TXT 的一行、CSV 的单格）。
+   */
+  tdgWriteAppend: (writerId: string, rows: (string | string[])[])
     => Promise<{ success: boolean; data?: unknown; error?: string }>;
   tdgWriteFinish: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
   tdgWriteAbort: (writerId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;

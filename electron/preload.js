@@ -315,7 +315,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: (url, useMirror, opts) => ipcRenderer.invoke('update:download', { url, useMirror, ...(opts || {}) }),
   updatePickFile: () => ipcRenderer.invoke('update:pick-file'),
-  saveText: (content, defaultName, filters) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters }),
+  // 第 4 参 opts.bom 必须**显式 true** 才带 BOM；不传就不带（默认中性，见 ipc-api.js file:save-text）
+  saveText: (content, defaultName, filters, opts) => ipcRenderer.invoke('file:save-text', { content, defaultName, filters, bom: !!(opts && opts.bom === true) }),
   pickFile: (title, filters) => ipcRenderer.invoke('file:pick', { title, filters }),
   readTextFile: (file, maxBytes) => ipcRenderer.invoke('file:read-text', { file, maxBytes }),
   updateInstall: (file) => ipcRenderer.invoke('update:install', { file }),

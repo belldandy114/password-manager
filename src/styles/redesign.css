@@ -8941,3 +8941,59 @@ html[data-bg='image'] .pg-sub {
   min-height: 0;
 }
 .dev-scroll > .tbl { width: 100%; }
+
+/* ================================================================
+   1.33.1（2026-11-24，t56 / W7-A 修复）三处缺口：pnl-meta 玻璃登记 /
+   激活页签文字色随主题翻转 / 浅色玻璃下 .tbl 正文档位
+   ----------------------------------------------------------------
+   依据：docs/acceptance/W7-A.md §2.2（扫描 12 条 .pnl-meta 实底违规）、
+   §4.2（12 组对比度里 5 组不达标：浅色 .tbl 三处 3.69:1、激活页签浅 4.35 / 深 1.05）。
+   为什么加在末尾：AGENTS.md —— 新增/修复样式一律写在最后加载的 redesign.css 末尾并注明原因。
+
+   三条都是**共享样式**的既存缺陷，不是 4 个新页引入的（老页面「网址管理」同样命中，
+   W7-A §4.2 有对照数据）；修完对老页面是有意改善，取证见交付说明。
+
+   1) .pnl-meta：pages.css:127 是 `background: var(--bg-input)` 的**纯色胶囊**。背景图模式下
+      它就是一块实底（浅/深两套都是 --bg-input 的纯色，面积 761–2432px²）→ 扫描判违规 12 条。
+      老页面一直没被抓到，只是因为它们的 meta 文案短（面积 < 600px²），不是没问题。
+      档位选 --glass-inset：token 语义就是「内嵌小块（统计卡 / KPI / chip）」，胶囊正属此类；
+      压在 --glass-side 的表头条上仍能看出边界。
+      ⚠️ 只换背景色：1px 边框 / 20px 圆角 / 内边距一个字没动。
+
+   2) .tab2.is-active：文字色一直是 `var(--accent)`（pages.css:1703）。开着「自动取色」时
+      --accent = --bg-accent（从背景图采样，见本文件 7877）→ 文字色既不稳定、也不随主题翻转：
+      实测 light 与 dark 拿到的**同一个**取色值，压在深色玻璃合成底上只有 **1.05:1**。
+      改为「文字 --text-1 + 保留 3px 底部条」：文字随主题翻转（WCAG 1.4.3），
+      强调交给底部条（::after 仍是 var(--accent)，图形 3:1 门限）。
+      ⚠️ 只改 .is-active：非激活态 .tab2 的 --text-3 一个字没动 ——
+      复跑取证：两套主题下非激活页签的 computed color 与改前**逐字相同**。
+      ⚠️ 这不是 t4 记的 K1（K1 是「激活页签**加深底** --glass-active」）：本段没加任何背景，
+      K1 仍然没做。
+
+   3) 浅色 + 背景图下 .tbl 的正文：td / th / .cell-mono 都是 --text-2，压在
+      「--glass-canvas 10% + --glass-card 40%」两层层叠后的合成底上只有 **3.69:1**；
+      提到 --text-1 后 **9.97:1**。
+      深色不动（同组实测 5.45:1 已达标）；非背景图模式不动（实底上 --text-2 是 6.4:1 档）。
+
+   约束（三条静态债预算都在顶格，本段一条都不新增）：
+   不新增 token、不写色值字面量、不加优先级声明；也没有 backdrop-filter / filter /
+   transform / contain / z-index（scripts/check-stacking.js 在盯）。
+   ================================================================ */
+
+/* 1) 面板标题行的 meta 胶囊：实底 → 内嵌小块玻璃档位 */
+/* 原因：纯色胶囊（--bg-input）在背景图模式下会把图挡成一块白板；改用 glass token 后随主题透出底色 */
+html[data-bg='image'] .pnl-meta {
+  background-color: var(--glass-inset);
+}
+
+/* 2) 激活页签：文字改正文色（随主题翻转），强调留给底部条 */
+.tabs .tab2.is-active {
+  color: var(--text-1);
+}
+
+/* 3) 浅色 + 背景图：表格正文/表头/等宽说明提到正文色 */
+html[data-bg='image'][data-theme='light'] .tbl td,
+html[data-bg='image'][data-theme='light'] .tbl th,
+html[data-bg='image'][data-theme='light'] .tbl .cell-mono {
+  color: var(--text-1);
+}

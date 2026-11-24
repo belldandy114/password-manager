@@ -76,4 +76,21 @@ function encodingLabel(encoding) {
   return 'UTF-8';
 }
 
-module.exports = { decodeTextBuffer, encodingLabel };
+/**
+ * `file:save-text` 这类「把文本写进用户文件」通道的 **BOM 前缀决策**。
+ *
+ * 抽成纯函数的原因：那个 handler `require('electron')`，vitest 起不来 —— 决策留在 handler 里，
+ * 「默认不加 BOM」就永远没有自动化回归，下次有人改通道重新引入 BOM 也不会有测试变红
+ * （这个缺陷已经咬过两次：`.java` 被 javac 拒绝、`.md`/`.txt` 长期被连带污染）。
+ *
+ * **只有严格 `=== true` 才给 BOM**，用真值判断是错的：IPC 传过来的值可能是字符串 `'true'`/`'false'`、
+ * 数字 `0`/`1`、`null`。`Boolean('false')` 是 `true` —— 那样「调用方明确说不要 BOM」反而会带上 BOM。
+ *
+ * @param {unknown} bom 调用方显式声明的偏好（只有 `true` 才算声明）
+ * @returns {string} 要 BOM 就给 U+FEFF，否则空串
+ */
+function bomPrefix(bom) {
+  return bom === true ? '\uFEFF' : '';
+}
+
+module.exports = { decodeTextBuffer, encodingLabel, bomPrefix };
