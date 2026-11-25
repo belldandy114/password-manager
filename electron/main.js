@@ -228,6 +228,28 @@ function clearCaches() {
   trashCache = { password: null, data: null };
   clearApiJar();
   closeWsConnections();
+  // 锁定即停录（契约 [C-114a]）：锁定后真 Chrome 与其 CDP 通道、被测系统登录态还活着 =
+  // 无人值守下继续持有一个带登录态的浏览器。clearCaches 是 session:lock / 改密 / 重置 / 解锁前
+  // 共用的清缓存入口，放这里才能四条触发源一处不漏（另三处见 recordLockStop 的调用点）。
+  recordLockStop('session-lock');
+}
+
+// ----------------------------------------------------------------
+// UI 录制器：会话管理器（业务在 electron/record-session.js）
+// ----------------------------------------------------------------
+/** @type {null|ReturnType<typeof createRecordSession>} 会话管理器；setupIpcHandlers 里创建 */
+let recordSession = null;
+
+/**
+ * 停录（契约 `[C-114a]` 的**主进程内部动作名**，不是 preload 通道、不计四通道四元组）。
+ * 四个触发源：`session:lock`（经 clearCaches）、自动锁超时（渲染层 sessionLock → 同上）、
+ * 主窗口关闭、防截屏生效。失败不抛：锁屏流程不能因为停录失败而卡住。
+ * @param {string} reason 只进审计与排障，不对外
+ */
+function recordLockStop(reason) {
+  try {
+    if (recordSession) recordSession.lockStop(reason);
+  } catch { /* 停录失败不影响锁定/退出 */ }
 }
 
 // ----------------------------------------------------------------
@@ -1569,10 +1591,18 @@ function createWindow() {
 
   // Persist size/position (debounced) and remember it on the way out.
   ['resize', 'move', 'maximize', 'unmaximize'].forEach(ev => mainWindow.on(ev, scheduleSaveWindowState));
-  mainWindow.on('close', () => saveWindowState());
+  mainWindow.on('close', () => {
+    saveWindowState();
+    // 主窗口关闭（含「关闭到托盘」：窗口已不可见，录制属于无人看管）→ 同步停录（契约 [C-114a]）
+    recordLockStop('window-close');
+  });
 
   // Privacy: keep the vault out of screen captures/recordings when enabled.
-  if ((loadSettings() || {}).contentProtection) mainWindow.setContentProtection(true);
+  if ((loadSettings() || {}).contentProtection) {
+    mainWindow.setContentProtection(true);
+    // 防截屏生效 = 第 4 条停录触发源（启动时通常没有活会话，是幂等空操作）
+    recordLockStop('device-lock');
+  }
 
   mainWindow.once('ready-to-show', () => {
     // 开机自启（--hidden）：不弹窗，直接驻留托盘；点托盘图标再显示
@@ -1661,6 +1691,10 @@ const { registerBgIpc } = require('./ipc-bg');
 const { registerUpdateIpc } = require('./ipc-update');
 const { registerApiIpc, clearApiJar } = require('./ipc-api');
 const { registerWsIpc, closeAll: closeWsConnections } = require('./ipc-ws');
+// UI 录制器（v1.35.0 / 契约 §9）：会话管理器 + 5 invoke + 1 推送。
+// 业务全在 record-session.js，这里只做「创建 + 注册 + 四个停录触发源接线」。
+const { createRecordSession } = require('./record-session');
+const { registerRecordIpc, recordEventSender } = require('./ipc-record');
 
 // ----------------------------------------------------------------
 // Vault shape (1.2.0 expanded from { entries, tags })
@@ -2273,6 +2307,26 @@ function setupIpcHandlers() {
   registerGitIpc();
   registerAllureIpc({ getMainWindow: () => mainWindow });
   registerTdgIpc({ getMainWindow: () => mainWindow });
+
+  // ---- UI 录制器（契约 [C-114]：5 条 invoke + 1 条推送）----
+  // 会话管理器是唯一持有「真 Chrome 子进程 + CDP 连接 + 临时 profile」的地方，
+  // 四个停录触发源（session:lock / 自动锁 / 关窗 / 防截屏）都经 recordLockStop 收口。
+  recordSession = createRecordSession({
+    getDataDir: () => DATA_DIR,
+    getPassword: () => currentPassword,
+    getMainWindow: () => mainWindow,
+    appendAudit,
+    // 推送桥：只透传约定键（sessionId / seq / action / target / candidates / ms / valueMeta）
+    onEvents: recordEventSender(() => mainWindow),
+  });
+  registerRecordIpc({ recordSession, getPassword: () => currentPassword });
+  // 启动扫残留：只处理命令行前缀匹配本应用 record-profiles 根的进程，先校验再杀；
+  // 读不到进程表不重试、写审计后继续（契约 [C-117] 第 3 条）
+  setTimeout(() => {
+    try { recordSession.scanOrphans(); } catch { /* 扫残留失败不影响启动 */ }
+  }, 1500);
+  // 退出兜底：窗口已销毁时 'close' 不会再触发，这里再停一次（幂等）
+  app.on('before-quit', () => recordLockStop('app-quit'));
 
 }
 

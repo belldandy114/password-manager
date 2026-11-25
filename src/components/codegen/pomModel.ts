@@ -16,6 +16,16 @@ import type { PomLocatorKind } from '../../utils/codegen/pageobject';
    ================================================================ */
 
 export interface PomElementRow {
+  /**
+   * 元素 id（契约 §9 [C-110]，v18 / 裁定 J-13）：**类型可选、写入必填**。
+   *
+   * - 读端：v1.34.0 及以前落库的元素没有这个字段，历史页与生成器**必须容错**（缺 id 按「未关联」处理）；
+   * - 写端：新建走 `blankElement()`（`newId`），迁移回填走 `MIGRATIONS[4]`（确定性派生），
+   *   保存走 `cleanPageForWrite()`（白名单透传，缺则补）—— **三条路径都必须产出非空 id**。
+   *
+   * 它是 `UiStep.elementId` 的唯一锚点：一旦在保存时被洗掉，录制步骤与元素库就断链。
+   */
+  id?: string;
   name: string;
   locator: string;
   kind: PomLocatorKind;
@@ -89,6 +99,46 @@ export function blankPage(): PomPage {
     className: '',
     elements: [],
     note: '',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 新建一个空白元素（[C-110] 写端必填：**id 在新建那一刻就定下来**，不等保存）。
+ *
+ * 为什么不在保存时才生成：用户可能先填一半就切页签（草稿留在 state 里），
+ * 保存时再生成会让「同一次编辑」在不同保存轮次拿到不同 id，引用它的录制步骤就漂了。
+ */
+export function blankElement(): PomElementRow {
+  return { id: newId('el-'), name: '', locator: '', kind: 'css', role: '' };
+}
+
+/**
+ * 保存前把页面草稿归一成「真正要写进 vault 的形状」（契约 §9 [C-110] ②，**本轮唯一的数据丢失路径**）。
+ *
+ * **为什么必须有这个函数**：原来这段逻辑写在 `ElementLibTab.savePage` 里，按
+ * `name / locator / kind / role / note` **逐字段重建**元素对象 —— 任何不在清单里的字段都会被丢掉，
+ * 包括迁移回填的 `id`。用户在元素库里「编辑一次 + 保存一次」，元素 id 就被洗白，
+ * `UiStep.elementId` 变成悬空引用，AC-8「重开应用后逐字段相等」当场失败。
+ *
+ * 所以：**白名单必须透传 `id`**，且历史元素缺 id 时补一个新的（`id: el.id || newId('el-')`）。
+ * 提成纯函数是为了让「保存后 id 不变」这件事能被单测锁死，而不是靠点一遍界面。
+ */
+export function cleanPageForWrite(draft: PomPage): PomPage {
+  return {
+    id: draft.id,
+    name: draft.name.trim(),
+    baseUrl: draft.baseUrl.trim(),
+    className: (draft.className || '').trim(),
+    note: (draft.note || '').trim(),
+    elements: draft.elements.map((el) => ({
+      id: el.id ? String(el.id) : newId('el-'), // [C-110] ②：透传，不许写 undefined / 空串
+      name: el.name.trim(),
+      locator: el.locator, // [C-27]：定位器原样存，转义只在生成器里做
+      kind: el.kind,
+      ...(el.kind === 'role' ? { role: String(el.role ?? '').trim() } : {}),
+      ...(el.note ? { note: el.note } : {}),
+    })),
     updatedAt: new Date().toISOString(),
   };
 }

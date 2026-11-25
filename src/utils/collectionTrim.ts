@@ -168,7 +168,7 @@ export function trimToCaps<T>(items: T[], caps: TrimCaps, opts: TrimOptions<T> =
 }
 
 /* ================================================================
-   5 个集合的上限（[C-24] 的字节 + 各自契约给的条数）
+   6 个集合的上限（[C-24] 的字节 + 各自契约给的条数）
    ================================================================ */
 
 /** 1 KB / 1 MB 的十进制常量（契约里写的是 KB/MB，按 1024 算，与代码里的“字节上限”一致） */
@@ -182,6 +182,7 @@ const MB = 1024 * 1024;
  * - `caseMaps` ≤ 20000 条（[C-34]）
  * - `pomPages` ≤ 200 条（[C-27]）
  * - `allureRuns` ≤ 20 条（[C-63] 附近的历史记录口径，与本文件同一套「从最旧丢」）
+ * - `uiRecordings` ≤ 20 条 / 1536 KB（[C-24a]：20 份 × 300 步 × 一步约 180–250 B ≈ 54–75 KB/份）
  */
 export const COLLECTION_CAPS: Record<string, Required<Pick<TrimCaps, 'maxBytes'>> & Pick<TrimCaps, 'maxItems'>> = {
   pomPages: { maxItems: 200, maxBytes: 512 * KB },
@@ -189,23 +190,25 @@ export const COLLECTION_CAPS: Record<string, Required<Pick<TrimCaps, 'maxBytes'>
   coverageRuns: { maxItems: 20, maxBytes: 1536 * KB },
   caseMaps: { maxItems: 20000, maxBytes: 1536 * KB },
   allureRuns: { maxItems: 20, maxBytes: 1024 * KB },
+  uiRecordings: { maxItems: 20, maxBytes: 1536 * KB },
 };
 
 /**
- * 「未知集合」的字节兜底上限（[C-24] v15：**6 MB**）。
+ * 「未知集合」的字节兜底上限（[C-24] v18：**7.5 MB**，裁定 J-1）。
  *
- * ⚠️ 这个常量**不是**"5 个集合合计的运行时校验"——**代码里没有任何跨集合求和**。
+ * ⚠️ 这个常量**不是**"6 个集合合计的运行时校验"——**代码里没有任何跨集合求和**。
  * 它目前只有一个用处：`capsOf()` 遇到 `COLLECTION_CAPS` 里没有的键时，回落到这个字节上限
  * （不裁条数、只按字节裁）。所以它挡住的是「将来新增集合忘了登记上限」，不是「总量超了」。
  *
- * 为什么从 4 MB 改成 6 MB（v15）：五个集合的单集合上限相加
- * = 512 + 1536 × 3 + 1024 = **6144 KB = 6 MB**，4 MB 在物理上就不可能满足（全满即违约）。
- * 提到 6 MB 只是让契约自洽；**没有**因此新增求和校验——要真做总量约束得单独实现并配测试，
- * 现在没有，就不假装有。
+ * 为什么从 6 MB 改成 7.5 MB（v18，裁定 J-1）：**六个**集合的单集合上限相加
+ * = 512 + 1536 × 3 + 1024 + 1536 = **7680 KB = 7.5 MB**，6 MB 在物理上就不可能满足（全满即违约）。
+ * 维持 6 MB 就只能删掉单测里那条 `Σcaps === TOTAL` 的硬断言，而 [C-113] 明令「不许删既有 it」
+ * —— 那等于制造一条假绿。提到 7.5 MB 只是让契约自洽；**没有**因此新增求和校验——要真做总量约束
+ * 得单独实现并配测试，现在没有，就不假装有。
  */
-export const TOTAL_COLLECTION_BYTES = 6 * MB;
+export const TOTAL_COLLECTION_BYTES = 7.5 * MB;
 
-/** 取某个集合的上限；未知键回落到「不裁条数、6 MB 字节」这种保守值 */
+/** 取某个集合的上限；未知键回落到「不裁条数、7.5 MB 字节」这种保守值 */
 export function capsOf(key: string): TrimCaps {
   return COLLECTION_CAPS[key] || { maxBytes: TOTAL_COLLECTION_BYTES };
 }

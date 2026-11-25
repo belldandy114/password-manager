@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 4,
+  "entries": [],
+  "tags": [],
+  "history": {},
+  "snippets": [],
+  "notes": [],
+  "checklists": [],
+  "accounts": [],
+  "environments": [],
+  "apiRequests": [],
+  "integrations": [],
+  "ztPresets": [],
+  "apiEnvs": [],
+  "apiHistory": [],
+  "codeSnippets": [],
+  "regressionSets": [],
+  "regressionRuns": [],
+  "envProbes": [],
+  "tdgDatasets": [],
+  "pomPages": [
+    {
+      "id": "pom-1",
+      "name": "登录页",
+      "baseUrl": "https://example.com/login",
+      "className": "",
+      "elements": [
+        {
+          "name": "账号",
+          "locator": "#account",
+          "kind": "css",
+          "role": ""
+        },
+        {
+          "name": "登录",
+          "locator": "button",
+          "kind": "role",
+          "role": "登录",
+          "note": "已有 id 的历史元素",
+          "id": "fixed-id-keep-me"
+        }
+      ],
+      "note": "",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "scanRuns": [],
+  "coverageRuns": [],
+  "caseMaps": [],
+  "allureRuns": []
+}

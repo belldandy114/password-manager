@@ -5,7 +5,7 @@ import {
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
   IconHome2, IconCode,
-  IconFileCode, IconShieldCheck, IconListDetails, IconChartDots,
+  IconFileCode, IconShieldCheck, IconListDetails, IconChartDots, IconPlayerRecord,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -215,6 +215,8 @@ const codeGenIcon = nav(IconFileCode);
 const auditIcon = nav(IconShieldCheck);
 const ledgerIcon = nav(IconListDetails);
 const resultHubIcon = nav(IconChartDots);
+// 1.34.0：UI 录制器（录制圆点，与上面 4 个图标形状差异明显，扫一眼不会认错）
+const recorderIcon = nav(IconPlayerRecord);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -245,6 +247,9 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '开发辅助',
     items: [
+      // 1.34.0：UI 录制器（真 Chrome + 原生 CDP 录制）。放在本组最前：它是本期主线能力。
+      // id 必须与 pages/loaders.ts 的 key、App.renderPage 的 case 逐字一致（三处同改）。
+      { id: 'recorder', label: '录制器', icon: recorderIcon },
       // 1.33.0：本地测试资产工作站 4 页（代码生成 / 代码体检 / 资产台账 / 结果中心）。
       // 放在「代码调试 / 测试数据 / 工具箱」之前：新能力在上、手边老工具在下；
       // 既有 3 项一项不删、不改顺序 —— 回归脚本按文案点侧栏，换位会点错。

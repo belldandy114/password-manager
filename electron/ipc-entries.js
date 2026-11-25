@@ -7,7 +7,10 @@
  * 本模块只做「读 → 改 → 存盘」的流程，避免出现 ipc-files.js 那种看不到 main 变量、
  * 一点按钮就 ReferenceError 的老问题。
  */
-const { app, ipcMain, clipboard } = require('electron');
+const { app, clipboard } = require('electron');
+
+// `ipcMain` 用惰性解析：单测可注入替身（`registerEntriesIpc({ ipcMain })`），生产不传就取真的。
+const resolveIpcMain = (deps) => (deps && deps.ipcMain) || require('electron').ipcMain;
 
 /**
  * @param {object} deps
@@ -47,6 +50,7 @@ const { app, ipcMain, clipboard } = require('electron');
  * @param {() => void} deps.closePinWindows
  */
 function registerEntriesIpc(deps) {
+  const ipcMain = resolveIpcMain(deps);
   const {
     getPassword, setPassword, bumpEpoch, setUnlocked, touchActivity,
     loadVault, saveVault, loadTrash, saveTrash,
@@ -63,6 +67,26 @@ function registerEntriesIpc(deps) {
 
   /** 统一取当前会话密码；未解锁时返回 null（各 handler 据此回「未解锁」） */
   const pw = () => getPassword();
+
+  /**
+   * 隐私收紧（防截屏生效）时的停录桥（SEC-R3-03 / `[C-114a]`）。
+   *
+   * 优先用 main.js 注入的**窄接口** `deps.recordLockStop`（只停录）；当前 main.js 还没注入它，
+   * 就退回它已有的共用入口 `clearCaches()` —— 后者内部就是 `recordLockStop('session-lock')`。
+   *
+   * ⚠️ 代价：`clearCaches()` 还会清 vault/trash 内存缓存、关 WS、清 API cookie 罐
+   * （下次读库要重新派生密钥，约几百 ms）。这是「宁可多清，也不带着登录态继续录」的取舍；
+   * 等 main.js 注入 `recordLockStop` 后这段退化就不再生效（本片不改 main.js）。
+   */
+  function stopRecordingForPrivacy() {
+    try {
+      if (typeof deps.recordLockStop === 'function') {
+        deps.recordLockStop('content-protection');
+        return;
+      }
+      clearCaches();
+    } catch { /* 停录失败不影响设置保存（与 main.js recordLockStop 同口径） */ }
+  }
 
   // ---- Session ----
   ipcMain.handle('session:unlock', (_event, { password }) => {
@@ -521,6 +545,8 @@ function registerEntriesIpc(deps) {
 
   ipcMain.handle('settings:save', (_event, prefs) => {
     const s = loadSettings() || {};
+    // 合并前先记下旧值：后面要判断「这次是不是从关到开」（SEC-R3-03）
+    const wasContentProtected = !!s.contentProtection;
     // 只合并白名单里的键：认证字段（masterPasswordHash / salt / recoveryData …）永远不接受渲染层写入
     if (prefs && typeof prefs === 'object') {
       for (const key of Object.keys(prefs)) {
@@ -554,6 +580,14 @@ function registerEntriesIpc(deps) {
     if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'contentProtection')
       && win && !win.isDestroyed()) {
       win.setContentProtection(!!prefs.contentProtection);
+    }
+
+    // SEC-R3-03（`[C-114a]` 的第四个触发源）：**运行期打开防截屏也要停录**。
+    // 之前只接了「建窗那一刻」，用户在会话中途打开防截屏，录制会带着被测系统的登录态继续跑。
+    // 只在**从关到开**时停（关掉不需要停；反复保存同一状态也不重复触发）。
+    if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'contentProtection')
+      && !!prefs.contentProtection && !wasContentProtected) {
+      stopRecordingForPrivacy();
     }
 
     // Start with Windows (only meaningful for the installed app).

@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /**
  * 密码库结构归一化 + 版本迁移（旧库升级的唯一关口）。
  *
@@ -44,13 +46,19 @@ const VAULT_COLLECTIONS = [
   'coverageRuns',
   'caseMaps',
   'allureRuns',
+  // UI 录制器（契约 §9 [C-109]）：录制会话的步骤序列。v4 之后新增的第一个集合，
+  // **没有 3→4 那趟车可搭**，所以它必须随 v4→v5 这次 bump 一起落地（[C-111]）。
+  'uiRecordings',
 ];
 
 /**
  * 当前库结构版本。**只许往上加，不许改历史值** ——
  * 已经把 v1 迁到 v2 的库，改动 v2 的定义就等于让它们的数据对不上号。
+ *
+ * v4 → v5（契约 §9 [C-111]，2026-11-26，对禁令 #10 的定向一次豁免）：
+ * 只为交付「UI 录制器」的 `uiRecordings` 集合与元素 `id`，结构上没有搬移任何既有字节。
  */
-const VAULT_SCHEMA_VERSION = 4;
+const VAULT_SCHEMA_VERSION = 5;
 
 /**
  * 迁移表：key = 源版本，value = 把该版本的结构升到「下一版」的纯函数。
@@ -129,7 +137,58 @@ const MIGRATIONS = {
    * **恒等也要有返回值**：migrateVault 的循环会为所有 v3 老库实实在在调用一次。
    */
   3: (v) => v,
+
+  /**
+   * v4 → v5（契约 §9 [C-111] / [C-110]，2026-11-26，对禁令 #10 的定向一次豁免）
+   *
+   * **只做两件事**，一个既有字节都不搬：
+   * 1. 缺失的 `uiRecordings` 补成 `[]`（新集合从空数组开始）；
+   * 2. `pomPages[].elements[]` 里**缺 `id`** 的元素回填 `id`（[C-110]：写端必填，读端容错历史数据）。
+   *
+   * **幂等**：已有 `id` 的元素原样保留，重复执行结果严格相等（单测锁死）。
+   *
+   * **回填的 id 必须可复现**：用 sha1 对 `(pageId, elementIndex, name, locator)` **四维**派生
+   * （`pageId` 缺失时用 `#<pageIndex>` 兜底，见 `deriveElementId` 与契约 `[C-111]` v22）——
+   * **不用 `crypto.randomUUID()`** —— 随机会让同一份老库在两台机器上迁移出不同结果，
+   * AC-8「重开应用后逐字段相等」与 golden 都没法比，跨机器导入导出还会把元素引用指错。
+   * （`[C-21]` 的 randomUUID 是给渲染层**新建**元素定的，迁移路径不适用。）
+   */
+  4: (v) => {
+    const next = { ...v };
+    if (!Array.isArray(next.uiRecordings)) next.uiRecordings = [];
+    if (Array.isArray(next.pomPages)) {
+      next.pomPages = next.pomPages.map((page, pageIndex) => {
+        if (!page || typeof page !== 'object' || !Array.isArray(page.elements)) return page;
+        const elements = page.elements.map((el, elementIndex) => {
+          if (!el || typeof el !== 'object') return el;
+          if (typeof el.id === 'string' && el.id) return el; // 已有 id：原样保留（幂等）
+          return { ...el, id: deriveElementId(page, pageIndex, elementIndex, el) };
+        });
+        return { ...page, elements };
+      });
+    }
+    return next;
+  },
 };
+
+/**
+ * 迁移回填元素 id 的确定性派生（[C-111]）：同输入 → 同输出，跨机器/跨次执行都一样。
+ * 输出拼成 uuid 形状（8-4-4-4-12，共 32 位十六进制），但**不是 RFC 4122 版本号语义**，
+ * 没有任何代码按版本位解析它（契约 §9 [C-109] 的 `id` 约束已写明这一点）。
+ *
+ * 维度与 `[C-111]` 对齐：**`pageId` + `elementIndex` + `name` + `locator` 四维**（RA2-14：
+ * 原实现多一维 `pageIndex`，契约里没有它 —— 页面顺序一变（插入/删除页面）所有元素 id 全变，
+ * 反而破坏「稳定锚点」的初衷）。页面没有 id 的极端情况用 `#<pageIndex>` 兜底，避免不同页面
+ * 在 pageId 缺失时互相撞车。
+ */
+function deriveElementId(page, pageIndex, elementIndex, el) {
+  const pageKey = page && page.id != null && page.id !== '' ? String(page.id) : `#${pageIndex}`;
+  const seed = [pageKey, elementIndex, el && el.name, el && el.locator]
+    .map((x) => (x == null ? '' : String(x)))
+    .join('\u0000');
+  const hex = crypto.createHash('sha1').update(seed, 'utf8').digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 /**
  * v3 迁移用的系统名归一：与渲染层 `src/utils/systemGroups.ts` 的 systemOfEntryName 保持一致。

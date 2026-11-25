@@ -127,6 +127,21 @@
  *    被收回了」（删掉透明规则扫描只会更绿），所以单独断言 `.pg .tabs` 与激活页签的背景为
  *    `rgba(0, 0, 0, 0)`、上/左/右边框 0px、下边框 1px。变异验证（M-1.34.0）就靠它变红。
  *
+ * ⚠️ 1.35.0（W3 / S5-t23）**新增 2 个扫描单元：UI 录制器 × 2 个页签**，组合数 32 → **36**
+ *    （9 组/主题 + 9 新单元/主题）× 2 主题）。录制器与上面 4 页有三处不同，四处登记都按它写：
+ *    1) **表单在 `.toolbar` 里、灯面板在 `.tabs` 之前**（都是 `.pg` 直下），不在 `[role=tabpanel]`
+ *       内 —— 所以 ctx 的 dev* 那组「限定 tabpanel」的计数对本页恒 0，另加 `recToolbar /
+ *       recInputs / recLamps / recLampStates` 四个字段做自证（min 用前三个）。
+ *    2) **两个 tabpanel 始终在 DOM 里**、靠 `hidden` 互斥（Recorder.tsx:11-13：AC-1 停止后
+ *       还要读候选锚点，卸载会读出「0 条推荐」的假绿）。所以 APPLIED_PRED 除了判激活页签文案，
+ *       还要判「非 hidden 的 tabpanel 恰好 1 个」—— 只判文案会漏掉「tab 切了但 hidden 没更新」。
+ *    3) ✅ **1.36.0（t27）：灯面板已挂载（t26），`min.recLamps: 5` 已补进两条单元**，
+ *       并把「5 盏灯在 DOM 里」并进 READY_PRED。补 min 前那两条 min 是 2/2/2/1/1，**没有一项能
+ *       证明灯渲染出来了** —— 灯不在 DOM 时扫描只会更绿（透明底、没有白块），这正是本文件
+ *       1.32.2 记的 `.pager` 同款假绿。可证伪的命令：
+ *       `PM_SCAN_DROP_LAMPS=1 node scripts/ui-glass-opaque-scan.js` → 必须 exit=1 且两条单元
+ *       红在 `recLamps=0 < 5`（该 hook 见下面 `DROP_LAMPS` 的注释：为什么不直接改 Recorder.tsx）。
+ *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
  *   USE_PACKED=1 node scripts/ui-glass-opaque-scan.js # 打包版（先 npm run pack / npm run dist）
@@ -170,6 +185,27 @@ const STABLE_POLL_MS = 150;
  * 不加这个环境变量时它恒为空串，对正常扫描零影响。
  */
 const MUTATION_CSS = String(process.env.PM_SCAN_INJECT_CSS || '').trim();
+
+/**
+ * 变异验证之二（默认关闭）：`PM_SCAN_DROP_LAMPS=1` —— 每次「页面扫描」求值**之前**，
+ * 先把 `.rec-page .rec-lamp` 从 DOM 里摘掉。
+ *
+ * 为什么需要它：`min` 自证计数的唯一作用是拦「元素从没进过 DOM → 0 违规 → 假绿」
+ * （1.32.2 的 `.pager` 就是这么漏的）。灯面板是本批最该被量的块，所以必须有一条
+ * **可反复执行**的命令证明 `min.recLamps: 5` 真的会红，而不是「改成 5 就算过」。
+ *
+ * 为什么不直接去 `Recorder.tsx` 里注释掉 `<AbilityBar/>`（任务书里的朴素做法）：
+ *   1) 那个文件属 frontend 面（本片 outOfScope），一次性改+回滚是越界操作；
+ *   2) 它**尚未进 git**（`?? src/pages/Recorder.tsx`），改坏了没有 `git checkout --` 兜底，
+ *      风险与收益完全不成比例；
+ *   3) 摘节点与「组件没挂载」在扫描眼里是**同一个可观测量**（`querySelectorAll` 计数为 0），
+ *      而这条 hook 是可复跑、可交给 QA 长期驻留的判据。
+ *
+ * 正常预期：**exit=1**，且录制器两条单元都红在「页面自证不足 recLamps=0 < 5」。
+ * 注意摘节点发生在**就绪判据之后**：就绪时灯必须是 5（否则 READY_PRED 先 10s 超时），
+ * 所以这条变异精确地只打 min，不会连累就绪判据 —— 两条断言各自可证伪。
+ */
+const DROP_LAMPS = process.env.PM_SCAN_DROP_LAMPS === '1';
 
 /**
  * 白名单：这些块**本应实心**，玻璃化反而是错的。每条都必须写理由 ——
@@ -316,6 +352,21 @@ const TARGETS = [
     pages: ['结果中心 · Allure'] },
   { sel: '.pg input', label: '新页输入框 input（结果中心·.jtl）', token: '--glass-input',
     pages: ['结果中心 · .jtl 指标'] },
+  // ── 1.35.0（W3 / S5-t23）：UI 录制器 2 个单元各一条锚点 ──
+  // 录制器这张页的表单**在 `.toolbar` 里**（`.pg` 直下、不在 `[role=tabpanel]` 内），
+  // 所以 `dev*` 那组「限定 tabpanel」的计数看不到它 —— 三个锚点分别落三个玻璃档位：
+  //   `.toolbar` → `--glass-side`（redesign.css:7944）
+  //   `.rec-row input` → `--glass-input`（:7964）
+  //   `.pnl` → `--glass-card`（:7863）
+  // 只比 alpha 不够：`.toolbar` 的基础底色是 `--surface-1` 实底、`.pnl` 是 `--surface-2` 实底，
+  // 两者在**普通模式**下也都是不透明的；带 token 才能证明「背景确实来自那条玻璃规则」。
+  { sel: '.rec-page .toolbar', label: '录制器工具条 .toolbar（含 .rec-row 表单行）', token: '--glass-side',
+    pages: ['UI 录制器 · 录制', 'UI 录制器 · 校验报告'] },
+  { sel: '.rec-page .rec-row input:not([type=checkbox]):not([type=radio])',
+    label: '录制页输入框 input（目标页址）', token: '--glass-input',
+    pages: ['UI 录制器 · 录制'] },
+  { sel: '.rec-page .pnl', label: '录制页面板 .pnl（本机能力 / 空态面板）', token: '--glass-card',
+    pages: ['UI 录制器 · 录制', 'UI 录制器 · 校验报告'] },
 ];
 
 /**
@@ -489,6 +540,35 @@ const PAGES = [
     min: { devPanel: 1, devTabs: 2, devInputs: 1 },
     hint: 'devInputs=0 说明「① 取数」的 .jtl 路径输入框没渲染',
   },
+  // ── 1.35.0（W3 / S5-t23）：UI 录制器 × 2 页签 = 2 个扫描单元（32 → 36 组合）──
+  // 为什么也是 2 条而不是 1 条：录制页两个 tabpanel **始终都在 DOM 里**（非激活的 `hidden`，
+  // Recorder.tsx:11-13 写死了理由：AC-1 在停止后才读候选锚点，卸载会读出「0 条推荐」的假绿），
+  // 但 `hidden` 的子树在扫描里是**不可见 → 整棵跳过**，所以只扫默认页签等于只测一半。
+  // `min` 用两张卡：
+  //   · `devTabs/devPanel/devEmpty` 证明页签栏与两个面板真的挂上了（来自 ctx 的通用字段）；
+  //   · `recToolbar/recInputs/recLamps` 证明**表单行与灯面板**真的渲染了 —— 表单在 `.toolbar` 里、
+  //     灯面板在 `.tabs` 之前，两者都不在 tabpanel 内，`dev*` 那组计数恒 0。
+  // ✅ 1.36.0（t27）：`AbilityBar` 已由 t26 挂进 Recorder.tsx，`ctx.recLamps` 实测 **5**，
+  // 所以 `recLamps: 5` 已写进下面两条 min。这条计数存在的唯一理由就是拦
+  // 「元素从没进过 DOM → 0 违规 → 假绿」（1.32.2 的 `.pager` 就是这么漏的：
+  // 造数只造了 2 条、分页条根本没渲染，门禁 exit=0 却一条都没量到）。
+  // 判据可证伪：`PM_SCAN_DROP_LAMPS=1 node scripts/ui-glass-opaque-scan.js` 会在每次扫描前
+  // 把 `.rec-lamp` 从 DOM 里摘掉（等价于 AbilityBar 没挂载），两条单元必须红在 `recLamps=0 < 5`。
+  {
+    label: 'UI 录制器 · 录制', nav: '录制器',
+    prep: (s) => clickText(s, '录制', { root: '.pg .tabs' }),
+    min: { devTabs: 2, devPanel: 2, devEmpty: 1, recToolbar: 1, recInputs: 1, recLamps: 5 },
+    hint: 'recToolbar=0 说明 .rec-page .toolbar 没渲染；recInputs=0 说明 .rec-row 里的目标页址输入框没渲染'
+      + '（.rec-row 的样式在 redesign.css 末尾 1.35.0 段，量不到它就是样式没加载）；'
+      + 'recLamps=0 说明 AbilityBar 没挂载/渲染炸了 —— 灯不在 DOM 里，灯面板的玻璃行为等于没量',
+  },
+  {
+    label: 'UI 录制器 · 校验报告', nav: '录制器',
+    prep: (s) => clickText(s, '校验报告', { root: '.pg .tabs' }),
+    min: { devTabs: 2, devPanel: 2, devEmpty: 1, recToolbar: 1, recLamps: 5 },
+    hint: 'devEmpty=0 说明报告面板没落进空态（会话残留或报告还在渲染中）；'
+      + 'recLamps=0 说明 AbilityBar 没挂载 —— 灯是页面级元素，与本页签无关，两条单元都必须量到 5',
+  },
 ];
 
 /**
@@ -603,6 +683,33 @@ const READY_PRED = {
       devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
     return { ok: !state.skel && state.title === '结果中心' && state.devTabs === 2 && state.panel === 1, state };
   })()`,
+  // ── 1.35.0（W3 / S5-t23）：UI 录制器 ──
+  // 与「哪个页签在前台」无关（切页签是 prep 的事，用它当就绪会死锁）：
+  // 只证明骨架屏没了 + 页标题对 + `.rec-page` 根在 + 两个页签 + 两个 tabpanel + 工具条 + 5 盏灯。
+  // `.rec-page` 是 Recorder.tsx:463 写死的根类（AC-15 的几何断言也按它取数）。
+  // ✅ 1.36.0（t27）：把「5 盏灯在 DOM 里」并进就绪判据。理由有两条：
+  //   1) 灯面板是页面级元素（`.tabs` 之前），与页签无关 —— 它不在就不是「这一页渲染好了」；
+  //   2) 灯如果渲染时抛错，`recLamps` 恒 0，就绪判据会**当场 10s 超时并说缺哪一项**，
+  //      比让 min 在采样阶段报「自证不足」快一步、也更好定位。
+  // AbilityBar 的 5 个槽位是固定的（abilities 为空时全部落 grey），首屏就齐，不会闪 0。
+  'UI 录制器 · 录制': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const t = document.querySelector('.pg-title');
+    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
+      recPage: q('.pg.rec-page'), devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'),
+      toolbar: q('.rec-page .toolbar'), lamps: q('.rec-page .rec-lamp') };
+    return { ok: !state.skel && state.title === 'UI 录制器' && state.recPage === 1
+      && state.devTabs === 2 && state.panel === 2 && state.toolbar === 1 && state.lamps === 5, state };
+  })()`,
+  'UI 录制器 · 校验报告': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const t = document.querySelector('.pg-title');
+    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
+      recPage: q('.pg.rec-page'), devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'),
+      toolbar: q('.rec-page .toolbar'), lamps: q('.rec-page .rec-lamp') };
+    return { ok: !state.skel && state.title === 'UI 录制器' && state.recPage === 1
+      && state.devTabs === 2 && state.panel === 2 && state.toolbar === 1 && state.lamps === 5, state };
+  })()`,
 };
 
 /**
@@ -713,6 +820,31 @@ const APPLIED_PRED = {
     return { ok: state.tab === '.jtl 指标' && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
+  // ── 1.35.0（W3 / S5-t23）：UI 录制器 2 个单元 ──
+  // 判据 = 激活页签文案对 + **非 hidden 的 tabpanel 恰好 1 个** + 该面板里有内容。
+  // 「恰好 1 个」是本页特有的：Recorder.tsx 把两个 tabpanel 都挂在 DOM 里、靠 `hidden` 互斥
+  // （AC-1 停止后还要能读到候选锚点）。只判文案的话，「tab 切了但面板没换」这种
+  // （hidden 没更新）会漏过去，而扫到的仍是旧面板 —— 假绿。
+  'UI 录制器 · 录制': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const a = document.querySelector('.pg .tabs .tab2.is-active');
+    const state = { tab: a ? (a.textContent || '').trim() : '',
+      shown: q('[role=tabpanel]:not([hidden])'), hidden: q('[role=tabpanel][hidden]'),
+      empty: q('[role=tabpanel]:not([hidden]) .empty'), panels: q('[role=tabpanel]:not([hidden]) .pnl'),
+      toolbar: q('.rec-page .toolbar') };
+    return { ok: state.tab === '录制' && state.shown === 1 && state.hidden === 1
+      && (state.empty + state.panels) >= 1 && state.toolbar === 1, state };
+  })()`,
+  'UI 录制器 · 校验报告': `(() => {
+    const q = (x) => document.querySelectorAll(x).length;
+    const a = document.querySelector('.pg .tabs .tab2.is-active');
+    const state = { tab: a ? (a.textContent || '').trim() : '',
+      shown: q('[role=tabpanel]:not([hidden])'), hidden: q('[role=tabpanel][hidden]'),
+      empty: q('[role=tabpanel]:not([hidden]) .empty'), panels: q('[role=tabpanel]:not([hidden]) .pnl'),
+      toolbar: q('.rec-page .toolbar') };
+    return { ok: state.tab === '校验报告' && state.shown === 1 && state.hidden === 1
+      && (state.empty + state.panels) >= 1 && state.toolbar === 1, state };
+  })()`,
 };
 
 /**
@@ -774,6 +906,19 @@ const buildScanExpr = (rootSel) => `(() => {
     devTextareas: document.querySelectorAll('[role=tabpanel] textarea').length,
     devEmpty: document.querySelectorAll('[role=tabpanel] .empty').length,
     devStats: document.querySelectorAll('[role=tabpanel] .home-stat').length,
+    // 1.35.0（W3 / S5-t23）：UI 录制器。它的表单在 .toolbar 里、灯面板在 .tabs 之前，
+    // 两者都在 .pg 直下、不在 [role=tabpanel] 内，所以上面那组限定 tabpanel 的 dev* 计数
+    // 对本页恒为 0 —— 单独取三项，用来做 PAGES 里两条录制器单元的 min 自证
+    // （否则「空页面 0 违规」又成了假绿）。
+    // ✅ 1.36.0（t27）：AbilityBar 已由 t26 挂进 Recorder.tsx，recLamps 实测 5，
+    // 已写进两条 min。灯面板的 DOM 是 5 个固定槽位（abilities 为空时全部落 grey），
+    // 所以首屏就有 5 个 .rec-lamp —— 这份计数不会因 probe 未返回而闪 0。
+    // ⚠️ 本段在模板字符串里：注释里不许出现反引号与 $ 加大括号。
+    recToolbar: document.querySelectorAll('.rec-page .toolbar').length,
+    recInputs: document.querySelectorAll('.rec-page .rec-row input:not([type=checkbox]):not([type=radio])').length,
+    recLamps: document.querySelectorAll('.rec-page .rec-lamp').length,
+    recLampStates: [...document.querySelectorAll('.rec-page .rec-lamp')]
+      .map((el) => String(el.getAttribute('data-state') || '')).join(','),
     // 1.34.1：生成代码区（只有点过「生成」才会出现），用来给 min 自证与日志
     devCode: document.querySelectorAll('[role=tabpanel] .dev-code').length };
   // Chromium 的 computed backgroundColor 有两种序列化：rgba(r, g, b, a) 与 color(srgb r g b / a)
@@ -1111,7 +1256,11 @@ const pageSig = (res) => JSON.stringify(res.rows.map((r) => [r.cls, r.w, r.h, r.
   // 不并入的话签名只剩「命中块列表」，表格还在挂载/填数据时也能「两次采样一致」= 新的假绿通道。
   + '|' + JSON.stringify([res.ctx.devTabs, res.ctx.devActiveTab, res.ctx.devPanel,
     res.ctx.devScroll, res.ctx.devTables, res.ctx.devRows, res.ctx.devBanners, res.ctx.devInputs, res.ctx.devStats,
-    res.ctx.devTextareas, res.ctx.devEmpty]);
+    res.ctx.devTextareas, res.ctx.devEmpty])
+  // 1.35.0（W3 / S5-t23）：录制器的三项自证也进签名。灯（recLamps）是探测返回后才挂上的
+  // （`record:probe` 有 60 s 缓存 + 一次 IPC 往返），不并进签名的话「灯还没挂出来」那一刻
+  // 也能「两次采样一致」——与 1.32.5 / 1.33.0 那两条是同一个假绿通道。
+  + '|' + JSON.stringify([res.ctx.recToolbar, res.ctx.recInputs, res.ctx.recLamps, res.ctx.recLampStates]);
 
 /**
  * 弹窗扫描的稳定性签名：块列表 + 弹窗自证（输入框数 / 预览字数）。
@@ -1727,6 +1876,11 @@ async function scanEntryDrawer(session, ev, theme, violations) {
       console.log(`\n（变异）已注入临时实底 CSS：${MUTATION_CSS}`);
       console.log('  本次运行**预期 exit=1**：违规清单里必须出现被注入的元素；跑完不要拿它当正常结果');
     }
+    if (DROP_LAMPS) {
+      console.log('\n（变异·灯）PM_SCAN_DROP_LAMPS=1：每次页面扫描前会把 .rec-page .rec-lamp 从 DOM 里摘掉');
+      console.log('  = 等价于「AbilityBar 没挂载」。本次运行**预期 exit=1**：');
+      console.log('  UI 录制器两条单元必须红在「页面自证不足 recLamps=0 < 5」。');
+    }
 
     for (const theme of THEMES) {
       await setTheme(session, theme);
@@ -1751,7 +1905,12 @@ async function scanEntryDrawer(session, ev, theme, violations) {
         // 要求「同一份签名连续两次相同」再判定，避免扫在重排中间出假绿。
         // 钉主题可能带来颜色过渡，判定前先把动画/过渡收尾（窗口被遮挡时它们会停在起始帧）。
         await settleAnimations(ev, `${page.label} 钉主题后`);
-        const { res, samples, ms } = await stableScan(ev, SCAN_EXPR, pageSig, `${page.label} · ${theme}`);
+        // 变异（默认关闭）：摘灯与扫描在**同一次求值**里做，避免「先摘、后渲染又长回来」的时序假阴性。
+        // 前缀返回 true 才继续求值 SCAN_EXPR，两者都是 IIFE，拼起来仍是一个表达式。
+        const scanExpr = DROP_LAMPS
+          ? `(() => { document.querySelectorAll('.rec-page .rec-lamp').forEach((n) => n.remove()); return true; })() && ${SCAN_EXPR}`
+          : SCAN_EXPR;
+        const { res, samples, ms } = await stableScan(ev, scanExpr, pageSig, `${page.label} · ${theme}`);
         const { ctx, rows } = res;
         scanned += 1;
         if (ctx.theme !== theme || ctx.bg !== 'image') {
@@ -1762,7 +1921,7 @@ async function scanEntryDrawer(session, ev, theme, violations) {
         // 除了打印条数，还要**卡住下限**（page.min）：SQL 片段页要求有 KPI 卡 / 标签栏项 / 表格行，
         // 分页页要求 .pager 真的渲染出来，拿不到就按违规处理，
         // 不允许「页面没渲染出来 → 0 违规」混成绿。
-        const ctxLine = `  · 页面自证：主题 ${ctx.theme} / 背景 ${ctx.bg} / 卡片 ${ctx.cards} / 列表行 ${ctx.rows}`
+        let ctxLine = `  · 页面自证：主题 ${ctx.theme} / 背景 ${ctx.bg} / 卡片 ${ctx.cards} / 列表行 ${ctx.rows}`
           + ` / 环境徽标 ${ctx.badges} / 主按钮 ${ctx.primaryBtns} / KBD ${ctx.kbds}`
           + ` / KPI 卡 ${ctx.stats} / 标签栏项 ${ctx.tagItems} / SQL 行 ${ctx.sqlRows}`
           + ` / 分页条 ${ctx.pagers}${ctx.pagers ? `（${String(ctx.pagerCur).trim()} · ${String(ctx.pagerInfo).trim()}）` : ''}`
@@ -1770,7 +1929,11 @@ async function scanEntryDrawer(session, ev, theme, violations) {
           // 1.33.0（t54/W7-A）：新页的自证计数（都限定在 [role=tabpanel] 里，见 buildScanExpr）
           + ` / 新页[页签 ${ctx.devTabs} · 激活「${String(ctx.devActiveTab).trim()}」 · 面板 ${ctx.devPanel}`
           + ` · 表格 ${ctx.devTables} · 行 ${ctx.devRows} · 横幅 ${ctx.devBanners} · 标签 ${ctx.devTags}`
-          + ` · 输入 ${ctx.devInputs} · 下拉 ${ctx.devSelects} · 多行框 ${ctx.devTextareas} · 空态块 ${ctx.devEmpty} · KPI ${ctx.devStats} · 滚动 ${ctx.devScroll}]`;
+          + ` · 输入 ${ctx.devInputs} · 下拉 ${ctx.devSelects} · 多行框 ${ctx.devTextareas} · 空态块 ${ctx.devEmpty} · KPI ${ctx.devStats} · 滚动 ${ctx.devScroll}]`
+          // 1.35.0（W3 / S5-t23）：录制器（表单在 .toolbar 里，不在 tabpanel 内）
+          + ` / 录制器[工具条 ${ctx.recToolbar} · 表单输入 ${ctx.recInputs} · 灯 ${ctx.recLamps}`;
+        if (ctx.recLamps > 0) ctxLine += `（data-state=${ctx.recLampStates}）`;
+        ctxLine += ']';
         const minFail = [];
         for (const [key, min] of Object.entries(page.min || {})) {
           const got = Number(ctx[key]) || 0;

@@ -20,24 +20,14 @@ const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { ipcMain, app } = require('electron');
 const { SUPPORTED, buildRunPlan, splitSteps, tempDirName } = require('./codelab-args');
+// 找命令行程序用共用实现（原私有副本已删：录制域探针也要用它，两处各写一份会漂移）
+const { which } = require('./which');
 
 const MAX_OUTPUT_LINES = 2000;
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_TIMEOUT_MS = 60000;
 
 let current = null;
-
-/** 找一个可用的命令行程序：where/which 能定位到，并且能跑出帮助信息 */
-function which(name) {
-  try {
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(cmd, [name], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    const first = String(out).split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
-    return first || '';
-  } catch {
-    return '';
-  }
-}
 
 function detect() {
   const nodePath = process.execPath; // Electron 自带 Node

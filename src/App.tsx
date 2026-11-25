@@ -45,6 +45,8 @@ const CodeGen = lazy(PAGE_LOADERS.codeGen);
 const CodeAudit = lazy(PAGE_LOADERS.codeAudit);
 const AssetLedger = lazy(PAGE_LOADERS.assetLedger);
 const ResultHub = lazy(PAGE_LOADERS.resultHub);
+// 1.34.0：UI 录制器（S4b）。与其它页一样从 PAGE_LOADERS 取 —— 侧栏悬停预取才指向同一份 import。
+const Recorder = lazy(PAGE_LOADERS.recorder);
 
 function App() {
   const isLocked = useStore(s => s.isLocked);
@@ -139,6 +141,20 @@ function App() {
   useEffect(() => window.electronAPI.onAppNavigate?.((p) => {
     if (p && p.page) setCurrentPage(p.page);
   }), []);
+
+  /**
+   * 录制事件（S4b）：**全应用只订一次**，卸载时退订。
+   *
+   * 为什么不挂在录制页里：录制页是 lazy 挂载的，切页就卸载；页面里订阅 + 退订稍有不慎
+   * 就会在「切页 → 回来」时留下第二条通道，事件翻倍——单页面操作根本看不出来。
+   * 放这里还顺带解决「录制中切到别的页面，动作不丢」：事件照样进 store 的草稿。
+   */
+  useEffect(() => {
+    const off = window.electronAPI.onRecordEvent?.((event) => {
+      useStore.getState().recorderPushEvent(event);
+    });
+    return () => { try { off?.(); } catch { /* 窗口已关 */ } };
+  }, []);
 
   // Auto-lock timer
   useEffect(() => {
@@ -501,6 +517,10 @@ function App() {
       case 'codeAudit': return <CodeAudit />;
       case 'assetLedger': return <AssetLedger />;
       case 'resultHub': return <ResultHub />;
+      // 1.34.0：UI 录制器。⚠️ 新增页面必须**同时**改三处：pages/loaders.ts 的 key、
+      // 这里的 case、Sidebar.tsx 的 GROUPS 数组（NavItem.id）。
+      // 只加前两处的表现是「路由有、入口没有」——页面永不可达，而且不报错，是最难发现的沉默缺口。
+      case 'recorder': return <Recorder />;
       default: return <PasswordManagerPage />;
     }
   };

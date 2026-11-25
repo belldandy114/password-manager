@@ -286,7 +286,9 @@ export type WorkspaceKey = 'snippets' | 'notes' | 'checklists' | 'accounts' | 'e
   /** 本地测试资产工作站（13 项）：元素库 / 代码体检记录 / 覆盖台账 / 用例映射 / Allure 历史。
    *  键名与 electron/vault-schema.js 的 VAULT_COLLECTIONS 逐字一致——**caseMaps 是复数**，
    *  少个 s 不会报错，只会静默返回空数组（契约 C-18）。 */
-  | 'pomPages' | 'scanRuns' | 'coverageRuns' | 'caseMaps' | 'allureRuns';
+  | 'pomPages' | 'scanRuns' | 'coverageRuns' | 'caseMaps' | 'allureRuns'
+  /** UI 录制器（v1.35.0 / 契约 [C-109]）：录制会话步骤，与 `pomPages` 的元素库通过 `elementId` 关联 */
+  | 'uiRecordings';
 
 export interface ZentaoConfig {
   id: string;
@@ -1140,6 +1142,102 @@ export interface TdgAbortResult {
   path: string;
 }
 
+// ---------------------------------------------------------------- 录制器（契约 §9 / [C-114]）
+
+/**
+ * `valueMeta` **只有两种形状**（契约 §9.1，v19）：
+ * `{ length, redacted: true }`（input / textarea / contenteditable）或
+ * `{ selectedIndex, redacted: true }`（select）。
+ *
+ * ⚠️ 写成判别联合而**不是** `{ length?, selectedIndex?, redacted }`：后者会让 `select` 也能造出
+ * `length`，等于把「省/市」「账户类型」这类业务信息变相存进库（`[C-119]` 第 2 款）。
+ * 也**不许**加 `preview` / `masked` / `options` / `label` 这类字段（§9.4 明令）。
+ */
+export type RecordValueMeta = { redacted: true } & ({ length: number } | { selectedIndex: number });
+
+/** 录制能力灯（`record:probe` 的 `data.abilities[]`；`id` 固定 5 个） */
+export interface RecordAbility {
+  id: 'chrome' | 'node' | 'jdk-jar' | 'playwright' | 'workspace';
+  state: 'green' | 'yellow' | 'red' | 'grey';
+  label: string;
+  detail: string;
+  /** 已脱敏：本机绝对路径换成 `<用户目录>` / `<工程目录>` */
+  evidence: Array<{ cmd: string; out: string }>;
+  fixHint?: string;
+}
+
+export interface RecordProbeResult {
+  abilities: RecordAbility[];
+  probedAt: string;
+  /** 探针注入口（`PM_RECORD_PROBE_STUB`）生效时才有；打包版永不为 true */
+  stubbed?: true;
+}
+
+export interface RecordStartResult {
+  sessionId: string;
+  browser: string;
+  port: number;
+}
+
+export interface RecordStopResult {
+  ok: true;
+  /** 主进程收到的事件数 */
+  received: number;
+  /** 已推给渲染层的数 */
+  pushed: number;
+  /** 因上限被丢弃的数 */
+  dropped: number;
+  /** 到 5000 上限置 true（界面必须提示「事件已达上限，后续动作未记录」，不得静默） */
+  truncated: boolean;
+  /** 与审计同源 */
+  cleaned: { killed: boolean; profileRemoved: boolean };
+}
+
+/** `record:validate` 的入参条目（`items ≤ 50`，`selector ≤ 500` 字符、禁 NUL 与换行） */
+export interface RecordValidateItem {
+  strategy: 'css' | 'xpath' | 'text' | 'role';
+  selector: string;
+}
+
+export interface RecordValidateRow {
+  strategy: string;
+  selector: string;
+  count: number;
+  precise: boolean;
+  ms: number;
+  invalid?: true;
+  error?: string;
+}
+
+/** `record:status` 的出参；**无活会话时 `data` 为 `null`** */
+export interface RecordStatusResult {
+  sessionId: string;
+  /** 本版唯一取值 `'recording'`（`stopping` 等中间态不对外暴露） */
+  state: 'recording';
+  startedAt: string;
+  /** 只回脱敏后的 `origin + path`（不带 userinfo / query / fragment，v19） */
+  url: string;
+}
+
+/** `record:event` 推送的载荷（主→渲染） */
+export interface RecordEvent {
+  sessionId: string;
+  /** 主进程单调递增（页面给的 seq 一律丢弃） */
+  seq: number;
+  action: 'navigate' | 'click' | 'fill' | 'select' | 'press' | 'assert' | 'session-ended';
+  target: { tag: string; role?: string; text?: string };
+  candidates: Array<{
+    strategy: 'css' | 'xpath' | 'text' | 'role';
+    selector: string;
+    count: number | null;
+    precise: boolean;
+    roleName?: string;
+  }>;
+  ms: number;
+  /** 只在 fill / select 步骤出现，且只有两种形状 */
+  valueMeta?: RecordValueMeta;
+}
+
 export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
@@ -1633,6 +1731,17 @@ export interface ElectronAPI {
   onUpdateAvailable: (cb: (payload: { current: string; latest: string; url: string; downloadUrl: string; notes?: string; assetName?: string; digest?: string }) => void) => () => void;
   onJmeterOutput: (cb: (payload: JmeterLogLine) => void) => () => void;
   onJmeterDone: (cb: (payload: JmeterDone) => void) => () => void;
+
+  // ---------------------------------------------------------------- 录制器（契约 [C-114]：5 条 invoke + 1 条推送）
+  // 错误文案是固定中文串（[C-02]），只许相等/含关键词匹配；前端不得拿它做分支以外的判据。
+  recordProbe: (input?: { workspaceDir?: string; force?: boolean }) => Promise<{ success: boolean; data?: RecordProbeResult; error?: string }>;
+  recordStart: (input: { url: string; pageId?: string }) => Promise<{ success: boolean; data?: RecordStartResult & { sessionId?: string }; error?: string }>;
+  recordStop: (input: { sessionId: string }) => Promise<{ success: boolean; data?: RecordStopResult; error?: string }>;
+  recordValidate: (input: { sessionId: string; items: RecordValidateItem[] }) => Promise<{ success: boolean; data?: { results: RecordValidateRow[] }; error?: string }>;
+  /** 只读、幂等、无副作用：无活会话时 `data` 为 `null`（刷新/重挂后的态复原） */
+  recordStatus: () => Promise<{ success: boolean; data?: RecordStatusResult | null; error?: string }>;
+  /** 录制事件推送：**必须**在组件卸载时调用返回的退订函数，否则重挂会叠加监听 */
+  onRecordEvent: (cb: (payload: RecordEvent) => void) => () => void;
   /** 保存文本到文件。**默认不写 BOM**；给 Excel 打开的 CSV/TSV 导出请传 `{ bom: true }` */
   saveText: (content: string, defaultName: string, filters?: { name: string; extensions: string[] }[], opts?: { bom?: boolean }) =>
     Promise<{ success: boolean; data?: { file: string }; error?: string; canceled?: boolean }>;

@@ -401,6 +401,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   logTail: (lines) => ipcRenderer.invoke('log:tail', lines),
   logRenderer: (level, message) => ipcRenderer.invoke('log:renderer', { level, message }),
 
+  // ---- 录制器（契约 [C-114]：5 条 invoke + 1 条推送；错误文案是固定中文串，见 §9.2）----
+  // 出参恒为 { success, data?, error? }：src/utils/ipc.ts 只认 success === false，
+  // 任何漏包 success 的返回值都会被当成成功（那正是「5 盏灯静默 undefined」的成因）。
+  recordProbe: (input) => ipcRenderer.invoke('record:probe', input),
+  recordStart: (input) => ipcRenderer.invoke('record:start', input),
+  recordStop: (input) => ipcRenderer.invoke('record:stop', input),
+  recordValidate: (input) => ipcRenderer.invoke('record:validate', input),
+  recordStatus: () => ipcRenderer.invoke('record:status'),
+  // 录制事件推送（主→渲染）：返回退订函数，组件卸载必须调用，否则重挂会叠加监听
+  onRecordEvent: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('record:event', handler);
+    return () => ipcRenderer.removeListener('record:event', handler);
+  },
+
   // 应用内「有新版本」提示（替代系统通知）
   onUpdateAvailable: (cb) => {
     const handler = (_e, payload) => cb(payload);
