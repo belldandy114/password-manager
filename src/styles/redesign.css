@@ -9292,3 +9292,47 @@ html[data-bg='image'] pre.dev-code {
   gap: 10px;
   min-width: 0;
 }
+
+/* ════════ 1.36.0（B8）：元素库「试跑」结果面板 + 设置页依赖灯 ════════
+   来由：B8 给元素库加了 `el:trial-run` 的结果展示（四种状态）与设置页的两盏依赖灯。
+   为什么写在末位：本文件是最后加载的样式表（AGENTS.md：新增样式一律写在 redesign.css 末尾，
+   不在前面三份里猜优先级）。
+   约束（与本项目既有规则一致）：
+   1) 零 `--glass-*` 新 token、零 `backdrop-filter` / `filter` / `transform` / `contain`
+      （脚本 check-stacking.js 在盯这条）；
+   2) 零色值字面量 —— 颜色只走 var(--text-*) / var(--accent) / var(--line*)；
+   3) 不新增优先级声明，也不写那个用感叹号强制的关键字（本文件把它算进预算，**注释里出现也算**，
+      所以这里连写法都拆开写：见 check-debt-budget.js 的 64 条上限）；
+   4) 这个面板**不做**内嵌截图预览（渲染层读不了 file://），所以它只是一张普通表格容器，
+      不进 `html[data-bg='image']` 的玻璃登记表（没有底可换）。 */
+.el-trial {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 10px);
+  padding: 10px 12px;
+  background: transparent;
+}
+.el-trial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+/* 截图路径一行显示，超长省略 —— 全路径留在 title 里，复制按钮给的是完整路径 */
+.el-shot-path {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-3);
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 设置页的两盏依赖灯：标签 + 说明一行排开，窄屏换行 */
+.el-deps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

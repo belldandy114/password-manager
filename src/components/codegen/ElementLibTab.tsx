@@ -15,7 +15,7 @@ import type { GeneratedFile } from '../../utils/codegen/escape';
 import { ElementTable } from './ElementTable';
 import type { ElementMeta } from './ElementTable';
 import { saveJavaFile, GeneratedFilesView } from './GeneratedFiles';
-import { blankPage, blankElement, cleanPageForWrite, validatePage, trimPagesForWrite, MAX_PAGES, MAX_ELEMENTS } from './pomModel';
+import { blankPage, blankElement, cleanPageForWrite, validatePage, trimPagesForWrite, MAX_PAGES, MAX_ELEMENTS, EL_WORK_DIR_KEY } from './pomModel';
 import type { PomWritePlan } from './pomModel';
 import type { PomPage, PomElementRow } from './pomModel';
 // 1.36.0（B6 / 裁定 Z2）：引用守卫已从录制器模型（`record/recorderModel`，B7 整块删除）搬到
@@ -23,6 +23,9 @@ import type { PomPage, PomElementRow } from './pomModel';
 import { elementUsage, canDeleteElement, scanElementRefs } from '../../utils/codegen/elementUsage';
 import type { ElementUsage, UiRecording } from '../../utils/codegen/elementUsage';
 import { PasteImportDialog } from './PasteImportDialog';
+// 1.36.0（B8）：试跑结果的行类型（主进程 t20 已定稿，渲染层只消费）
+import type { ElTrialInputItem, ElTrialItem } from '../../types';
+import { copyPlain } from '../../utils/clipboard';
 
 /* ================================================================
    引用完整性闸门（RA3-01 / `[C-110]`「有人在用不许删」）
@@ -149,6 +152,93 @@ function checkSummaryText(passed: number, total: number): string {
 }
 
 /* ================================================================
+   试跑（1.36.0 / B8）：`el:trial-run` 的四种状态
+   ================================================================ */
+
+/** 2026-11-28T02:03:04.000Z → 11-28 02:03（试跑结果面板的时间戳） */
+function fmtTrialTime(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+}
+
+// 工作目录的键定义在 pomModel（设置页也要读写它，见那里的注释：避免设置页把整个 codegen
+// 组件树拉进自己的 chunk）；这里 re-export，保持既有 import 路径（含单测）可用。
+export { EL_WORK_DIR_KEY };
+
+export interface TrialState {
+  /** `hit1` 命中 1 ／ `miss` 未命中 ／ `multi` 命中多个 ／ `skip` 未执行 ／ `fail` 可操作性检查失败 */
+  key: 'hit1' | 'miss' | 'multi' | 'skip' | 'fail';
+  label: string;
+  detail: string;
+  /** `.dev-tag` 的语义类（is-ok / is-error / is-warn / is-unknown） */
+  cls: string;
+}
+
+/**
+ * 这一条**是否真的验过了**（决定要不要回填 `hitCount / checkedAt`）。
+ *
+ * 判据来自主进程（`electron/element-args.js`，本文件只消费）：
+ * - 每条结果默认 `trial: 'skip'`；`count() > 0` 才会去 `click({trial:true})`，成功 → `ok`，抛错 → `fail`；
+ * - 解析不了的白名单链（变量 / filter({has}) / 未知方法）**带 `skipReason`** → `skip` + `error`；
+ * - `items` 段超预算 → `skip` + `error: 'items 段超时，未执行'`；
+ * - **`count() === 0` 时 `trial` 停在 `skip` 但 `error` 为空** —— 这才是「选择器未命中」。
+ *
+ * 所以「skip + 有 error」= 未执行（不许写命中数），「skip + 无 error + hit=0」= 真的未命中（要写 0）。
+ */
+export function trialSettled(item: ElTrialItem): boolean {
+  if (item.trial === 'ok' || item.trial === 'fail') return true;
+  return item.hit === 0 && !item.error;
+}
+
+/**
+ * 把主进程的一条结果翻译成界面状态（纯函数，单测锁）。
+ *
+ * **三件「不是 0 命中」的事必须分得开**（`types.ts` 的 ElTrialItem 注释第 2 条 + `element-args.js` 的
+ * `rowOf` 默认值）：
+ * 1. `hit === 0` **且没有 `error`** → 选择器未命中（红）——页面上真的没有这个元素；
+ * 2. `trial === 'skip'` **且带 `error`** → **未执行**（灰）：pw 链里有变量插值 / `filter({has})` /
+ *    未知方法，或 items 段超时，白名单解析不了就不硬跑。**绝不能显示成 0 命中**
+ *    （那是把「没验」说成「验了没中」）；
+ * 3. `loginRequired` → 需要登录（黄），此时根本不该有结果行（见页面级横幅）。
+ */
+export function trialStateOf(item: ElTrialItem): TrialState {
+  if (!trialSettled(item)) {
+    return {
+      key: 'skip',
+      label: '未执行',
+      detail: item.error || '这条定位器无法在应用内试跑（变量插值 / filter({has}) / 未知方法），请在 Playwright 里手验',
+      cls: 'is-unknown',
+    };
+  }
+  if (item.hit === 0) {
+    return {
+      key: 'miss',
+      label: '选择器未命中',
+      detail: item.error || '页面上没有匹配元素：检查定位器，或确认页面已经加载到目标状态',
+      cls: 'is-error',
+    };
+  }
+  if (item.hit > 1) {
+    return {
+      key: 'multi',
+      label: `命中 ${item.hit} 个，请细化`,
+      detail: item.error || '一次命中多个元素：生成物里的取第一个是巧合，缩小范围（加 filter / 更具体的 css）',
+      cls: 'is-warn',
+    };
+  }
+  return {
+    key: item.trial === 'fail' ? 'fail' : 'hit1',
+    label: '命中 1',
+    detail: item.trial === 'fail'
+      ? (item.error || '命中了，但可操作性检查没过（可能被遮挡 / 不可见 / 只读）')
+      : `可见 ${item.visible ? '是' : '否'} · 可操作性检查 ${item.trial === 'ok' ? '通过' : '未做'}`,
+    cls: item.trial === 'fail' ? 'is-warn' : 'is-ok',
+  };
+}
+
+/* ================================================================
    页签②：元素库 → POM
    ================================================================ */
 
@@ -178,6 +268,16 @@ export function ElementLibTab({
   const [refBlock, setRefBlock] = useState<RefBlock | null>(null);
   /** 1.36.0（B6）：粘贴导入弹窗 */
   const [pasteOpen, setPasteOpen] = useState(false);
+  /** 1.36.0（B8）：试跑（`el:trial-run`）—— 结果与忙碌态 */
+  const [trialBusy, setTrialBusy] = useState(false);
+  const [trial, setTrial] = useState<{
+    at: string;
+    /** 与「参与试跑的元素」一一对应的结果（顺序一致，空 = 需要登录 / 依赖缺失） */
+    results: { item: ElTrialItem; el: PomElementRow }[];
+    loginRequired: boolean;
+    message: string;
+    truncated: boolean;
+  } | null>(null);
   /** 裁剪结果统一处理：横幅常显 + toast 一次，两处写入共用 */
   const noteTrim = (plan: PomWritePlan) => {
     if (!plan.dropped) return;
@@ -236,8 +336,97 @@ export function ElementLibTab({
     });
   };
 
-  const addElement = () => {
+  /**
+   * 1.36.0（B8）：试跑（`el:trial-run`）—— **本批唯一的写入方**，也是 `hitCount/checkedAt`
+   * 这两个字段存在的全部理由（裁定 Z10：没有写入方的字段不加）。
+   *
+   * 四条硬约束（对应裁定 §十二）：
+   * 1. 工作目录从 **localStorage** 取（`EL_WORK_DIR_KEY`），不进 vault；没选目录就明说，不静默失败；
+   * 2. 只把「能跑」的元素发下去（≤ 20 条，与主进程上限一致），`kind=role` 带 `roleName`；
+   * 3. `loginRequired` 时**不写任何 hitCount**（页面根本没打开，写 0 就是把「没验」说成「没中」）；
+   * 4. `trial === 'skip'` 时同样不写 hitCount —— 只在**真跑过**（ok / fail）时才回填。
+   */
+  const runTrial = async () => {
     if (!draft) return;
+    const active = draft.elements;
+    if (!active.length) {
+      addToast('这个页面还没有元素，先加元素再试跑', 'error');
+      return;
+    }
+    let dir = '';
+    try { dir = localStorage.getItem(EL_WORK_DIR_KEY) || ''; } catch { dir = ''; }
+    if (!dir) {
+      setTrial({ at: new Date().toISOString(), results: [], loginRequired: false, truncated: false,
+        message: '还没选 Playwright 工作目录：去「设置 → 数据与备份 → Playwright 工作目录」选一个，再回来点试跑' });
+      addToast('还没选 Playwright 工作目录（设置 → 数据与备份）', 'error');
+      return;
+    }
+    if (!draft.baseUrl) {
+      addToast('这个页面还没填「页面地址（baseUrl）」，试跑不知道打开哪个页面', 'error');
+      return;
+    }
+    const picked = active.slice(0, 20);
+    const items: ElTrialInputItem[] = picked.map((el) => ({
+      kind: el.kind,
+      locator: el.locator,
+      ...(el.kind === 'role' ? { roleName: String(el.role || '') } : {}),
+      ...(el.name ? { name: el.name } : {}),
+    }));
+    setTrialBusy(true);
+    try {
+      const r = await window.electronAPI.elTrialRun({
+        dir, url: draft.baseUrl, items, withStyle: false,
+      });
+      const now = new Date().toISOString();
+      if (!r.success || !r.data) {
+        // 依赖缺失 / 参数被拦：主进程给的是固定文案，原样显示（不改写成「未命中」）
+        setTrial({ at: now, results: [], loginRequired: false, truncated: false,
+          message: r.error || '试跑失败：主进程没有返回结果' });
+        addToast(r.error || '试跑失败', 'error');
+        return;
+      }
+      const data = r.data;
+      const rows = data.results.map((item, i) => ({ item, el: picked[i] })).filter((x) => !!x.el);
+      setTrial({
+        at: now,
+        results: rows,
+        loginRequired: !!data.loginRequired,
+        truncated: !!data.truncated,
+        message: data.message || '',
+      });
+      // 回填：只给「真跑过」的元素写字段（skip / loginRequired 一律不写）
+      if (!data.loginRequired) {
+        setDraft((prev) => {
+          if (!prev) return prev;
+          const byId = new Map<string, ElTrialItem>();
+          rows.forEach((row) => { if (row.el?.id) byId.set(String(row.el.id), row.item); });
+          const elements = prev.elements.map((el) => {
+            const item = byId.get(String(el.id));
+            // 只回填「真的验过」的（未执行 / 需要登录一律不写，否则就是把「没验」说成「没中」）
+            if (!item || !trialSettled(item)) return el;
+            return { ...el, hitCount: item.hit, checkedAt: now };
+          });
+          return { ...prev, elements };
+        });
+      }
+      if (data.loginRequired) {
+        addToast('页面需要登录：在弹出的窗口里登录后点「重试」', 'info');
+      } else if (data.truncated) {
+        addToast('试跑到预算上限提前结束：已完成的部分照回，剩下的请再试一次', 'info');
+      } else {
+        addToast(`试跑完成：${rows.length} 条，用时 ${data.ms} ms`, 'success');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setTrial({ at: new Date().toISOString(), results: [], loginRequired: false, truncated: false,
+        message: `试跑调用失败：${msg}` });
+      addToast(`试跑调用失败：${msg}`, 'error');
+    } finally {
+      setTrialBusy(false);
+    }
+  };
+
+  const addElement = () => {    if (!draft) return;
     if (draft.elements.length >= MAX_ELEMENTS) {
       addToast(`单个页面最多 ${MAX_ELEMENTS} 个元素`, 'error');
       return;
@@ -614,6 +803,17 @@ export function ElementLibTab({
                   >
                     <Icons.copy size={13} /> 粘贴导入
                   </button>
+                  {/* 1.36.0（B8）：试跑。没有工作目录时按钮不隐藏 —— 点了会明确告诉你该去哪设，
+                      隐藏按钮等于让用户猜「为什么没有这个能力」。 */}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void runTrial()}
+                    disabled={trialBusy || !draft.elements.length}
+                    title={draft.elements.length ? '在 Playwright 里真跑一遍这些定位器（最多 20 条）' : '先加元素'}
+                    data-el-trial="run"
+                  >
+                    <Icons.search size={13} /> {trialBusy ? '试跑中…' : '试跑'}
+                  </button>
                 </div>
 
                 {/* 大表必须套 .dev-scroll：.pnl 是 overflow:hidden，不套会把右侧列裁掉 */}
@@ -623,6 +823,97 @@ export function ElementLibTab({
                   onRemove={removeElement}
                   metaOf={metaOf}
                 />
+                {/*
+                  1.36.0（B8）：试跑结果。四种状态（命中 1 / 未命中 / 命中多个 / 未执行）各占一行，
+                  「未执行」与「需要登录」**不显示成 0 命中**（裁定 Z9：假命中比不显示更糟）。
+                  已知限制：截图只给路径 —— 渲染层读不了 file://，不做内嵌预览（不新增 IPC）。
+                */}
+                {trial && (
+                  <div className="el-trial mt-16" role="region" aria-label="试跑结果">
+                    <div className="el-trial-head">
+                      <span className="text-sm">
+                        <b>试跑结果</b>
+                        <span className="text-muted"> · {trial.results.length} 条 · {fmtTrialTime(trial.at)}</span>
+                      </span>
+                      <div className="tool-inline">
+                        {trial.truncated && <span className="dev-tag is-warn"><Icons.clock size={13} /> 提前结束</span>}
+                        <button className="btn btn-ghost btn-sm" onClick={() => void runTrial()} disabled={trialBusy}>
+                          <Icons.tool size={13} /> {trial.loginRequired ? '重试' : '再跑一次'}
+                        </button>
+                      </div>
+                    </div>
+                    {trial.loginRequired && (
+                      <div className="dev-banner is-warn" role="alert" data-trial="login">
+                        <Icons.lock size={14} />
+                        <div className="text-sm">
+                          页面需要登录：请在弹出的窗口里登录后点「重试」。
+                          <span className="text-muted">（这不是「未命中」—— 页面还没打开到能查元素的状态）</span>
+                        </div>
+                      </div>
+                    )}
+                    {!trial.loginRequired && trial.message && (
+                      <div className="dev-banner is-info" role="status" data-trial="message">
+                        <Icons.list size={14} />
+                        <div className="text-sm">{trial.message}</div>
+                      </div>
+                    )}
+                    {trial.results.length > 0 && (
+                      <div className="dev-scroll is-short">
+                        <table className="tbl">
+                          <thead>
+                            <tr>
+                              <th scope="col" style={{ width: 160 }}>元素</th>
+                              <th scope="col" style={{ width: 150 }}>结果</th>
+                              <th scope="col">说明</th>
+                              <th scope="col" style={{ width: 220 }}>截图</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {trial.results.map(({ item, el }) => {
+                              const st = trialStateOf(item);
+                              return (
+                                <tr key={String(el.id)} data-trial-state={st.key}>
+                                  <td>{el.name || '未命名元素'}</td>
+                                  <td>
+                                    <span className={`dev-tag ${st.cls}`}>{st.label}</span>
+                                  </td>
+                                  <td className="text-sm">
+                                    <div>{st.detail}</div>
+                                    {item.style && (
+                                      <div className="text-muted">读到的样式：{item.style.color} / {item.style.background} / {item.style.fontSize}</div>
+                                    )}
+                                  </td>
+                                  <td className="text-sm">
+                                    {item.shotPath ? (
+                                      <>
+                                        <div className="el-shot-path" title={item.shotPath}>{item.shotPath}</div>
+                                        <button
+                                          className="btn btn-ghost btn-sm"
+                                          onClick={async () => {
+                                            await copyPlain(String(item.shotPath));
+                                            addToast('截图路径已复制（用资源管理器打开即可）', 'success');
+                                          }}
+                                        >
+                                          <Icons.copy size={12} /> 复制路径
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <span className="text-muted">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="text-sm text-muted mt-8">
+                      已知限制：截图只显示路径、不做内嵌预览（渲染层读不了 <code>file://</code>，为此新开通道不划算）。
+                      「未执行」是没法在应用内真跑（变量插值 / filter({'{'}has{'}'}) / 未知方法），不等于 0 命中。
+                    </div>
+                  </div>
+                )}
                 {/* 引用完整性拦截横幅（RA3-01）：列出「谁在用」，并指出下一步该去哪改 */}
                 {refBlock ? (
                   <div className="dev-banner is-error mt-8" data-ref-block={refBlock.kind} role="alert">

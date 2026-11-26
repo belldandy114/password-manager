@@ -43,6 +43,16 @@ export interface PomElementRow {
    * 漏掉白名单就会「保存一次把来源洗成 undefined」，表格那列随即变成 `—`。
    */
   source?: 'paste' | 'manual' | 'recorder';
+  /**
+   * 「上次校验」两列的数据来源（1.36.0 / B8，裁定 Z10：本批新增这两个字段，且**只有**这两个）。
+   *
+   * 写入方只有一个：元素库的「试跑」（`el:trial-run` 的 results 回填 → `cleanPageForWrite` 白名单透传）。
+   * 不加 `styleSnapshot`：主进程虽然会回 6 键样式，但渲染层没有它的展示位，
+   * 加了就是「永远没有写入方的字段」——比没有更难排查（Z10 的原话）。
+   */
+  checkedAt?: string;
+  /** 一次试跑的命中数：0 = 选择器未命中（与「需要登录」「未执行」是三件不同的事） */
+  hitCount?: number;
 }
 
 export interface PomPage {
@@ -69,6 +79,17 @@ export const KINDS: Array<{ id: PomLocatorKind; label: string }> = [
 /** 上限（契约 §1.2 [C-27]） */
 export const MAX_PAGES = 200;
 export const MAX_ELEMENTS = 200;
+
+/**
+ * 1.36.0（B8）：Playwright「试跑」工作目录的 localStorage 键。
+ *
+ * 放在这里（而**不是** ElementLibTab）：设置页也要读写它，而设置页不该为了一个字符串常量
+ * 把整个 codegen 组件树（含 pageobject 生成器、粘贴解析器）拉进自己的 chunk —— 那会让
+ * 元素库的懒加载白做。`pomModel.ts` 是零依赖的纯模型模块，设置页与元素库引用它都不亏。
+ *
+ * 值**不进 vault、不进备份、不进导出**（方案 §12.7：那个目录含登录 cookie）。
+ */
+export const EL_WORK_DIR_KEY = 'pm.el.workDir';
 
 /* ================================================================
    纯校验（页面内做字段级校验；[C-23] 明确字段校验在渲染层）
@@ -160,6 +181,9 @@ export function cleanPageForWrite(draft: PomPage): PomPage {
       // 1.36.0（B6）：来源必须透传（漏它 = 保存一次就把「粘贴导入 / 手工添加」洗成 `—`）。
       // 用条件展开而不是 `source: el.source`：历史元素没有这个字段时不该多出一个永远空的键。
       ...(el.source ? { source: el.source } : {}),
+      // 1.36.0（B8）：试跑结果同样只在**有值**时才写（`hitCount: 0` 是有效值，不能用真值判断）。
+      ...(typeof el.hitCount === 'number' ? { hitCount: el.hitCount } : {}),
+      ...(el.checkedAt ? { checkedAt: el.checkedAt } : {}),
       ...(el.note ? { note: el.note } : {}),
     })),
     updatedAt: new Date().toISOString(),

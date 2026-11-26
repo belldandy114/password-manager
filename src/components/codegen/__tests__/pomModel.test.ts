@@ -55,7 +55,33 @@ describe('[C-110] 元素 id：新建即定、保存不被洗白', () => {
   it('白名单仍只保留契约字段（草稿里的临时字段不会被写进库）', () => {
     const dirty = { name: '账号', locator: '#account', kind: 'css', role: '', 临时字段: 'x' } as unknown as PomPage['elements'][0];
     const clean = cleanPageForWrite(draftWith([dirty]));
+    // 1.36.0（B8）：改成**显式键集合**（不是放宽）—— 1.36 新增的 source / hitCount / checkedAt
+    // 只有「有值」时才出现，所以没有这些值的元素仍然是这四个键，多一个少一个都会红。
     expect(Object.keys(clean.elements[0]).sort()).toEqual(['id', 'kind', 'locator', 'name']);
+  });
+
+  it('1.36.0（B8）白名单透传 checkedAt / hitCount（含 hitCount=0 这个有效值）', () => {
+    const hit = {
+      id: 'el-hit', name: '确定', locator: '#ok', kind: 'css',
+      checkedAt: '2026-11-28T02:03:04.000Z', hitCount: 1,
+    } as unknown as PomPage['elements'][0];
+    const miss = {
+      id: 'el-miss', name: '取消', locator: '#nope', kind: 'css',
+      checkedAt: '2026-11-28T02:03:04.000Z', hitCount: 0,
+    } as unknown as PomPage['elements'][0];
+    const clean = cleanPageForWrite(draftWith([hit, miss]));
+    expect(Object.keys(clean.elements[0]).sort()).toEqual(['checkedAt', 'hitCount', 'id', 'kind', 'locator', 'name']);
+    expect(clean.elements[0].hitCount).toBe(1);
+    // hitCount = 0 必须保住：用真值判断的话它会被当成「没有值」洗掉
+    expect(clean.elements[1].hitCount).toBe(0);
+    expect(clean.elements[1].checkedAt).toBe('2026-11-28T02:03:04.000Z');
+  });
+
+  it('1.36.0（B8）blankElement 不预置这两个键，也不加 styleSnapshot（Z10）', () => {
+    const el = blankElement();
+    expect('checkedAt' in el).toBe(false);
+    expect('hitCount' in el).toBe(false);
+    expect('styleSnapshot' in el).toBe(false);
   });
 
   it('页面字段同样走归一（name / baseUrl 去空白，updatedAt 刷新）', () => {

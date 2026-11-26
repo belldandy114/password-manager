@@ -43,6 +43,26 @@ const SOURCE_LABEL: Record<NonNullable<PomElementRow['source']>, string> = {
   recorder: '录制器',
 };
 
+/**
+ * 试跑命中的口径（1.36.0 / B8）：**0 / 1 / >1 是三件事，不许合并成一句「未命中」**。
+ * 注意这里只用于「已经跑过」的元素 —— 「未执行（skip）」与「需要登录」压根不写 `hitCount`，
+ * 所以不会走到这里（Z9：不许把 skip 显示成 0 命中）。
+ */
+function settledLabel(hitCount: number): string {
+  if (hitCount === 0) return '未命中';
+  if (hitCount === 1) return '命中 1';
+  return `命中 ${hitCount} 个`;
+}
+
+/** `2026-11-28T02:03:04.000Z` → `11-28 02:03`（本地时间；空值显示 `—`） */
+function shortTime(iso?: string): string {
+  if (!iso) return '—';
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+}
+
 export function ElementTable({
   elements,
   onPatch,
@@ -89,13 +109,23 @@ export function ElementTable({
                               const sourceTitle = ownSource
                                 ? `元素自带的来源：${ownSource}${meta && meta.sourceTitle ? `\n历史录制引用：${meta.sourceTitle}` : ''}`
                                 : (meta?.sourceTitle || meta?.source || '');
-                              // 1.36.0（B6 / Z9）：pw 链应用内验不了 → 固定文案，不显示任何命中数字
-                              const lastCheckText = el.kind === 'pw'
-                                ? '未校验（pw 链需在 Playwright 中验证）'
-                                : (meta ? meta.lastCheck : '—');
-                              const lastCheckTitle = el.kind === 'pw'
-                                ? 'pw 链只能在 Playwright 里真跑才知道命中；应用内的浏览器定位只认 css/xpath/text/role'
-                                : (meta?.lastCheckTitle || meta?.lastCheck || '');
+                              // 1.36.0（B8）：先读元素自带的试跑结果（`hitCount/checkedAt` 有写入方了：
+                              // 元素库「试跑」回填 → cleanPageForWrite 白名单）。没有字段时逐级回退：
+                              // pw → 固定「未校验（pw 链需在 Playwright 中验证）」；其余 → uiRecordings 派生。
+                              const hasTrial = typeof el.hitCount === 'number';
+                              const trialText = hasTrial
+                                ? `${settledLabel(el.hitCount as number)} · ${shortTime(el.checkedAt)}`
+                                : '';
+                              const lastCheckText = hasTrial
+                                ? trialText
+                                : el.kind === 'pw'
+                                  ? '未校验（pw 链需在 Playwright 中验证）'
+                                  : (meta ? meta.lastCheck : '—');
+                              const lastCheckTitle = hasTrial
+                                ? `上次试跑：命中 ${el.hitCount} 个；时间 ${el.checkedAt || '未知'}`
+                                : el.kind === 'pw'
+                                  ? 'pw 链只能在 Playwright 里真跑才知道命中；应用内的浏览器定位只认 css/xpath/text/role'
+                                  : (meta?.lastCheckTitle || meta?.lastCheck || '');
                               return (
                               <tr key={el.id || i}>
                                 <td>

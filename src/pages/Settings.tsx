@@ -5,7 +5,7 @@ import { callIpc } from '../utils/ipc';
 import { ToastContainer } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { Page, PageHead, Icons } from '../components/ui';
-import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo, HotkeyInfo, VaultAuditReport, RestoreDrillResult } from '../types';
+import type { KeybindingId, AppSettings, ThemeMode, BackupFile, AccentColor, Density, NotifyStatus, AuditEntry, DataLocationInfo, HotkeyInfo, VaultAuditReport, RestoreDrillResult, ElDepsResult } from '../types';
 import { accelFromKeyEvent, accelLabel, isImeClash, sameAccel } from '../utils/hotkey';
 import { DEFAULT_KEYBINDINGS, findConflicts } from '../utils/keybindings';
 import { applyTheme, applyAccent, applyDensity, ACCENTS } from '../utils/theme';
@@ -15,6 +15,16 @@ import { runEnvProbeOnce } from '../utils/envSchedule';
 import { useEnvProbeStore, formatAt } from '../store/envProbeStore';
 import { nextRunAt, type RegressionSet } from '../utils/regression';
 import { REGRESSION_RAN_EVENT } from '../hooks/useRegressionScheduler';
+import { useConfirm } from '../components/confirm';
+// 1.36.0（B8）：试跑工作目录的键与元素库共用一份定义（定义在元素库里，设置页只引用）
+import { EL_WORK_DIR_KEY } from '../components/codegen/pomModel';
+
+/**
+ * 1.36.0（B8）「遗留数据」的四个集合：1.36 起都没有写入方了
+ * （周报 / 录制器 / 覆盖统计 / 用例映射已下线）。
+ * **只清这四个**：`pomPages`（元素库）与 `scanRuns`（代码体检历史）还有活的写入方，永不清。
+ */
+const LEGACY_KEYS = ['uiRecordings', 'allureRuns', 'coverageRuns', 'caseMaps'] as const;
 
 interface BrowserInfo {
   id: string;
@@ -152,6 +162,8 @@ export function Settings() {
   };
 
   const { toasts, addToast, removeToast } = useToast();
+  // 1.36.0（B8）：清空登录状态 / 清理遗留数据都要二次确认（原生 confirm 与应用样式不一致）
+  const { ask, confirmNode } = useConfirm();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     try { return normalizeSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY)); } catch { return 'security'; }
@@ -210,6 +222,20 @@ export function Settings() {
   /** 恢复演练结果（按备份文件名索引，避免一次演练覆盖另一次） */
   const [drill, setDrill] = useState<{ name: string; result: RestoreDrillResult } | null>(null);
   const [drillBusy, setDrillBusy] = useState('');
+  /* ------------------------------------------------------------------
+     1.36.0（B8）：Playwright 试跑目录 / 登录状态 / 遗留数据
+     ------------------------------------------------------------------ */
+  /** 工作目录：**只存 localStorage**（不进 vault、不进备份、不进导出，方案 §12.7） */
+  const [elDir, setElDir] = useState<string>(() => {
+    try { return localStorage.getItem(EL_WORK_DIR_KEY) || ''; } catch { return ''; }
+  });
+  const [elDeps, setElDeps] = useState<ElDepsResult | null>(null);
+  const [elBusy, setElBusy] = useState('');
+  /** 遗留数据：四个集合的条数（操作前后对比用，也是「有没有东西可清」的判据） */
+  const [legacyCounts, setLegacyCounts] = useState<Record<string, number> | null>(null);
+  const [legacyBusy, setLegacyBusy] = useState('');
+  /** 导出成功后才能清理（本会话内的凭据；刷新页面就要求重新导出一次，这是有意的） */
+  const [legacyExportedAt, setLegacyExportedAt] = useState('');
   /** 运行日志查看器（只读最近若干行，出问题时不用去翻目录） */
   const [logOpen, setLogOpen] = useState(false);
   const [logText, setLogText] = useState('');
@@ -544,9 +570,150 @@ export function Settings() {
     else addToast(`自检完成：${error} 项错误 / ${warn} 项警告`, error ? 'error' : 'info');
   };
 
+  /* ------------------------------------------------------------------
+     1.36.0（B8）：三组控件的手柄
+     ① 选工作目录（`el:pick-dir`）→ 存 localStorage → 探两盏灯（`el:deps`）
+     ② 清空登录状态（`el:profile-clear`，删 `<目录>/.pm-profile`）
+     ③ 遗留数据：先导出（`file:save-text`）成功，才允许清理（`ws:set` 四个集合清空）
+     ------------------------------------------------------------------ */
+
+  /** ① 选目录：选完立刻探灯，缺 node / playwright 时当场说清楚，别等试跑才报错 */
+  const pickElDir = async () => {
+    const r = await window.electronAPI.elPickDir();
+    if (!r.success || !r.data) {
+      if (r.error) addToast(r.error, 'error');
+      return;
+    }
+    const dir = r.data;
+    try { localStorage.setItem(EL_WORK_DIR_KEY, dir); } catch { /* 隐私模式写不了，本次会话仍可用 */ }
+    setElDir(dir);
+    await refreshElDeps(dir);
+    addToast('Playwright 工作目录已设置（只存在本机 localStorage，不进备份）', 'success');
+  };
+
+  /** 探两盏灯；返回 `ready` 便于调用方决定要不要继续 */
+  const refreshElDeps = async (dir: string): Promise<boolean> => {
+    setElBusy('deps');
+    const r = await window.electronAPI.elDeps({ dir });
+    setElBusy('');
+    if (!r.success || !r.data) {
+      setElDeps(null);
+      addToast(r.error || '探测试跑依赖失败', 'error');
+      return false;
+    }
+    setElDeps(r.data);
+    return r.data.ready;
+  };
+
+  /** ② 清空登录状态：二次确认，删的是 `<工作目录>/.pm-profile` */
+  const clearElProfile = () => {
+    if (!elDir) { addToast('先选 Playwright 工作目录', 'error'); return; }
+    ask({
+      title: '清空登录状态',
+      message: `将删除「${elDir}\\.pm-profile」里的登录 cookie（页面数据与截图不受影响）。下次试跑要重新登录。`,
+      confirmText: '清空',
+      onOk: () => {
+        void (async () => {
+          setElBusy('profile');
+          const r = await window.electronAPI.elProfileClear({ dir: elDir });
+          setElBusy('');
+          if (!r.success || !r.data) { addToast(r.error || '清空登录状态失败', 'error'); return; }
+          addToast(`已清空登录状态（${String(r.data)}）`, 'success');
+        })();
+      },
+    });
+  };
+
+  /** ③ 读四个遗留集合的条数（导出前/清理后各读一次，贴进回执做对比） */
+  const readLegacyCounts = useCallback(async (): Promise<Record<string, number>> => {
+    const out: Record<string, number> = {};
+    for (const key of LEGACY_KEYS) {
+      const r = await window.electronAPI.wsGet(key);
+      out[key] = Array.isArray(r.data) ? r.data.length : 0;
+    }
+    setLegacyCounts(out);
+    return out;
+  }, []);
+
+  useEffect(() => {
+    // 进「数据与备份」页时顺手读一次条数：有东西才显示「可清理 N 条」
+    if (activeTab !== 'data') return;
+    void readLegacyCounts();
+  }, [activeTab, readLegacyCounts]);
+
+  /**
+   * ③ 导出遗留数据：四个集合 + `schemaVersion` + 导出时间 → JSON，走**既有** `file:save-text`。
+   *
+   * `schemaVersion` 取自既有 `vaultAudit` 通道（渲染层拿不到主进程的常量，也不该为此新增常量通道）；
+   * 已经体检过就复用 `auditReport`，没有才现查一次。
+   */
+  const exportLegacyData = async () => {
+    setLegacyBusy('export');
+    try {
+      const collections: Record<string, unknown[]> = {};
+      for (const key of LEGACY_KEYS) {
+        const r = await window.electronAPI.wsGet(key);
+        collections[key] = Array.isArray(r.data) ? r.data : [];
+      }
+      let schemaVersion = auditReport?.schemaVersion ?? null;
+      if (schemaVersion === null) {
+        const a = await window.electronAPI.vaultAudit();
+        schemaVersion = a.success && a.data ? a.data.schemaVersion : null;
+      }
+      const payload = {
+        kind: 'pm-legacy-collections',
+        schemaVersion,
+        exportedAt: new Date().toISOString(),
+        note: '这四个集合在 1.36.0 起没有写入方（周报 / 录制器 / 覆盖统计 / 用例映射已下线），导出留档后可由用户自行清理。',
+        collections,
+      };
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const r = await window.electronAPI.saveText(
+        JSON.stringify(payload, null, 2),
+        `遗留数据-${stamp}.json`,
+        [{ name: 'JSON', extensions: ['json'] }],
+      );
+      if (!r.success) {
+        addToast(r.error || '导出失败（取消保存也算失败，取消后不能清理）', 'error');
+        setLegacyExportedAt('');
+        return;
+      }
+      const total = LEGACY_KEYS.reduce((n, k) => n + collections[k].length, 0);
+      setLegacyExportedAt(new Date().toISOString());
+      addToast(`已导出 ${total} 条遗留数据${r.data?.file ? `：${r.data.file}` : ''}`, 'success');
+    } finally {
+      setLegacyBusy('');
+    }
+  };
+
+  /** ③ 清理：**必须先导出成功**；只清四个集合，`pomPages` / `scanRuns` 永不清 */
+  const clearLegacyData = () => {
+    if (!legacyExportedAt) { addToast('先导出一次再清理：导出文件是唯一的后悔药', 'error'); return; }
+    ask({
+      title: '清理遗留数据',
+      message: `将清空 ${LEGACY_KEYS.join(' / ')} 四个集合（元素库 pomPages 与体检历史 scanRuns 不动）。
+清理前请确认刚才导出的 JSON 已经存好 —— 这一步不可撤销。`,
+      confirmText: '清理',
+      onOk: () => {
+        void (async () => {
+          setLegacyBusy('clear');
+          const cleared: string[] = [];
+          for (const key of LEGACY_KEYS) {
+            const r = await window.electronAPI.wsSet(key, []);
+            if (!r.success) { addToast(`清理 ${key} 失败：${r.error || '未知原因'}`, 'error'); setLegacyBusy(''); return; }
+            cleared.push(key);
+          }
+          const after = await readLegacyCounts();
+          setLegacyBusy('');
+          setLegacyExportedAt('');
+          addToast(`已清理 ${cleared.length} 个集合（现 ${LEGACY_KEYS.map((k) => `${k}=${after[k]}`).join(' / ')}）`, 'success');
+        })();
+      },
+    });
+  };
+
   /** 恢复演练：拿一份备份试解 + 体检，不碰正式库 */
-  const runRestoreDrill = async (name: string) => {
-    setDrillBusy(name);
+  const runRestoreDrill = async (name: string) => {    setDrillBusy(name);
     const r = await window.electronAPI.vaultRestoreDrill(name);
     setDrillBusy('');
     if (!r.success || !r.data) {
@@ -1230,6 +1397,105 @@ export function Settings() {
                 `settings.weeklyDir` 字段与 `ipc-entries.js` 的 settings 白名单保留（老库不迁移、回滚零风险）。 */}
             <div className="text-sm text-muted" style={{ marginTop: 6 }}>
               目录切换只复制、不删除原文件；附件目录改完立即生效，不需要重启。
+            </div>
+
+            {/* ============ 1.36.0（B8）：Playwright 试跑 ============ */}
+            <h3 style={{ marginTop: 24 }}>Playwright 试跑</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">Playwright 工作目录</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  {elDir || '还没选：元素库的「试跑」需要它才能打开浏览器'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  用于存放浏览器登录状态（<code>.pm-profile</code>）与试跑截图。这个目录含登录 cookie，
+                  <b>别拷给别人</b>；它只存在本机 localStorage，<b>不进加密库、不进备份、不进导出</b>。
+                </div>
+                {elDeps && (
+                  <div className="el-deps" style={{ marginTop: 6 }}>
+                    {elDeps.lamps.map((l) => (
+                      <span key={l.id} className={`dev-tag ${l.state === 'green' ? 'is-ok' : 'is-error'}`} title={l.detail}>
+                        {l.state === 'green' ? '✓' : '✗'} {l.label}
+                        {l.fixHint ? `：${l.fixHint}` : ''}
+                      </span>
+                    ))}
+                    <span className="text-sm text-muted">
+                      {elDeps.ready ? '依赖齐了，可以在元素库里试跑' : '依赖不齐：试跑会直接报错，先按上面的提示装好'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => void pickElDir()} disabled={!!elBusy}>
+                  {elBusy === 'deps' ? '探测中…' : '选择目录'}
+                </button>
+                {elDir && (
+                  <button className="btn btn-sm btn-ghost" onClick={() => void refreshElDeps(elDir)} disabled={!!elBusy}>
+                    重新探测依赖
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">清空登录状态</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  删掉 <code>{elDir ? `${elDir}\\.pm-profile` : '<工作目录>\\.pm-profile'}</code> 里的 cookie
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  换账号 / 试跑卡在登录页时用。页面数据与已生成的截图不受影响，下次试跑要重新登录。
+                </div>
+              </div>
+              <div className="setting-control">
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={clearElProfile}
+                  disabled={!elDir || !!elBusy}
+                  title={elDir ? '删除该目录下的 .pm-profile' : '先选工作目录'}
+                >
+                  {elBusy === 'profile' ? '清理中…' : '清空登录状态'}
+                </button>
+              </div>
+            </div>
+
+            {/* ============ 1.36.0（B8）：遗留数据（导出 / 清理） ============ */}
+            <h3 style={{ marginTop: 24 }}>遗留数据</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">导出 / 清理遗留数据</div>
+                <div className="setting-desc">
+                  {legacyCounts
+                    ? LEGACY_KEYS.map((k) => `${k}=${legacyCounts[k] ?? 0}`).join(' / ')
+                    : '读取中…'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  这四个集合在 1.36.0 起没有写入方了（周报 / 录制器 / 覆盖统计 / 用例映射已下线）。
+                  <b>必须先导出成功才能清理</b>；元素库（<code>pomPages</code>）与体检历史（<code>scanRuns</code>）永不清。
+                </div>
+                {legacyExportedAt && (
+                  <div className="text-sm" style={{ marginTop: 4 }} data-legacy-exported="1">
+                    ✓ 已导出（{formatDateTime(legacyExportedAt)}），现在可以清理了
+                  </div>
+                )}
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => void exportLegacyData()}
+                  disabled={!!legacyBusy}
+                >
+                  {legacyBusy === 'export' ? '导出中…' : '导出遗留数据'}
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={clearLegacyData}
+                  disabled={!legacyExportedAt || !!legacyBusy}
+                  title={legacyExportedAt ? '清空那四个集合' : '先导出一次再清理'}
+                >
+                  {legacyBusy === 'clear' ? '清理中…' : '清理遗留数据'}
+                </button>
+              </div>
             </div>
           </div>
         );
@@ -2104,6 +2370,7 @@ export function Settings() {
 
   return (
     <div className="content-area">
+      {confirmNode}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <Page>
         <PageHead
