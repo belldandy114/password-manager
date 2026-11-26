@@ -1,6 +1,6 @@
 /**
  * ui-round4-test.js —— 1.3.0 新功能回归
- *   ① Bug 详情抽屉   ② 筛选预设   ③ 周报生成草稿
+ *   ① Bug 详情抽屉   ② 筛选预设（③ 周报生成草稿随 1.36 B2 周报页下线一并摘除）
  *   ④ 接口调试：环境 + 历史   ⑤ 命令面板 Ctrl+K   ⑥ 工具箱新增 4 个工具
  */
 const { spawn } = require('child_process');
@@ -134,15 +134,8 @@ const check = (name, ok, detail) => {
     const presetOpts = await evaluate(`(() => { const s = document.querySelector('.zt-preset'); return s ? s.options.length : 0; })()`);
     check('筛选预设保存成功', presetOpts > 1, `${presetOpts - 1} 个预设`);
 
-    /* ---------- ③ 周报生成草稿 ---------- */
-    await nav('周报');
-    await sleep(1000);
-    await clickText('生成草稿');
-    await sleep(800);
-    const draft = await evaluate(`(() => { const ta = document.querySelector('.wk-md-input'); return ta ? ta.value : ''; })()`);
-    check('周报草稿已生成', String(draft).includes('本周工作') && String(draft).includes('禅道缺陷'), JSON.stringify(draft).slice(0, 60));
   } else {
-    console.log('- 禅道：拉数据 + 周报草稿（跳过：未配置 ZT_* 环境变量）');
+    console.log('- 禅道：拉数据（跳过：未配置 ZT_* 环境变量）');
   }
 
     /* ---------- ④ 接口调试：环境 + 历史 ---------- */

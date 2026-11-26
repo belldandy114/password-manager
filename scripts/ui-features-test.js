@@ -1,8 +1,8 @@
 /**
  * ui-features-test.js —— 验证本轮改动：
  *   ① 环境地址新增不再崩溃且能落盘
- *   ② 周报页能读到本地目录并渲染
- *   ③ 禅道：项目筛选 / 标签点击筛选 / 按项目统计 / 切页数据不丢
+ *   ② 禅道：项目筛选 / 标签点击筛选 / 按项目统计 / 切页数据不丢
+ *   （原「② 周报页能读到本地目录并渲染」随 1.36（B2）周报页下线一并摘除）
  */
 const { spawn } = require('child_process');
 const { pickExe } = require('./pick-exe');
@@ -98,21 +98,6 @@ const check = (name, ok, detail) => {
     const envData = await evaluate(`(async () => JSON.stringify((await window.electronAPI.wsGet('environments')).data || []))()`);
     check('环境地址：数据已落盘', !!envData && envData.includes('功能测试系统'), envData);
     check('环境地址：矩阵出现新行', (await evaluate(`(() => { const t = document.querySelector('.envx'); return t ? t.querySelectorAll('tbody tr').length : -1; })()`)) === 1);
-
-    /* ---------- ② 周报 ---------- */
-    await nav('周报');
-    await sleep(2500);
-    const wkFiles = await evaluate(`(() => { const l = document.querySelector('.wk-list'); return l ? l.querySelectorAll('.wk-item').length : -1; })()`);
-    check('周报：列表读到文件', typeof wkFiles === 'number' && wkFiles > 0, `${wkFiles} 篇`);
-    const mdLen = await evaluate(`(() => { const b = document.querySelector('.md-body'); return b ? b.innerText.length : -1; })()`);
-    check('周报：正文已渲染', typeof mdLen === 'number' && mdLen > 100, `${mdLen} 字`);
-    const hasSection = await evaluate(`(() => { const b = document.querySelector('.md-body'); return b ? b.querySelectorAll('.md-h').length : -1; })()`);
-    check('周报：小节标题已解析', typeof hasSection === 'number' && hasSection > 0, `${hasSection} 个小节`);
-    // 点第二篇
-    await evaluate(`(() => { const items = document.querySelectorAll('.wk-item'); if (items[1]) items[1].click(); return items.length; })()`);
-    await sleep(1200);
-    const mdLen2 = await evaluate(`(() => { const b = document.querySelector('.md-body'); return b ? b.innerText.length : -1; })()`);
-    check('周报：切换另一篇', typeof mdLen2 === 'number' && mdLen2 > 100, `${mdLen2} 字`);
 
     /* ---------- ③ 禅道 ---------- */
     await nav('禅道');

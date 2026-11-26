@@ -1,7 +1,7 @@
 /**
  * 1.6.0 回归：数据安全（原子写 / 备份恢复 / 登录页恢复入口 / 数据目录）
  *            接口调试（Set-Cookie 会话 / 断言可加行 / 响应快照 / JSON→TS）
- *            禅道（多地址配置 / 附件下载 / 未读红点）、周报（周对比 / 群消息）
+ *            禅道（多地址配置 / 附件下载 / 未读红点）；周报段随 1.36 B2 下线已摘
  *
  * 用法：node scripts/ui-round7-test.js            # 跑 dist（PM_USE_DIST=1）
  *      USE_PACKED=1 node scripts/ui-round7-test.js # 跑 release/win-unpacked
@@ -408,13 +408,6 @@ const check = (name, ok, extra = '') => {
   const dotAfter = await ev(`(() => { const d = document.querySelector('.nav-dot'); return d ? d.textContent.trim() : ''; })()`);
   const unreadNow = await api(`window.electronAPI.zentaoUnread()`);
   check('侧边栏：进禅道页后红点清零', !dotAfter && unreadNow.data === 0, `红点=${dotAfter || '(无)'} 计数=${unreadNow.data}`);
-
-  /* ================= D. 周报 ================= */
-  await navTo('周报');
-  await sleep(900);
-  const wkTitle = await ev(`(() => { const t = document.querySelector('.pg-title'); return t ? t.innerText.trim() : ''; })()`);
-  const wkCmp = await ev(`(() => document.querySelectorAll('.wk-cmp').length)()`);
-  check('周报：页面正常渲染（没禅道数据时不显示对比块）', wkTitle.includes('周报') && Number(wkCmp) === 0, `${wkTitle} / 对比块 ${wkCmp} 个`);
 
   /* ================= F. 应用内更新：多线程分段下载 ================= */
   // 本地起一个支持 Range 的“安装包”服务，验证主进程确实并发分段抓取

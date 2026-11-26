@@ -1,10 +1,9 @@
 /**
  * ui-round2-test.js —— 本轮改动的界面回归（CDP 驱动真实界面）
- *   ① 环境地址/用例清单已移除，周报在侧边栏
- *   ② 周报：新建 / 修改 / 删除（用临时目录，不动真实周报）
- *   ③ 禅道：我的 Bug + 项目 Bug 两个 tab，项目 Bug 是全量
- *   ④ 工具箱：正则提取 / JSON 提取
- *   ⑤ 接口调试：请求头逐行输入
+ *   ① 环境地址/用例清单已移除（侧边栏分组已按 1.36 收敛，周报页随 B2 下线）
+ *   ② 禅道：我的 Bug + 项目 Bug 两个 tab，项目 Bug 是全量
+ *   ③ 工具箱：正则提取 / JSON 提取
+ *   ④ 接口调试：请求头逐行输入
  */
 const { spawn } = require('child_process');
 const { pickExe } = require('./pick-exe');
@@ -22,7 +21,6 @@ const { ensureZt } = require('./zt-stub');
 
 if (!fs.existsSync(EXE)) { console.error('找不到主程序：' + EXE); process.exit(1); }
 
-const tmpWeekly = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-weekly-'));
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-r2-'));
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
@@ -113,44 +111,7 @@ const check = (name, ok, detail) => {
     /* ---------- ① 侧边栏 ---------- */
     const navTexts = await evaluate(`(() => Array.from(document.querySelectorAll('.nav-item')).map(n => n.textContent.trim()).join('|'))()`);
     check('侧边栏已去掉环境地址/用例清单', !navTexts.includes('环境地址') && !navTexts.includes('用例清单'), navTexts);
-    check('侧边栏有「周报」', navTexts.includes('周报'));
 
-    /* ---------- ② 周报 CRUD（临时目录） ---------- */
-    await evaluate(`localStorage.setItem('weekly.report.dir', ${JSON.stringify(tmpWeekly)})`);
-    await nav('周报');
-    await sleep(1200);
-    check('周报：空目录提示', await evaluate(`(() => { const e = document.querySelector('.empty-title'); return e ? e.textContent : ''; })()`) !== '');
-
-    // 新建
-    await clickText('新建周报');
-    await sleep(600);
-    check('周报：新建弹窗是编辑态', await evaluate(`!!document.querySelector('.wk-md-input, .wk-editor')`));
-    await evaluate(`(() => { const inp = document.querySelector('.wk-editor input'); const set = ${SETVAL}; set(inp, '2026-10-30.md'); const ta = document.querySelector('.wk-md-input'); set(ta, '**一、本周工作**\\n\\n1. 验证周报新建\\n2. 验证保存\\n\\n**二、下周计划**\\n\\n1. 继续'); return true; })()`);
-    await sleep(300);
-    await clickText('保存');
-    await sleep(1800);
-    const created = fs.existsSync(path.join(tmpWeekly, '2026-10-30.md'));
-    check('周报：新建并写入文件', created, created ? fs.readFileSync(path.join(tmpWeekly, '2026-10-30.md'), 'utf8').slice(0, 20) : '文件不存在');
-    check('周报：列表出现新条目', await evaluate(`(() => { const l = document.querySelector('.wk-list'); return l ? l.querySelectorAll('.wk-item').length : 0; })()`) === 1);
-    const rendered = await evaluate(`(() => { const b = document.querySelector('.md-body'); return b ? b.innerText : ''; })()`);
-    check('周报：正文渲染出内容', String(rendered).includes('验证周报新建'), String(rendered).slice(0, 40));
-
-    // 修改
-    await clickText('编辑');
-    await sleep(500);
-    await evaluate(`(() => { const set = ${SETVAL}; const ta = document.querySelector('.wk-md-input'); set(ta, ta.value + '\\n3. 追加一行'); return true; })()`);
-    await sleep(300);
-    await clickText('保存');
-    await sleep(1500);
-    const afterEdit = fs.readFileSync(path.join(tmpWeekly, '2026-10-30.md'), 'utf8');
-    check('周报：修改已保存', afterEdit.includes('追加一行'));
-
-    // 删除
-    await clickText('删除');
-    await sleep(500);
-    await clickText('删除到回收站');
-    await sleep(1800);
-    check('周报：删除后文件不在目录', !fs.existsSync(path.join(tmpWeekly, '2026-10-30.md')));
 
     /* ---------- ④ 工具箱 ---------- */
     await nav('工具箱');
@@ -269,7 +230,6 @@ const check = (name, ok, detail) => {
   zt.stop();
   await sleep(1000);
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
-  try { fs.rmSync(tmpWeekly, { recursive: true, force: true }); } catch { /* ignore */ }
 
   const failed = results.filter(r => !r.ok);
   console.log('─'.repeat(48));

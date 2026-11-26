@@ -792,8 +792,8 @@ const echo = http.createServer((req, res) => {
     check('禅道：重新拉取按当前所选项目发出新请求',
       bugReqs().length > beforeRefresh, `${beforeRefresh} → ${bugReqs().length}`);
 
-    // 切页面回来视图保留（状态在 store 里）
-    await navTo('周报');
+    // 切页面回来视图保留（状态在 store 里）。1.36（B2）：周报页已下线，切出去改用「代码工具」页。
+    await navTo('代码工具');
     await navTo('缺陷管理');
     const kept = await ev(`(() => { const b = document.querySelector('.zt-scope-btn.is-active'); return b ? b.textContent.trim() : ''; })()`);
     check('禅道：切换页面后视图选择保留', !!kept, String(kept));

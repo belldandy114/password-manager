@@ -1,5 +1,5 @@
 /**
- * 1.6.1 回归：周报周次下拉方向 / 设置页左栏布局 / 接口调试分区样式
+ * 1.6.1 回归：设置页左栏布局 / 接口调试分区样式（周报页随 1.36 B2 下线，相关段已摘）
  * node scripts/ui-round8-test.js
  *
  * 说明：本次改动以样式与布局为主，模型看不到截图，所以断言全部落在
@@ -129,34 +129,6 @@ const echoServer = http.createServer((req, res) => {
   await clickHas('设置主密码');
   await sleep(2400);
 
-  /* ================= A. 周报：1.9.3 去掉周次下拉与「本周 vs 上周」 ================= */
-  await navTo('周报');
-  const weekUi = await ev(`(() => ({
-    selects: document.querySelectorAll('.wk-draft-week').length,
-    weekOptions: document.querySelectorAll('.wk-draft-week option').length,
-    cmpPanel: [...document.querySelectorAll('.pnl-title')].some(t => /vs\s*上周|上周\s*vs/.test(t.textContent)),
-    cmpRows: document.querySelectorAll('.wk-cmp-row').length,
-    // 1.21.9：页头「复制群消息」已随「从禅道生成」对话框改版移除（提交 46da061），
-    // 改为断言新的生成入口存在，避免把产品改版误判成回退。
-    digestBtn: [...document.querySelectorAll('button')].some(b => /从禅道生成/.test(b.textContent)),
-  }))()`);
-  check('周报：周次下拉已去掉', !!weekUi && weekUi.selects === 0 && weekUi.weekOptions === 0, JSON.stringify(weekUi));
-  check('周报：「本周 vs 上周」对比面板已去掉', !!weekUi && weekUi.cmpPanel === false && weekUi.cmpRows === 0, JSON.stringify(weekUi));
-  check('周报：保留「从禅道生成」入口', !!weekUi && weekUi.digestBtn === true, JSON.stringify(weekUi));
-
-  // 目录默认值不再内置本机路径：没选目录时应给引导提示，而不是抛「未指定周报目录」错误
-  const noDir = await ev(`(() => {
-    const bad = [...document.querySelectorAll('.pill-bad')].map(e => e.textContent.trim());
-    const hint = [...document.querySelectorAll('.pill')].map(e => e.textContent.trim()).find(t => t.includes('还没有选择周报目录'));
-    return { badCount: bad.length, bad: bad.slice(0, 2), hint: hint || '' };
-  })()`);
-  check('周报：未选目录时给引导提示、不报错',
-    !!noDir && noDir.badCount === 0 && /还没有选择周报目录/.test(noDir.hint),
-    JSON.stringify(noDir));
-
-  // 「选择目录」的真实点击会弹系统目录框（自动化点不了），改为静态守卫：
-  // npm run check:ipc 会拦截「拆分模块引用 main.js 模块级状态」这类错误
-  check('周报：选择目录的接线由 npm run check:ipc 静态守卫覆盖（不再拖住回归）', true);
   /* ================= B. 设置页：左侧竖排菜单 ================= */
   await navTo('设置');
   const rail = await ev(`(() => {
@@ -334,7 +306,7 @@ const echoServer = http.createServer((req, res) => {
   })()`);
   check('接口调试：状态码做成药丸', !!statusPill && parseFloat(statusPill.radius) >= 8, JSON.stringify(statusPill));
 
-  // 周报对比面板可折叠：没有禅道数据时该面板不渲染，这里只验证 Panel 折叠能力在页面可用
+  // Panel 折叠能力在页面上是否可用（原用例挂在周报对比面板上；周报页已下线，该断言与 Panel 组件本身有关，保留在接口调试页）
   const panelsCollapsible = await ev(`(() => {
     const c = document.querySelector('.pnl-head.is-clickable');
     return !!c;
@@ -348,73 +320,14 @@ const echoServer = http.createServer((req, res) => {
   check('接口调试：没有横向溢出',
     !!overflowApi && overflowApi.sw <= overflowApi.cw + 2, JSON.stringify(overflowApi));
 
-  /* ================= D. 周报对比表：数字列与「变化」对齐 ================= */
-  // 对比面板要有禅道数据才渲染；这里把同样的结构插进真实页面，用真实样式量几何量。
-  // 模型看不到截图，只能靠「右边界/基线是否吻合」来证明对齐。
-  await navTo('周报');
-  const cmp = await ev(`(() => {
-    const host = document.querySelector('.pg');
-    if (!host) return null;
-    const rows = [
-      { label: '新提', cur: 7, prev: 12, d: -5, tone: 'good' },
-      { label: '解决', cur: 128, prev: 9, d: 119, tone: 'good' },
-      { label: '关闭', cur: 3, prev: 3, d: 0, tone: 'flat' },
-      { label: '未关闭', cur: 1041, prev: 998, d: 43, tone: 'bad' },
-    ];
-    const box = document.createElement('section');
-    box.className = 'pnl';
-    box.id = 'pm-test-cmp';
-    box.innerHTML = '<div class="pnl-body"><div class="wk-cmp">'
-      + '<div class="wk-cmp-head"><span></span><span>本周</span><span>上周</span><span>变化</span></div>'
-      + rows.map(r => '<div class="wk-cmp-row">'
-        + '<span class="wk-cmp-label">' + r.label + '</span>'
-        + '<b>' + r.cur + '</b>'
-        + '<span class="wk-cmp-prev">' + r.prev + '</span>'
-        + '<span class="wk-delta is-' + r.tone + '">' + (r.d === 0 ? '持平' : (r.d > 0 ? '↑ ' + r.d : '↓ ' + (-r.d))) + '</span>'
-        + '</div>').join('')
-      + '</div></div>';
-    host.appendChild(box);
-    const q = (sel) => [...box.querySelectorAll(sel)];
-    const rect = (el) => el.getBoundingClientRect();
-    const data = q('.wk-cmp-row').map(row => {
-      const b = row.querySelector('b');
-      const prev = row.querySelector('.wk-cmp-prev');
-      const delta = row.querySelector('.wk-delta');
-      const label = row.querySelector('.wk-cmp-label');
-      const rb = rect(b), rp = rect(prev), rd = rect(delta), rl = rect(label);
-      return {
-        bRight: Math.round(rb.right), pRight: Math.round(rp.right), dRight: Math.round(rd.right),
-        bTop: Math.round(rb.top), pTop: Math.round(rp.top), dTop: Math.round(rd.top), lTop: Math.round(rl.top),
-        dLeft: Math.round(rd.left), pRightRaw: Math.round(rp.right),
-        gapPrevDelta: Math.round(rd.left - rp.right),
-      };
-    });
-    const head = q('.wk-cmp-head span').map(s => Math.round(rect(s).right));
-    const align = getComputedStyle(box.querySelector('.wk-cmp-row')).alignItems;
-    return { data, head, align, rowCount: data.length };
-  })()`);
-  check('周报对比：4 行都渲染出来了', !!cmp && cmp.rowCount === 4, cmp && String(cmp.rowCount));
-  // 每列的数字右边界要与「自己那列表头」的右边界吻合（各列本来就不同，不能互相比较）
-  check('周报对比：每列数字正对表头（本周/上周/变化各在其列）',
-    !!cmp && cmp.data.every((d) => Math.abs(d.bRight - cmp.head[1]) <= 2
-      && Math.abs(d.pRight - cmp.head[2]) <= 2
-      && Math.abs(d.dRight - cmp.head[3]) <= 2),
-    cmp && `表头 ${JSON.stringify(cmp.head)} / 行 ${JSON.stringify([cmp.data[0].bRight, cmp.data[0].pRight, cmp.data[0].dRight])}`);
-  check('周报对比：跨行的同一列右边界一致（位数变化也不抖）',
-    !!cmp && new Set(cmp.data.map((d) => d.dRight)).size === 1
-    && new Set(cmp.data.map((d) => d.bRight)).size === 1,
-    cmp && JSON.stringify(cmp.data.map((d) => d.bRight)));
-  check('周报对比：表头与数字列同一基线网格',
-    !!cmp && Math.abs(cmp.head[3] - cmp.data[0].dRight) <= 1,
-    cmp && `表头 ${JSON.stringify(cmp.head)} / 数据 ${cmp.data[0].dRight}`);
-  check('周报对比：按 baseline 对齐（字号不同也不互相错位）',
-    !!cmp && cmp.align === 'baseline', cmp && cmp.align);
-  check('周报对比：「变化」不压到数字列',
-    !!cmp && cmp.data.every((d) => d.gapPrevDelta >= 4), cmp && JSON.stringify(cmp.data.map((d) => d.gapPrevDelta)));
-
-  await ev(`(() => { const n = document.getElementById('pm-test-cmp'); if (n) n.remove(); return !!n; })()`);
-
-  /* ================= E. 折叠交互（对比面板用的同一个 Panel） ================= */
+  /* ================= D. 折叠交互（Panel 组件本身，与具体页面无关） ================= */
+  // 1.36（B2）：原来这里复用的是「周报对比面板」，周报页下线后它不存在了。
+  // 改到「代码工具 → 代码体检」的「规则（19 条）」面板 —— 那是当前唯一默认折叠的 Panel，
+  // 断言一字未改，覆盖面（收起/展开/箭头）保住。
+  await navTo('代码工具');
+  await sleep(600);
+  await clickHas('代码体检');
+  await sleep(1200);
   const collapse = await ev(`(async () => {
     const head = document.querySelector('.pnl-head.is-clickable');
     const pnl = head && head.closest('.pnl');
