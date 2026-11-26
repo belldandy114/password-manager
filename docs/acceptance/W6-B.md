@@ -1,4 +1,5 @@
 # W6-B Allure 解析域验收证据（t38）
+> ⚠ 已下线（1.36.0）：结果中心的 Allure 解析域（ipc-allure / allure-parse）。本文档仅作历史记录，不要照它实现。
 
 > 任务：模块 5.1「Allure 结果解析」主进程侧 —— 纯函数 allure-parse.js（flaky / 聚类 / skippedFiles）+ ipc-allure.js 两条只读通道。
 > 本文件是长证据唯一落点；`update_task` 每条 evidence ≤200 字 + 指向本文件章节。

@@ -1,4 +1,5 @@
 # W5-B 验收取证：覆盖矩阵 + 用例映射（t34）
+> ⚠ 已下线（1.36.0）：资产台账的覆盖矩阵与用例映射（coverage / caseMaps 纯函数）。本文档仅作历史记录，不要照它实现。
 
 > 范围：`src/utils/coverage.ts`、`src/utils/caseMaps.ts`、`src/utils/collectionTrim.ts`、
 > `src/pages/AssetLedger.tsx`（页签①覆盖矩阵 / 页签②用例映射）。
