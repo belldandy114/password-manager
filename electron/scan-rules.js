@@ -12,9 +12,13 @@
  *      字符串内部的 `//`（如 `"https://a"`）不能被当注释截断，所以剥离时带引号状态。
  *   3. **snippet 只留命中行原文并截 200 字符**：扫的是用户私有代码，不能把整段拼出去。
  *
- * 规则分两个包（C-52：同一个通道两个包，不新增通道）：
- *   - `audit`：体检（UI 反模式 / 硬编码敏感 / 弱断言），≤30 条；
- *   - `coverage`：接口覆盖取数，只抽「请求路径原文」作为 `key`，≤8 条。
+ * 规则只有**一个包**（C-52 原本两个包共用 `scan:rules` 通道）：
+ *   - `audit`：体检（UI 反模式 / 硬编码敏感 / 弱断言），≤30 条。
+ *
+ * 1.36.0：`coverage` 包（接口覆盖取数，5 条 `cov-*`）随「资产台账下线」整块删除。
+ * 注意本文件里另有两处名字带 coverage 但**不是**规则包，别一起删：
+ *   ① `SKIP_DIRS` 的 `coverage/`（`scan-collect.js`）是覆盖率工具的**目录**守卫；
+ *   ② `src/components/codeaudit/scanModel.ts` 的 `coverageCut` 是截断告警。
  */
 
 const path = require('path');
@@ -43,14 +47,12 @@ const DOC_FILE_RE = /\.(?:md|txt)$/i;
  * **只体检代码、不体检文档**的规则族（RC-04 / RC-06）。
  *
  * `.md` / `.txt` 进 `SCAN_EXTS` 的初衷是扫文档里的**硬编码 URL / token**（`sec-*`），
- * 不是把文档当测试代码/覆盖证据：
+ * 不是把文档当测试代码：
  *   - `ui-*`：README 里写「`div > div > div` 很脆」是说明文字（t58）；
- *   - `assert-*`：文档里写「这条用例以前没有断言」不是缺陷（RC-04）；
- *   - `cov-*`：**危害最大**——文档里的示例路径会被当成「已覆盖」证据，
- *     假 covered 比假 missing 更危险，它让用户以为测过了而漏测（RC-06）。
+ *   - `assert-*`：文档里写「这条用例以前没有断言」不是缺陷（RC-04）。
  * `sec-*` **不在此列**：文档里出现真内网地址/token 必须报，那正是扫文档的目的。
  */
-const CODE_ONLY_RULE_RE = /^(?:ui|assert|cov)-/;
+const CODE_ONLY_RULE_RE = /^(?:ui|assert)-/;
 
 /**
  * 「这段代码算不算测试代码」——W8 新增规则的前置条件（口径 §4.2）。
@@ -86,20 +88,6 @@ function isTestCode(codeText, filePath) {
   const code = String(codeText == null ? '' : codeText);
   const rel = String(filePath == null ? '' : filePath).replace(/\\/g, '/');
   return TESTISH_RE.test(code) && TEST_PATH_RE.test(rel);
-}
-
-/**
- * coverage 规则的 HTTP method 归一：
- *   - 命名组 `method` 有值 → 大写（`.get(` / `requests.post(`）；
- *   - `@XxxMapping` → 注解名大写（`RequestMapping` → ANY）；
- *   - 都拿不到（`.url(` / 纯路径字面量）→ `ANY`。
- * **只做大小写归一，不做路径归一化**——路径归一在渲染层 coverage.ts（契约明文）。
- */
-function methodOf(rule, groups) {
-  const raw = String((groups && (groups.method || groups.anno)) || '').trim();
-  if (!raw) return 'ANY';
-  if (/^request$/i.test(raw)) return 'ANY';
-  return raw.toUpperCase();
 }
 
 /** 规则表（id 一经发布不得改：UI 勾选、历史统计、白名单都按 id 记） */
@@ -310,64 +298,12 @@ const RULES = [
     // `enabled = false` 必须限定在注解括号内：普通属性赋值（clipHistory.test.ts:46）是误报
     pattern: /@\w+\s*\([^)]*enabled\s*=\s*false|@Ignore\b|@Disabled\b|\b(?:it|test|describe|suite)\.(?:skip|only)\s*\(|pytest\.mark\.skip/,
   },
-
-  // ---------------- 覆盖取数（coverage 包：只抽路径原文） ----------------
-  {
-    id: 'cov-spring-mapping',
-    pack: 'coverage',
-    category: 'coverage',
-    severity: 'low',
-    title: 'Spring 映射路径',
-    desc: '从 @GetMapping/@PostMapping/@RequestMapping 抽 method + 路径原文；方法名取自注解名（RequestMapping 记 ANY），归一化留给渲染层 coverage.ts。',
-    coverage: true,
-    pattern: /@(?<anno>Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=\s*)?["'`](?<path>[^"'`]+)["'`]/,
-  },
-  {
-    id: 'cov-restassured',
-    pack: 'coverage',
-    category: 'coverage',
-    severity: 'low',
-    title: '链式客户端调用（.get/.post…）',
-    desc: 'RestAssured / axios 一类的 .get("/x") 链式调用：从调用的方法名拿到 HTTP method，路径原文照抄。',
-    coverage: true,
-    pattern: /\.(?<method>get|post|put|delete|patch)\s*\(\s*["'`](?<path>\/[^"'`]*)["'`]/i,
-  },
-  {
-    id: 'cov-python-requests',
-    pack: 'coverage',
-    category: 'coverage',
-    severity: 'low',
-    title: 'Python requests 调用',
-    desc: 'requests.get/post/put/delete("…")（含 f""/r""/b"" 前缀），路径可以是绝对 URL 或相对路径。',
-    coverage: true,
-    pattern: /\brequests\.(?<method>get|post|put|delete|patch)\s*\(\s*[fFrRbB]*["'`](?<path>[^"'`]+)["'`]/i,
-  },
-  {
-    id: 'cov-url-literal',
-    pack: 'coverage',
-    category: 'coverage',
-    severity: 'low',
-    title: '.url("/x") 字面量',
-    desc: 'HttpRequest.url("/x") 这类显式设置路径的写法；method 不在这一行，记 ANY。',
-    coverage: true,
-    pattern: /\.url\s*\(\s*["'`](?<path>[^"'`]+)["'`]/,
-  },
-  {
-    id: 'cov-path-literal',
-    pack: 'coverage',
-    category: 'coverage',
-    severity: 'low',
-    title: '路径字面量',
-    desc: '兜底：任何形如 "/api/..."、"/rest/..."、"/v1/..." 的字符串都当作候选路径，method 记 ANY。',
-    coverage: true,
-    pattern: /["'`](?<path>\/(?:api|rest|v\d|open)\/[^"'`\s]*)["'`]/,
-  },
 ];
 
-const PACK_LABELS = { audit: '代码体检', coverage: '接口覆盖取数' };
+const PACK_LABELS = { audit: '代码体检' };
 
 /** `scan:rules` 直接把它给 UI（纯静态，不触盘） */
-const SCAN_PACKS = ['audit', 'coverage'].map((id) => ({
+const SCAN_PACKS = ['audit'].map((id) => ({
   id,
   label: PACK_LABELS[id],
   rules: RULES.filter((r) => r.pack === id).map((r) => ({
@@ -376,7 +312,6 @@ const SCAN_PACKS = ['audit', 'coverage'].map((id) => ({
     title: r.title,
     desc: r.desc,
     category: r.category,
-    keyFrom: !!r.keyFrom,
   })),
 }));
 
@@ -454,7 +389,6 @@ function rulesOf(pack) {
     severity: r.severity,
     title: r.title,
     desc: r.desc,
-    coverage: !!r.coverage,
   }));
 }
 
@@ -465,7 +399,7 @@ function rulesOf(pack) {
  * @param {string} filePath 相对路径（只用来判断注释语法，不读盘）
  * @param {string[]} [ruleIds] 只跑这些规则；缺省/空数组 = 跑全部
  * @returns {{ ok: true, hits: { ruleId: string, severity: string, category: string, title: string,
- *                              line: number, snippet: string, method?: string, path?: string }[],
+ *                              line: number, snippet: string }[],
  *             suppressed: number }}
  *          `line` 为 1-based，`0` 表示整文件级规则；`snippet` 只含该行原文（≤200 字符）。
  *          **`suppressed`** = 被 `MAX_HITS_PER_RULE`（每规则 3 条/文件）折叠掉、没有出现在 `hits` 里的条数；
@@ -486,7 +420,7 @@ function matchRules(text, filePath, ruleIds) {
   let suppressed = 0; // RC-01：被 MAX_HITS_PER_RULE 折掉的命中条数（必须能回传给用户）
   for (const rule of RULES) {
     if (wanted && !wanted.has(rule.id)) continue;
-    // 扩展名守卫：ui-* / assert-* / cov-* 只体检代码，不体检文档（见 CODE_ONLY_RULE_RE 注释）
+    // 扩展名守卫：ui-* / assert-* 只体检代码，不体检文档（见 CODE_ONLY_RULE_RE 注释）
     if (CODE_ONLY_RULE_RE.test(rule.id) && DOC_FILE_RE.test(String(filePath || ''))) continue;
     // 测试作用域守卫（W8）：行级规则里的「只在测试代码里才算缺陷」那批
     if (rule.testOnly && !ctx.isTest) continue;
@@ -527,12 +461,6 @@ function matchRules(text, filePath, ruleIds) {
         line: i + 1,
         snippet,
       };
-      // coverage 包：契约要求 findings 带 { method, path, file, line }（file 由调用方补）
-      if (rule.coverage) {
-        const g = m.groups || {};
-        hit.method = methodOf(rule, g);
-        hit.path = String(g.path || m[1] || '').slice(0, SNIPPET_MAX);
-      }
       hits.push(hit);
       n += 1;
     }

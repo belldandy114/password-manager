@@ -1,8 +1,8 @@
 /** 代码体检规则引擎（契约 C-52〜C-54）。纯函数：本模块不 require fs / electron。 */
 
-export type ScanPackId = 'audit' | 'coverage';
+export type ScanPackId = 'audit';
 export type ScanSeverity = 'high' | 'medium' | 'low';
-export type ScanCategory = 'ui' | 'secret' | 'assert' | 'coverage';
+export type ScanCategory = 'ui' | 'secret' | 'assert';
 
 export interface ScanRule {
   id: string;
@@ -26,8 +26,6 @@ export interface ScanRule {
    * `Math.random()` 生成 id），不加这个就是成片误报。
    */
   testOnly?: boolean;
-  /** true 时把 pattern 的第 1 个捕获组作为 Finding.key（coverage 包） */
-  coverage?: boolean;
 }
 
 /** 一份文件跑规则时的共享上下文（每个文件只算一次，避免每条规则各扫一遍全文） */
@@ -44,7 +42,6 @@ export interface ScanRulePublic {
   severity: ScanSeverity;
   title: string;
   desc: string;
-  coverage: boolean;
 }
 
 export interface ScanPack {
@@ -62,7 +59,10 @@ export interface ScanHit {
   line: number;
   /** 只含命中行原文，≤200 字符（整文件级为空串） */
   snippet: string;
-  /** coverage 包：抽取到的路径原文（未归一化） */
+  /**
+   * 历史字段：`coverage` 包下线后**没有产出方**（规则引擎永不再写它）。
+   * 保留声明只为对得上旧 `scanRuns` 记录与 `ScanFinding` 的形状。
+   */
   method?: string;
   path?: string;
 }

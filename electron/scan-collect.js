@@ -196,7 +196,8 @@ function createFindingCollector(opts = {}) {
       line: Number(h.line) || 0,
       snippet: String(h.snippet == null ? '' : h.snippet),
     };
-    // coverage 包才有的两个字段：**有值才带**，别塞 undefined（结构化克隆会把它变成 null）
+    // 历史字段透传（1.36.0 起 `coverage` 包已下线、规则引擎不再产出 method/path）：
+    // **有值才带**，别塞 undefined（结构化克隆会把它变成 null）；旧 scanRuns 记录仍可能有这两键。
     if (h.method) finding.method = String(h.method);
     if (h.path) finding.path = String(h.path);
     findings.push(finding);

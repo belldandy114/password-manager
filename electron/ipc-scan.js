@@ -53,7 +53,12 @@ const MAX_DEPTH = SCAN_MAX_DEPTH; // C-53
 const TIMEOUT_MS = SCAN_TIMEOUT_MS; // C-53
 const YIELD_EVERY = 32; // C-51/C-55：每 32 个文件让出事件循环，取消消息才进得来
 
-const PACKS = ['audit', 'coverage'];
+/**
+ * 允许的规则包。
+ * 1.36.0：`coverage`（接口覆盖取数）随「资产台账下线」删除，只剩 `audit`；
+ * 传 `coverage` 会落到下面的 `ERR.unknownPack` → 明确文案「未知规则包：coverage」。
+ */
+const PACKS = ['audit'];
 
 /** `scan:run` 的错误文案唯一真源是契约 C-56，这里只是引用方 */
 const ERR = {

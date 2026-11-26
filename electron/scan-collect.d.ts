@@ -23,9 +23,9 @@ export interface ScanHitLike {
   title: string;
   line: number;
   snippet: string;
-  /** coverage 包：HTTP 方法 */
+  /** 历史字段：`coverage` 包下线后无产出方，仅为兼容旧记录的形状 */
   method?: string;
-  /** coverage 包：路径原文（未归一化） */
+  /** 同上（历史字段） */
   path?: string;
 }
 
@@ -37,6 +37,7 @@ export interface ScanFindingOut {
   file: string;
   line: number;
   snippet: string;
+  /** 历史字段（coverage 包已下线，无产出方；仅为兼容旧 scanRuns 记录的形状） */
   method?: string;
   path?: string;
 }

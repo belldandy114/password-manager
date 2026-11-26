@@ -176,13 +176,15 @@ describe('明细收集 / 计数状态机（C-30 v16 不变量）', () => {
     expect(s.truncated).toBe(false);
   });
 
-  it('finding 字段齐：file 由调用方给，method/path 只在有值时透传（coverage 包）', () => {
+  // 1.36.0：coverage 包已下线，规则引擎不再产出 method/path；但收集器**仍按「有值才透传」**
+  // 处理这两个历史字段（旧 scanRuns 记录有它们），所以这条用例保留，只改措辞。
+  it('finding 字段齐：file 由调用方给，method/path（历史字段）只在有值时透传', () => {
     const c = createFindingCollector({ maxFindings: 10 });
-    c.addHits([h('low', { ruleId: 'cov-restassured', method: 'GET', path: '/api/users', line: 2 })], 'B.java');
+    c.addHits([h('low', { ruleId: 'legacy-coverage-hit', method: 'GET', path: '/api/users', line: 2 })], 'B.java');
     c.addHits([h('high', { ruleId: 'assert-no-assertion' })], 'A.java');
     const [cov, plain] = c.snapshot().findings;
     expect(cov).toEqual({
-      ruleId: 'cov-restassured', severity: 'low', title: '硬编码等待',
+      ruleId: 'legacy-coverage-hit', severity: 'low', title: '硬编码等待',
       file: 'B.java', line: 2, snippet: 'Thread.sleep(3000);', method: 'GET', path: '/api/users',
     });
     // 没有 method/path 时**不许**塞 undefined 键（IPC 结构化克隆会把它变成 null）

@@ -21,7 +21,7 @@ const ids = (text: string, filePath = JAVA, ruleIds?: string[]): string[] =>
 
 const hit = (ruleId: string, text: string, filePath = JAVA) => ids(text, filePath).includes(ruleId);
 
-describe('规则表结构（C-52：两个包、audit ≤30 / coverage ≤8）', () => {
+describe('规则表结构（C-52：只有一个包、audit ≤30）', () => {
   it('三类规则合计 ≥12 条，且每条都有 id/severity/title/desc', () => {
     const audit = rulesOf('audit');
     expect(audit.length).toBeGreaterThanOrEqual(12);
@@ -37,12 +37,17 @@ describe('规则表结构（C-52：两个包、audit ≤30 / coverage ≤8）', 
     expect([...cats].sort()).toEqual(['assert', 'secret', 'ui']);
   });
 
-  it('coverage 包 ≤8 条且都标了 coverage（契约：findings 带 method+path）', () => {
-    const cov = rulesOf('coverage');
-    expect(cov.length).toBeGreaterThan(0);
-    expect(cov.length).toBeLessThanOrEqual(8);
-    for (const r of cov) expect(r.coverage).toBe(true);
-    expect(SCAN_PACKS.map((p: { id: string }) => p.id).sort()).toEqual(['audit', 'coverage']);
+  // 1.36.0：coverage 包随资产台账下线。这条断言从「两包齐全 / coverage ≤8」改成
+  // 「只剩 audit」，并**正向钉死公开元信息的键集**——旧实现多一个恒 false 的 `keyFrom`，
+  // 那种字段没人读却会让人以为有产出方。
+  it('只有一个包：SCAN_PACKS 只有 audit，公开元信息只有 5 键（无 coverage / keyFrom）', () => {
+    expect(SCAN_PACKS.map((p: { id: string }) => p.id)).toEqual(['audit']);
+    expect(rulesOf('coverage')).toEqual([]);
+    const audit = rulesOf('audit');
+    expect(audit.length).toBeGreaterThan(0);
+    for (const r of audit) {
+      expect(Object.keys(r).sort()).toEqual(['category', 'desc', 'id', 'severity', 'title']);
+    }
   });
 
   it('规则 id 不重复（重复 id 会让 UI 勾选与历史统计对不上）', () => {
@@ -137,22 +142,6 @@ describe('扩展名守卫（t58）：ui-* 不扫文档、sec-* 仍扫文档', ()
     expect(ids(NO_ASSERT_CODE, 'test_x.py')).toContain('assert-no-assertion'); // 先证规则本身有效
     expect(ids(NO_ASSERT_CODE, 'NOTES.md').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
     expect(ids(NO_ASSERT_CODE, 'README.txt').filter((x: string) => x.startsWith('assert-'))).toEqual([]);
-  });
-
-  // RC-06：cov-* 的假 covered 比假 missing 更危险（让用户以为测过了而漏测）
-  it('cov-* 五条在文档里都不命中，同一段代码在 .java/.ts/.py 上必须命中（逐条成对）', () => {
-    const samples: { ruleId: string; code: string; file: string }[] = [
-      { ruleId: 'cov-spring-mapping', code: '  @GetMapping("/api/users/{id}")', file: 'UserController.java' },
-      { ruleId: 'cov-restassured', code: 'given().when().get("/api/users")', file: 'UserApiTest.java' },
-      { ruleId: 'cov-python-requests', code: 'requests.get("/api/users")', file: 'test_users.py' },
-      { ruleId: 'cov-url-literal', code: 'given().when().url("/api/users")', file: 'UserApiTest.java' },
-      { ruleId: 'cov-path-literal', code: 'const p = "/api/users";', file: 'apiPaths.ts' },
-    ];
-    for (const s of samples) {
-      expect(ids(s.code, s.file)).toContain(s.ruleId);          // 代码里必须命中
-      expect(ids(s.code, 'README.md')).not.toContain(s.ruleId); // 文档里必须跳过
-      expect(ids(s.code, 'NOTES.txt')).not.toContain(s.ruleId);
-    }
   });
 
   // RC-01：每规则上限的折叠必须可见（否则用户以为看到的是全部）
@@ -299,52 +288,6 @@ describe('matchRules 的过滤与输出形状', () => {
     const text = Array.from({ length: 10 }, () => 'Thread.sleep(1000);').join('\n');
     const { hits } = matchRules(text, JAVA) as { hits: { ruleId: string }[] };
     expect(hits.filter((h) => h.ruleId === 'ui-hard-sleep')).toHaveLength(3);
-  });
-
-  it('coverage 包：Spring 映射抽出 method + path（路径原文，未归一化）', () => {
-    const { hits } = matchRules('@GetMapping("/api/user/{id}")', 'UserController.java', ['cov-spring-mapping']) as {
-      hits: { ruleId: string; method?: string; path?: string }[];
-    };
-    expect(hits[0].ruleId).toBe('cov-spring-mapping');
-    expect(hits[0].method).toBe('GET');
-    expect(hits[0].path).toBe('/api/user/{id}');
-  });
-
-  it('coverage 包：Java 测试里的 .get("/x")（RestAssured/axios 风格）抽出 method + path', () => {
-    const src = 'given().when()\n  .get("/api/order/list")\n  .then().statusCode(200);';
-    const { hits } = matchRules(src, 'OrderTest.java', ['cov-restassured']) as {
-      hits: { method?: string; path?: string; line: number }[];
-    };
-    expect(hits[0]).toMatchObject({ method: 'GET', path: '/api/order/list', line: 2 });
-  });
-
-  it('coverage 包：Python requests.post("/x") 抽出 method + path', () => {
-    const src = 'def t():\n    requests.post("https://example.com/api/login", json={})\n';
-    const { hits } = matchRules(src, 'test_api.py', ['cov-python-requests']) as {
-      hits: { method?: string; path?: string }[];
-    };
-    expect(hits[0].method).toBe('POST');
-    expect(hits[0].path).toBe('https://example.com/api/login');
-  });
-
-  it('coverage 包：.url("/x") 与纯路径字面量也能抽（method 未知记 ANY）', () => {
-    const urlHit = (matchRules('httpRequest.url("/api/a/b");', 'A.java', ['cov-url-literal']) as {
-      hits: { method?: string; path?: string }[];
-    }).hits[0];
-    expect(urlHit).toMatchObject({ method: 'ANY', path: '/api/a/b' });
-    const litHit = (matchRules('String p = "/api/c/d";', 'B.java', ['cov-path-literal']) as {
-      hits: { method?: string; path?: string }[];
-    }).hits[0];
-    expect(litHit).toMatchObject({ method: 'ANY', path: '/api/c/d' });
-  });
-
-  it('coverage 包：findings 四个字段 method/path/file/line 齐全（契约要求）', () => {
-    const { hits } = matchRules('  .get("/api/x")', 'X.java', ['cov-restassured']) as {
-      hits: { method?: string; path?: string; line: number }[];
-    };
-    expect(hits[0].method).toBeTruthy();
-    expect(hits[0].path).toBeTruthy();
-    expect(hits[0].line).toBe(1); // file 由调用方补齐（扫描时才知道相对路径）
   });
 
   it('语言相关的注释语法：# 开头的注释在 .py 里算注释、在 .java 里不算', () => {

@@ -962,12 +962,11 @@ export interface ScanRuleMeta {
   title: string;
   desc: string;
   category: string;
-  /** true = coverage 包规则：命中要产出 `{ method, path }` */
-  keyFrom: boolean;
 }
 
 export interface ScanPack {
-  id: 'audit' | 'coverage';
+  /** 1.36.0：`coverage` 包（接口覆盖取数）随资产台账下线，只剩 `audit` */
+  id: 'audit';
   label: string;
   rules: ScanRuleMeta[];
 }
@@ -988,9 +987,12 @@ export interface ScanFinding {
   line: number;
   /** 只含命中行原文，≤200 字符 */
   snippet: string;
-  /** coverage 包：HTTP 方法（拿不到时为 `ANY`） */
+  /**
+   * **历史字段，暂无产出方**：`coverage` 包（接口覆盖取数）已于 1.36.0 下线，
+   * `scan-rules` 不再产出 `method` / `path`；保留这两个键是为了仍然能读旧 `scanRuns` 记录
+   * （删入口不删数据）。新记录里它们不会出现——别据此判断「有产出方在写」。
+   */
   method?: string;
-  /** coverage 包：抽取到的路径原文（未归一化） */
   path?: string;
 }
 
@@ -1023,7 +1025,8 @@ export type ScanTruncatedReason = typeof SCAN_TRUNCATED_REASONS[number];
 /** `scan:run` 的 data（11 个字段 + 可选 truncatedReason） */
 export interface ScanRunResult {
   root: string;
-  pack: 'audit' | 'coverage';
+  /** 1.36.0：只剩 audit（coverage 包随资产台账下线） */
+  pack: 'audit';
   /** 真正读过的**文件数**（不是列表）；等于 `fileList.length` */
   files: number;
   /** 读过的文件相对路径（POSIX 分隔符），供 UI 展示 */
@@ -1728,7 +1731,7 @@ export interface ElectronAPI {
    * 取消语义统一 { success:false, canceled:true }（C-03）。 */
   scanPickRoot: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
   scanRules: () => Promise<{ success: boolean; data?: ScanRulesResult; error?: string }>;
-  scanRun: (opts: { root: string; pack: 'audit' | 'coverage'; ruleIds?: string[]; maxFiles?: number; token?: string })
+  scanRun: (opts: { root: string; pack: 'audit'; ruleIds?: string[]; maxFiles?: number; token?: string })
     => Promise<{ success: boolean; data?: ScanRunResult; error?: string; canceled?: boolean }>;
   scanCancel: (token: string) => Promise<{ success: boolean; data?: { canceled: boolean }; error?: string }>;
   /**
