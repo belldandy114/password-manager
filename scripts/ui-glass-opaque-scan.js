@@ -170,6 +170,17 @@
  *      `pomPages / scanRuns` 两个；**`pomPages` 与 `scanRuns` 的造数保留**（元素库与代码体检还要用）。
  *    - 自证口径不变：剩下的单元 min / 锚点一条不动，删单元不等于放宽判据。
  *
+ * ⚠️ 1.36.0（B5）**代码生成 + 代码体检合并成「代码工具」，组合数不变（26），但单元口径变了**：
+ *    - 结构：**扁平三页签**（`OpenAPI → 骨架` / `元素库 → POM` / `代码体检`），同页只有一条 `.tabs` /
+ *      一个 `role=tablist`（裁定 Z1：要禁的是 tablist 嵌套，不是层数）。
+ *    - 3 个单元改名 `代码工具 · …`；`devTabs` 期望改成 **3**，READY 还要求 `panel === 3`（三块常挂）
+ *      与 `tablist === 1`；APPLIED 要求 `visible === 1`（恰好一个可见面板，hidden 没跟着更新会露馅）。
+ *    - ctx 的 `dev*` 内容计数从 `[role=tabpanel]` 改成 `[role=tabpanel]:not([hidden])`：
+ *      三个面板常挂互斥（元素库草稿不能丢），不排除 hidden 会把三块元素加在一起 = 假绿。
+ *    - `DEV_PAGE_LABEL` 由 `/^(代码生成|代码体检)/` 改成 `/^代码工具/`。
+ *    - 可证伪：把 `CodeTools.tsx` 改回条件渲染（只挂当前页签）→ READY 红在 `panel=1`；
+ *      把 `GeneratedFiles.tsx` 的按钮组改回 `.tabs` → READY/APPLIED 红在 `tabs=2`。
+ *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
  *   USE_PACKED=1 node scripts/ui-glass-opaque-scan.js # 打包版（先 npm run pack / npm run dist）
@@ -362,12 +373,12 @@ const TARGETS = [
   // （原「单元 8 → `.pg input`」那条已在 1.36.0（B1）随对应页面下线一起摘除；当时不用
   //  契约里写的 `.home-stat` 的原因也一并作废：`.home-stat` 只在 .jtl **解析成功后**才挂载。）
   // 页签透明化本身改用下面的 TAB_STRIP_INVARIANT 断言（面积判据盖不到「变透明」）。
-  { sel: '.pg .pnl', label: '新页面板 .pnl（代码生成·OpenAPI）', token: '--glass-card',
-    pages: ['代码生成 · OpenAPI → 骨架'] },
-  { sel: '.pg .tbl th', label: '新页表头 .tbl th（代码生成·元素库）', token: '--glass-side',
-    pages: ['代码生成 · 元素库 → POM'] },
-  { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检）', token: '--glass-card',
-    pages: ['代码体检'] },
+  { sel: '.pg .pnl', label: '新页面板 .pnl（代码工具·OpenAPI）', token: '--glass-card',
+    pages: ['代码工具 · OpenAPI → 骨架'] },
+  { sel: '.pg .tbl th', label: '新页表头 .tbl th（代码工具·元素库）', token: '--glass-side',
+    pages: ['代码工具 · 元素库 → POM'] },
+  { sel: '.pg .pnl', label: '新页面板 .pnl（代码工具·代码体检）', token: '--glass-card',
+    pages: ['代码工具 · 代码体检'] },
   // ── 1.36.0（B3）：Git 影响面下线（页面改单页），这条锚点随单元一起摘除。
   // ── 1.36.0（B4）：资产台账下线，它的 2 条锚点（`.pg .pnl` → --glass-card / `.pg .tbl th` → --glass-side，
   // 覆盖矩阵 / 用例映射各一条）随 2 个单元一起摘除；**不要**在本批给它另找替代单元。
@@ -421,8 +432,9 @@ const TAB_STRIP_EXPR = `(() => {
   const act = info('.pg .tabs .tab2.is-active');
   return { found: !!(strip && act), strip, act };
 })()`;
-/** 开发辅助四页的 label 前缀（TAB_STRIP_EXPR 只在这些页面上量） */
-const DEV_PAGE_LABEL = /^(代码生成|代码体检)/;
+/** 开发辅助页的 label 前缀（TAB_STRIP_EXPR 只在这些页面上量）。
+ *  1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」一页。 */
+const DEV_PAGE_LABEL = /^代码工具/;
 
 /**
  * 要扫的页面与进入方式（都不依赖网络/账号：网址管理用预置样本条目，工具箱与笔记是本地页）。
@@ -476,13 +488,19 @@ const PAGES = [
   // 而侧栏 `.nav-item` 也是 button 且文案可能和页签同名（「代码体检」就是），
   // 不限定就会点到侧栏导航（点了也不报错，但 tab 没切 → 扫的还是默认页签）。
   {
-    label: '代码生成 · OpenAPI → 骨架', nav: '代码生成',
+    // 1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」，同页一条 `.tabs` 三个页签。
+    // 三个面板**常挂、靠 hidden 互斥**（CodeTools.tsx 文件头：元素库草稿不能丢），所以
+    // `devTabs` 期望是 **3**（三个页签都在），而 `min` 里的内容计数一律用
+    // `devPanelVisible` / 限定 `[role=tabpanel]:not([hidden])` —— 不限定就会把三个面板的元素加在一起，
+    // 「隐藏面板里有内容」也能让自证过 = 假绿。
+    label: '代码工具 · OpenAPI → 骨架', nav: '代码工具',
     prep: (s) => clickText(s, 'OpenAPI → 骨架', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devTextareas: 1 },
-    hint: 'devTextareas=0 说明「① 取数」的粘贴区没渲染出来（该页签是表单页：选文件/粘贴 + 按钮）',
+    min: { devPanelVisible: 1, devTabs: 3, devTextareas: 1 },
+    hint: 'devTextareas=0 说明「① 取数」的粘贴区没渲染出来（该页签是表单页：选文件/粘贴 + 按钮）；'
+      + 'devTabs≠3 说明合并后的页签栏被改动了',
   },
   {
-    label: '代码生成 · 元素库 → POM', nav: '代码生成',
+    label: '代码工具 · 元素库 → POM', nav: '代码工具',
     // 1.34.1（review-arch 阻断项）：**这个单元必须点一次「生成 POM」**。
     // 代码块只在 `files.length > 0` 之后才挂载（ElementLibTab.tsx:383 → GeneratedFilesView
     // → ui.tsx:306 `<pre class="tb-pre dev-code">`），而扫描原来只切页签不点生成 → 白名单
@@ -496,18 +514,18 @@ const PAGES = [
       // 而右侧编辑面板要等 useCollection 读完、draft 自动选中第一条之后才渲染（ElementLibTab.tsx:56-62）——
       // 第一版等 `.pnl` 就点，正好点在「还没有按钮」的那一刻，prep 返回 false（这就是本仓那类「等错了东西」）。
       const hasGen = await s.waitFor({
-        expr: `[...document.querySelectorAll('[role=tabpanel] button')].some((b) => (b.textContent || '').includes('生成 POM'))`,
+        expr: `[...document.querySelectorAll('[role=tabpanel]:not([hidden]) button')].some((b) => (b.textContent || '').includes('生成 POM'))`,
       }, { timeout: 8000, throwOnTimeout: false });
       if (hasGen !== true) {
-        throw new Error('「代码生成 · 元素库 → POM」等 8s 也没出现「生成 POM」按钮：'
+        throw new Error('「代码工具 · 元素库 → POM」等 8s 也没出现「生成 POM」按钮：'
           + '多半是 pomPages 造数没读到（左侧列表空态 → 右侧是 .empty 占位，没有编辑面板）');
       }
-      const onGen = await clickText(s, '生成 POM', { root: '[role=tabpanel]' });
+      const onGen = await clickText(s, '生成 POM', { root: '[role=tabpanel]:not([hidden])' });
       if (!onGen) return false; // 按钮真的不在 → 交给调用方的通用「prep 点击落空」文案
       const shown = await s.waitFor({ expr: `!!document.querySelector('.dev-code')` },
         { timeout: 5000, throwOnTimeout: false });
       if (shown !== true) {
-        throw new Error('「代码生成 · 元素库 → POM」点了「生成 POM」但 5s 内没有出现 .dev-code：'
+        throw new Error('「代码工具 · 元素库 → POM」点了「生成 POM」但 5s 内没有出现 .dev-code：'
           + '白名单「代码区 (.dev-code)」会因此一次都命中不到（生成失败/校验不通过会走 .dev-banner 分支）。'
           + '先看页面上有没有 is-error 横幅，再看造数 pomPages 是否通过 validatePage');
       }
@@ -518,23 +536,22 @@ const PAGES = [
       const toastGone = await s.waitFor({ expr: `document.querySelectorAll('.toast').length === 0` },
         { timeout: 8000, throwOnTimeout: false });
       if (toastGone !== true) {
-        throw new Error('「代码生成 · 元素库 → POM」等 8s 后 .toast 仍在（3s 应自动消失）：'
+        throw new Error('「代码工具 · 元素库 → POM」等 8s 后 .toast 仍在（3s 应自动消失）：'
           + '要么 toast 定时器坏了，要么页面上叠了常驻浮层 —— 后者会让面积判据把浮层记成违规');
       }
       return true;
     },
-    min: { devPanel: 1, devTabs: 2, devInputs: 1, devCode: 1 },
+    min: { devPanelVisible: 1, devTabs: 3, devInputs: 1, devCode: 1 },
     hint: 'devInputs=0 说明元素库表单没渲染；devCode=0 说明「生成 POM」后代码块没挂载（白名单会空转）',
   },
   {
-    // 1.36.0（B3）：代码体检改单页（Git 影响面下线），**没有页签可点**了 —— prep 退化成 no-op，
-    // 但保留这个字段（框架按 prep 是否存在决定要不要点，删掉反而要改框架）。
-    // devTabs 期望从 2 改成 **0**：单页就该一个页签壳都没有（方案 §3.5 不允许留空壳）。
-    label: '代码体检', nav: '代码体检',
-    prep: async () => true,
-    min: { devPnlAll: 1, devTabs: 0, devRowsAll: 1 },
-    hint: 'devRowsAll=0 说明 scanRuns 历史表没渲染（造数没写进 vault，或页面落进了空态）；'
-      + 'devTabs≠0 说明单页又长出了页签壳',
+    // 1.36.0（B5）：代码体检成了「代码工具」的第三个页签（B3 时它是单页，现在有页签可点了）。
+    // 内容计数限定在可见面板（`devPanelVisible` / `devRows`），否则元素库面板里的表格会把
+    // 「历史表渲染出来了」这条自证喂成假绿。
+    label: '代码工具 · 代码体检', nav: '代码工具',
+    prep: (s) => clickText(s, '代码体检', { root: '.pg .tabs' }),
+    min: { devPanelVisible: 1, devTabs: 3, devRows: 1 },
+    hint: 'devRows=0 说明 scanRuns 历史表没渲染（造数没写进 vault，或该面板落进了空态）',
   },
   // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两个单元随页面下线一并摘除，
   // 组合数 30 → 26（每主题 15 → 13）。它的 `caseMaps` 造数（原 ③）也一起删 —— 没有页面读它了；
@@ -629,28 +646,31 @@ const READY_PRED = {
   // ── 1.33.0（t54/W7-A）：4 个新页 × 2 页签。就绪判据**与当前在哪个页签无关** ──
   // 只证明：骨架屏没了、页标题是这一页、页签栏两个按钮都在、tabpanel 挂载了 1 个。
   // 切页签是下一步 prep 的动作，拿「目标页签已激活」当就绪条件会死锁（1.32.3 的同类坑）。
-  '代码生成 · OpenAPI → 骨架': `(() => {
+  // ── 1.36.0（B5）：三条就绪判据合并成「代码工具」一页的形态断言：标题正确 + 三个页签 +
+  // **三个面板都在 DOM 里**（常挂互斥，不是条件渲染）+ 恰好一条 `.tabs`（禁止 tablist 嵌套）。
+  '代码工具 · OpenAPI → 骨架': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const t = document.querySelector('.pg-title');
     const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '代码生成' && state.devTabs === 2 && state.panel === 1, state };
+      tabs: q('.pg .tabs'), devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), tablist: q('[role=tablist]') };
+    return { ok: !state.skel && state.title === '代码工具' && state.tabs === 1 && state.devTabs === 3
+      && state.panel === 3 && state.tablist === 1, state };
   })()`,
-  '代码生成 · 元素库 → POM': `(() => {
+  '代码工具 · 元素库 → POM': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const t = document.querySelector('.pg-title');
     const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '代码生成' && state.devTabs === 2 && state.panel === 1, state };
+      tabs: q('.pg .tabs'), devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), tablist: q('[role=tablist]') };
+    return { ok: !state.skel && state.title === '代码工具' && state.tabs === 1 && state.devTabs === 3
+      && state.panel === 3 && state.tablist === 1, state };
   })()`,
-  // 1.36.0（B3）：代码体检改单页 —— 就绪判据要求「无页签壳且页面有内容」。
-  // 注意 devTabs 用 `.pg .tabs .tab2`，单页时必须是 0；panel（[role=tabpanel]）也必须是 0。
-  '代码体检': `(() => {
+  '代码工具 · 代码体检': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const t = document.querySelector('.pg-title');
     const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), pnl: q('.pg .pnl') };
-    return { ok: !state.skel && state.title === '代码体检' && state.devTabs === 0 && state.panel === 0 && state.pnl >= 1, state };
+      tabs: q('.pg .tabs'), devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), tablist: q('[role=tablist]') };
+    return { ok: !state.skel && state.title === '代码工具' && state.tabs === 1 && state.devTabs === 3
+      && state.panel === 3 && state.tablist === 1, state };
   })()`,
   // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两条就绪判据随单元摘除（页面已下线）。
   // ── 1.36.0（B1）：上面两个已删单元的就绪判据一并摘除（页面已下线）。
@@ -711,35 +731,43 @@ const APPLIED_PRED = {
   // ── 1.33.0（t54/W7-A）：8 个新单元「点完页签真的切过去了」 ──
   // 判据 = 激活页签文案对 + tabpanel 里真的有内容（面板数 ≥1，且横幅/输入框/表格/滚动容器至少一项）。
   // 只判文案会漏掉「tab 切了但内容空着」的情况 —— 空页扫 0 违规等于没测。
-  '代码生成 · OpenAPI → 骨架': `(() => {
+  // ── 1.36.0（B5）：三条 APPLIED_PRED 合并成「点完页签真的切过去了」的同一套判据：
+  // 激活页签文案对 + **恰好一个可见 tabpanel**（三块常挂互斥，hidden 没跟着更新时会露馅）+
+  // 可见面板里真的有内容 + 全页仍只有一条 `.tabs`（禁止第二处 tablist 回来）。
+  '代码工具 · OpenAPI → 骨架': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === 'OpenAPI → 骨架' && state.panels >= 1
+    const V = '[role=tabpanel]:not([hidden])';
+    const state = { tab: a ? (a.textContent || '').trim() : '', tabs: q('.pg .tabs'), visible: q(V),
+      panels: q(V + ' .pnl'),
+      banners: q(V + ' .dev-banner'), inputs: q(V + ' input:not([type=checkbox]):not([type=radio])'),
+      tables: q(V + ' table.tbl'), scroll: q(V + ' .dev-scroll'),
+      textareas: q(V + ' textarea'), empty: q(V + ' .empty') };
+    return { ok: state.tab === 'OpenAPI → 骨架' && state.tabs === 1 && state.visible === 1 && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
-  '代码生成 · 元素库 → POM': `(() => {
+  '代码工具 · 元素库 → POM': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === '元素库 → POM' && state.panels >= 1
+    const V = '[role=tabpanel]:not([hidden])';
+    const state = { tab: a ? (a.textContent || '').trim() : '', tabs: q('.pg .tabs'), visible: q(V),
+      panels: q(V + ' .pnl'),
+      banners: q(V + ' .dev-banner'), inputs: q(V + ' input:not([type=checkbox]):not([type=radio])'),
+      tables: q(V + ' table.tbl'), scroll: q(V + ' .dev-scroll'),
+      textareas: q(V + ' textarea'), empty: q(V + ' .empty') };
+    return { ok: state.tab === '元素库 → POM' && state.tabs === 1 && state.visible === 1 && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
-  // 1.36.0（B3）：代码体检单页 —— 断言「没有页签栏」+「面板里有内容」。
-  // 原来的判据是「激活页签文案 === 代码体检」，单页后没有激活页签，那条必然红。
-  '代码体检': `(() => {
+  '代码工具 · 代码体检': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
-    const state = { tabs: q('.pg .tabs'), tab2: q('.pg .tab2'), panels: q('.pg .pnl'),
-      banners: q('.pg .dev-banner'), inputs: q('.pg input:not([type=checkbox]):not([type=radio])'),
-      tables: q('.pg table.tbl'), scroll: q('.pg .dev-scroll'),
-      textareas: q('.pg textarea'), empty: q('.pg .empty') };
-    return { ok: state.tabs === 0 && state.tab2 === 0 && state.panels >= 1
+    const a = document.querySelector('.pg .tabs .tab2.is-active');
+    const V = '[role=tabpanel]:not([hidden])';
+    const state = { tab: a ? (a.textContent || '').trim() : '', tabs: q('.pg .tabs'), visible: q(V),
+      panels: q(V + ' .pnl'),
+      banners: q(V + ' .dev-banner'), inputs: q(V + ' input:not([type=checkbox]):not([type=radio])'),
+      tables: q(V + ' table.tbl'), scroll: q(V + ' .dev-scroll'),
+      textareas: q(V + ' textarea'), empty: q(V + ' .empty') };
+    return { ok: state.tab === '代码体检' && state.tabs === 1 && state.visible === 1 && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
   // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两条 APPLIED_PRED 随单元摘除。
@@ -814,22 +842,26 @@ const buildScanExpr = (rootSel) => `(() => {
     preLen: (() => { const p = document.querySelector('pre.sql-var-preview'); return p ? (p.textContent || '').length : 0; })(),
     drawerKv: document.querySelectorAll('.drawer.entry-drawer .drawer-kv dt').length,
     drawerTitle: (() => { const t = document.querySelector('.drawer.entry-drawer .drawer-title-text'); return t ? (t.textContent || '').slice(0, 40) : ''; })(),
-    // 1.33.0（t54/W7-A）：开发辅助 4 个新页（4 页 × 2 页签）的自证。
-    // 一律限定在 [role=tabpanel] 里 —— 同页里的历史表/其它表格会被算进来（t51 实测过
-    // 301 = 300 findings + 1 历史行），不限定的话自证值就不专属于当前页签。
+    // 1.33.0（t54/W7-A）：开发辅助页的自证。
+    // 一律限定在 [role=tabpanel:not([hidden])] 里 —— 两个理由叠在一起：
+    //   ① 同页里的历史表/其它表格会被算进来（t51 实测过 301 = 300 findings + 1 历史行）；
+    //   ② 1.36.0（B5）：『代码工具』三个面板**常挂、靠 hidden 互斥**（元素库草稿不能丢），
+    //      不排除 hidden 就会把三个面板的元素加在一起 —— 隐藏面板里有内容也能让自证过 = 假绿。
     devTabs: document.querySelectorAll('.pg .tabs .tab2').length,
     devActiveTab: (() => { const a = document.querySelector('.pg .tabs .tab2.is-active'); return a ? (a.textContent || '').trim() : ''; })(),
+    devTabsStrips: document.querySelectorAll('.pg .tabs').length,
     devPanel: document.querySelectorAll('[role=tabpanel]').length,
-    devScroll: document.querySelectorAll('[role=tabpanel] .dev-scroll').length,
-    devTables: document.querySelectorAll('[role=tabpanel] table.tbl').length,
-    devRows: document.querySelectorAll('[role=tabpanel] table.tbl tbody tr').length,
-    devBanners: document.querySelectorAll('[role=tabpanel] .dev-banner').length,
-    devTags: document.querySelectorAll('[role=tabpanel] .dev-tag').length,
-    devInputs: document.querySelectorAll('[role=tabpanel] input:not([type=checkbox]):not([type=radio])').length,
-    devSelects: document.querySelectorAll('[role=tabpanel] select').length,
-    devTextareas: document.querySelectorAll('[role=tabpanel] textarea').length,
-    devEmpty: document.querySelectorAll('[role=tabpanel] .empty').length,
-    devStats: document.querySelectorAll('[role=tabpanel] .home-stat').length,
+    devPanelVisible: document.querySelectorAll('[role=tabpanel]:not([hidden])').length,
+    devScroll: document.querySelectorAll('[role=tabpanel]:not([hidden]) .dev-scroll').length,
+    devTables: document.querySelectorAll('[role=tabpanel]:not([hidden]) table.tbl').length,
+    devRows: document.querySelectorAll('[role=tabpanel]:not([hidden]) table.tbl tbody tr').length,
+    devBanners: document.querySelectorAll('[role=tabpanel]:not([hidden]) .dev-banner').length,
+    devTags: document.querySelectorAll('[role=tabpanel]:not([hidden]) .dev-tag').length,
+    devInputs: document.querySelectorAll('[role=tabpanel]:not([hidden]) input:not([type=checkbox]):not([type=radio])').length,
+    devSelects: document.querySelectorAll('[role=tabpanel]:not([hidden]) select').length,
+    devTextareas: document.querySelectorAll('[role=tabpanel]:not([hidden]) textarea').length,
+    devEmpty: document.querySelectorAll('[role=tabpanel]:not([hidden]) .empty').length,
+    devStats: document.querySelectorAll('[role=tabpanel]:not([hidden]) .home-stat').length,
     // 1.35.0（W3 / S5-t23）：UI 录制器。它的表单在 .toolbar 里、灯面板在 .tabs 之前，
     // 两者都在 .pg 直下、不在 [role=tabpanel] 内，所以上面那组限定 tabpanel 的 dev* 计数
     // 对本页恒为 0 —— 单独取三项，用来做 PAGES 里两条录制器单元的 min 自证
@@ -844,9 +876,9 @@ const buildScanExpr = (rootSel) => `(() => {
     recLampStates: [...document.querySelectorAll('.rec-page .rec-lamp')]
       .map((el) => String(el.getAttribute('data-state') || '')).join(','),
     // 1.34.1：生成代码区（只有点过「生成」才会出现），用来给 min 自证与日志
-    devCode: document.querySelectorAll('[role=tabpanel] .dev-code').length,
-    // 1.36.0（B3）：代码体检改**单页**后没有 [role=tabpanel]，上面那组「限定 tabpanel」的计数对本页恒 0，
-    // 所以另取三项**页面级**计数给它的 min 做自证（同录制器那组的做法：不另取就会红，或者只能放宽 min）。
+    devCode: document.querySelectorAll('[role=tabpanel]:not([hidden]) .dev-code').length,
+    // 1.36.0（B5）：『代码工具』的页面级兜底计数（万一将来某页没有 tabpanel 容器，
+    // 这三项仍能给出「页面真的有内容」的证据；B3/B4 就靠它们活过单页形态）。
     // 本段在模板字符串里：注释里不许出现反引号与 $ 加大括号。
     devPnlAll: document.querySelectorAll('.pg .pnl').length,
     devTablesAll: document.querySelectorAll('.pg table.tbl').length,

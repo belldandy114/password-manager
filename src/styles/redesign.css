@@ -9453,3 +9453,17 @@ html[data-bg='image'] pre.dev-code {
 .rec-lamp-ev > .tb-pre {
   margin: 0;
 }
+/* ════════ 1.36.0（B5 / TD-3）：压测页右栏面板容器的布局收口 ════════
+   来由：1.36.0（B1）把 `.jtl 指标` 搬进压测页右栏后，右栏变成一个 `role=tabpanel` 容器，
+   而容器里原来那三块（控制台 / 报告 / .jtl 指标）本是 `.perf-main`（column + gap:10）的
+   直接子元素 —— 多包一层，间距就塌了，所以当时在 PerfTest.tsx 上写了内联
+   `display:flex; flexDirection:column; gap:10; minWidth:0` 救急（内联，是因为 src/styles
+   不在 B1 的 inScope）。
+   现在按 TD-3 收口到这里：只此一条选择器、只作用于压测页右栏面板，不影响其它 tabpanel。
+   `min-width:0` 不能省：表格与代码块在窄栏里会撑破 `.perf-main` 的 grid 轨道。 */
+.perf-main [role='tabpanel'] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}

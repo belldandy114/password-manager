@@ -72,14 +72,19 @@ export function GeneratedFilesView({
 
   return (
     <div>
+      {/* 1.36.0（B5）：这里原来是一条 `.tabs` + `role=tablist` + `.tab2`（第二处 tablist）。
+          合并成「代码工具」后，元素库页签里再嵌一条 tablist 就成了**同页两个 tablist 嵌套**，
+          而且它们切换的是同一段代码预览 —— 不是页签，是「选择哪一个文件」。所以降级成按钮组：
+          保留 `.tool-tabs`（可换行卡片容器的既有类）与 `.tab2`（按钮外观，回归脚本按文字点，
+          类名不能改），去掉 `role=tablist` / `role=tab` / `aria-selected`，改用
+          `aria-pressed` 表达「当前选中哪个文件」。 */}
       {files.length > 1 && (
-        <div className="tabs" role="tablist" aria-label="生成的文件">
+        <div className="tool-tabs" role="group" aria-label="生成的文件（选择要预览/保存的这一个）">
           {files.map((f, i) => (
             <button
               key={f.path}
               type="button"
-              role="tab"
-              aria-selected={i === safeIdx}
+              aria-pressed={i === safeIdx}
               className={`tab2${i === safeIdx ? ' is-active' : ''}`}
               onClick={() => setIdx(i)}
             >

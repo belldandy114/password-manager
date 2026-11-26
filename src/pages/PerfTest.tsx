@@ -515,13 +515,12 @@ export function PerfTest() {
 
             {/* 条件渲染：非激活页签不挂载（文件头第 3 条）。面板容器的 column+gap 是把
                 `.perf-main` 的 10px 间距补回来 —— 原始三块是 `.perf-main` 的直接子元素，
-                包一层后间距会塌；`src/styles/**` 不在本批 inScope，故用内联（同 ElementLibTab
-                里那类「无现成类可用」的内联重置先例）。 */}
+                包一层后间距会塌。1.36.0（B5 / TD-3）：这层布局已收口进 `redesign.css` 末尾的
+                `.perf-main [role='tabpanel']`，页面不再留内联样式。 */}
             <div
               role="tabpanel"
               id={`perf-panel-${rightTab}`}
               aria-labelledby={`perf-tab-${rightTab}`}
-              style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}
             >
               {rightTab === 'run' ? (
                 <>

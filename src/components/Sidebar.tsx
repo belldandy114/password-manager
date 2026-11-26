@@ -5,7 +5,7 @@ import {
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
   IconHome2, IconCode,
-  IconFileCode, IconShieldCheck, IconPlayerRecord,
+  IconFileCode, IconPlayerRecord,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -211,7 +211,6 @@ const lockIcon = nav(IconLock);
 const bellIcon = nav(IconBell);
 // 1.33.0：开发辅助 4 个新页的图标（都避开既有 13 项已用的图标，免得两个入口看起来是同一个东西）
 const codeGenIcon = nav(IconFileCode);
-const auditIcon = nav(IconShieldCheck);
 // 1.34.0：UI 录制器（录制圆点，与上面 4 个图标形状差异明显，扫一眼不会认错）
 const recorderIcon = nav(IconPlayerRecord);
 
@@ -248,12 +247,13 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
       // 1.34.0：UI 录制器（真 Chrome + 原生 CDP 录制）。放在本组最前：它是本期主线能力。
       // id 必须与 pages/loaders.ts 的 key、App.renderPage 的 case 逐字一致（三处同改）。
       { id: 'recorder', label: '录制器', icon: recorderIcon },
-      // 1.33.0：本地测试资产工作站的新页（现在只剩代码生成 / 代码体检；结果中心随 1.36.0（B1）、
-      // 资产台账随 1.36.0（B4）下线）。
+      // 1.33.0：本地测试资产工作站（现在只剩「代码工具」一项：代码生成 + 代码体检已合并，
+      // 见 1.36.0（B5）；结果中心随 B1、资产台账随 B4 下线）。
       // 放在「代码调试 / 测试数据 / 工具箱」之前：新能力在上、手边老工具在下；
       // 既有 3 项一项不删、不改顺序 —— 回归脚本按文案点侧栏，换位会点错。
-      { id: 'codeGen', label: '代码生成', icon: codeGenIcon },
-      { id: 'codeAudit', label: '代码体检', icon: auditIcon },
+      // 1.36.0（B5）：id 保留 `codeGen`（老用户持久化的 currentPage 与悬停预取都还指向它），
+      // 只把 label 改成「代码工具」；`codeAudit` 的 NavItem 删除，但 loaders 里的 key 留着做旧路由兼容。
+      { id: 'codeGen', label: '代码工具', icon: codeGenIcon },
       { id: 'codeLab', label: '代码调试', icon: terminalIcon },
       { id: 'dataGenerator', label: '测试数据', icon: dataGenIcon },
       { id: 'toolbox', label: '工具箱', icon: toolboxIcon },

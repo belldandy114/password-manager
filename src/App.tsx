@@ -38,10 +38,12 @@ const Cases = lazy(PAGE_LOADERS.cases);
 // 所以这里直接给 import 路径；补进 loaders 之后侧栏的悬停预取才生效（功能不受影响，
 // 点开时 lazy 会自己 import，只是少了预取那一次预热）。
 const SqlSnippets = lazy(PAGE_LOADERS.sqlSnippets);
-// 1.33.0：本地测试资产工作站 4 个新页（开发辅助分组）。和其它页一样从 PAGE_LOADERS 取，
-// 这样侧栏悬停预取才指向同一份 import 路径；写成 `lazy(() => import('./CodeGen'))` 就没有预取了。
-const CodeGen = lazy(PAGE_LOADERS.codeGen);
-const CodeAudit = lazy(PAGE_LOADERS.codeAudit);
+// 1.33.0：本地测试资产工作站（开发辅助分组）。和其它页一样从 PAGE_LOADERS 取，
+// 这样侧栏悬停预取才指向同一份 import 路径。
+// 1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」一页；两个 key 都指向同一个 chunk
+// （裁定 A-7），所以这里仍留两个 lazy 常量，但取的是同一份 loader。
+const CodeTools = lazy(PAGE_LOADERS.codeGen);
+const CodeToolsFromAudit = lazy(PAGE_LOADERS.codeAudit);
 // 1.34.0：UI 录制器（S4b）。与其它页一样从 PAGE_LOADERS 取 —— 侧栏悬停预取才指向同一份 import。
 const Recorder = lazy(PAGE_LOADERS.recorder);
 
@@ -514,8 +516,11 @@ function App() {
       // 1.36.0（B1）：结果中心下线（`.jtl` 指标已搬进压力测试页），`resultHub` 的 key / case /
       // 侧栏项 / 懒加载常量同批摘除；老用户持久化的 `currentPage='resultHub'` 落到 `default`
       // 兜底的网址管理（与 1.30.1 的 `accounts` 同理，不白屏）。
-      case 'codeGen': return <CodeGen />;
-      case 'codeAudit': return <CodeAudit />;
+      // 1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」（扁平三页签，见 pages/CodeTools.tsx）。
+      // 两个 key / 两个 case 都保留，都渲染同一页：`codeAudit` 进来时默认落「代码体检」页签，
+      // `codeGen` 进来落默认的第一个页签（裁定 A-7 的双 key 方案；PAGE_ALIAS 不新增）。
+      case 'codeGen': return <CodeTools />;
+      case 'codeAudit': return <CodeToolsFromAudit initialTab="audit" />;
       // 1.36.0（B4）：资产台账下线（覆盖矩阵 / 用例映射的结论属一次性，方案 §11.1 判它该删）。
       // key / lazy 常量 / case / 侧栏项 / 命令面板条目同批摘除；老用户持久化的
       // `currentPage='assetLedger'` 落到 `default` 兜底的网址管理，不白屏（同 B1 的 resultHub）。

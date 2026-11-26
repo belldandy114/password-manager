@@ -86,8 +86,9 @@ export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'codeLab', label: '代码调试' },
   // 1.33.0：开发辅助新页。不登记的话命令面板搜不到新页面，会被当成「页面没做」。
   // 1.36.0：结果中心（B1）与资产台账（B4）已下线，这两条一并摘除。
-  { page: 'codeGen', label: '代码生成' },
-  { page: 'codeAudit', label: '代码体检' },
+  // 1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」，两条合一（`codeAudit` 的 key 仍在
+  // loaders 里做旧路由兼容，但命令面板只留一条，否则同一个页面会出现两个结果）。
+  { page: 'codeGen', label: '代码工具' },
   { page: 'settings', label: '设置' },
 ];
 PAGES.push(...PAGES_MORE);

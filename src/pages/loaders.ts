@@ -33,8 +33,11 @@ export const PAGE_LOADERS = {
   // 因为 renderPage 的 default 分支是 PasswordManagerPage）。
   // 挂进这张表而不是直接写进 App 的 lazy()：只有从这里取，侧栏悬停预取（prefetchPage）才覆盖到它们；
   // 页面组件一律命名导出（m.Xxx），没有 default 导出。
-  codeGen: () => import('./CodeGen').then(m => ({ default: m.CodeGen })),
-  codeAudit: () => import('./CodeAudit').then(m => ({ default: m.CodeAudit })),
+  // 1.36.0（B5）：代码生成 + 代码体检合并成「代码工具」一页。**双 key 指同一个 chunk**
+  // （裁定 A-7 / 仿 notes+attachments 的写法）：老路由 `codeAudit` 与老用户持久化的
+  // currentPage 都还能落到位，PAGE_ALIAS 不新增。
+  codeGen: () => import('./CodeTools').then(m => ({ default: m.CodeTools })),
+  codeAudit: () => import('./CodeTools').then(m => ({ default: m.CodeTools })),
   // 1.34.0：UI 录制器（S4b）。key 名 = 侧栏 NavItem.id = App.renderPage 的 case，三处逐字一致；
   // 挂进这张表是为了让侧栏悬停预取也覆盖到它（页面一律命名导出，没有 default 导出）。
   recorder: () => import('./Recorder').then(m => ({ default: m.Recorder })),
