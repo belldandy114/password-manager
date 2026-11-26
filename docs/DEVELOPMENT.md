@@ -1,6 +1,6 @@
 # 测试中台（password-manager）
 
-Windows 桌面端测试工作台：加密密码库 + 测试数据生成 + 接口调试 + 缺陷管理 + 周报 + 压测 + 工具箱。
+Windows 桌面端测试工作台：加密密码库 + 测试数据生成 + 接口调试 + 缺陷管理 + 压测 + 工具箱。
 Electron 主进程 + preload 桥 + React 渲染层，数据全部落在本地加密库（AES-256-GCM）。
 
 > **这份文档是给「接手的人 / AI」看的入口。**
@@ -37,14 +37,13 @@ node scripts/ui-round12-test.js     # 只跑你改的那一块（工具箱）
 
 ## 1. 这个项目是什么
 
-13 个页面（侧栏顺序；另有底部「设置」`settings`，5 个 tab：安全 / 通用 / 浏览器 / 快捷键 / 定时任务）：
+12 个页面（侧栏顺序；另有底部「设置」`settings`，5 个 tab：安全 / 通用 / 浏览器 / 快捷键 / 定时任务）：
 
 | 页面 | 路由 key | 说明 |
 |---|---|---|
 | 网址管理 | `passwordManager` | 密码库主体，含子页 `dashboard / trash / import / export` |
 | 测试账号 | `accounts` | 系统 / 角色 / 环境 / 账号密码表格，支持批量导入 |
 | 环境矩阵 | `environments` | 环境地址清单 + 一键巡检（并发探活）+ 巡检历史 |
-| 周报 | `weeklyReport` | 本地 Markdown 周报，可从禅道自动成稿 |
 | 测试笔记 | `notes` | 双模式：本地目录 Markdown / 加密库笔记；支持 Ctrl+V 粘图、钉成桌面小窗。1.24.3 起 SQL 片段并入此页（`kind: 'sql'`），旧 `snippets` 集合保留作兜底 |
 | 附件管理 | `attachments` | 全库附件集中查看：缩略图、引用者、未引用清理、导出到本地 |
 | 缺陷管理 | `zentao` | 禅道 Bug 拉取、统计汇总、日报口径 |
@@ -117,7 +116,7 @@ docs/agents/         12 个主题文档（AGENTS.md 拆出来的历史细节）
 | `ipc-ws.js` | `ws:` `sse:`（WebSocket / SSE 长连接，锁定时全部断开） |
 | `ipc-zentao.js` | `zentao:`（13 个，最大的一块） |
 | `ipc-vault-io.js` | `import:` `export:` |
-| `ipc-files.js` | `weekly:` `notes:` |
+| `ipc-files.js` | `notes:` |
 | `ipc-system.js` | `dialog:` `fs:` `system:` |
 | `ipc-tools.js` | 密码生成 / TOTP |
 | `ipc-browser.js` | 浏览器检测与启动 |
@@ -241,13 +240,13 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | `ui-round3-test.js` | 网址管理 + 禅道全部项目 | 13.1s |
 | `ui-palette-cache-test.js` | 搜索小窗缓存 / epoch / 锁定 | 13.3s |
 | `ui-startup-test.js` | 启动期 | 16.4s |
-| `ui-round8-test.js` | 周报下拉 / 设置页布局 / 接口调试分区（几何量断言） | 17.9s |
-| `ui-round2-test.js` | 周报 CRUD / 禅道两 tab / 工具箱 / 接口调试 | 21.6s |
+| `ui-round8-test.js` | 设置页布局 / 接口调试分区（几何量断言） | 17.9s |
+| `ui-round2-test.js` | 禅道两 tab / 工具箱 / 接口调试 | 21.6s |
 | `ui-round15-test.js` | 随手记小窗 / 环境矩阵 / 图片附件 / 快捷键 | 22.7s |
 | `ui-round12-test.js` | **工具箱 21 个工具** | 24.5s |
 | `ui-round16-test.js` | 可访问性 / 焦点陷阱 / 拼音 / 逐页 console error | 30.1s |
 | `ui-round5-test.js` | 分页 / 导出 / 缓存 / 断言 / 体检 / 审计 | 32.6s |
-| `ui-round4-test.js` | Bug 抽屉 / 筛选预设 / 周报草稿 / 环境历史 / 命令面板 | 37.5s |
+| `ui-round4-test.js` | Bug 抽屉 / 筛选预设 / 环境历史 / 命令面板 | 37.5s |
 | `ui-round6-test.js` | 接口调试（历史 / Cookie / 请求体） | 41.7s |
 | `ui-round17-test.js` | 定时任务 / 库自检 / 片段库 / 变量提取 / 钉小窗 | 41.8s |
 | `ui-round7-test.js` | 数据安全（原子写 / 备份恢复 / 数据目录） | 42.4s |
@@ -257,6 +256,7 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | `ui-round19-test.js` | 接口调试 WebSocket / SSE（自带本地回声与 SSE 服务） | 未实测 |
 | `ui-round13/14-test.js` | 缺陷管理汇总 / 两个列表页 | **需真实禅道**，未配 `ZT_*` 时 0.1s 跳过 |
 | `verify-packaged-csv.js` | 打包后 CSV 导出 | 1.9s |
+| `ui-digest-test.js` | 缺陷管理·汇总 → 「复制周报草稿」（剪贴板内容 + 两家公司禅道 cookie 桶不串号） | 未实测 |
 
 **全量 UI ≈ 8.5 分钟**（不含 r13/r14）。这就是「两小时」的来源：全量 + 反复 repack + 排查。
 
@@ -273,7 +273,7 @@ data-location.json 数据目录指针（在 userData 下，不在 DATA_DIR 里�
 | 单个页面/组件的 JSX 或样式 | `npx vite build` + `npm run pack:asar` + 对应 `ui-roundN` | `ui-round16`（逐页 console error） |
 | 工具箱某个工具 | `ui-round12`（24s） | `ui-round16` |
 | 接口调试 | `ui-round6`（42s）+ `ui-round7`（42s） | `ui-round8`（分区样式）、`ui-round19`（WS/SSE） |
-| 缺陷管理 / 周报 | `ui-round2` + `ui-round11`（禅道走本地桩） | `ui-round13/14`（需真实禅道） |
+| 缺陷管理（含汇总页「复制周报草稿」） | `ui-round2` + `ui-round11`（禅道走本地桩）+ `ui-digest`（草稿复制） | `ui-round13/14`（需真实禅道） |
 | 环境矩阵 / 随手记 / 附件 | `ui-round15`（23s）+ `ui-round18`（附件管理） | `ui-round17` |
 | 主进程 IPC / vault / 加密 | `npm run check` + `smoke-test`（4s）+ `ui-round7`（42s） | `ui-round9`（92s，含下载） |
 | 全局 CSS（`tokens/global/pages/redesign`） | `npm run check`（含 CSS 重复 + 静态债）+ `ui-round8` + `ui-round16` | 全量 UI |
@@ -404,7 +404,7 @@ const app = spawn(EXE, ['.', '--no-sandbox', `--remote-debugging-port=${PORT}`, 
 | `docs/agents/url-open.md` | 网址打开/复制唯一入口、环境矩阵 v3 |
 | `docs/agents/window-tray.md` | 单实例锁、托盘、`showMainWindow()` 顺序、全局快捷键回滚 |
 | `docs/agents/update-and-release.md` | 发布流程、应用内更新、CI 覆盖 Release |
-| `docs/agents/weekly-report.md` | 周报 + 禅道成稿的全部规则 |
+| `docs/agents/weekly-report.md` | 周报 + 禅道成稿规则（周报页已下线，仅作历史存档；现行形态 = 缺陷管理·汇总页的「复制周报草稿」） |
 | `docs/agents/perf-test.md` | JMeter 非 GUI 压测 |
 | `docs/agents/visual-system.md` | 视觉体系 v2 的 token 与组件类名 |
 | `docs/agents/security.md` | 加密、审计、库自检 |
