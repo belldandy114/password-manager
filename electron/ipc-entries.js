@@ -68,25 +68,8 @@ function registerEntriesIpc(deps) {
   /** 统一取当前会话密码；未解锁时返回 null（各 handler 据此回「未解锁」） */
   const pw = () => getPassword();
 
-  /**
-   * 隐私收紧（防截屏生效）时的停录桥（SEC-R3-03 / `[C-114a]`）。
-   *
-   * 优先用 main.js 注入的**窄接口** `deps.recordLockStop`（只停录）；当前 main.js 还没注入它，
-   * 就退回它已有的共用入口 `clearCaches()` —— 后者内部就是 `recordLockStop('session-lock')`。
-   *
-   * ⚠️ 代价：`clearCaches()` 还会清 vault/trash 内存缓存、关 WS、清 API cookie 罐
-   * （下次读库要重新派生密钥，约几百 ms）。这是「宁可多清，也不带着登录态继续录」的取舍；
-   * 等 main.js 注入 `recordLockStop` 后这段退化就不再生效（本片不改 main.js）。
-   */
-  function stopRecordingForPrivacy() {
-    try {
-      if (typeof deps.recordLockStop === 'function') {
-        deps.recordLockStop('content-protection');
-        return;
-      }
-      clearCaches();
-    } catch { /* 停录失败不影响设置保存（与 main.js recordLockStop 同口径） */ }
-  }
+  // 1.36.0：原 `stopRecordingForPrivacy()`（「窄接口 + 退化到 clearCaches」的停录桥）随 UI 录制器下线整段删除。
+  // 它是为停录而生的：录制域消失后没有停录这回事，防截屏只需 `win.setContentProtection(...)`。
 
   // ---- Session ----
   ipcMain.handle('session:unlock', (_event, { password }) => {
@@ -545,8 +528,6 @@ function registerEntriesIpc(deps) {
 
   ipcMain.handle('settings:save', (_event, prefs) => {
     const s = loadSettings() || {};
-    // 合并前先记下旧值：后面要判断「这次是不是从关到开」（SEC-R3-03）
-    const wasContentProtected = !!s.contentProtection;
     // 只合并白名单里的键：认证字段（masterPasswordHash / salt / recoveryData …）永远不接受渲染层写入
     if (prefs && typeof prefs === 'object') {
       for (const key of Object.keys(prefs)) {
@@ -582,13 +563,8 @@ function registerEntriesIpc(deps) {
       win.setContentProtection(!!prefs.contentProtection);
     }
 
-    // SEC-R3-03（`[C-114a]` 的第四个触发源）：**运行期打开防截屏也要停录**。
-    // 之前只接了「建窗那一刻」，用户在会话中途打开防截屏，录制会带着被测系统的登录态继续跑。
-    // 只在**从关到开**时停（关掉不需要停；反复保存同一状态也不重复触发）。
-    if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'contentProtection')
-      && !!prefs.contentProtection && !wasContentProtected) {
-      stopRecordingForPrivacy();
-    }
+    // 1.36.0：运行期打开防截屏时的「停录」联动已随录制域删除；
+    // 开启防截屏本身仍在上面的 setContentProtection 里生效（本机手工验过开关可正常切换）。
 
     // Start with Windows (only meaningful for the installed app).
     if (prefs && Object.prototype.hasOwnProperty.call(prefs, 'launchAtLogin') && app.isPackaged) {
