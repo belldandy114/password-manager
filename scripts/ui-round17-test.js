@@ -138,7 +138,8 @@ async function targets() {
   check('环境巡检有「立即巡检」按钮', immediate === true);
 
   /* ---------- ② 库自检 / 诊断包 ---------- */
-  await clickBtn('安全');
+  // 1.30 起「库自检」从 rail 的「安全」搬到「数据与备份」（安全只剩主密码/锁定/剪贴板），
+  await clickBtn('数据与备份');
   await sleep(700);
   const auditBtn = await M.ev(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('开始自检'))`);
   check('安全页有「开始自检」入口', auditBtn === true);
@@ -147,7 +148,8 @@ async function targets() {
   const auditReport = await M.ev(`(() => { const a = document.querySelector('.vault-audit'); if (!a) return null; return { pills: a.querySelectorAll('.vault-audit-pill').length, sum: a.querySelector('.vault-audit-sum')?.textContent.trim().slice(0, 80) || '' }; })()`);
   check('自检能出报告（三枚计数丸 + 结构版本行）', !!auditReport && auditReport.pills >= 3, JSON.stringify(auditReport));
   // 诊断包入口在「通用 › 关于」，不在安全页
-  await clickBtn('通用');
+  // 1.30 起 rail 的「通用」拆成「外观与交互」/「关于与更新」；诊断包与日志查看器在「关于与更新」。
+  await clickBtn('关于与更新');
   await sleep(700);
   const diagBtn = await M.ev(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('导出诊断包'))`);
   check('通用页有「导出诊断包」入口', diagBtn === true);
