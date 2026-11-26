@@ -1074,6 +1074,81 @@ export interface ScanRunResult {
   ms: number;
 }
 
+/* ------------------------------------------------------------------ *
+ * 元素库 · 定位/试跑（1.36.0 / B8，契约 §12.6 / §12.7，裁定 Q4 / Q5）
+ *
+ * 四件事写死在这里，别在 UI 里各自解释：
+ *   1. `el:deps` 只回**两盏灯**，且**只回脱敏后的目录**（`<工作目录>`）——真实绝对路径不出主进程；
+ *   2. `el:trial-run` 的三种「不是 0 命中」必须分得开：`hit=0`（选择器未命中）/
+ *      `loginRequired=true`（页面需要登录）/ 依赖缺失（`success:false` + 固定文案）；
+ *   3. 截断原因**只用既有枚举** `'timeout'`（细分写 `message`，不新增取值）；
+ *   4. 工作目录与 `.pm-profile/` **不进 vault、不进备份、不进导出**，目录由渲染层每次传入。
+ * ------------------------------------------------------------------ */
+
+/** `el:deps` 的一盏灯（`node` / `playwright` 两项，永远两项都回） */
+export interface ElDepsLamp {
+  id: 'node' | 'playwright';
+  label: string;
+  /** 缺任一项就是 `'red'` + `fixHint`，不假装可用 */
+  state: 'green' | 'red';
+  detail: string;
+  fixHint?: string;
+}
+
+/** `el:deps` → `{ lamps, dir, ready }`（`dir` 已脱敏成 `<工作目录>`） */
+export interface ElDepsResult {
+  lamps: ElDepsLamp[];
+  dir: string;
+  ready: boolean;
+}
+
+/** `el:trial-run` 的入参条目（`items ≤ 20`、`locator ≤ 500` 字符） */
+export interface ElTrialInputItem {
+  kind: 'css' | 'xpath' | 'text' | 'role' | 'pw';
+  locator: string;
+  /** `kind==='role'` 必填 */
+  roleName?: string;
+  name?: string;
+}
+
+/** 读到的计算样式（只有 `withStyle: true` 才回） */
+export interface ElTrialStyle {
+  color: string;
+  background: string;
+  fontSize: string;
+  fontWeight: string;
+  display: string;
+}
+
+/** `el:trial-run` 的一条结果 */
+export interface ElTrialItem {
+  kind: string;
+  locator: string;
+  /** `count()` 的命中数：0 = 选择器未命中（与「需要登录」不是一回事） */
+  hit: number;
+  visible: boolean;
+  /** `click({ trial: true })` 只做可操作性检查，不真点 */
+  trial: 'ok' | 'fail' | 'skip';
+  /** Playwright 原文（不吞、不改写；`trial='fail'` 时才有） */
+  error?: string;
+  /** 命中元素的截图（落在系统临时目录） */
+  shotPath?: string;
+  style?: ElTrialStyle | null;
+}
+
+/** `el:trial-run` → `{ results, ms, truncated?, truncatedReason? }` */
+export interface ElTrialResult {
+  results: ElTrialItem[];
+  ms: number;
+  /** 超时/条目段超预算时为 true：**已完成的结果照回**，不许静默丢 */
+  truncated?: boolean;
+  /** 只用既有枚举 `'timeout'`（细分在 `message`） */
+  truncatedReason?: ScanTruncatedReason;
+  /** true = 停在登录页；此时 `results` 通常为空，界面提示登录而不是「未命中」 */
+  loginRequired?: boolean;
+  message?: string;
+}
+
 /** `tdg:write-start` → `{ writerId, path }` */
 export interface TdgWriteStartResult {
   writerId: string;
@@ -1639,6 +1714,22 @@ export interface ElectronAPI {
    * 早期版本按主进程 cwd 解析，dev 碰巧能用、打包版必挂（S-06）。
    */
   scanReveal: (payload: { root: string; file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
+
+  /* ---- 元素库 · 定位/试跑（1.36.0 / B8）：`dir` 每次由渲染层传入，主进程不保存目录 ---- */
+  /**
+   * 试跑一条或多条元素定位（`items ≤ 20`，超出回固定文案「一次最多校验 20 个元素」）。
+   * 主进程写临时 `.mjs` → `which('node')` 跑 Playwright 持久 profile → 解析 stdout → 删脚本；
+   * 总超时 50s，超时杀进程树并回 `truncated:true` + `truncatedReason:'timeout'`（已完成的结果照回）。
+   */
+  elTrialRun: (input: { dir: string; url: string; items: ElTrialInputItem[]; withStyle?: boolean; timeoutMs?: number })
+    => Promise<{ success: boolean; data?: ElTrialResult; error?: string }>;
+  /** 两盏灯（node / playwright 包）；**只回脱敏目录**，缺项即红 + `fixHint` */
+  elDeps: (input: { dir: string }) => Promise<{ success: boolean; data?: ElDepsResult; error?: string }>;
+  /** 选「Playwright 工作目录」；取消时 `success:false, data:null` */
+  elPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
+  /** 清空 profile（= 退出登录）；只允许 `<dir>/.pm-profile`，外部路径一律拒绝 */
+  elProfileClear: (input: { dir: string; target?: string })
+    => Promise<{ success: boolean; data?: { cleared: boolean; path: string }; error?: string }>;
 
   tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
     => Promise<{ success: boolean; data?: TdgWriteStartResult; error?: string; canceled?: boolean }>;

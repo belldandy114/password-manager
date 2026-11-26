@@ -379,6 +379,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   tdgWriteAppend: (writerId, rows) => ipcRenderer.invoke('tdg:write-append', { writerId, rows }),
   tdgWriteFinish: (writerId) => ipcRenderer.invoke('tdg:write-finish', { writerId }),
   tdgWriteAbort: (writerId) => ipcRenderer.invoke('tdg:write-abort', { writerId }),
+  /* 元素库 · 定位/试跑（1.36.0 / B8，契约 §12.6）。四条都是「调用即返回」的请求型通道：
+   * 工作目录每次作为入参传进来（渲染层存 localStorage），主进程**不保存**任何目录状态；
+   * 工作目录与 `.pm-profile/` 都不进 vault / 备份 / 导出（裁定 Q4）。 */
+  elTrialRun: (input) => ipcRenderer.invoke('el:trial-run', input),
+  elDeps: (input) => ipcRenderer.invoke('el:deps', input),
+  elPickDir: () => ipcRenderer.invoke('el:pick-dir'),
+  elProfileClear: (input) => ipcRenderer.invoke('el:profile-clear', input),
   // 运行输出（流式）：返回取消订阅函数
   // 应用日志（排障）
   dataLegacyInfo: () => ipcRenderer.invoke('data:legacy-info'),

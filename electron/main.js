@@ -1647,6 +1647,7 @@ const { registerBrowserIpc } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
 const { registerJmxLibIpc } = require('./ipc-jmxlib');
 const { registerScanIpc } = require('./ipc-scan');   // 本地测试资产工作站（13 项）：4 个新 IPC 域，W1 只接线
+const { registerElementIpc } = require('./ipc-element');   // 元素库 · 定位/试跑（B8）：el:* 4 条通道
 const { registerTdgIpc } = require('./ipc-tdg');
 const { registerSystemIpc } = require('./ipc-system');
 const { registerCodelabIpc } = require('./ipc-codelab');
@@ -2273,6 +2274,8 @@ function setupIpcHandlers() {
   registerJmeterIpc({ loadSettings, saveSettings, getWindow: () => mainWindow, dataDir: DATA_DIR });
   registerJmxLibIpc({ ipcMain, dialog, shell, getWindow: () => mainWindow, dataDir: DATA_DIR });
   registerScanIpc({ getMainWindow: () => mainWindow });   // W1 只接线（占位）：业务分别落在 W5 / W6-B / W6-A / W2-B
+  // 元素库 · 定位/试跑（B8）：试跑用 which('node') + 临时 .mjs 跑 Playwright，主进程不引浏览器库
+  registerElementIpc({ getMainWindow: () => mainWindow });
   registerTdgIpc({ getMainWindow: () => mainWindow });
 
   // 1.36.0：UI 录制器整块下线（会话管理器 / 5 条 invoke / record:event 推送 / 四个停录触发源）。
