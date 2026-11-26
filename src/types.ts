@@ -946,30 +946,11 @@ export interface HotkeyInfo {
   quicknoteIsDefault: boolean;
 }
 
-/**
- * Allure 解析结果的**真源**是 `electron/allure-parse.d.ts`（纯函数层）。
- * 这里只 `export type` 复用，**不再各写一份字段表**——t62 之前就是两处各写一份，
- * 结果漂移（d.ts 缺 `root`/`ms`、types.ts 缺 `ok`/`error`），谁都以为自己是准的。
- */
-export type {
-  AllureCase,
-  AllureCluster,
-  AllureFlaky,
-  AllureTruncatedReason,
-} from '../electron/allure-parse';
-import type { AllureParseResult as AllureParserOutput } from '../electron/allure-parse';
-
-/**
- * `allure:parse` 的 data：主进程在纯函数输出上**补了 `root` / `ms`**
- * （见 `electron/ipc-allure.js` 的成功分支），所以这里做一次 Omit + 补字段，
- * 不重复声明 `cases`/`clusters` 等字段。
- */
-export type AllureParseResult = Omit<AllureParserOutput, 'ok' | 'error'> & { root: string; ms: number };
-
 /* ------------------------------------------------------------------ *
  * 本地测试资产工作站：结果类型（契约 C-45 / C-46）
- * **字段以主进程实际返回为准**（electron/ipc-scan.js、ipc-git.js、ipc-tdg.js），
+ * **字段以主进程实际返回为准**（electron/ipc-scan.js、electron/ipc-tdg.js），
  * 不照契约旧稿抄——旧稿与实现已经对不上（如 `files` 是 number 不是列表）。
+ * 1.36.0：git 域（`git:probe` / `git:diff` 与 3 个结果类型）随「代码体检去掉 Git 影响面」下线，已删除。
  * ------------------------------------------------------------------ */
 
 export type ScanSeverity = 'high' | 'medium' | 'low';
@@ -1016,7 +997,8 @@ export interface ScanFinding {
 /**
  * `scan:run` 的截断原因**单一真源**（属 `[C-09]` 的 11 值枚举，scan 侧只用这 6 个）。
  *
- * **scan 侧不含 `'files'`**（`[C-09] v17` 裁定）：`'files'` 只归 `allure:parse` 的 5000，
+ * **scan 侧不含 `'files'`**（`[C-09] v17` 裁定）：`'files'` 原本只归 `allure:parse`（≤5000 文件）
+ * ——该通道随结果中心在 1.36.0 下线，这个取值在 scan 侧**仍然不许出现**（历史记录里可能还有），
  * scan 的文件数触顶一律用 `'max-files'`。以前这里多写了一个 `'files'`，与
  * `electron/scan-collect.d.ts` 的 6 值声明不一致（第 1 轮评审 R-03）。
  *
@@ -1087,32 +1069,6 @@ export interface ScanRunResult {
   totalFindings: number;
   findings: ScanFinding[];
   ms: number;
-}
-
-/** `git:probe` → `{ isRepo, branch, head, dirty }` */
-export interface GitProbeResult {
-  isRepo: boolean;
-  branch: string;
-  head: string;
-  dirty: boolean;
-}
-
-/** `git:diff` 的一条改动文件（`origPath` 只在 renamed 时出现） */
-export interface GitDiffFile {
-  path: string;
-  origPath?: string;
-  /** untracked | added | deleted | modified | staged-modified | renamed（二进制再加 `-binary`） */
-  status: string;
-  additions: number;
-  deletions: number;
-}
-
-/** `git:diff` → `{ root, scope, files, truncated }` */
-export interface GitDiffResult {
-  root: string;
-  scope: 'unstaged' | 'staged' | 'head';
-  files: GitDiffFile[];
-  truncated: boolean;
 }
 
 /** `tdg:write-start` → `{ writerId, path }` */
@@ -1588,18 +1544,6 @@ export interface ElectronAPI {
   /** 主进程发现新 Bug 时推送未读数 */
   onZentaoUnread: (cb: (n: number) => void) => () => void;
 
-  // 周报（本地 Markdown 目录，只读）
-  weeklyList: (dir: string) => Promise<{ success: boolean; data?: WeeklyFile[]; error?: string }>;
-  weeklyRead: (dir: string, name: string) =>
-    Promise<{ success: boolean; data?: { name: string; content: string; mtime: string; size: number }; error?: string }>;
-  weeklyPickDir: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
-  weeklyReveal: (dir: string, name?: string) => Promise<{ success: boolean; error?: string }>;
-  weeklySave: (dir: string, name: string, content: string) =>
-    Promise<{ success: boolean; data?: WeeklyFile; error?: string }>;
-  weeklyRename: (dir: string, name: string, nextName: string) =>
-    Promise<{ success: boolean; data?: { name: string }; error?: string }>;
-  weeklyDelete: (dir: string, name: string) => Promise<{ success: boolean; error?: string }>;
-
   // 用例库（文件管家：收纳 / 打开 / 导出）
   casesConfig: () => Promise<{ success: boolean; data?: { root: string; configured: boolean; exists: boolean }; error?: string }>;
   casesChooseRoot: () => Promise<{ success: boolean; data?: { root: string }; error?: string; canceled?: boolean }>;
@@ -1793,13 +1737,6 @@ export interface ElectronAPI {
    * 早期版本按主进程 cwd 解析，dev 碰巧能用、打包版必挂（S-06）。
    */
   scanReveal: (payload: { root: string; file: string; line?: number }) => Promise<{ success: boolean; data?: Record<string, never>; error?: string }>;
-
-  gitProbe: (payload: { root: string }) => Promise<{ success: boolean; data?: GitProbeResult; error?: string }>;
-  gitDiff: (payload: { root: string; scope: 'unstaged' | 'staged' | 'head' })
-    => Promise<{ success: boolean; data?: GitDiffResult; error?: string }>;
-
-  allurePickDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string; canceled?: boolean }>;
-  allureParse: (payload: { dir: string; maxFiles?: number }) => Promise<{ success: boolean; data?: AllureParseResult; error?: string }>;
 
   tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
     => Promise<{ success: boolean; data?: TdgWriteStartResult; error?: string; canceled?: boolean }>;

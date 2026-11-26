@@ -26,7 +26,6 @@ const Settings = lazy(PAGE_LOADERS.settings);
 const DataGenerator = lazy(PAGE_LOADERS.dataGenerator);
 const Toolbox = lazy(PAGE_LOADERS.toolbox);
 const Environments = lazy(PAGE_LOADERS.environments);
-const WeeklyReport = lazy(PAGE_LOADERS.weeklyReport);
 // 1.30.1：notes / attachments 两个 loader 都指向合并页 NotesAttachments，
 // 别名跟着改成真实组件名，避免读代码时以为这里还是单页的 Notes
 const NotesAttachments = lazy(PAGE_LOADERS.notes);
@@ -44,7 +43,6 @@ const SqlSnippets = lazy(PAGE_LOADERS.sqlSnippets);
 const CodeGen = lazy(PAGE_LOADERS.codeGen);
 const CodeAudit = lazy(PAGE_LOADERS.codeAudit);
 const AssetLedger = lazy(PAGE_LOADERS.assetLedger);
-const ResultHub = lazy(PAGE_LOADERS.resultHub);
 // 1.34.0：UI 录制器（S4b）。与其它页一样从 PAGE_LOADERS 取 —— 侧栏悬停预取才指向同一份 import。
 const Recorder = lazy(PAGE_LOADERS.recorder);
 
@@ -442,7 +440,6 @@ function App() {
           }
           else if (arg === 'lock') handleLockRef.current();
           else if (arg === 'zt-refresh') { setCurrentPage('zentao'); st.signalCmd('zentao:refresh-mine'); }
-          else if (arg === 'weekly-draft') { setCurrentPage('weeklyReport'); st.signalCmd('weekly:draft'); }
           else if (arg === 'zentao') setCurrentPage('zentao');
           else if (arg === 'api') setCurrentPage('apiClient');
           else if (arg === 'theme') {
@@ -493,7 +490,9 @@ function App() {
       // 持久化的 currentPage 还是 accounts，落到网址管理而不是白屏。
       case 'accounts': return <PasswordManagerPage />;
     case 'environments': return <Environments />;
-      case 'weeklyReport': return <WeeklyReport />;
+      // 1.36.0（B2）：周报页下线（key / lazy 常量 / 这个 case / 命令面板入口同批删）。
+      // 老用户持久化的 `currentPage='weeklyReport'` 落到 `default` 兜底的网址管理，不白屏
+      // （与 1.30.1 的 `accounts`、B1 的 `resultHub` 同理）。
       // 1.30.2：SQL 片段重新独立成页（数据仍来自 notes 集合里 kind='sql' 的条目）。
       // 老路由 'snippets' 跟着改指向独立页 —— 数据源是同一批条目，落到笔记页会看不见它们。
       case 'snippets': return <SqlSnippets onNavigate={setCurrentPage} />;
@@ -513,10 +512,12 @@ function App() {
       case 'cases': return <Cases />;
       // 1.33.0：开发辅助 4 个新页（本批只有接线与空壳，页面内是「待实现（W2–W6）」）。
       // 这 4 个 case 与 pages/loaders.ts 的 4 个 key、侧栏 NavItem.id 逐字同名。
+      // 1.36.0（B1）：结果中心下线（`.jtl` 指标已搬进压力测试页），`resultHub` 的 key / case /
+      // 侧栏项 / 懒加载常量同批摘除；老用户持久化的 `currentPage='resultHub'` 落到 `default`
+      // 兜底的网址管理（与 1.30.1 的 `accounts` 同理，不白屏）。
       case 'codeGen': return <CodeGen />;
       case 'codeAudit': return <CodeAudit />;
       case 'assetLedger': return <AssetLedger />;
-      case 'resultHub': return <ResultHub />;
       // 1.34.0：UI 录制器。⚠️ 新增页面必须**同时**改三处：pages/loaders.ts 的 key、
       // 这里的 case、Sidebar.tsx 的 GROUPS 数组（NavItem.id）。
       // 只加前两处的表现是「路由有、入口没有」——页面永不可达，而且不报错，是最难发现的沉默缺口。

@@ -4,13 +4,35 @@ import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/Toast';
 import type { JmeterDone, JmeterLogLine, JmeterHistoryRecord, JmxLibMeta } from '../types';
 import { JmxLibrary } from '../components/JmxLibrary';
+import { JtlTab } from '../components/perftest/JtlTab';
 
 /**
  * JMeter 非 GUI 运行页。
  *
  * 布局（1.28.0）：左边是可折叠的「环境 / 脚本库 / 运行配置」，右边是「实时控制台 / 历史记录」+ 结果 + 运行历史。
  * 早期是整页纵向平铺，选脚本要来回滚：脚本库在上面、控制台在下面，跑起来就看不见配置了。
+ *
+ * 1.36.0（B1）：结果中心下线，`.jtl` 指标页签搬进右栏（第 2 个页签）。三条写死的约束：
+ *
+ * 1. **不嵌套 `.tabs`**：本页只有右栏这一条页签条，`JtlTab` 内部只由 `<Panel>` 组成。
+ * 2. **默认「运行结果」**：r10（`scripts/ui-round10-test.js`）断言 `.perf-console-head .pnl-title`
+ *    是「实时控制台」、且 `.perf-page .pnl` 的裁切数为 0；默认落 `.jtl` 会让两条同时红。
+ * 3. **非激活页签条件渲染（不挂载）**：不要 `hidden` 并存 —— 上面那条裁切断言按整页所有 `.pnl`
+ *    统计，并存会引入一批隐藏面板的噪声；条件渲染让非激活页签的 Panel 根本不在 DOM 里。
+ *    同时这也保证「切到 .jtl 页签」不会自动发起解析或弹文件框（解析只由页签里的按钮触发）。
+ *
+ * 另：类名只能用既有 `.tabs` / `.tab2`，**不要用 `.perf-tab`** ——
+ * `scripts/ui-jmxlib-test.js:191` 断言该类的数量恒为 0（历史上压测页有过页签后被移除）。
  */
+
+/** 右栏页签（顺序固定：运行结果在前＝默认） */
+const PERF_TABS = [
+  { id: 'run', label: '运行结果' },
+  { id: 'jtl', label: '.jtl 指标' },
+] as const;
+
+type PerfTabId = typeof PERF_TABS[number]['id'];
+
 export function PerfTest() {
   const { toasts, addToast, removeToast } = useToast();
 
@@ -55,6 +77,8 @@ export function PerfTest() {
   const [openRun, setOpenRun] = useState(true);
   // 运行历史：默认只显示最近 5 次，可展开全部
   const [showAllHistory, setShowAllHistory] = useState(false);
+  /** 右栏页签：默认「运行结果」（见文件头第 2 条约束） */
+  const [rightTab, setRightTab] = useState<PerfTabId>('run');
 
   /** 自动探测本机 JMeter / Java */
   const detect = async () => {
@@ -469,85 +493,120 @@ export function PerfTest() {
             </SideFold>
           </aside>
 
-          {/* ---------- 右栏：控制台 / 结果 / 历史 ---------- */}
+          {/* ---------- 右栏：运行结果（控制台 / 结果 / 历史） ／ .jtl 指标 ---------- */}
           <section className="perf-main">
-            <div className="pnl perf-console">
-              <div className="pnl-head perf-console-head">
-                <span className="pnl-title">实时控制台</span>
-                <span className="perf-console-tools">
-                  <span className="perf-console-hint" title="界面只保留最近 4000 行，更早的会丢弃；完整输出看「打开运行日志」">
-                    {lines.length ? `最近 ${lines.length} 行` : '最多保留 4000 行'}
-                  </span>
-                  {running ? <Pill tone="info">运行中</Pill> : lines.length > 0 ? (
-                    <button className="btn btn-ghost btn-sm" onClick={() => { setLines([]); setResult(null); }}>清空</button>
-                  ) : null}
-                </span>
-              </div>
-              <div className="pnl-body perf-console-body">
-                <div
-                  className="perf-log"
-                  ref={logRef}
-                  onScroll={(e) => {
-                    const el = e.currentTarget;
-                    keepBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-                  }}
+            <div className="tabs" role="tablist" aria-label="压力测试结果视图">
+              {PERF_TABS.map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`perf-tab-${t.id}`}
+                  aria-selected={rightTab === t.id}
+                  aria-controls={`perf-panel-${t.id}`}
+                  tabIndex={rightTab === t.id ? 0 : -1}
+                  className={`tab2${rightTab === t.id ? ' is-active' : ''}`}
+                  onClick={() => setRightTab(t.id)}
                 >
-                  {lines.length === 0 ? (
-                    <div className="perf-log-empty">点右上角「开始运行」后，这里会像 cmd 一样逐行显示 JMeter 输出</div>
-                  ) : lines.map((l, i) => (
-                    <div key={i} className={`perf-line${l.stream === 'err' ? ' is-err' : ''}${l.stream === 'cmd' ? ' is-cmd' : ''}`}>
-                      {l.line}
-                    </div>
-                  ))}
-                </div>
-              </div>
+                  <span>{t.label}</span>
+                </button>
+              ))}
             </div>
 
-            {result && (
-              <Panel
-                title="结果"
-                meta={result.ok ? '成功' : `退出码 ${result.code}`}
-                tools={<Pill tone={errorTone as 'ok' | 'bad' | 'mute'}>{stats ? `错误率 ${stats.errorPct}%` : '无统计'}</Pill>}
-              >
-                {stats ? (
-                  <div className="perf-stats">
-                    <div className="perf-stat"><span>样本数</span><b>{stats.samples}</b></div>
-                    <div className="perf-stat"><span>平均</span><b>{stats.avg} ms</b></div>
-                    <div className="perf-stat"><span>最小 / 最大</span><b>{stats.min} / {stats.max} ms</b></div>
-                    {stats.p90 != null && <div className="perf-stat"><span>P90 / P95</span><b>{stats.p90} / {stats.p95} ms</b></div>}
-                    <div className="perf-stat"><span>TPS</span><b>{stats.tps}</b></div>
-                    <div className="perf-stat"><span>错误数</span><b>{stats.errors}{stats.topErrorCode ? `（${stats.topErrorCode.code}×${stats.topErrorCode.count}）` : ''}</b></div>
-                  </div>
-                ) : (
-                  <div className="perf-tip">没解析到统计（脚本可能没有 Sampler，或结果文件为空）。完整输出见左侧控制台。</div>
-                )}
-                <div className="perf-links">
-                  {result.jtlPath && <button className="btn btn-secondary btn-sm" onClick={() => void openPath(result.jtlPath)}>打开 .jtl</button>}
-                  {result.reportDir && <button className="btn btn-primary btn-sm" onClick={() => void openPath(result.reportDir)}>打开 HTML 报告</button>}
-                  {result.logPath && <button className="btn btn-ghost btn-sm" onClick={() => void openPath(result.logPath)}>打开运行日志</button>}
-                </div>
-              </Panel>
-            )}
-
-            <Panel
-              title="运行历史"
-              meta={history.length ? `共 ${history.length} 次` : '还没有记录'}
-              tools={history.length > 0 ? (
-                <>
-                  {/* 只有超过 5 条才有「展开全部」的意义；否则点了看不出变化，像坏了 */}
-                  {history.length > 5 && (
-                    <button className="btn btn-ghost btn-sm" onClick={() => setShowAllHistory(v => !v)}>
-                      {showAllHistory ? '收起' : `展开全部（${history.length}）`}
-                    </button>
-                  )}
-                  <button className="btn btn-ghost btn-sm" onClick={() => void clearHistory()}>清空历史</button>
-                </>
-              ) : undefined}
+            {/* 条件渲染：非激活页签不挂载（文件头第 3 条）。面板容器的 column+gap 是把
+                `.perf-main` 的 10px 间距补回来 —— 原始三块是 `.perf-main` 的直接子元素，
+                包一层后间距会塌；`src/styles/**` 不在本批 inScope，故用内联（同 ElementLibTab
+                里那类「无现成类可用」的内联重置先例）。 */}
+            <div
+              role="tabpanel"
+              id={`perf-panel-${rightTab}`}
+              aria-labelledby={`perf-tab-${rightTab}`}
+              style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}
             >
-              <div className={showAllHistory ? 'perf-hist-expand' : undefined}>
-                {historyTable(showAllHistory ? history : history.slice(0, 5), '跑一次压测后，这里会留下「时间 / 脚本 / 样本 / 错误率 / TPS」，方便对比调参前后。')}
-              </div>
-            </Panel>
+              {rightTab === 'run' ? (
+                <>
+                  <div className="pnl perf-console">
+                    <div className="pnl-head perf-console-head">
+                      <span className="pnl-title">实时控制台</span>
+                      <span className="perf-console-tools">
+                        <span className="perf-console-hint" title="界面只保留最近 4000 行，更早的会丢弃；完整输出看「打开运行日志」">
+                          {lines.length ? `最近 ${lines.length} 行` : '最多保留 4000 行'}
+                        </span>
+                        {running ? <Pill tone="info">运行中</Pill> : lines.length > 0 ? (
+                          <button className="btn btn-ghost btn-sm" onClick={() => { setLines([]); setResult(null); }}>清空</button>
+                        ) : null}
+                      </span>
+                    </div>
+                    <div className="pnl-body perf-console-body">
+                      <div
+                        className="perf-log"
+                        ref={logRef}
+                        onScroll={(e) => {
+                          const el = e.currentTarget;
+                          keepBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+                        }}
+                      >
+                        {lines.length === 0 ? (
+                          <div className="perf-log-empty">点右上角「开始运行」后，这里会像 cmd 一样逐行显示 JMeter 输出</div>
+                        ) : lines.map((l, i) => (
+                          <div key={i} className={`perf-line${l.stream === 'err' ? ' is-err' : ''}${l.stream === 'cmd' ? ' is-cmd' : ''}`}>
+                            {l.line}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {result && (
+                    <Panel
+                      title="结果"
+                      meta={result.ok ? '成功' : `退出码 ${result.code}`}
+                      tools={<Pill tone={errorTone as 'ok' | 'bad' | 'mute'}>{stats ? `错误率 ${stats.errorPct}%` : '无统计'}</Pill>}
+                    >
+                      {stats ? (
+                        <div className="perf-stats">
+                          <div className="perf-stat"><span>样本数</span><b>{stats.samples}</b></div>
+                          <div className="perf-stat"><span>平均</span><b>{stats.avg} ms</b></div>
+                          <div className="perf-stat"><span>最小 / 最大</span><b>{stats.min} / {stats.max} ms</b></div>
+                          {stats.p90 != null && <div className="perf-stat"><span>P90 / P95</span><b>{stats.p90} / {stats.p95} ms</b></div>}
+                          <div className="perf-stat"><span>TPS</span><b>{stats.tps}</b></div>
+                          <div className="perf-stat"><span>错误数</span><b>{stats.errors}{stats.topErrorCode ? `（${stats.topErrorCode.code}×${stats.topErrorCode.count}）` : ''}</b></div>
+                        </div>
+                      ) : (
+                        <div className="perf-tip">没解析到统计（脚本可能没有 Sampler，或结果文件为空）。完整输出见左侧控制台。</div>
+                      )}
+                      <div className="perf-links">
+                        {result.jtlPath && <button className="btn btn-secondary btn-sm" onClick={() => void openPath(result.jtlPath)}>打开 .jtl</button>}
+                        {result.reportDir && <button className="btn btn-primary btn-sm" onClick={() => void openPath(result.reportDir)}>打开 HTML 报告</button>}
+                        {result.logPath && <button className="btn btn-ghost btn-sm" onClick={() => void openPath(result.logPath)}>打开运行日志</button>}
+                      </div>
+                    </Panel>
+                  )}
+
+                  <Panel
+                    title="运行历史"
+                    meta={history.length ? `共 ${history.length} 次` : '还没有记录'}
+                    tools={history.length > 0 ? (
+                      <>
+                        {/* 只有超过 5 条才有「展开全部」的意义；否则点了看不出变化，像坏了 */}
+                        {history.length > 5 && (
+                          <button className="btn btn-ghost btn-sm" onClick={() => setShowAllHistory(v => !v)}>
+                            {showAllHistory ? '收起' : `展开全部（${history.length}）`}
+                          </button>
+                        )}
+                        <button className="btn btn-ghost btn-sm" onClick={() => void clearHistory()}>清空历史</button>
+                      </>
+                    ) : undefined}
+                  >
+                    <div className={showAllHistory ? 'perf-hist-expand' : undefined}>
+                      {historyTable(showAllHistory ? history : history.slice(0, 5), '跑一次压测后，这里会留下「时间 / 脚本 / 样本 / 错误率 / TPS」，方便对比调参前后。')}
+                    </div>
+                  </Panel>
+                </>
+              ) : (
+                <JtlTab addToast={addToast} />
+              )}
+            </div>
           </section>
         </div>
 

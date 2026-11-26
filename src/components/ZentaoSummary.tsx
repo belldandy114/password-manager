@@ -16,7 +16,6 @@ import {
 } from '../utils/bugSummary';
 import { pushHistory, prevOf, clearHistory, readHistory, type SumSnapshot } from '../utils/sumHistory';
 import { buildWeeklyDraft, weekRange } from '../utils/weeklyDraft';
-import { useStore } from '../store/useStore';
 
 /** 进入页面自动拉一次（每个会话只自动拉一次，避免来回切 tab 反复打禅道） */
 let autoPulledOnce = false;
@@ -477,16 +476,36 @@ export function ZentaoSummary({
     else if (!r.canceled) flash(r.error || '导出失败');
   };
 
-  /** 用当前汇总的数据起草周报（跳到周报页并填入内容） */
-  const makeWeeklyDraft = () => {
+  /**
+   * 用当前汇总的数据起草周报，直接复制到剪贴板（1.36.0 B2：周报页已下线）。
+   *
+   * 与旧实现的三点差别（都写死在这里，别再改回去）：
+   * 1. **不写 localStorage**（`pm.weekly.pendingDraft` 的读者随周报页一起删了，留着就是死数据）；
+   * 2. **不 `requestNavigate('weeklyReport')`**（目标页已不存在，导航会落 default 兜底）；
+   * 3. 成功/失败提示与失败文案沿用本文件既有的复制三兄弟（`copySecurity` / `copyOne` / `copyReport`），
+   *    不新造第二套文案。
+   * `buildWeeklyDraft` 与它的两段单测原地保留（方案 §11.2 的「坑 1」）。
+   */
+  const copyWeeklyDraft = async () => {
     const w = weekRange(0);
-    const text = buildWeeklyDraft(sumBugs, w.start, w.end);
+    /**
+     * ⚠️ 为什么不能直接把 `sumBugs` 丢给 `buildWeeklyDraft`：
+     * 主进程 `ztSummaryOf`（`electron/ipc-zentao.js`）取项目名时读的是 `ztProductCache` 的**缓存信封**
+     * （`{ at, map }`）而不是 `map` 本身，于是汇总来的 Bug 上 `productName` 恒为空 →
+     * 草稿的项目分组会整片退化成「未分类」（实测：`（1）未分类：新提 2、解决 1、关闭 1`）。
+     * 本页本来就有 `product` id → 名称的映射（`productNames`，表格在用），在这里补齐，
+     * 复制出去的草稿才是能直接贴进周报的。根因在主进程（不在本批 inScope），已作为 B2 回执的一条 finding 交 backend。
+     */
+    const named = sumBugs.map(b => (
+      b.productName ? b : { ...b, productName: productNames[String(b.product)] || '' }
+    ));
+    const text = buildWeeklyDraft(named, w.start, w.end);
     try {
-      localStorage.setItem('pm.weekly.pendingDraft', JSON.stringify({
-        name: `${w.end}.md`, text, at: Date.now(),
-      }));
-    } catch { /* 配额满：退化为只跳页 */ }
-    useStore.getState().requestNavigate('weeklyReport');
+      await navigator.clipboard.writeText(text);
+      flash(`已复制周报草稿（${w.start} ~ ${w.end}）`);
+    } catch {
+      flash('复制失败：窗口没有焦点，点一下窗口再试');
+    }
   };
 
   const copySecurity = async () => {
@@ -786,11 +805,11 @@ export function ZentaoSummary({
                 </button>
                 <button
                   className="btn btn-ghost btn-sm"
-                  onClick={makeWeeklyDraft}
+                  onClick={() => void copyWeeklyDraft()}
                   disabled={!sumBugs.length}
-                  title="用当前汇总数据生成本周周报草稿，自动跳到周报页"
+                  title="用当前汇总数据生成本周周报草稿并复制到剪贴板（不跳页）"
                 >
-                  <Icons.note size={12} /> 生成周报
+                  <Icons.note size={12} /> 复制周报草稿
                 </button>
                 <button
                   ref={copyBtnRef}

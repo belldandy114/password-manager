@@ -17,6 +17,29 @@ const { ztPageAll } = require('./zentao-pager');
 const { createTtlCache } = require('./ttl-cache');
 
 /**
+ * 读产品名映射：把 `{ at, map }` 信封解开，只交映射本身（t9）。
+ *
+ * ⚠️ 必须放在**模块作用域**：本文件的其余助手都写在 `registerZentaoIpc` 内部
+ * （搬迁时保持了 setupIpcHandlers 里的原缩进），无法被单测引用；
+ * 这个纯函数与任何闭包状态无关，放外面既能被 `zentao-product-cache.test.js` 直接测，
+ * 也让「统一解包口径」有一个可指认的落点。
+ *
+ * 统一口径：本文件**所有** `ztProductCache` 的取值都必须走这里，
+ * 禁止再用 `ztProductCache.get(key)` 直接当映射索引（有源码守卫测试锁着）。
+ *
+ * @param {Map<string, any>} cache 缓存（生产传 `ztProductCache`，测试可传任意同形 Map）
+ * @param {string} key `ztApiCacheKey(cfg)` 或 `programs|…`
+ * @returns {Record<string, string>|null} 命中 → 映射；未命中/形状不对 → `null`
+ *   （返回 `null` 而不是 `{}`，是为了让调用方既有的 `if (!nameMap) 重拉产品` 兜底继续生效）
+ */
+function ztProductMapOf(cache, key) {
+  const hit = cache && typeof cache.get === 'function' ? cache.get(key) : null;
+  if (!hit || typeof hit !== 'object') return null;
+  const map = hit.map;
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : null;
+}
+
+/**
  * @param {object} deps
  * @param {string} deps.DATA_DIR
  * @param {(pw: string) => any} deps.loadVault
@@ -942,7 +965,15 @@ ipcMain.handle('zentao:notify-status', () => {
 // 每个实例（baseUrl|account）一份 token：跨公司汇总时逐家切换，
 // 用单例的话每换一家都要重新认证一次，白白多几秒。
 const ztApiTokens = new Map();
-const ztProductCache = new Map();   // base|account → { [productId]: name }
+/**
+ * 产品清单「id → 名称」缓存。
+ *
+ * ⚠️ **值是信封 `{ at, map }`，不是映射本身**（写入点两处：`ztApiPrograms` 与 `ztApiProducts`）。
+ * 键有两种前缀：`ztApiCacheKey(cfg)`（`base|account`）与 `programs|base|account`。
+ * 消费方**必须先解包**（模块作用域的 `ztProductMapOf`），否则 `nameMap[productId]` 恒为 undefined、
+ * `productName` 恒空 —— t9 修的就是这个（周报草稿项目分组退化成「（1）未分类」）。
+ */
+const ztProductCache = new Map();
 
 /**
  * 产品清单（用户口中的「项目」）短时缓存。
@@ -1529,10 +1560,11 @@ ipcMain.handle('zentao:project-bugs', async (_event, payload = {}) => {
 
   try {
     const key = ztApiCacheKey(cfg);
-    let nameMap = ztProductCache.get(key);
+    // t9：值是 { at, map } 信封，必须解包（返回 null 时保留既有的「重拉产品」兜底）
+    let nameMap = ztProductMapOf(ztProductCache, key);
     if (!nameMap) {
       await ztApiProducts(cfg);
-      nameMap = ztProductCache.get(key) || {};
+      nameMap = ztProductMapOf(ztProductCache, key) || {};
     }
     // 模块名与 Bug 并行取：模块接口要 HTML 会话，失败只影响「模块」列显示
     const modPromise = ztFetchModuleNames(cfg, productId);
@@ -1583,7 +1615,7 @@ ipcMain.handle('zentao:all-bugs', async (_event, cfg, opts = {}) => {
     const key = ztApiCacheKey(cfg);
     // 强制刷新时连产品清单也重拉：否则 60 秒缓存里没有的新产品会漏掉其 Bug
     const products = await ztApiProducts(cfg, { fresh: !!opts.force });
-    const nameMap = ztProductCache.get(key) || {};
+    const nameMap = ztProductMapOf(ztProductCache, key) || {};
     const queue = products.slice();
     const collected = [];
     let reported = 0;
@@ -1680,10 +1712,11 @@ async function ztSummaryOf(cfg, productIds, opts = {}) {
 
   try {
     const key = ztApiCacheKey(cfg);
-    let nameMap = ztProductCache.get(key);
+    // t9：信封解包（同 zentao:project-bugs）；null = 未命中 → 重拉产品后再解一次
+    let nameMap = ztProductMapOf(ztProductCache, key);
     if (!nameMap) {
       await ztApiProducts(cfg);
-      nameMap = ztProductCache.get(key) || {};
+      nameMap = ztProductMapOf(ztProductCache, key) || {};
     }
 
     const queue = ids.slice();
@@ -1821,4 +1854,6 @@ ipcMain.handle('zentao:summary-multi', async (_event, targets, opts = {}) => {
   };
 }
 
-module.exports = { registerZentaoIpc };
+// `ztProductMapOf` 是纯函数（模块作用域），导出仅供单测（electron/zentao-product-cache.test.js）；
+// 通道注册面不变（仍是 registerZentaoIpc），四元组不受影响。
+module.exports = { registerZentaoIpc, ztProductMapOf };

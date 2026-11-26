@@ -743,9 +743,7 @@ export function Home() {
                 <button className="home-shortcut" onClick={() => go('toolbox')}>
                   <Icons.tool size={13} /> 工具箱
                 </button>
-                <button className="home-shortcut" onClick={() => go('weeklyReport')}>
-                  <Icons.note size={13} /> 写周报
-                </button>
+                {/* 1.36.0（B2）：「写周报」快捷入口随周报页下线（原 go('weeklyReport') 会落 default） */}
                 <button className="home-shortcut" onClick={() => go('attachments')}>
                   <Icons.image size={13} /> 附件管理
                 </button>

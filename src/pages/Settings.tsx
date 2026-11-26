@@ -466,19 +466,16 @@ export function Settings() {
     return true;
   };
 
-  const saveDirSetting = async (key: 'notesDir' | 'weeklyDir', dir: string) => {
+  const saveDirSetting = async (key: 'notesDir', dir: string) => {
     const ok = await persist({ [key]: dir } as Partial<AppSettings>, dir ? '目录已更新' : '已改回默认位置');
     if (!ok) return;
     // 双写旧键：笔记页/附件页反查仍有读 localStorage 的兜底路径，
     // 只清 settings 会让「改回加密库」在下一次进入页面时被旧目录拉回去。
+    // 1.36.0（B2）：周报目录区块已随周报页下线删除，这里只剩 notesDir 一支
+    // （`settings.weeklyDir` 字段与 `ipc-entries.js` 白名单**保留**，方案 §11.2 明示）。
     try {
-      if (key === 'notesDir') {
-        if (dir) localStorage.setItem('pm.notes.dir', dir);
-        else localStorage.removeItem('pm.notes.dir');
-      } else {
-        if (dir) localStorage.setItem('weekly.report.dir', dir);
-        else localStorage.removeItem('weekly.report.dir');
-      }
+      if (dir) localStorage.setItem('pm.notes.dir', dir);
+      else localStorage.removeItem('pm.notes.dir');
     } catch { /* 隐私模式下写不了，忽略 */ }
   };
 
@@ -486,12 +483,6 @@ export function Settings() {
     const r = await window.electronAPI.notesPickDir();
     if (!r.success || !r.data) return;
     await saveDirSetting('notesDir', r.data);
-  };
-
-  const pickWeeklyDir = async () => {
-    const r = await window.electronAPI.weeklyPickDir();
-    if (!r.success || !r.data) return;
-    await saveDirSetting('weeklyDir', r.data);
   };
 
   /** 切换附件目录：主进程先把已有附件复制过去，成功才切换（不用重启） */
@@ -1235,32 +1226,8 @@ export function Settings() {
               </div>
             </div>
 
-            <div className="setting-row">
-              <div style={{ minWidth: 0 }}>
-                <div className="setting-label">周报目录</div>
-                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
-                  {settings.weeklyDir || '未选择'}
-                </div>
-                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
-                  周报 .md 文件存放的位置，换电脑时选同一个目录就能接着写。
-                </div>
-              </div>
-              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-sm btn-secondary" onClick={() => void pickWeeklyDir()}>
-                  选择目录
-                </button>
-                {settings.weeklyDir && (
-                  <button className="btn btn-sm btn-ghost" onClick={() => void window.electronAPI.weeklyReveal(settings.weeklyDir || '')}>
-                    打开
-                  </button>
-                )}
-                {settings.weeklyDir && (
-                  <button className="btn btn-sm btn-ghost" onClick={() => void saveDirSetting('weeklyDir', '')}>
-                    清除
-                  </button>
-                )}
-              </div>
-            </div>
+            {/* 1.36.0（B2）：原「周报目录」setting-row 随周报页下线删除。
+                `settings.weeklyDir` 字段与 `ipc-entries.js` 的 settings 白名单保留（老库不迁移、回滚零风险）。 */}
             <div className="text-sm text-muted" style={{ marginTop: 6 }}>
               目录切换只复制、不删除原文件；附件目录改完立即生效，不需要重启。
             </div>

@@ -134,7 +134,7 @@ export function PaletteApp() {
         { id: 'action:new-entry', title: '新建网址', sub: '相当于 Ctrl+N', kind: 'action' },
         { id: 'action:lock', title: '锁定密码库', sub: '立即锁屏', kind: 'action' },
         { id: 'action:zt-refresh', title: '刷新：我的 Bug', sub: '重新拉缺陷管理「我的 Bug」', kind: 'action' },
-        { id: 'action:weekly-draft', title: '生成周报草稿', sub: '用禅道「我的 Bug」生成本周草稿', kind: 'action' },
+        // 1.36.0（B2）：`action:weekly-draft` 随周报页下线删除（原 goto 指向已删页面）
         { id: 'action:theme', title: '切换深浅主题', sub: '立即切换界面配色', kind: 'action' },
         ...((vault.entries || []).slice(0, 400).map((e: any) => ({
           id: `entry:${e.id}`,

@@ -43,7 +43,7 @@ export const KIND_LABEL: Record<Kind, string> = {
 export const PAGES: { page: string; label: string }[] = [
   { page: 'home', label: '工作台' },
   { page: 'passwordManager', label: '网址管理' },
-  { page: 'weeklyReport', label: '周报' },
+  // 1.36.0（B2）：「周报」页下线，命令面板不再登记（§实现契约 R6：P ⊆ A 且 P ⊆ L）
   { page: 'notes', label: '测试笔记' },
   // 1.30.2：SQL 片段拆成独立页，命令面板也要能直接搜到
   { page: 'sqlSnippets', label: 'SQL 片段' },
@@ -84,11 +84,11 @@ export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'apiClient', label: '接口调试' },
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
-  // 1.33.0：开发辅助 4 个新页。不登记的话命令面板搜不到新页面，会被当成「页面没做」
+  // 1.33.0：开发辅助新页。不登记的话命令面板搜不到新页面，会被当成「页面没做」。
+  // 1.36.0（B1）：结果中心已下线（`.jtl` 指标并入压力测试页），这条一并摘除。
   { page: 'codeGen', label: '代码生成' },
   { page: 'codeAudit', label: '代码体检' },
   { page: 'assetLedger', label: '资产台账' },
-  { page: 'resultHub', label: '结果中心' },
   { page: 'settings', label: '设置' },
 ];
 PAGES.push(...PAGES_MORE);
@@ -218,13 +218,6 @@ export function CommandPalette({
         sub: '重新拉缺陷管理「我的 Bug」',
         kind: 'action',
         run: () => { onNavigate('zentao'); signalCmd('zentao:refresh-mine'); },
-      },
-      {
-        id: 'action:weekly-draft',
-        title: '生成周报草稿',
-        sub: '用禅道「我的 Bug」生成本周草稿',
-        kind: 'action',
-        run: () => { onNavigate('weeklyReport'); signalCmd('weekly:draft'); },
       },
       {
         id: 'action:theme',

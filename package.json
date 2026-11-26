@@ -16,6 +16,7 @@
     "test:unit": "vitest run",
     "pack": "electron-builder --dir",
     "check:ipc": "node scripts/check-ipc-contract.js",
+    "check:pages": "node scripts/check-pages.js",
     "check:privacy": "node scripts/check-privacy.js",
     "check:integrity": "node scripts/check-integrity.js",
     "smoke": "node scripts/smoke-test.js",

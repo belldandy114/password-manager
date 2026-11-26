@@ -20,7 +20,6 @@ import { PerfTest } from '../../pages/PerfTest';
 import { Settings } from '../../pages/Settings';
 import { Toolbox } from '../../pages/Toolbox';
 import { TrashPage } from '../../pages/TrashPage';
-import { WeeklyReport } from '../../pages/WeeklyReport';
 import { ZentaoPage } from '../../pages/ZentaoPage';
 
 const PAGES: Array<[string, () => ReactElement]> = [
@@ -40,7 +39,6 @@ const PAGES: Array<[string, () => ReactElement]> = [
   ['Settings', Settings],
   ['Toolbox', Toolbox],
   ['TrashPage', TrashPage],
-  ['WeeklyReport', WeeklyReport],
   ['ZentaoPage', ZentaoPage],
 ];
 

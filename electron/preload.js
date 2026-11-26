@@ -248,15 +248,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 系统通知：环境巡检状态翻转等 */
   appNotify: (payload) => ipcRenderer.invoke('app:notify', payload),
 
-  // 周报（本地 Markdown 目录）
-  weeklyList: (dir) => ipcRenderer.invoke('weekly:list', { dir }),
-  weeklyRead: (dir, name) => ipcRenderer.invoke('weekly:read', { dir, name }),
-  weeklyPickDir: () => ipcRenderer.invoke('weekly:pick-dir'),
-  weeklyReveal: (dir, name) => ipcRenderer.invoke('weekly:reveal', { dir, name }),
-  weeklySave: (dir, name, content) => ipcRenderer.invoke('weekly:save', { dir, name, content }),
-  weeklyRename: (dir, name, nextName) => ipcRenderer.invoke('weekly:rename', { dir, name, nextName }),
-  weeklyDelete: (dir, name) => ipcRenderer.invoke('weekly:delete', { dir, name }),
-
   // 测试笔记（可选：存到自己选的目录）
   notesList: (dir) => ipcRenderer.invoke('notes:list', { dir }),
   notesRead: (dir, name) => ipcRenderer.invoke('notes:read', { dir, name }),
@@ -373,10 +364,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   jmeterOpenPath: (p) => ipcRenderer.invoke('jmeter:open-path', p),
   jmeterAnalyzeJtl: (p) => ipcRenderer.invoke('jmeter:analyze-jtl', p),
 
-  /* ---- 本地测试资产工作站：代码体检 / Git 影响面 / Allure / 十万级流式造数 ----
+  /* ---- 本地测试资产工作站：代码体检 / Git 影响面 / 十万级流式造数 ----
    * W1 只接线（通道契约见 docs/契约-本地测试资产工作站.md §2.2–§2.5）；
    * 入参一律原样转发、不在这里做默认值与 clamp（clamp 只在主进程，C-08）。
-   * 本批不引入任何推送型通道，所以这里没有 on* 监听（C-50）。 */
+   * 本批不引入任何推送型通道，所以这里没有 on* 监听（C-50）。
+   * 1.36.0：Allure 两条（`allure:pick-dir` / `allure:parse`）随结果中心下线整块删除。 */
   scanPickRoot: () => ipcRenderer.invoke('scan:pick-root'),
   scanRules: () => ipcRenderer.invoke('scan:rules'),
   scanRun: (opts) => ipcRenderer.invoke('scan:run', opts),
@@ -384,8 +376,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanReveal: (payload) => ipcRenderer.invoke('scan:reveal', payload),
   gitProbe: (payload) => ipcRenderer.invoke('git:probe', payload),
   gitDiff: (payload) => ipcRenderer.invoke('git:diff', payload),
-  allurePickDir: () => ipcRenderer.invoke('allure:pick-dir'),
-  allureParse: (payload) => ipcRenderer.invoke('allure:parse', payload),
   tdgWriteStart: (payload) => ipcRenderer.invoke('tdg:write-start', payload),
   // rows 必须逐字传数组：拼接与转义在渲染层、分隔符在主进程 tdg-write.js，别在这里 join（C-68）
   tdgWriteAppend: (writerId, rows) => ipcRenderer.invoke('tdg:write-append', { writerId, rows }),

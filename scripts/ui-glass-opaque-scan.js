@@ -110,10 +110,10 @@
  *   1) **每个单元一条 READY_PRED（与当前 tab 无关）+ 一条 APPLIED_PRED（点完 tab 后生效）**。
  *      就绪判据不能依赖「当前在哪个页签」：切 tab 是下一步 prep 的动作，用结果等前置条件会死锁
  *      （1.32.3 / 1.32.5 两次踩过：等 rows>=1 再切列表 = 永远等不到）。
- *   2) **每个单元一条 `min` 自证**：空页面扫出 0 违规没有意义。4 个新页里 5 个页签的数据来自
- *      vault 集合（`pomPages` / `scanRuns` / `coverageRuns` 里的历史 / `caseMaps` / `allureRuns`），
+ *   2) **每个单元一条 `min` 自证**：空页面扫出 0 违规没有意义。新页里几个页签的数据来自
+ *      vault 集合（`pomPages` / `scanRuns` / `coverageRuns` 里的历史 / `caseMaps`），
  *      所以下面加了一段**新页造数**（`opaque-dev-` 前缀，收尾按前缀删），让表格真的有行；
- *      另外 3 个页签（OpenAPI 粘贴区 / Git 影响面取数 / .jtl 取数）本身是表单+空态，
+ *      另外几个「表单+空态」的页签（OpenAPI 粘贴区 / .jtl 取数）本身没有表格数据，
  *      自证卡在「面板+输入框/横幅真的渲染出来」，并把实测计数打进日志（见 ctx 的 dev* 字段）。
  *   3) **TARGETS 锚点带 token**：每个新单元至少一个锚点，要求 computed backgroundColor
  *      **逐字符等于** `var(--glass-*)` 的解析值（`.pnl`→`--glass-card`、`.tbl th`→`--glass-side`、
@@ -141,6 +141,26 @@
  *       1.32.2 记的 `.pager` 同款假绿。可证伪的命令：
  *       `PM_SCAN_DROP_LAMPS=1 node scripts/ui-glass-opaque-scan.js` → 必须 exit=1 且两条单元
  *       红在 `recLamps=0 < 5`（该 hook 见下面 `DROP_LAMPS` 的注释：为什么不直接改 Recorder.tsx）。
+ *
+ * ⚠️ 1.36.0（B1）**结果中心下线，摘 2 个扫描单元，组合数 36 → 32**（每主题 18 → 16）：
+ *    - 页面 `ResultHub.tsx` 已删，`.jtl 指标` 搬进「压力测试」页右栏（老页，**不在**
+ *      `DEV_PAGE_LABEL` 里，本脚本不覆盖它 —— 要覆盖压测页得另开一轮，方案 §3.6 的边界）。
+ *    - 五处登记一起摘：`ANCHORS` 2 条（`.pg .tbl th` → --glass-side / `.pg input` → --glass-input）、
+ *      `PAGES` 2 个单元、`READY_PRED` 2 条、`APPLIED_PRED` 2 条、`DEV_PAGE_LABEL` 里的前缀。
+ *    - `devSeed` 的「④ allureRuns 造数」一并摘除（没有页面读它了），收尾的按前缀删集合同步
+ *      缩到 `pomPages / scanRuns / caseMaps` 三个。
+ *    - **自证口径不变**：每个单元仍要「就绪判据 + APPLIED_PRED + min + 锚点」四件，删单元不等于
+ *      放宽判据 —— 剩余单元的 min / 锚点一条不动（本批只删不改）。
+ *
+ * ⚠️ 1.36.0（B3）**代码体检改单页，摘 1 个扫描单元，组合数 32 → 30**（每主题 16 → 15）：
+ *    - `src/pages/CodeAudit.tsx` 不再有页签（Git 影响面下线，方案 §11.1 判它该删），所以：
+ *      · `PAGES` 删「Git 影响面」1 个单元；剩下的单元改名 `代码体检`（不再是「代码体检 · 代码体检」）；
+ *      · 该单元 `min.devTabs` 从 2 改成 **0** —— 单页就该一个页签壳都没有，留壳会红；
+ *      · `READY_PRED` 要求 `devTabs === 0 && panel === 0`（没有 `.tabs`、也没有 `[role=tabpanel]`）；
+ *      · `APPLIED_PRED` 改成「`.pg .tabs`=0、`.pg .tab2`=0、面板有内容」（原来判激活页签文案，
+ *        单页后那条必然红）。
+ *    - `ANCHORS` 删「代码体检 · Git 影响面」那条，剩「代码体检」一条；`DEV_PAGE_LABEL` 不用动。
+ *    - 可证伪：把 `CodeAudit.tsx` 里加回一个单页签的 `.tabs` 壳 → 该单元必红在 `devTabs=1`。
  *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
@@ -330,28 +350,24 @@ const TARGETS = [
   // 的背景收回 transparent，见 redesign.css 末尾 1.34.0 段），所以原来挂在
   // `.pg .tabs .tab2.is-active` 上的两条 `--glass-control` 锚点会**必然变红**
   // （透明底 alpha=0，tokenMatch 不可能等于 --glass-control）。改挂既有玻璃规则的
-  // 落点：单元 2 → `.pg .tbl th`（元素表是 `.tbl`，ElementTable.tsx:37）；
-  // 单元 8 → `.pg input`（.jtl 取数框）。
-  // 为什么单元 8 不用契约里写的 `.home-stat`：`.home-stat` 只在**解析成功之后**才
-  // 挂载（JtlTab.tsx:102-112 是 `!data` 分支，渲染的是 <Empty>），而扫描从不解析
-  // .jtl 文件 → 锚点会永远 found:0，变成一条「永远红、且红得没意义」的断言。
+  // 落点：单元 2 → `.pg .tbl th`（元素表是 `.tbl`，ElementTable.tsx:37）。
+  // （原「单元 8 → `.pg input`」那条已在 1.36.0（B1）随对应页面下线一起摘除；当时不用
+  //  契约里写的 `.home-stat` 的原因也一并作废：`.home-stat` 只在 .jtl **解析成功后**才挂载。）
   // 页签透明化本身改用下面的 TAB_STRIP_INVARIANT 断言（面积判据盖不到「变透明」）。
   { sel: '.pg .pnl', label: '新页面板 .pnl（代码生成·OpenAPI）', token: '--glass-card',
     pages: ['代码生成 · OpenAPI → 骨架'] },
   { sel: '.pg .tbl th', label: '新页表头 .tbl th（代码生成·元素库）', token: '--glass-side',
     pages: ['代码生成 · 元素库 → POM'] },
-  { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检·代码体检）', token: '--glass-card',
-    pages: ['代码体检 · 代码体检'] },
-  { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检·Git 影响面）', token: '--glass-card',
-    pages: ['代码体检 · Git 影响面'] },
+  { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检）', token: '--glass-card',
+    pages: ['代码体检'] },
+  // ── 1.36.0（B3）：Git 影响面下线（页面改单页），这条锚点随单元一起摘除。
   { sel: '.pg .pnl', label: '新页面板 .pnl（资产台账·覆盖矩阵）', token: '--glass-card',
     pages: ['资产台账 · 覆盖矩阵'] },
   { sel: '.pg .tbl th', label: '新页表头 .tbl th（资产台账·用例映射）', token: '--glass-side',
     pages: ['资产台账 · 用例映射'] },
-  { sel: '.pg .tbl th', label: '新页表头 .tbl th（结果中心·Allure）', token: '--glass-side',
-    pages: ['结果中心 · Allure'] },
-  { sel: '.pg input', label: '新页输入框 input（结果中心·.jtl）', token: '--glass-input',
-    pages: ['结果中心 · .jtl 指标'] },
+  // ── 1.36.0（B1）：两个已删单元的原锚点（`.pg .tbl th` → --glass-side / `.pg input` → --glass-input）
+  // 随单元一起摘除；剩下的锚点一条不动。**不要**在本批给搬走的那个页签另登记新单元
+  // （它现在在「压力测试」页＝老页，玻璃行为另开一轮）。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 2 个单元各一条锚点 ──
   // 录制器这张页的表单**在 `.toolbar` 里**（`.pg` 直下、不在 `[role=tabpanel]` 内），
   // 所以 `dev*` 那组「限定 tabpanel」的计数看不到它 —— 三个锚点分别落三个玻璃档位：
@@ -400,7 +416,7 @@ const TAB_STRIP_EXPR = `(() => {
   return { found: !!(strip && act), strip, act };
 })()`;
 /** 开发辅助四页的 label 前缀（TAB_STRIP_EXPR 只在这些页面上量） */
-const DEV_PAGE_LABEL = /^(代码生成|代码体检|资产台账|结果中心)/;
+const DEV_PAGE_LABEL = /^(代码生成|代码体检|资产台账)/;
 
 /**
  * 要扫的页面与进入方式（都不依赖网络/账号：网址管理用预置样本条目，工具箱与笔记是本地页）。
@@ -505,16 +521,14 @@ const PAGES = [
     hint: 'devInputs=0 说明元素库表单没渲染；devCode=0 说明「生成 POM」后代码块没挂载（白名单会空转）',
   },
   {
-    label: '代码体检 · 代码体检', nav: '代码体检',
-    prep: (s) => clickText(s, '代码体检', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devRows: 1 },
-    hint: 'devRows=0 说明 scanRuns 历史表没渲染（造数没写进 vault，或该页签落进了空态）',
-  },
-  {
-    label: '代码体检 · Git 影响面', nav: '代码体检',
-    prep: (s) => clickText(s, 'Git 影响面', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devInputs: 1, devSelects: 1 },
-    hint: 'devInputs/devSelects=0 说明「仓库目录 + 比对范围」那段表单没渲染出来',
+    // 1.36.0（B3）：代码体检改单页（Git 影响面下线），**没有页签可点**了 —— prep 退化成 no-op，
+    // 但保留这个字段（框架按 prep 是否存在决定要不要点，删掉反而要改框架）。
+    // devTabs 期望从 2 改成 **0**：单页就该一个页签壳都没有（方案 §3.5 不允许留空壳）。
+    label: '代码体检', nav: '代码体检',
+    prep: async () => true,
+    min: { devPnlAll: 1, devTabs: 0, devRowsAll: 1 },
+    hint: 'devRowsAll=0 说明 scanRuns 历史表没渲染（造数没写进 vault，或页面落进了空态）；'
+      + 'devTabs≠0 说明单页又长出了页签壳',
   },
   {
     label: '资产台账 · 覆盖矩阵', nav: '资产台账',
@@ -528,18 +542,9 @@ const PAGES = [
     min: { devPanel: 1, devTabs: 2, devRows: 1 },
     hint: 'devRows=0 说明 caseMaps 造数没读到（映射清单是空态，表头行也应有 1 行）',
   },
-  {
-    label: '结果中心 · Allure', nav: '结果中心',
-    prep: (s) => clickText(s, 'Allure', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devRows: 1 },
-    hint: 'devRows=0 说明 allureRuns 历史表没渲染（造数没写进 vault）',
-  },
-  {
-    label: '结果中心 · .jtl 指标', nav: '结果中心',
-    prep: (s) => clickText(s, '.jtl 指标', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devInputs: 1 },
-    hint: 'devInputs=0 说明「① 取数」的 .jtl 路径输入框没渲染',
-  },
+  // ── 1.36.0（B1）：两个已删单元（Allure / .jtl 指标）随页面下线一并摘除。
+  // 不在这里补 `.jtl` 的替代单元：它现在挂在「压力测试」页（老页，不在 DEV_PAGE_LABEL 里），
+  // 要覆盖它得另开一轮（方案 §3.6 的边界）。组合数 36 → 32。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 × 2 页签 = 2 个扫描单元（32 → 36 组合）──
   // 为什么也是 2 条而不是 1 条：录制页两个 tabpanel **始终都在 DOM 里**（非激活的 `hidden`，
   // Recorder.tsx:11-13 写死了理由：AC-1 在停止后才读候选锚点，卸载会读出「0 条推荐」的假绿），
@@ -641,19 +646,14 @@ const READY_PRED = {
       devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
     return { ok: !state.skel && state.title === '代码生成' && state.devTabs === 2 && state.panel === 1, state };
   })()`,
-  '代码体检 · 代码体检': `(() => {
+  // 1.36.0（B3）：代码体检改单页 —— 就绪判据要求「无页签壳且页面有内容」。
+  // 注意 devTabs 用 `.pg .tabs .tab2`，单页时必须是 0；panel（[role=tabpanel]）也必须是 0。
+  '代码体检': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
     const t = document.querySelector('.pg-title');
     const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '代码体检' && state.devTabs === 2 && state.panel === 1, state };
-  })()`,
-  '代码体检 · Git 影响面': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const t = document.querySelector('.pg-title');
-    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '代码体检' && state.devTabs === 2 && state.panel === 1, state };
+      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), pnl: q('.pg .pnl') };
+    return { ok: !state.skel && state.title === '代码体检' && state.devTabs === 0 && state.panel === 0 && state.pnl >= 1, state };
   })()`,
   '资产台账 · 覆盖矩阵': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
@@ -669,20 +669,7 @@ const READY_PRED = {
       devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
     return { ok: !state.skel && state.title === '资产台账' && state.devTabs === 2 && state.panel === 1, state };
   })()`,
-  '结果中心 · Allure': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const t = document.querySelector('.pg-title');
-    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '结果中心' && state.devTabs === 2 && state.panel === 1, state };
-  })()`,
-  '结果中心 · .jtl 指标': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const t = document.querySelector('.pg-title');
-    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '结果中心' && state.devTabs === 2 && state.panel === 1, state };
-  })()`,
+  // ── 1.36.0（B1）：上面两个已删单元的就绪判据一并摘除（页面已下线）。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 ──
   // 与「哪个页签在前台」无关（切页签是 prep 的事，用它当就绪会死锁）：
   // 只证明骨架屏没了 + 页标题对 + `.rec-page` 根在 + 两个页签 + 两个 tabpanel + 工具条 + 5 盏灯。
@@ -760,24 +747,15 @@ const APPLIED_PRED = {
     return { ok: state.tab === '元素库 → POM' && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
-  '代码体检 · 代码体检': `(() => {
+  // 1.36.0（B3）：代码体检单页 —— 断言「没有页签栏」+「面板里有内容」。
+  // 原来的判据是「激活页签文案 === 代码体检」，单页后没有激活页签，那条必然红。
+  '代码体检': `(() => {
     const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === '代码体检' && state.panels >= 1
-      && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
-  })()`,
-  '代码体检 · Git 影响面': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === 'Git 影响面' && state.panels >= 1
+    const state = { tabs: q('.pg .tabs'), tab2: q('.pg .tab2'), panels: q('.pg .pnl'),
+      banners: q('.pg .dev-banner'), inputs: q('.pg input:not([type=checkbox]):not([type=radio])'),
+      tables: q('.pg table.tbl'), scroll: q('.pg .dev-scroll'),
+      textareas: q('.pg textarea'), empty: q('.pg .empty') };
+    return { ok: state.tabs === 0 && state.tab2 === 0 && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
   '资产台账 · 覆盖矩阵': `(() => {
@@ -800,26 +778,7 @@ const APPLIED_PRED = {
     return { ok: state.tab === '用例映射' && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
-  '结果中心 · Allure': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === 'Allure' && state.panels >= 1
-      && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
-  })()`,
-  '结果中心 · .jtl 指标': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === '.jtl 指标' && state.panels >= 1
-      && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
-  })()`,
+  // ── 1.36.0（B1）：两个已删单元的 APPLIED_PRED 随单元摘除（页面已下线）。下面接录制器。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 2 个单元 ──
   // 判据 = 激活页签文案对 + **非 hidden 的 tabpanel 恰好 1 个** + 该面板里有内容。
   // 「恰好 1 个」是本页特有的：Recorder.tsx 把两个 tabpanel 都挂在 DOM 里、靠 `hidden` 互斥
@@ -920,7 +879,13 @@ const buildScanExpr = (rootSel) => `(() => {
     recLampStates: [...document.querySelectorAll('.rec-page .rec-lamp')]
       .map((el) => String(el.getAttribute('data-state') || '')).join(','),
     // 1.34.1：生成代码区（只有点过「生成」才会出现），用来给 min 自证与日志
-    devCode: document.querySelectorAll('[role=tabpanel] .dev-code').length };
+    devCode: document.querySelectorAll('[role=tabpanel] .dev-code').length,
+    // 1.36.0（B3）：代码体检改**单页**后没有 [role=tabpanel]，上面那组「限定 tabpanel」的计数对本页恒 0，
+    // 所以另取三项**页面级**计数给它的 min 做自证（同录制器那组的做法：不另取就会红，或者只能放宽 min）。
+    // 本段在模板字符串里：注释里不许出现反引号与 $ 加大括号。
+    devPnlAll: document.querySelectorAll('.pg .pnl').length,
+    devTablesAll: document.querySelectorAll('.pg table.tbl').length,
+    devRowsAll: document.querySelectorAll('.pg table.tbl tbody tr').length };
   // Chromium 的 computed backgroundColor 有两种序列化：rgba(r, g, b, a) 与 color(srgb r g b / a)
   const alphaOf = (c) => {
     const s = String(c || '').trim();
@@ -1801,11 +1766,12 @@ async function scanEntryDrawer(session, ev, theme, violations) {
       + `，其中带成员账号 ${seed.withAccounts} 条 / 账号 ${seed.totalAccounts} 个`
       + ` / notes ${seed.notesBefore} → ${seed.notesAfter} 条（普通笔记 +${seed.notes}、SQL +${seed.sql}）`
       + ' —— 分页条、成员账号表格与复制弹窗都必须渲染出来，否则下面的自证会红');
-    // 1.33.0（t54/W7-A）：新页造数。4 个新页里有 5 个页签的数据来自 vault 集合
-    // （pomPages / scanRuns / caseMaps / allureRuns），集合为空时渲染的是空态 ——
+    // 1.33.0（t54/W7-A）：新页造数。4 个新页里有 4 个页签的数据来自 vault 集合
+    // （pomPages / scanRuns / caseMaps），集合为空时渲染的是空态 ——
     // 空页扫出 0 个不透明块等于没测。这里只造「能渲染出表格行」的最小字段，不含任何真实信息，
     // id 一律 `opaque-dev-` 前缀（收尾按前缀删）。覆盖矩阵页签没有历史表（只在跑完后才有结果），
     // 它的自证卡在「面板 + 表单真的渲染」，见 PAGES 里该条的 hint。
+    // 1.36.0（B1）：Allure 历史那条集合已无页面读，它的造数（原 ④）一并摘除。
     const devSeed = await ev(`(async () => {
       const now = new Date().toISOString();
       // ① pomPages：元素库 1 个页面 / 3 个元素（css / text / role 三种定位器）
@@ -1832,19 +1798,12 @@ async function scanEntryDrawer(session, ev, theme, violations) {
         { id: 'opaque-dev-map-2', caseNo: 'OPAQUE-002', caseTitle: '下单成功',
           target: { kind: 'method', ref: 'src/tests/OrderTest#shouldCreate' }, source: 'manual', updatedAt: now },
       ]);
-      // ④ allureRuns：结果中心历史 1 行（flaky 带分母 runs/pass/fail，clusters 1 组）
-      await window.electronAPI.wsSet('allureRuns', [{ id: 'opaque-dev-allure-1', at: now, root: '<fixture>',
-        total: 8, passed: 5, failed: 1, broken: 1, skipped: 1, retries: 1, skippedFiles: 0,
-        clusters: [{ key: 'java.net.ConnectException: Connection refused', count: 3,
-          sample: 'Connection refused', samples: ['a', 'b', 'c'] }],
-        flaky: [{ name: 'shouldTimeoutAfter3s',
-          fullName: 'com.example.qa.api.ApiClientTest.shouldTimeoutAfter3s', runs: 2, pass: 1, fail: 1 }] }]);
+      // ④ Allure 历史的造数已随 1.36.0（B1）一并摘除（本段在模板字符串里，注释不写反引号）。
       const read = async (k) => { const r = await window.electronAPI.wsGet(k); return (r && r.success && Array.isArray(r.data)) ? r.data.length : -1; };
-      return { pom: await read('pomPages'), scan: await read('scanRuns'), maps: await read('caseMaps'), allure: await read('allureRuns') };
+      return { pom: await read('pomPages'), scan: await read('scanRuns'), maps: await read('caseMaps') };
     })()`);
     console.log(`（造数·新页）pomPages ${devSeed.pom} 条 / scanRuns ${devSeed.scan} 条 / caseMaps ${devSeed.maps} 条`
-      + ` / allureRuns ${devSeed.allure} 条 —— 元素库、体检历史、映射清单、Allure 历史读的就是这几个集合，`
-      + '空集合 = 空页 = 假绿');
+      + ' —— 元素库、体检历史、映射清单读的就是这几个集合，空集合 = 空页 = 假绿');
     const saved = await applyBackground(session, {
       name: backgroundName,
       // 压暗取默认 0.42（浅色下 CSS 会再乘 0.67）：扫描要按用户的实际默认配置来
@@ -2142,17 +2101,17 @@ async function scanEntryDrawer(session, ev, theme, violations) {
           return { before: arr.length, after: keep.length };
         };
         const dev = {};
-        for (const k of ['pomPages', 'scanRuns', 'caseMaps', 'allureRuns']) dev[k] = await dropDev(k);
+        for (const k of ['pomPages', 'scanRuns', 'caseMaps']) dev[k] = await dropDev(k);
         return { notesBefore: all.length, notesAfter: keepNotes.length,
           entriesBefore: entries.length, entriesAfter, deleted: del.length, dev }; })()`);
       if (cleaned) {
         console.log(`\n（收尾）清掉造的数据：entries ${cleaned.entriesBefore} → ${cleaned.entriesAfter} 条`
           + `（删 ${cleaned.deleted} 条）/ notes ${cleaned.notesBefore} → ${cleaned.notesAfter} 条`);
         const dev = cleaned.dev || {};
-        const devLine = ['pomPages', 'scanRuns', 'caseMaps', 'allureRuns']
+        const devLine = ['pomPages', 'scanRuns', 'caseMaps']
           .map((k) => `${k} ${dev[k] ? `${dev[k].before} → ${dev[k].after}` : '?'}`).join(' / ');
         console.log(`（收尾·新页）${devLine} 条`);
-        const devLeft = ['pomPages', 'scanRuns', 'caseMaps', 'allureRuns']
+        const devLeft = ['pomPages', 'scanRuns', 'caseMaps']
           .filter((k) => !dev[k] || dev[k].after !== 0);
         if (cleaned.entriesAfter !== 0 || cleaned.notesAfter !== 0 || devLeft.length) {
           console.log(`  ⚠️ 前缀 opaque- / opaque-dev- 的样本没清干净（应为 0，残留：${devLeft.join(',') || 'entries/notes'}），`

@@ -79,6 +79,12 @@ function runGate() {
   // 拆分守卫的自测：真实文件恰好都合规时，坏掉的守卫跑真实检查永远是绿的，
   // 所以必须用内联 fixture 锁住「注入裸用要报、正确解构不报」。
   step('IPC 拆分守卫自测 (check:ipc --self-test)', process.execPath, ['scripts/check-ipc-contract.js', '--self-test']);
+  // 1.36.0（功能收敛）：页面 key 在 4 个文件里是**纯字符串字面量**，TS 一条都管不到
+  // （`currentPage` 是 useState('home')，类型是 string），漏删/拼错的表现是
+  // 「点开落到密码库」或「入口永不可达」且**不报错**。与上面的 IPC 守卫同理：
+  // 先用内联 fixture 自证「该报的报、不该报的不报」，再跑真实文件。
+  step('page key 同步守卫自测 (check:pages --self-test)', process.execPath, ['scripts/check-pages.js', '--self-test']);
+  step('page key 同步门禁 (check:pages)', process.execPath, ['scripts/check-pages.js']);
   // 只报告不阻断：三份 CSS 有历史重复规则，目的是让新增重复可见；
   // 但「声明完全相同」的重复已经清零，新增会失败（这是可机械清理的那一半）。
   step('CSS 重复选择器检查', process.execPath, ['scripts/check-css-dup.js']);
