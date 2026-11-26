@@ -18,8 +18,11 @@ import { saveJavaFile, GeneratedFilesView } from './GeneratedFiles';
 import { blankPage, blankElement, cleanPageForWrite, validatePage, trimPagesForWrite, MAX_PAGES, MAX_ELEMENTS } from './pomModel';
 import type { PomWritePlan } from './pomModel';
 import type { PomPage, PomElementRow } from './pomModel';
-import { elementUsage, canDeleteElement, scanElementRefs } from '../../utils/record/recorderModel';
-import type { ElementUsage, UiRecording } from '../../utils/record/recorderModel';
+// 1.36.0（B6 / 裁定 Z2）：引用守卫已从录制器模型（`record/recorderModel`，B7 整块删除）搬到
+// `utils/codegen/elementUsage` —— 这三个纯函数还要继续守着元素库（老库里仍存 uiRecordings）。
+import { elementUsage, canDeleteElement, scanElementRefs } from '../../utils/codegen/elementUsage';
+import type { ElementUsage, UiRecording } from '../../utils/codegen/elementUsage';
+import { PasteImportDialog } from './PasteImportDialog';
 
 /* ================================================================
    引用完整性闸门（RA3-01 / `[C-110]`「有人在用不许删」）
@@ -171,8 +174,10 @@ export function ElementLibTab({
   const [savedAt, setSavedAt] = useState<Record<string, string>>({});
   /** 上限裁剪提示（[C-25]：不许静默丢） */
   const [trimWarn, setTrimWarn] = useState('');
-  /** 删元素/删页面被引用拦下时的清单（不弹窗，见 `RefBlock`） */
+  /** 删除元素/删页面被引用拦下时的清单（不弹窗，见 `RefBlock`） */
   const [refBlock, setRefBlock] = useState<RefBlock | null>(null);
+  /** 1.36.0（B6）：粘贴导入弹窗 */
+  const [pasteOpen, setPasteOpen] = useState(false);
   /** 裁剪结果统一处理：横幅常显 + toast 一次，两处写入共用 */
   const noteTrim = (plan: PomWritePlan) => {
     if (!plan.dropped) return;
@@ -265,6 +270,47 @@ export function ElementLibTab({
     }
     setRefBlock(null);
     patchDraft({ elements: draft.elements.filter((_, i) => i !== index) });
+  };
+
+  /**
+   * 1.36.0（B6）：把粘贴导入的行写进当前页面。
+   *
+   * **唯一写入路径**（渲染层契约 §6.2）：合并草稿 → `validatePage` → `cleanPageForWrite`
+   * （字段白名单，透传 id / source）→ `trimPagesForWrite`（上限裁剪，钉住刚保存的这条）→ `save`
+   * （就是 `useCollection('pomPages')` 那一条 `ws:set`）。**不新开写库通道、不新增 IPC**。
+   */
+  const importPasted = async (rows: PomElementRow[]) => {
+    if (!draft || !rows.length) return; // 认不出/没勾 → 一条都不写
+    const merged: PomPage = {
+      ...draft,
+      elements: [...draft.elements, ...rows].slice(0, MAX_ELEMENTS),
+    };
+    const message = validatePage(merged, items);
+    if (message) {
+      setErr(message);
+      addToast(message, 'error');
+      return;
+    }
+    setErr('');
+    setBusy(true);
+    try {
+      const clean = cleanPageForWrite(merged);
+      const exists = items.some((p) => p.id === clean.id);
+      const next = exists ? items.map((p) => (p.id === clean.id ? clean : p)) : [clean, ...items];
+      const plan = trimPagesForWrite(next, clean.id);
+      const r = await save(plan.items);
+      noteTrim(plan);
+      if (!r.success) {
+        setErr(r.error || '导入失败');
+        addToast(r.error || '导入失败', 'error');
+        return;
+      }
+      setDraft(clean);
+      setActiveId(clean.id);
+      addToast(`已导入 ${rows.length} 条元素（还要点「保存页面」才会写进加密库）`, 'success');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const savePage = async () => {
@@ -555,6 +601,19 @@ export function ElementLibTab({
                   >
                     <Icons.plus size={13} /> 加元素
                   </button>
+                  {/* 1.36.0（B6）：粘贴导入。入口只有这一个 —— 不做「选文件」，粘贴是唯一输入。 */}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setPasteOpen(true)}
+                    disabled={draft.elements.length >= MAX_ELEMENTS}
+                    title={
+                      draft.elements.length >= MAX_ELEMENTS
+                        ? `单个页面最多 ${MAX_ELEMENTS} 个元素`
+                        : '从 DevTools Recorder JSON / Playwright codegen 脚本 / Elements HTML 导入元素'
+                    }
+                  >
+                    <Icons.copy size={13} /> 粘贴导入
+                  </button>
                 </div>
 
                 {/* 大表必须套 .dev-scroll：.pnl 是 overflow:hidden，不套会把右侧列裁掉 */}
@@ -624,6 +683,14 @@ export function ElementLibTab({
             </>
           )}
       </div>
+      {/* 粘贴导入弹窗：只在有草稿时可开；写入走 importPasted → 唯一那条 ws:set */}
+      <PasteImportDialog
+        open={pasteOpen && !!draft}
+        onClose={() => setPasteOpen(false)}
+        onImport={(rows) => { void importPasted(rows); }}
+        existing={draft ? draft.elements : []}
+        remaining={draft ? MAX_ELEMENTS - draft.elements.length : 0}
+      />
     </div>
   );
 }

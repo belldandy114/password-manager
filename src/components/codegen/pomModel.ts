@@ -32,6 +32,17 @@ export interface PomElementRow {
   /** `kind='role'` 时的可访问名（[C-28] 必填） */
   role?: string;
   note?: string;
+  /**
+   * 这条元素是**怎么来的**（1.36.0 / B6，裁定 Z10：本批只加这一个字段）。
+   *
+   * - `paste`：粘贴导入（DevTools Recorder JSON / Playwright codegen / Elements HTML）；
+   * - `manual`：元素库里手工加的（`blankElement()` 的默认值）；
+   * - `recorder`：历史数据里由录制器建的（B7 之后不再产生，读端保留以显示真实来源）。
+   *
+   * 可选且**必须进 `cleanPageForWrite` 白名单**：保存是唯一的写入路径，
+   * 漏掉白名单就会「保存一次把来源洗成 undefined」，表格那列随即变成 `—`。
+   */
+  source?: 'paste' | 'manual' | 'recorder';
 }
 
 export interface PomPage {
@@ -49,6 +60,10 @@ export const KINDS: Array<{ id: PomLocatorKind; label: string }> = [
   { id: 'xpath', label: 'xpath' },
   { id: 'text', label: '可见文本' },
   { id: 'role', label: '角色（role）' },
+  // 1.36.0（B6，渲染层契约 §6.1）：第 5 种。文案逐字定稿，改它要同步 §6.1 的表。
+  // 为什么需要它：css/xpath 表达不了 `hasText` / `hasNotText` 这类语义过滤（`:has-text()` 只有
+  // Playwright 认，浏览器不认），而元素库的定位器要同时服务「浏览器内校验」和「生成 Java」。
+  { id: 'pw', label: 'Playwright 链（原样存）' },
 ];
 
 /** 上限（契约 §1.2 [C-27]） */
@@ -81,6 +96,11 @@ export function validatePage(draft: PomPage, all: PomPage[]): string | null {
     if (!el.locator.trim()) return `${at}：定位器不能为空`;
     if (el.locator.length > 500) return `${at}：定位器最多 500 个字符`;
     if (!KINDS.some((k) => k.id === el.kind)) return `${at}：定位器类型无效`;
+    if (el.kind === 'pw') {
+      // 1.36.0（B6）：pw 存的是一行 JS 链，换行/控制字符会让它落库后既生成不了 Java
+      // 也没法在预览表里等宽显示（文案逐字定稿，见渲染层契约 §6.1）。
+      if (/[\r\n\u0000-\u001f]/.test(el.locator)) return `${at}：Playwright 链不能包含换行或控制字符`;
+    }
     if (el.kind === 'role') {
       // [C-28] 固定文案：少了它生成的 Java 会 setName("")，等于没写选择器
       if (!String(el.role ?? '').trim()) return `role 定位器必须填写 role 名称`;
@@ -110,7 +130,7 @@ export function blankPage(): PomPage {
  * 保存时再生成会让「同一次编辑」在不同保存轮次拿到不同 id，引用它的录制步骤就漂了。
  */
 export function blankElement(): PomElementRow {
-  return { id: newId('el-'), name: '', locator: '', kind: 'css', role: '' };
+  return { id: newId('el-'), name: '', locator: '', kind: 'css', role: '', source: 'manual' };
 }
 
 /**
@@ -137,6 +157,9 @@ export function cleanPageForWrite(draft: PomPage): PomPage {
       locator: el.locator, // [C-27]：定位器原样存，转义只在生成器里做
       kind: el.kind,
       ...(el.kind === 'role' ? { role: String(el.role ?? '').trim() } : {}),
+      // 1.36.0（B6）：来源必须透传（漏它 = 保存一次就把「粘贴导入 / 手工添加」洗成 `—`）。
+      // 用条件展开而不是 `source: el.source`：历史元素没有这个字段时不该多出一个永远空的键。
+      ...(el.source ? { source: el.source } : {}),
       ...(el.note ? { note: el.note } : {}),
     })),
     updatedAt: new Date().toISOString(),

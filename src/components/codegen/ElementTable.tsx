@@ -9,6 +9,14 @@
  * 1.34.0（S6）新增两列 **来源 / 上次校验**：两列都是**派生只读**数据（由调用方按 `uiRecordings`
  * 算好传进来），不写回 `pomPages`——元素上没有 `source` / `lastCheck` 字段，也不该有
  * （`cleanPageForWrite()` 是字段白名单，加字段就会被洗）。没有派生数据时显示 `—`。
+ *
+ * 1.36.0（B6，裁定 Z10 / §18.3）**口径变了一半**：
+ * - 「来源」列优先读元素**自带**的 `source`（`paste` / `manual` / `recorder`），老元素（没有该字段）
+ *   才回退到派生文案。理由：B7 删掉录制器后 `uiRecordings` 不再有新写入方，只靠派生的话新数据
+ *   这一列会**永远是空**——收敛过程中亲手造出一个恒空列。
+ * - 「上次校验」列 B6 保持派生口径（B8 加了 `checkedAt / hitCount` 才改字段），但 **`pw` 例外**：
+ *   pw 链应用内验不了，固定显示「未校验（pw 链需在 Playwright 中验证）」，**绝不显示命中数字**
+ *   （Z9：转不出时兜底成 `page.locator("body")` 必然命中 1，拿它冒充「校验通过」就是假阳性）。
  */
 
 import { Empty, Icons } from '../ui';
@@ -27,6 +35,13 @@ export interface ElementMeta {
   /** `title`：校验口径说明 */
   lastCheckTitle?: string;
 }
+
+/** 元素自带的来源字段 → 中文（裁定 Z10：B6 只加 `source` 这一个字段） */
+const SOURCE_LABEL: Record<NonNullable<PomElementRow['source']>, string> = {
+  paste: '粘贴导入',
+  manual: '手工添加',
+  recorder: '录制器',
+};
 
 export function ElementTable({
   elements,
@@ -68,6 +83,19 @@ export function ElementTable({
                           <tbody>
                             {elements.map((el, i) => {
                               const meta = metaOf ? metaOf(el) : undefined;
+                              // 1.36.0（B6）：自带 source 优先；老元素（无该字段）回退派生
+                              const ownSource = el.source ? SOURCE_LABEL[el.source] : '';
+                              const sourceText = ownSource || (meta ? meta.source : '—');
+                              const sourceTitle = ownSource
+                                ? `元素自带的来源：${ownSource}${meta && meta.sourceTitle ? `\n历史录制引用：${meta.sourceTitle}` : ''}`
+                                : (meta?.sourceTitle || meta?.source || '');
+                              // 1.36.0（B6 / Z9）：pw 链应用内验不了 → 固定文案，不显示任何命中数字
+                              const lastCheckText = el.kind === 'pw'
+                                ? '未校验（pw 链需在 Playwright 中验证）'
+                                : (meta ? meta.lastCheck : '—');
+                              const lastCheckTitle = el.kind === 'pw'
+                                ? 'pw 链只能在 Playwright 里真跑才知道命中；应用内的浏览器定位只认 css/xpath/text/role'
+                                : (meta?.lastCheckTitle || meta?.lastCheck || '');
                               return (
                               <tr key={el.id || i}>
                                 <td>
@@ -110,12 +138,12 @@ export function ElementTable({
                                     )
                                     : <span className="text-sm text-muted">—</span>}
                                 </td>
-                                {/* 来源 / 上次校验：只读文本（派生数据，不可编辑） */}
-                                <td className="text-sm text-muted" data-col="source" title={meta?.sourceTitle || meta?.source || ''}>
-                                  {meta ? meta.source : '—'}
+                                {/* 来源 / 上次校验：只读文本（来源可来自元素自带字段，上次校验仍是派生） */}
+                                <td className="text-sm text-muted" data-col="source" title={sourceTitle}>
+                                  {sourceText}
                                 </td>
-                                <td className="text-sm text-muted" data-col="last-check" title={meta?.lastCheckTitle || meta?.lastCheck || ''}>
-                                  {meta ? meta.lastCheck : '—'}
+                                <td className="text-sm text-muted" data-col="last-check" title={lastCheckTitle}>
+                                  {lastCheckText}
                                 </td>
                                 <td>
                                   {/*
