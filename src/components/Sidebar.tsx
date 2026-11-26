@@ -5,7 +5,7 @@ import {
   IconPencil, IconBug, IconTable, IconJson, IconTool, IconChartBar,
   IconTerminal2, IconApi, IconSettings, IconLock, IconServer, IconPhoto, IconBell, IconFolder,
   IconHome2, IconCode,
-  IconFileCode, IconPlayerRecord,
+  IconFileCode,
 } from '@tabler/icons-react';
 
 interface Props {
@@ -211,8 +211,6 @@ const lockIcon = nav(IconLock);
 const bellIcon = nav(IconBell);
 // 1.33.0：开发辅助 4 个新页的图标（都避开既有 13 项已用的图标，免得两个入口看起来是同一个东西）
 const codeGenIcon = nav(IconFileCode);
-// 1.34.0：UI 录制器（录制圆点，与上面 4 个图标形状差异明显，扫一眼不会认错）
-const recorderIcon = nav(IconPlayerRecord);
 
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
@@ -244,9 +242,6 @@ const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '开发辅助',
     items: [
-      // 1.34.0：UI 录制器（真 Chrome + 原生 CDP 录制）。放在本组最前：它是本期主线能力。
-      // id 必须与 pages/loaders.ts 的 key、App.renderPage 的 case 逐字一致（三处同改）。
-      { id: 'recorder', label: '录制器', icon: recorderIcon },
       // 1.33.0：本地测试资产工作站（现在只剩「代码工具」一项：代码生成 + 代码体检已合并，
       // 见 1.36.0（B5）；结果中心随 B1、资产台账随 B4 下线）。
       // 放在「代码调试 / 测试数据 / 工具箱」之前：新能力在上、手边老工具在下；

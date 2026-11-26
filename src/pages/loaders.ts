@@ -38,9 +38,6 @@ export const PAGE_LOADERS = {
   // currentPage 都还能落到位，PAGE_ALIAS 不新增。
   codeGen: () => import('./CodeTools').then(m => ({ default: m.CodeTools })),
   codeAudit: () => import('./CodeTools').then(m => ({ default: m.CodeTools })),
-  // 1.34.0：UI 录制器（S4b）。key 名 = 侧栏 NavItem.id = App.renderPage 的 case，三处逐字一致；
-  // 挂进这张表是为了让侧栏悬停预取也覆盖到它（页面一律命名导出，没有 default 导出）。
-  recorder: () => import('./Recorder').then(m => ({ default: m.Recorder })),
 } as const;
 
 export type PageKey = keyof typeof PAGE_LOADERS;

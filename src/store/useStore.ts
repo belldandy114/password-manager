@@ -1,42 +1,7 @@
 import { create } from 'zustand';
-import type { PasswordEntry, VaultData, ViewMode, SortField, SortOrder, AppSettings, SearchField, SortOption, RecordEvent } from '../types';
+import type { PasswordEntry, VaultData, ViewMode, SortField, SortOrder, AppSettings, SearchField, SortOption } from '../types';
 import { fuzzyMatch } from '../utils/search';
-import { stepFromEvent, chooseCandidate } from '../utils/record/recorderModel';
-import type { RecordedStep } from '../utils/record/recorderModel';
 
-/**
- * 录制器草稿（S4b）。
- *
- * **为什么放 store 而不是页面 useState**：录制页是 lazy 挂载的，切到别的页面就卸载。
- * 步骤若只活在页面里，切一次页面回来就「已录 0 步」——而主进程那边会话还在跑、
- * 事件也还在推（`record:status` 还能拿回 sessionId，契约 J-2 就是为这个场景定的）。
- * 草稿放 store 之后：切页不丢已录步骤，回来能接着 stop / validate。
- *
- * 事件订阅本身在 `App.tsx`（全应用**只订一次**，卸载时退订）：挂在页面上会在
- * 「切页 → 回来」时留下第二条通道，事件翻倍——单页面里看不出来的那类 bug。
- */
-export interface RecorderDraft {
-  /** 主进程会话 id（`record:start` 返回） */
-  sessionId: string;
-  /** ISO（`record:status` 的 `startedAt`） */
-  startedAt: string;
-  /** 已脱敏的 `origin + path`（`record:status` 的 `url`，不带 userinfo / query / fragment） */
-  url: string;
-  browser: string;
-  port: number;
-  /** 关联的 `pomPages` 页面 id（空串 = 未选，保存时按 baseUrl 找或新建） */
-  pageId: string;
-  /** 录制 id：**start 时定一次**，重复保存走 upsert，不会把一份录制存成两份 */
-  recordingId: string;
-  steps: RecordedStep[];
-  /** 主进程已推的最大 `seq`（丢弃乱序/重复） */
-  lastSeq: number;
-  /** 收到 `session-ended`（锁定 / 关窗 / 别人 stop 过） */
-  ended: boolean;
-  /** 主进程报的截断/丢弃（`[C-09]`：不许静默） */
-  truncated: boolean;
-  dropped: number;
-}
 
 interface AppState {
   // Auth
@@ -124,24 +89,6 @@ interface AppState {
   /** 跨组件请求跳页（页面内按钮跳别的页面时用；App 监听后切页并清空） */
   navigateTo: string | null;
 
-  /* ---- 录制器（S4b）：草稿跨页面存活，见 `RecorderDraft` ---- */
-  recorder: RecorderDraft | null;
-  /** `record:start` 成功后建草稿（`record:status` 的 url/startedAt 也可走这里补） */
-  recorderBegin: (init: { sessionId: string; recordingId: string; url?: string; startedAt?: string; browser?: string; port?: number; pageId?: string }) => void;
-  /** 主进程推来的一条事件：`session-ended` 只置位，不追加步骤 */
-  recorderPushEvent: (event: RecordEvent) => void;
-  /** 补 session 信息（start 只回 sessionId/browser/port，脱敏 URL 要从 status 拿） */
-  recorderPatchSession: (patch: { url?: string; startedAt?: string; browser?: string; port?: number }) => void;
-  recorderSetPageId: (pageId: string) => void;
-  /** 改选某一步的候选（面板点击） */
-  recorderChoose: (stepIndex: number, candidateIndex: number) => void;
-  /** 删掉某一步（录制期手工删） */
-  recorderDropStep: (stepIndex: number) => void;
-  /** 会话结束/停止：保留步骤供报告与落库，只标结束 */
-  recorderEnd: (patch?: { truncated?: boolean; dropped?: number }) => void;
-  /** 清空（保存完或重新开始） */
-  recorderReset: () => void;
-
   requestNavigate: (page: string) => void;
   consumeNavigate: () => void;
   setPmSubPage: (page: string) => void;
@@ -219,7 +166,6 @@ export const useStore = create<AppState>((set, get) => ({
   toolboxIntent: null,
   casesIntent: null,
   navigateTo: null,
-  recorder: null,
   pmSubPage: 'dashboard',
   entries: [],
   tags: [],
@@ -292,79 +238,6 @@ export const useStore = create<AppState>((set, get) => ({
   consumeCasesIntent: () => set({ casesIntent: null }),
   requestNavigate: (page) => set({ navigateTo: page }),
   consumeNavigate: () => set({ navigateTo: null }),
-
-  /* ---- 录制器（S4b） ---- */
-  recorderBegin: (init) => set({
-    recorder: {
-      sessionId: init.sessionId,
-      recordingId: init.recordingId,
-      url: init.url || '',
-      startedAt: init.startedAt || new Date().toISOString(),
-      browser: init.browser || '',
-      port: init.port || 0,
-      pageId: init.pageId || '',
-      steps: [],
-      lastSeq: 0,
-      ended: false,
-      truncated: false,
-      dropped: 0,
-    },
-  }),
-  /**
-   * 一条事件 → 一步。
-   *
-   * 三道闸门都在这里，**不散到组件里**：
-   * 1. `sessionId` 不匹配 → 丢（切换过会话时旧会话的尾巴不能混进新草稿）；
-   * 2. `seq` 不递增 → 丢（主进程保证单调，重复推送不该产生重复步骤）；
-   * 3. `session-ended` → 只置 `ended`（它不是一步动作；页面据此显示「会话已结束」）。
-   */
-  recorderPushEvent: (event) => set((s) => {
-    const draft = s.recorder;
-    if (!draft || !event) return {};
-    if (event.sessionId && draft.sessionId && event.sessionId !== draft.sessionId) return {};
-    if (typeof event.seq === 'number' && event.seq <= draft.lastSeq) return {};
-    const lastSeq = typeof event.seq === 'number' ? event.seq : draft.lastSeq;
-    if (event.action === 'session-ended') {
-      return { recorder: { ...draft, lastSeq, ended: true } };
-    }
-    const recorded = stepFromEvent(event, draft.steps.length);
-    return { recorder: { ...draft, lastSeq, steps: [...draft.steps, recorded] } };
-  }),
-  recorderPatchSession: (patch) => set((s) => {
-    if (!s.recorder) return {};
-    const next: RecorderDraft = { ...s.recorder };
-    if (patch.url) next.url = patch.url;
-    if (patch.startedAt) next.startedAt = patch.startedAt;
-    if (patch.browser) next.browser = patch.browser;
-    if (typeof patch.port === 'number' && patch.port > 0) next.port = patch.port;
-    return { recorder: next };
-  }),
-  recorderSetPageId: (pageId) => set((s) => (s.recorder ? { recorder: { ...s.recorder, pageId } } : {})),
-  recorderChoose: (stepIndex, candidateIndex) => set((s) => {
-    const draft = s.recorder;
-    if (!draft || stepIndex < 0 || stepIndex >= draft.steps.length) return {};
-    const steps = draft.steps.slice();
-    steps[stepIndex] = chooseCandidate(steps[stepIndex], candidateIndex);
-    return { recorder: { ...draft, steps } };
-  }),
-  recorderDropStep: (stepIndex) => set((s) => {
-    const draft = s.recorder;
-    if (!draft || stepIndex < 0 || stepIndex >= draft.steps.length) return {};
-    // 删完要重排 index：AC-20 的 `steps[i].index === i` 靠它
-    const steps = draft.steps.filter((_, i) => i !== stepIndex).map((rec, i) => ({
-      ...rec,
-      step: { ...rec.step, index: i },
-    }));
-    return { recorder: { ...draft, steps } };
-  }),
-  recorderEnd: (patch) => set((s) => {
-    if (!s.recorder) return {};
-    const next: RecorderDraft = { ...s.recorder, ended: true };
-    if (patch && typeof patch.truncated === 'boolean') next.truncated = patch.truncated;
-    if (patch && typeof patch.dropped === 'number') next.dropped = patch.dropped;
-    return { recorder: next };
-  }),
-  recorderReset: () => set({ recorder: null }),
   setPmSubPage: (page) => set({ pmSubPage: page }),
   setLocked: (locked) => set({ isLocked: locked }),
   setIsSetup: (setup) => set({ isSetup: setup }),
