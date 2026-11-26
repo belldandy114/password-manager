@@ -374,8 +374,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanRun: (opts) => ipcRenderer.invoke('scan:run', opts),
   scanCancel: (token) => ipcRenderer.invoke('scan:cancel', { token }),
   scanReveal: (payload) => ipcRenderer.invoke('scan:reveal', payload),
-  gitProbe: (payload) => ipcRenderer.invoke('git:probe', payload),
-  gitDiff: (payload) => ipcRenderer.invoke('git:diff', payload),
   tdgWriteStart: (payload) => ipcRenderer.invoke('tdg:write-start', payload),
   // rows 必须逐字传数组：拼接与转义在渲染层、分隔符在主进程 tdg-write.js，别在这里 join（C-68）
   tdgWriteAppend: (writerId, rows) => ipcRenderer.invoke('tdg:write-append', { writerId, rows }),
