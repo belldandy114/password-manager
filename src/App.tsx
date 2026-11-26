@@ -42,7 +42,6 @@ const SqlSnippets = lazy(PAGE_LOADERS.sqlSnippets);
 // 这样侧栏悬停预取才指向同一份 import 路径；写成 `lazy(() => import('./CodeGen'))` 就没有预取了。
 const CodeGen = lazy(PAGE_LOADERS.codeGen);
 const CodeAudit = lazy(PAGE_LOADERS.codeAudit);
-const AssetLedger = lazy(PAGE_LOADERS.assetLedger);
 // 1.34.0：UI 录制器（S4b）。与其它页一样从 PAGE_LOADERS 取 —— 侧栏悬停预取才指向同一份 import。
 const Recorder = lazy(PAGE_LOADERS.recorder);
 
@@ -517,7 +516,9 @@ function App() {
       // 兜底的网址管理（与 1.30.1 的 `accounts` 同理，不白屏）。
       case 'codeGen': return <CodeGen />;
       case 'codeAudit': return <CodeAudit />;
-      case 'assetLedger': return <AssetLedger />;
+      // 1.36.0（B4）：资产台账下线（覆盖矩阵 / 用例映射的结论属一次性，方案 §11.1 判它该删）。
+      // key / lazy 常量 / case / 侧栏项 / 命令面板条目同批摘除；老用户持久化的
+      // `currentPage='assetLedger'` 落到 `default` 兜底的网址管理，不白屏（同 B1 的 resultHub）。
       // 1.34.0：UI 录制器。⚠️ 新增页面必须**同时**改三处：pages/loaders.ts 的 key、
       // 这里的 case、Sidebar.tsx 的 GROUPS 数组（NavItem.id）。
       // 只加前两处的表现是「路由有、入口没有」——页面永不可达，而且不报错，是最难发现的沉默缺口。

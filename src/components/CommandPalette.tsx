@@ -85,10 +85,9 @@ export const PAGES_MORE: { page: string; label: string }[] = [
   { page: 'perfTest', label: '压力测试' },
   { page: 'codeLab', label: '代码调试' },
   // 1.33.0：开发辅助新页。不登记的话命令面板搜不到新页面，会被当成「页面没做」。
-  // 1.36.0（B1）：结果中心已下线（`.jtl` 指标并入压力测试页），这条一并摘除。
+  // 1.36.0：结果中心（B1）与资产台账（B4）已下线，这两条一并摘除。
   { page: 'codeGen', label: '代码生成' },
   { page: 'codeAudit', label: '代码体检' },
-  { page: 'assetLedger', label: '资产台账' },
   { page: 'settings', label: '设置' },
 ];
 PAGES.push(...PAGES_MORE);

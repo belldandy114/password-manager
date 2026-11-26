@@ -111,7 +111,7 @@
  *      就绪判据不能依赖「当前在哪个页签」：切 tab 是下一步 prep 的动作，用结果等前置条件会死锁
  *      （1.32.3 / 1.32.5 两次踩过：等 rows>=1 再切列表 = 永远等不到）。
  *   2) **每个单元一条 `min` 自证**：空页面扫出 0 违规没有意义。新页里几个页签的数据来自
- *      vault 集合（`pomPages` / `scanRuns` / `coverageRuns` 里的历史 / `caseMaps`），
+ *      vault 集合（`pomPages` / `scanRuns`），
  *      所以下面加了一段**新页造数**（`opaque-dev-` 前缀，收尾按前缀删），让表格真的有行；
  *      另外几个「表单+空态」的页签（OpenAPI 粘贴区 / .jtl 取数）本身没有表格数据，
  *      自证卡在「面板+输入框/横幅真的渲染出来」，并把实测计数打进日志（见 ctx 的 dev* 字段）。
@@ -148,7 +148,7 @@
  *    - 五处登记一起摘：`ANCHORS` 2 条（`.pg .tbl th` → --glass-side / `.pg input` → --glass-input）、
  *      `PAGES` 2 个单元、`READY_PRED` 2 条、`APPLIED_PRED` 2 条、`DEV_PAGE_LABEL` 里的前缀。
  *    - `devSeed` 的「④ allureRuns 造数」一并摘除（没有页面读它了），收尾的按前缀删集合同步
- *      缩到 `pomPages / scanRuns / caseMaps` 三个。
+ *      缩到 `pomPages / scanRuns`（B4 删资产台账后 `caseMaps` 也不需要了）。
  *    - **自证口径不变**：每个单元仍要「就绪判据 + APPLIED_PRED + min + 锚点」四件，删单元不等于
  *      放宽判据 —— 剩余单元的 min / 锚点一条不动（本批只删不改）。
  *
@@ -161,6 +161,14 @@
  *        单页后那条必然红）。
  *    - `ANCHORS` 删「代码体检 · Git 影响面」那条，剩「代码体检」一条；`DEV_PAGE_LABEL` 不用动。
  *    - 可证伪：把 `CodeAudit.tsx` 里加回一个单页签的 `.tabs` 壳 → 该单元必红在 `devTabs=1`。
+ *
+ * ⚠️ 1.36.0（B4）**资产台账下线，摘 2 个扫描单元，组合数 30 → 26**（每主题 15 → 13）：
+ *    - `src/pages/AssetLedger.tsx` 已删（覆盖矩阵 / 用例映射的结论属一次性，方案 §11.1 判它该删），
+ *      它的两个单元（`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射`）在五处登记一起摘：
+ *      `ANCHORS` 2 条、`PAGES` 2 条、`READY_PRED` 2 条、`APPLIED_PRED` 2 条、`DEV_PAGE_LABEL` 的 `资产台账`。
+ *    - `devSeed` 的「③ caseMaps 造数」一并摘除（没有页面读它了），收尾的按前缀删集合同步缩到
+ *      `pomPages / scanRuns` 两个；**`pomPages` 与 `scanRuns` 的造数保留**（元素库与代码体检还要用）。
+ *    - 自证口径不变：剩下的单元 min / 锚点一条不动，删单元不等于放宽判据。
  *
  * 跑法：
  *   node scripts/ui-glass-opaque-scan.js              # 开发目录 + dist（先 npm run build:renderer）
@@ -361,10 +369,8 @@ const TARGETS = [
   { sel: '.pg .pnl', label: '新页面板 .pnl（代码体检）', token: '--glass-card',
     pages: ['代码体检'] },
   // ── 1.36.0（B3）：Git 影响面下线（页面改单页），这条锚点随单元一起摘除。
-  { sel: '.pg .pnl', label: '新页面板 .pnl（资产台账·覆盖矩阵）', token: '--glass-card',
-    pages: ['资产台账 · 覆盖矩阵'] },
-  { sel: '.pg .tbl th', label: '新页表头 .tbl th（资产台账·用例映射）', token: '--glass-side',
-    pages: ['资产台账 · 用例映射'] },
+  // ── 1.36.0（B4）：资产台账下线，它的 2 条锚点（`.pg .pnl` → --glass-card / `.pg .tbl th` → --glass-side，
+  // 覆盖矩阵 / 用例映射各一条）随 2 个单元一起摘除；**不要**在本批给它另找替代单元。
   // ── 1.36.0（B1）：两个已删单元的原锚点（`.pg .tbl th` → --glass-side / `.pg input` → --glass-input）
   // 随单元一起摘除；剩下的锚点一条不动。**不要**在本批给搬走的那个页签另登记新单元
   // （它现在在「压力测试」页＝老页，玻璃行为另开一轮）。
@@ -416,7 +422,7 @@ const TAB_STRIP_EXPR = `(() => {
   return { found: !!(strip && act), strip, act };
 })()`;
 /** 开发辅助四页的 label 前缀（TAB_STRIP_EXPR 只在这些页面上量） */
-const DEV_PAGE_LABEL = /^(代码生成|代码体检|资产台账)/;
+const DEV_PAGE_LABEL = /^(代码生成|代码体检)/;
 
 /**
  * 要扫的页面与进入方式（都不依赖网络/账号：网址管理用预置样本条目，工具箱与笔记是本地页）。
@@ -530,18 +536,9 @@ const PAGES = [
     hint: 'devRowsAll=0 说明 scanRuns 历史表没渲染（造数没写进 vault，或页面落进了空态）；'
       + 'devTabs≠0 说明单页又长出了页签壳',
   },
-  {
-    label: '资产台账 · 覆盖矩阵', nav: '资产台账',
-    prep: (s) => clickText(s, '覆盖矩阵', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devInputs: 1 },
-    hint: 'devInputs=0 说明「① 取数与运行」表单没渲染（覆盖矩阵没有历史表，价值主要在面板+表单的玻璃）',
-  },
-  {
-    label: '资产台账 · 用例映射', nav: '资产台账',
-    prep: (s) => clickText(s, '用例映射', { root: '.pg .tabs' }),
-    min: { devPanel: 1, devTabs: 2, devRows: 1 },
-    hint: 'devRows=0 说明 caseMaps 造数没读到（映射清单是空态，表头行也应有 1 行）',
-  },
+  // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两个单元随页面下线一并摘除，
+  // 组合数 30 → 26（每主题 15 → 13）。它的 `caseMaps` 造数（原 ③）也一起删 —— 没有页面读它了；
+  // `pomPages`（元素库）与 `scanRuns`（代码体检历史）的造数**保留**。
   // ── 1.36.0（B1）：两个已删单元（Allure / .jtl 指标）随页面下线一并摘除。
   // 不在这里补 `.jtl` 的替代单元：它现在挂在「压力测试」页（老页，不在 DEV_PAGE_LABEL 里），
   // 要覆盖它得另开一轮（方案 §3.6 的边界）。组合数 36 → 32。
@@ -655,20 +652,7 @@ const READY_PRED = {
       devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]'), pnl: q('.pg .pnl') };
     return { ok: !state.skel && state.title === '代码体检' && state.devTabs === 0 && state.panel === 0 && state.pnl >= 1, state };
   })()`,
-  '资产台账 · 覆盖矩阵': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const t = document.querySelector('.pg-title');
-    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '资产台账' && state.devTabs === 2 && state.panel === 1, state };
-  })()`,
-  '资产台账 · 用例映射': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const t = document.querySelector('.pg-title');
-    const state = { skel: !!document.querySelector('.page-skel'), title: t ? (t.textContent || '').trim() : '',
-      devTabs: q('.pg .tabs .tab2'), panel: q('[role=tabpanel]') };
-    return { ok: !state.skel && state.title === '资产台账' && state.devTabs === 2 && state.panel === 1, state };
-  })()`,
+  // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两条就绪判据随单元摘除（页面已下线）。
   // ── 1.36.0（B1）：上面两个已删单元的就绪判据一并摘除（页面已下线）。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 ──
   // 与「哪个页签在前台」无关（切页签是 prep 的事，用它当就绪会死锁）：
@@ -758,26 +742,7 @@ const APPLIED_PRED = {
     return { ok: state.tabs === 0 && state.tab2 === 0 && state.panels >= 1
       && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
   })()`,
-  '资产台账 · 覆盖矩阵': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === '覆盖矩阵' && state.panels >= 1
-      && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
-  })()`,
-  '资产台账 · 用例映射': `(() => {
-    const q = (x) => document.querySelectorAll(x).length;
-    const a = document.querySelector('.pg .tabs .tab2.is-active');
-    const state = { tab: a ? (a.textContent || '').trim() : '', panels: q('[role=tabpanel] .pnl'),
-      banners: q('[role=tabpanel] .dev-banner'), inputs: q('[role=tabpanel] input:not([type=checkbox]):not([type=radio])'),
-      tables: q('[role=tabpanel] table.tbl'), scroll: q('[role=tabpanel] .dev-scroll'),
-      textareas: q('[role=tabpanel] textarea'), empty: q('[role=tabpanel] .empty') };
-    return { ok: state.tab === '用例映射' && state.panels >= 1
-      && (state.banners + state.inputs + state.textareas + state.tables + state.scroll + state.empty) >= 1, state };
-  })()`,
+  // ── 1.36.0（B4）：`资产台账 · 覆盖矩阵` / `资产台账 · 用例映射` 两条 APPLIED_PRED 随单元摘除。
   // ── 1.36.0（B1）：两个已删单元的 APPLIED_PRED 随单元摘除（页面已下线）。下面接录制器。
   // ── 1.35.0（W3 / S5-t23）：UI 录制器 2 个单元 ──
   // 判据 = 激活页签文案对 + **非 hidden 的 tabpanel 恰好 1 个** + 该面板里有内容。
@@ -1766,12 +1731,12 @@ async function scanEntryDrawer(session, ev, theme, violations) {
       + `，其中带成员账号 ${seed.withAccounts} 条 / 账号 ${seed.totalAccounts} 个`
       + ` / notes ${seed.notesBefore} → ${seed.notesAfter} 条（普通笔记 +${seed.notes}、SQL +${seed.sql}）`
       + ' —— 分页条、成员账号表格与复制弹窗都必须渲染出来，否则下面的自证会红');
-    // 1.33.0（t54/W7-A）：新页造数。4 个新页里有 4 个页签的数据来自 vault 集合
-    // （pomPages / scanRuns / caseMaps），集合为空时渲染的是空态 ——
+    // 1.33.0（t54/W7-A）：新页造数。页面里几个页签的数据来自 vault 集合
+    // （pomPages / scanRuns），集合为空时渲染的是空态 ——
     // 空页扫出 0 个不透明块等于没测。这里只造「能渲染出表格行」的最小字段，不含任何真实信息，
-    // id 一律 `opaque-dev-` 前缀（收尾按前缀删）。覆盖矩阵页签没有历史表（只在跑完后才有结果），
-    // 它的自证卡在「面板 + 表单真的渲染」，见 PAGES 里该条的 hint。
+    // id 一律 `opaque-dev-` 前缀（收尾按前缀删）。
     // 1.36.0（B1）：Allure 历史那条集合已无页面读，它的造数（原 ④）一并摘除。
+    // 1.36.0（B4）：资产台账下线后 caseMaps 也无人读，原 ③ 的映射造数一并摘除。
     const devSeed = await ev(`(async () => {
       const now = new Date().toISOString();
       // ① pomPages：元素库 1 个页面 / 3 个元素（css / text / role 三种定位器）
@@ -1791,19 +1756,14 @@ async function scanEntryDrawer(session, ev, theme, violations) {
           { ruleId: 'assert-weak', severity: 'medium', title: '弱断言', file: 'src/b.ts', line: 34, snippet: 'expect(x).toBeTruthy();' },
           { ruleId: 'dep-dup', severity: 'low', title: '依赖重复声明', file: 'package.json', line: 7 },
         ], ruleIds: ['cred-hardcoded', 'assert-weak', 'dep-dup'], ms: 42 }]);
-      // ③ caseMaps：用例映射 2 行（file / method 两种 target.kind 各一）
-      await window.electronAPI.wsSet('caseMaps', [
-        { id: 'opaque-dev-map-1', caseNo: 'OPAQUE-001', caseTitle: '登录成功',
-          target: { kind: 'file', ref: 'src/tests/LoginTest.java' }, source: 'manual', note: '造数样本', updatedAt: now },
-        { id: 'opaque-dev-map-2', caseNo: 'OPAQUE-002', caseTitle: '下单成功',
-          target: { kind: 'method', ref: 'src/tests/OrderTest#shouldCreate' }, source: 'manual', updatedAt: now },
-      ]);
-      // ④ Allure 历史的造数已随 1.36.0（B1）一并摘除（本段在模板字符串里，注释不写反引号）。
+      // ③ caseMaps：用例映射的造数已随 1.36.0（B4）资产台账下线一并摘除
+      //    （没有页面读它了；本段在模板字符串里，注释不写反引号）。
+      // ④ Allure 历史的造数已随 1.36.0（B1）一并摘除。
       const read = async (k) => { const r = await window.electronAPI.wsGet(k); return (r && r.success && Array.isArray(r.data)) ? r.data.length : -1; };
-      return { pom: await read('pomPages'), scan: await read('scanRuns'), maps: await read('caseMaps') };
+      return { pom: await read('pomPages'), scan: await read('scanRuns') };
     })()`);
-    console.log(`（造数·新页）pomPages ${devSeed.pom} 条 / scanRuns ${devSeed.scan} 条 / caseMaps ${devSeed.maps} 条`
-      + ' —— 元素库、体检历史、映射清单读的就是这几个集合，空集合 = 空页 = 假绿');
+    console.log(`（造数·新页）pomPages ${devSeed.pom} 条 / scanRuns ${devSeed.scan} 条`
+      + ' —— 元素库、体检历史读的就是这几个集合，空集合 = 空页 = 假绿');
     const saved = await applyBackground(session, {
       name: backgroundName,
       // 压暗取默认 0.42（浅色下 CSS 会再乘 0.67）：扫描要按用户的实际默认配置来
@@ -2101,17 +2061,17 @@ async function scanEntryDrawer(session, ev, theme, violations) {
           return { before: arr.length, after: keep.length };
         };
         const dev = {};
-        for (const k of ['pomPages', 'scanRuns', 'caseMaps']) dev[k] = await dropDev(k);
+        for (const k of ['pomPages', 'scanRuns']) dev[k] = await dropDev(k);
         return { notesBefore: all.length, notesAfter: keepNotes.length,
           entriesBefore: entries.length, entriesAfter, deleted: del.length, dev }; })()`);
       if (cleaned) {
         console.log(`\n（收尾）清掉造的数据：entries ${cleaned.entriesBefore} → ${cleaned.entriesAfter} 条`
           + `（删 ${cleaned.deleted} 条）/ notes ${cleaned.notesBefore} → ${cleaned.notesAfter} 条`);
         const dev = cleaned.dev || {};
-        const devLine = ['pomPages', 'scanRuns', 'caseMaps']
+        const devLine = ['pomPages', 'scanRuns']
           .map((k) => `${k} ${dev[k] ? `${dev[k].before} → ${dev[k].after}` : '?'}`).join(' / ');
         console.log(`（收尾·新页）${devLine} 条`);
-        const devLeft = ['pomPages', 'scanRuns', 'caseMaps']
+        const devLeft = ['pomPages', 'scanRuns']
           .filter((k) => !dev[k] || dev[k].after !== 0);
         if (cleaned.entriesAfter !== 0 || cleaned.notesAfter !== 0 || devLeft.length) {
           console.log(`  ⚠️ 前缀 opaque- / opaque-dev- 的样本没清干净（应为 0，残留：${devLeft.join(',') || 'entries/notes'}），`
