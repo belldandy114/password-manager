@@ -489,16 +489,22 @@ export function ZentaoSummary({
   const copyWeeklyDraft = async () => {
     const w = weekRange(0);
     /**
-     * ⚠️ 为什么不能直接把 `sumBugs` 丢给 `buildWeeklyDraft`：
-     * 主进程 `ztSummaryOf`（`electron/ipc-zentao.js`）取项目名时读的是 `ztProductCache` 的**缓存信封**
-     * （`{ at, map }`）而不是 `map` 本身，于是汇总来的 Bug 上 `productName` 恒为空 →
-     * 草稿的项目分组会整片退化成「未分类」（实测：`（1）未分类：新提 2、解决 1、关闭 1`）。
-     * 本页本来就有 `product` id → 名称的映射（`productNames`，表格在用），在这里补齐，
-     * 复制出去的草稿才是能直接贴进周报的。根因在主进程（不在本批 inScope），已作为 B2 回执的一条 finding 交 backend。
+     * ⚠️ 为什么要在这里给 `productName` 定口径（1.36 / t27）：
+     * 主进程 `ztSummaryOf`（`electron/ipc-zentao.js:1373` / `:1423`）回的项目名来自
+     * `ztProductCache` 的 id → **纯产品名** 映射，**不带项目集前缀**；
+     * 而本页表格用的是 `productNames`（`:145`，`programName ? '项目集 / 产品名' : 产品名`）。
+     *
+     * 这两个口径在 t9（解包修复）之后开始分叉：t9 之前 `nameMap` 恒为空 → 这里靠兜底补齐，
+     * 草稿恰好与表格一致；t9 之后 `productName` 变成真值（但只是纯产品名）→ 兜底被跳过 →
+     * 草稿退化成「（1）资产管理系统」而表格仍是「（1）广科 / 资产管理系统」。
+     *
+     * 所以顺序反过来：**能用本页的限定名就用它**，拿不到才回落到主进程的纯名。
+     * 这样草稿与表格、项目选择器三处永远是同一口径，不再随主进程缓存的粒度漂。
      */
-    const named = sumBugs.map(b => (
-      b.productName ? b : { ...b, productName: productNames[String(b.product)] || '' }
-    ));
+    const named = sumBugs.map(b => ({
+      ...b,
+      productName: productNames[String(b.product)] || b.productName || '',
+    }));
     const text = buildWeeklyDraft(named, w.start, w.end);
     try {
       await navigator.clipboard.writeText(text);
