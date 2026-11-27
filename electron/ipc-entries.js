@@ -48,6 +48,7 @@ const resolveIpcMain = (deps) => (deps && deps.ipcMain) || require('electron').i
  * @param {() => object} deps.getClipboardTimers
  * @param {() => void} deps.resetClipboardTimers
  * @param {() => void} deps.closePinWindows
+ * @param {(v: boolean) => void} [deps.setAutoUnlockSuppressed] 手动锁定后置「本次进程内不自动解锁」（E4）
  */
 function registerEntriesIpc(deps) {
   const ipcMain = resolveIpcMain(deps);
@@ -63,6 +64,7 @@ function registerEntriesIpc(deps) {
     wipeClipHistory, loadClipHistory,
     getClipHistory, getClipboardTimers, resetClipboardTimers,
     closePinWindows,
+    setAutoUnlockSuppressed,
   } = deps;
 
   /** 统一取当前会话密码；未解锁时返回 null（各 handler 据此回「未解锁」） */
@@ -97,6 +99,12 @@ function registerEntriesIpc(deps) {
     bumpEpoch();   // 锁屏后小窗要立刻切成「未解锁」提示
     clearCaches();
     clearClipHistory();
+    /**
+     * E4（契约 §2.8）：手动锁定 = 本次进程内不再自动解锁（用户明确要求「锁了就是锁了」）。
+     * **只置进程内抑制位，不删 autologin.json** —— 删了会让「锁定一次」变成永久关掉免密。
+     * 抑制位在 main.js 模块作用域，进程重启自动归零。
+     */
+    try { setAutoUnlockSuppressed?.(true); } catch { /* 抑制位设置失败不影响锁定本身 */ }
     try { ztRestartNotify(); } catch { /* 锁定后自动停掉定时器 */ }
     hideSearchWindow();
     // 「钉」出来的小窗里是明文密码，锁屏必须连它们一起关掉

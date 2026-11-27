@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   authVerifySecurityWord: (data) => ipcRenderer.invoke('auth:verify-security-word', data),
   authHasSecurityWord: () => ipcRenderer.invoke('auth:has-security-word'),
   authResetPassword: (data) => ipcRenderer.invoke('auth:reset-password', data),
+  // 启动免密（1.37.0）：状态查询 / 开启 / 关闭 / 自动解锁；主密码明文永不回渲染层
+  authAutoUnlockStatus: () => ipcRenderer.invoke('auth:auto-unlock-status'),
+  authEnableAutoUnlock: (data) => ipcRenderer.invoke('auth:enable-auto-unlock', data),
+  authDisableAutoUnlock: () => ipcRenderer.invoke('auth:disable-auto-unlock'),
+  authAutoUnlock: () => ipcRenderer.invoke('auth:auto-unlock'),
 
   // Session
   sessionUnlock: (data) => ipcRenderer.invoke('session:unlock', data),
@@ -394,6 +399,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dataLegacyInfo: () => ipcRenderer.invoke('data:legacy-info'),
   dataRecoverLegacy: () => ipcRenderer.invoke('data:recover-legacy'),
   appRelaunch: () => ipcRenderer.invoke('app:relaunch'),
+  /* 卸载入口（1.37.0 / R3）：危险区用。appUninstallInfo 只读（含数据目录绝对路径与体积），
+   * appUninstall 不幂等 —— removeData 为真时必须把回显的绝对路径原样作为 dataDirAck 传回，
+   * 主进程按「路径相等」做第二道闸门（防弹框期间数据目录被迁移）。 */
+  appUninstallInfo: () => ipcRenderer.invoke('app:uninstall-info'),
+  appUninstall: (data) => ipcRenderer.invoke('app:uninstall', data),
   logInfo: () => ipcRenderer.invoke('log:info'),
   logOpen: () => ipcRenderer.invoke('log:open'),
   logTail: (lines) => ipcRenderer.invoke('log:tail', lines),

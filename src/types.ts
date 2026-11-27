@@ -1278,6 +1278,88 @@ export interface TdgAbortResult {
 // / `RecordStopResult` / `RecordValidateItem` / `RecordValidateRow` / `RecordStatusResult` / `RecordEvent`）
 // 与 5 条 invoke + 1 条推送订阅声明随录制域删除；`WorkspaceKey` 的 `'uiRecordings'` **保留**（删入口不删数据）。
 
+// ---------------------------------------------------------------- 启动免密（R2 / 1.37.0，契约 §2）
+/**
+ * 启动免密不可用/不生效的原因码（契约 §2.2 / §2.5，对应附录 A 的 9~14）。
+ *
+ * 真源只有 `<DATA_DIR>/autologin.json`（D2）——**不进** AppSettings，
+ * 否则会出现「设置说开、文件已被失效时机删掉」的双真源漂移。
+ */
+export type AutoUnlockReasonCode =
+  | 'safe-storage-unavailable'
+  | 'autologin-corrupt'
+  | 'autologin-version-unsupported'
+  | 'not-setup'
+  | 'no-credential'
+  | 'session-locked'
+  | 'decrypt-failed'
+  | 'vault-corrupt';
+
+/** `auth:auto-unlock-status` 的 data（契约 §2.2）。**不解密**，启动期零 DPAPI 开销。 */
+export interface AutoUnlockStatus {
+  /** 文件存在 且 可解析 且 `v === 1` 且 `blob` 为非空 base64 */
+  enabled: boolean;
+  /** `safeStorage.isEncryptionAvailable()` 的当前值；false → 开关禁用并给原因 */
+  available: boolean;
+  reasonCode?: AutoUnlockReasonCode;
+  /** 中文人话，与 reasonCode 一一对应 */
+  reason?: string;
+  /** autologin.json 里的 updatedAt（ISO 8601） */
+  updatedAt?: string;
+}
+
+/**
+ * `auth:auto-unlock` 的 data（契约 §2.5）。
+ * **明文禁令**：这里永远不含主密码；`vault` 与 `session:unlock` 的 data 同形。
+ * `unlocked: false` 是正常态（用户关过 / 本次已锁定 / DPAPI 不可用），不是错误。
+ */
+export interface AutoUnlockResult {
+  unlocked: boolean;
+  vault?: VaultData;
+  reasonCode?: AutoUnlockReasonCode;
+  reason?: string;
+}
+
+// ---------------------------------------------------------------- 卸载入口（R3 / 1.37.0，契约 §3.1）
+export type UninstallMode = 'installed' | 'dev';
+export type UninstallerSource = 'registry-hkcu' | 'registry-hklm' | 'exe-sibling';
+
+export interface UninstallInfo {
+  /** `mode === 'installed'` 且卸载器可用 */
+  supported: boolean;
+  mode: UninstallMode;
+  /** 绝对路径，`.exe`，已 `existsSync` 校验 */
+  uninstaller: string | null;
+  uninstallerSource: UninstallerSource | null;
+  /** 命中的注册表键全路径（供排错，不含用户信息） */
+  regKey: string | null;
+  /** 绝对路径（`resolveDataDir()`），第二层删除确认必须回显它 */
+  dataDir: string;
+  /** 字节；统计失败时为已统计到的下限值（见 dataSizeError） */
+  dataSize: number;
+  /** `DATA_DIR` 直属子项体积，按 size 降序，最多 8 条 */
+  dataBreakdown: { dir: string; size: number }[];
+  /** 统计超时/权限不足的原因（存在时 dataSize 为下限值） */
+  dataSizeError?: string;
+  productName: string;
+  appVersion: string;
+  exePath: string;
+}
+
+export interface UninstallResult {
+  launched: boolean;
+  removedData: boolean;
+  mode: UninstallMode;
+  dataDir: string;
+  dataSizeBefore: number;
+  /** 受管清单里实际删掉的绝对路径 */
+  removedPaths?: string[];
+  code?: string;
+  error?: string;
+  /** dev 模式的「源码目录需自行删除」等提示 */
+  message?: string;
+}
+
 export interface ElectronAPI {
   // Auth
   authIsSetup: () => Promise<boolean>;
@@ -1300,6 +1382,14 @@ export interface ElectronAPI {
   authVerifySecurityWord: (data: { securityWord: string }) => Promise<{ success: boolean; error?: string }>;
   authHasSecurityWord: () => Promise<boolean>;
   authResetPassword: (data: { securityWord: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
+  /** 启动免密状态（启动期第一步，未解锁也能调；永远 success:true） */
+  authAutoUnlockStatus: () => Promise<{ success: boolean; data?: AutoUnlockStatus; error?: string }>;
+  /** 开启启动免密：需已解锁 + 再验一次主密码（`password` 只进不出） */
+  authEnableAutoUnlock: (data: { password: string }) => Promise<{ success: boolean; data?: { enabled: true; updatedAt: string }; error?: string; code?: string; retryAfterMs?: number }>;
+  /** 关闭启动免密（强幂等：凭据本来就不存在也返回成功） */
+  authDisableAutoUnlock: () => Promise<{ success: boolean; data?: { enabled: false }; error?: string; code?: string }>;
+  /** 用 DPAPI 里存的凭据自动解锁；`unlocked:false` 是正常态，落回登录页即可 */
+  authAutoUnlock: () => Promise<{ success: boolean; data?: AutoUnlockResult; error?: string; code?: string }>;
 
   // Session
   sessionUnlock: (data: { password: string }) => Promise<{ success: boolean; data?: VaultData }>;
@@ -1752,6 +1842,10 @@ export interface ElectronAPI {
   dataLegacyInfo: () => Promise<{ success: boolean; data?: { legacyDir: string; found: string[]; currentHasVault: boolean } }>;
   dataRecoverLegacy: () => Promise<{ success: boolean; data?: { from: string; copied: number; backup: string }; error?: string }>;
   appRelaunch: () => Promise<{ success: boolean }>;
+  /** 卸载信息（危险区进入时拉一次；含数据目录绝对路径与体积，用于第二层确认回显） */
+  appUninstallInfo: () => Promise<{ success: boolean; data?: UninstallInfo; error?: string; code?: string }>;
+  /** 执行卸载。`removeData` 为真时 `dataDirAck` 必填＝回显过的绝对路径（防目录竞态） */
+  appUninstall: (data: { removeData: boolean; dataDirAck?: string }) => Promise<{ success: boolean; data?: UninstallResult; error?: string; code?: string }>;
   logInfo: () => Promise<{ success: boolean; data?: { path: string } }>;
   logOpen: () => Promise<{ success: boolean; data?: { path: string }; error?: string }>;
   logTail: (lines?: number) => Promise<{ success: boolean; data?: { path: string; text: string } }>;

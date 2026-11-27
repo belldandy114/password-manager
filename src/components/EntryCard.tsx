@@ -265,8 +265,13 @@ export function EntryCard({ entry, onEdit, onCopy, onOpen, security, onToggleFav
 
       {/* Row 4: Account + Password — icon-only prefixes, eye next to password */}
       <div className="card-credential-row">
-        <span className="cred-account">
-          <Icons.user size={13} /> {entry.username || '--'}
+        {/* R5（1.37.0）：账号文本单独包一层 .cred-account-text。
+            原来文本只是 .cred-account（inline-flex，redesign.css:7794）的匿名 flex 项，
+            压缩时只能被硬裁、paint 不出省略号；包一层后由 .cred-account-text 拿 ellipsis。
+            同时 .cred-account 带 title —— 账号被省略也能 hover 读到全文（空值回落 '--'）。 */}
+        <span className="cred-account" title={entry.username || '--'}>
+          <Icons.user size={13} />{' '}
+          <span className="cred-account-text">{entry.username || '--'}</span>
           {(entry.accounts?.length || 0) > 0 && (
             <button
               type="button"

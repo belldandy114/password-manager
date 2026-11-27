@@ -14,6 +14,10 @@ import { guessUrlFromInput } from './utils/urlInput';
 import { recordPageUse } from './utils/recent';
 import { useEnvAutoProbe } from './utils/envSchedule';
 import { useRegressionScheduler } from './hooks/useRegressionScheduler';
+// 1.37.0（S3）：启动自动解锁 —— 只借用「上次启动 reason」的记录点，让设置页的免密卡能显示
+// session-locked / decrypt-failed 这类启动态原因（文案只有一份，不为了展示多调一次解密接口）。
+import { noteAutoUnlockResult } from './components/settings/AutoUnlockCard';
+import type { VaultData } from './types';
 
 /**
  * 工作台页面按需加载：首屏只装登录 + 侧边栏，
@@ -87,6 +91,20 @@ function App() {
     return () => { alive = false; };
   }, [isLocked]);
 
+  /**
+   * 解锁成功后的统一回填（1.37.0 契约 §2.9 硬约束）：
+   * 手动登录（session:unlock）与启动自动解锁（auth:auto-unlock）**共用这一段**，
+   * 禁止两份拷贝 —— 否则以后改一处漏一处（例如新增一个必须在解锁后执行的初始化）。
+   */
+  const applyUnlockedState = useCallback(async (vault: VaultData) => {
+    useStore.getState().setVaultData(vault);
+    setLocked(false);
+    setIsSetup(true);
+    // Load settings
+    const prefs = await window.electronAPI.settingsGet();
+    if (prefs) setSettings(prefs);
+  }, [setLocked, setIsSetup, setSettings]);
+
   // Handle login success
   const handleLogin = useCallback(async () => {
     try {
@@ -94,17 +112,12 @@ function App() {
         password: useStore.getState().masterPassword
       });
       if (result.success && result.data) {
-        useStore.getState().setVaultData(result.data);
-        setLocked(false);
-        setIsSetup(true);
-        // Load settings
-        const prefs = await window.electronAPI.settingsGet();
-        if (prefs) setSettings(prefs);
+        await applyUnlockedState(result.data);
       }
     } catch (e) {
       console.error('Login error:', e);
     }
-  }, []);
+  }, [applyUnlockedState]);
 
   // Handle lock
   const handleLock = useCallback(async () => {
@@ -308,6 +321,36 @@ function App() {
         setIsSetup(setup);
         if (!setup) {
           setLocked(true);
+        } else {
+          /**
+           * 1.37.0（S3）启动免密时序（契约 §2.9，顺序固定、不可重排）：
+           *   authIsSetup → authAutoUnlockStatus（纯读，零 DPAPI 开销）
+           *   → 只有 enabled 才 authAutoUnlock（用 DPAPI 里的凭据解锁）
+           *   → unlocked:true 与手动登录共用 applyUnlockedState；unlocked:false 落登录页、**不弹 toast**
+           *
+           * 硬约束：**绝不**在自动解锁分支里调 sessionUnlock —— 渲染层根本拿不到明文密码。
+           * 自动解锁失败也不许降级成「清空库 / 未初始化态」（契约 §2.9 第 3 条）。
+           */
+          try {
+            const status = await window.electronAPI.authAutoUnlockStatus();
+            if (status.success && status.data && status.data.enabled) {
+              const auto = await window.electronAPI.authAutoUnlock();
+              const data = auto.success ? auto.data : undefined;
+              noteAutoUnlockResult(data?.reasonCode ?? null);
+              if (data && data.unlocked && data.vault) {
+                await applyUnlockedState(data.vault);
+              } else {
+                setLocked(true);
+              }
+            } else {
+              noteAutoUnlockResult(status.data?.reasonCode ?? null);
+              setLocked(true);
+            }
+          } catch {
+            // 自动解锁这一段任何异常都不阻断启动：静默落回登录页（不弹错误框）
+            noteAutoUnlockResult(null);
+            setLocked(true);
+          }
         }
         const prefs = await window.electronAPI.settingsGet();
         if (prefs) {
@@ -320,7 +363,7 @@ function App() {
         setLocked(true);
       }
     })();
-  }, []);
+  }, [applyUnlockedState, setLocked, setIsSetup, setSettings]);
 
   // Apply theme on change (支持 dark / light / system)
   const themeMode = useStore(s => s.settings.theme);

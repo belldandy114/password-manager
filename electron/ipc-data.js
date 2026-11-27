@@ -15,6 +15,7 @@ const { app, ipcMain, dialog, shell } = require('electron');
 const { inspectVaultFile } = require('./vault-file');
 const { auditVault } = require('./vault-audit');
 const { logPath, tail: logTail } = require('./app-log');
+const { autologinPath } = require('./autologin');
 
 function registerDataIpc(deps) {
   const {
@@ -44,6 +45,29 @@ function registerDataIpc(deps) {
     saveSettings,
     decrypt,
   } = deps;
+
+  /**
+   * E3（契约 §2.8）：数据目录一换，`autologin.json` 必须**两处都删**。
+   *
+   * 只删旧目录不够：`data:migrate` 只复制白名单（autologin.json 本就不在清单里），
+   * 但用户把目录改回来时旧目录那份会「复活」；只删新目录也同样不够。所以统一走这个函数，
+   * 由调用点把「旧 / 新」两个目录都传进来。删除失败只记日志（不能让迁移失败）。
+   *
+   * @param {string} dir 数据目录
+   * @param {string} why 触发原因（只写原因名，**不写**任何密码/密文）
+   */
+  function dropAutoUnlockCredential(dir, why) {
+    if (!dir) return;
+    try {
+      const file = autologinPath(dir);
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        console.log(`[data] 已清除启动免密凭据（${why}）：${dir}`);
+      }
+    } catch (e) {
+      console.warn(`[data] 清除启动免密凭据失败（${why}）：${(e && e.message) || e}`);
+    }
+  }
 
   // ---- 旧版本数据恢复（改名后「新库已建、旧库还在」时手动搬）----
   function legacyInfo() {
@@ -503,6 +527,12 @@ function registerDataIpc(deps) {
         }
       } catch { /* 改不了 settings 不影响迁移本身 */ }
       fs.writeFileSync(LOCATION_FILE, JSON.stringify({ dir: target, from: DATA_DIR, at: new Date().toISOString() }, null, 2), 'utf8');
+      /**
+       * E3（契约 §2.8）：迁移成功后清**两处**凭据 —— 旧目录那份不清，
+       * 用户把数据目录改回默认时就「复活」了。
+       */
+      dropAutoUnlockCredential(DATA_DIR, 'data-migrate-old-dir');
+      dropAutoUnlockCredential(target, 'data-migrate-new-dir');
       appendAudit({ action: 'data-migrate', entry: target });
       return { success: true, data: { dir: target, copied } };
     } catch (e) {
@@ -514,6 +544,12 @@ function registerDataIpc(deps) {
   ipcMain.handle('data:reset-location', () => {
     try {
       if (fs.existsSync(LOCATION_FILE)) fs.unlinkSync(LOCATION_FILE);
+      /**
+       * E3（契约 §2.8）：改回默认目录后，**当前目录**与**默认目录**两份凭据都要失效。
+       * （自定义目录里那份是用户勾过免密的那份；默认目录里可能还留着更早的一份。）
+       */
+      dropAutoUnlockCredential(DATA_DIR, 'data-reset-location-current');
+      dropAutoUnlockCredential(USER_DATA_DIR, 'data-reset-location-default');
       return { success: true, data: { dir: USER_DATA_DIR } };
     } catch (e) {
       return { success: false, error: e.message };

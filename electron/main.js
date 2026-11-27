@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, ipcMain, nativeImage, Menu, shell, dialog, globalShortcut, Tray, screen, Notification, net, session } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, nativeImage, Menu, shell, dialog, globalShortcut, Tray, screen, Notification, net, session, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -842,6 +842,15 @@ const DEFAULT_SETTINGS = {
   },
 };
 
+/**
+ * 启动免密（R2）：手动锁定后**本次进程内**不再自动解锁（契约 §2.8 E4）。进程重启自动归零。
+ *
+ * 必须定义在**模块作用域**：`setupIpcHandlers()` 里定义的变量，`app.whenReady()` 之后的
+ * 调用点看不到 —— AGENTS.md 记着「autoCheckUpdate 写在 setupIpcHandlers 内部 → 启动 8 秒后
+ * ReferenceError」的先例，这里不再重复踩。
+ */
+let autoUnlockSuppressed = false;
+
 // ----------------------------------------------------------------
 // Window / Tray
 // ----------------------------------------------------------------
@@ -1664,6 +1673,8 @@ const { registerVaultIoIpc } = require('./ipc-vault-io');
 const { registerZentaoIpc } = require('./ipc-zentao');
 const { registerAuthIpc } = require('./ipc-auth');
 const { registerDataIpc } = require('./ipc-data');
+// 卸载入口（R3）：app:uninstall-info / app:uninstall（纯函数逻辑在 electron/uninstall.js）
+const { registerUninstallIpc } = require('./ipc-uninstall');
 const { registerBgIpc } = require('./ipc-bg');
 const { registerUpdateIpc } = require('./ipc-update');
 const { registerApiIpc, clearApiJar } = require('./ipc-api');
@@ -2124,6 +2135,23 @@ function setupIpcHandlers() {
     wipeClipHistory: () => clipHistory.wipe(),
     // 改密/重置密码时必须把附件一起重加密，否则改密后所有附件永久失效
     reencryptAttachments,
+    // ---- 启动免密（1.37.0 / R2，契约 §6.2）：safeStorage 由 Electron 提供，路径/原子写盘用既有工具 ----
+    safeStorage,
+    autologinPath: (dir) => path.join(dir, 'autologin.json'),
+    writeFileAtomic,
+    getUnlocked: () => appUnlocked,
+    getAutoUnlockSuppressed: () => autoUnlockSuppressed,
+    setAutoUnlockSuppressed: (v) => { autoUnlockSuppressed = !!v; },
+    appendAudit,
+    // 自动解锁成功后与 session:unlock 走**同一套**副作用（纪元 / 活动时间 / 四个定时器）
+    bumpEpoch: () => { vaultEpoch += 1; },
+    touchActivity: () => { lastActivity = Date.now(); },
+    afterAutoUnlock: () => {
+      setTimeout(() => { try { zentaoIpc.restartNotify(); } catch { /* 提醒失败不影响解锁 */ } }, 0);
+      setTimeout(() => { try { zentaoIpc.loadSeen(); zentaoIpc.pushUnread(); } catch { /* 忽略 */ } }, 0);
+      setTimeout(() => { try { backupVaultOncePerDay(); } catch { /* 忽略 */ } }, 400);
+      setTimeout(() => { try { clipHistory.load(); } catch { /* 解不开就当空历史 */ } }, 0);
+    },
   });
 
   // ---- 搜索小窗的会话纪元（palette:epoch）----
@@ -2240,10 +2268,21 @@ function setupIpcHandlers() {
     getClipboardTimers: () => clipboardTimers,
     resetClipboardTimers: () => { clipboardTimers = {}; },
     closePinWindows: () => pinManager.closeAll(),
+    // E4：手动锁定后本次进程内不再自动解锁（文件不删，重启进程后恢复）
+    setAutoUnlockSuppressed: (v) => { autoUnlockSuppressed = !!v; },
   });
 
   // 系统类 IPC（对话框 / 文件读写 / 应用路径）已拆到 electron/ipc-system.js
   registerSystemIpc({ getWindow: () => mainWindow });
+  // 卸载入口（R3）：危险区专用，删数据走受管清单（electron/uninstall.js 的 listManagedDataPaths）
+  registerUninstallIpc({
+    DATA_DIR,
+    USER_DATA_DIR,
+    DEFAULT_ATTACH_DIR,
+    getUnlocked: () => appUnlocked,
+    getPassword: () => currentPassword,
+    appendAudit,
+  });
   registerCodelabIpc({ getWindow: () => mainWindow });
   // HTML 预览走独立来源的自定义协议：srcdoc 会继承主窗口 CSP，内联脚本不执行
   registerPreviewIpc();

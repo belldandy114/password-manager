@@ -968,7 +968,9 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 120px;
+  /* 1.37.0：原来的 `max-width: 120px` 已删 —— 它被 redesign.css 末尾的
+     `.cred-account { max-width: 62% }` 完全覆盖（可证明的死声明），
+     留着会让 css-cascade-audit 门禁红、也会让后来人以为账号列还有 120px 硬上限。 */
 }
 
 .entry-card .card-credential-row .cred-gap {

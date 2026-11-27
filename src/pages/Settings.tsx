@@ -16,6 +16,12 @@ import { useEnvProbeStore, formatAt } from '../store/envProbeStore';
 import { nextRunAt, type RegressionSet } from '../utils/regression';
 import { REGRESSION_RAN_EVENT } from '../hooks/useRegressionScheduler';
 import { useConfirm } from '../components/confirm';
+// 1.37.0（S2）：设置页 tab 的真源下沉到 utils/settingsTab.ts（契约 D1），这里只引用
+import { SETTINGS_TABS, SETTINGS_TAB_KEY, normalizeSettingsTab } from '../utils/settingsTab';
+import type { SettingsTab } from '../utils/settingsTab';
+// 1.37.0（S3/S4）：两张新卡只做引用，卡内实现各自独立（契约 KEEP-L2 / D9）
+import { AutoUnlockCard } from '../components/settings/AutoUnlockCard';
+import { UninstallCard } from '../components/settings/UninstallCard';
 // 1.36.0（B8）：试跑工作目录的键与元素库共用一份定义（定义在元素库里，设置页只引用）
 import { EL_WORK_DIR_KEY } from '../components/codegen/pomModel';
 
@@ -47,41 +53,17 @@ const KEYBINDING_DEFS: KeybindingDef[] = [
   { id: 'export', label: '导出数据', desc: '打开导出页面' },
 ];
 
-type SettingsTab = 'security' | 'data' | 'appearance' | 'tasks' | 'about';
 /** 可改的三个全局键：搜索小窗 / 主窗口显隐 / 随手记小窗 */
 type HotkeySlot = 'search' | 'toggle' | 'quicknote';
 
-const TABS: { id: SettingsTab; label: string; icon: React.ReactNode; hint: string }[] = [
-  { id: 'security', label: '安全', icon: <Icons.lock size={14} />, hint: '主密码 / 锁定 / 剪贴板' },
-  { id: 'data', label: '数据与备份', icon: <Icons.db size={14} />, hint: '备份 / 目录 / 自检' },
-  { id: 'appearance', label: '外观与交互', icon: <Icons.tool size={14} />, hint: '主题 / 浏览器 / 按键' },
-  { id: 'tasks', label: '定时任务', icon: <Icons.clock size={14} />, hint: '巡检 / 禅道 / 回归' },
-  { id: 'about', label: '关于与更新', icon: <Icons.note size={14} />, hint: '版本 / 更新 / 日志' },
-];
-
-/**
- * 老 tab id → 新 tab id（重新分类）。
- * 以前是 security / general / browser / shortcuts / tasks 五个 tab：
- * general（主题、剪贴板、托盘、关于）、browser（路径）、shortcuts（快捷键）合并成 appearance，
- * 备份与目录从 security 拆到 data，更新从 tasks 拆到 about。
- * 老用户 localStorage 里存的旧 id 必须能落到新 tab 上，否则会白屏（switch 找不到 case）。
+/*
+ * 1.37.0（S2）：TABS / LEGACY_TAB_MAP / SETTINGS_TAB_KEY / normalizeSettingsTab 已整体搬到
+ * `src/utils/settingsTab.ts`（契约 D1：Settings.tsx 2500 行且 import React，无法单测；
+ * 「历史 localStorage id 漏一条就白屏」只能靠纯函数单测兜）。
+ * 契约 §1.1 的 7 个 tab、顺序、文案、图标键都在那里是唯一真源，**禁止在页面里再写一份**。
  */
-const LEGACY_TAB_MAP: Record<string, SettingsTab> = {
-  general: 'appearance',
-  browser: 'appearance',
-  shortcuts: 'appearance',
-  // 老 tasks 里同时装着「定时任务」和「更新」，无法精确拆分；主用途仍是定时任务，保持原样
-  tasks: 'tasks',
-};
-const SETTINGS_TAB_KEY = 'pm.settings.tab';
 
-/** 把任意历史 tab id 归一到当前 5 个 tab 之一；认不出来就回安全页 */
-function normalizeSettingsTab(rawTab: string | null | undefined): SettingsTab {
-  if (!rawTab) return 'security';
-  const mapped = LEGACY_TAB_MAP[rawTab] || rawTab;
-  return TABS.some(t => t.id === mapped) ? (mapped as SettingsTab) : 'security';
-}
-
+/* 历史 id 映射与归一化函数见 src/utils/settingsTab.ts（契约 §1.2 / §1.3，纯函数可单测） */
 /** 下载体积显示：1.2 MB / 860 KB */
 function fmtBytes(n: number): string {
   if (!n || n < 0) return '0 B';
@@ -971,10 +953,13 @@ export function Settings() {
   }, []);
 
   const renderTabContent = () => {
-    switch (activeTab) {
-      case 'security':
-        return (
-          <div className="settings-section">
+    /**
+     * security 分区的 JSX 抽成一段：`case 'security'` 与 `default:` **共用同一段**
+     * （契约 §1.4 第 2 条：禁止两处拷贝导致漂移）。7 个 case 每个都 return，
+     * `default:` 只是二道保险 —— **绝不** return null（那就是白屏）。
+     */
+    const renderSecurityPane = () => (
+      <div className="settings-section">
             <h3>主密码</h3>
             <div className="setting-row">
               <div>
@@ -1078,6 +1063,11 @@ export function Settings() {
                 </label>
               </div>
             </div>
+            {/* ============ 1.37.0（S3）：启动免密（契约 §2） ============
+                卡片是独立组件（契约 D9），Settings.tsx 只做引用；
+                开关真源是 autologin.json，不在 AppSettings 里（D2）。 */}
+            <AutoUnlockCard />
+
             <h3 style={{ marginTop: 24 }}>密码显示</h3>
             <div className="setting-row">
               <div>
@@ -1089,29 +1079,8 @@ export function Settings() {
                 <span className="text-sm text-muted">秒</span>
               </div>
             </div>
-            <h3 style={{ marginTop: 24 }}>隐私保护</h3>
-            <div className="setting-row">
-              <div>
-                <div className="setting-label">防截屏 / 录屏</div>
-                <div className="setting-desc">开启后窗口内容在截图和录屏中显示为黑屏（Windows 10+）</div>
-              </div>
-              <div className="setting-control">
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={!!contentProtection}
-                    onChange={async e => {
-                      const val = e.target.checked;
-                      setContentProtection(val);
-                      updateSettings({ contentProtection: val });
-                      await window.electronAPI.settingsSave({ contentProtection: val });
-                      addToast(val ? '已开启防截屏' : '已关闭防截屏', 'success');
-                    }}
-                  />
-                  <span className="switch-slider" />
-                </label>
-              </div>
-            </div>
+            {/* 1.37.0（S2）：防截屏按契约 §1.1 归到「交互」分区（原来的「隐私保护」整块搬走），
+                不在安全分区留重复入口。 */}
             <h3 style={{ marginTop: 24 }}>审计日志</h3>
             <div className="setting-row">
               <div>
@@ -1148,7 +1117,11 @@ export function Settings() {
               )}
             </div>
           </div>
-        );
+    );
+
+    switch (activeTab) {
+      case 'security':
+        return renderSecurityPane();
 
       case 'data':
         return (
@@ -1277,19 +1250,8 @@ export function Settings() {
                 >
                   迁移到其他盘
                 </button>
-                {dataInfo?.isCustom && (
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    onClick={async () => {
-                      const r = await window.electronAPI.dataResetLocation();
-                      if (!r.success) { addToast(r.error || '操作失败', 'error'); return; }
-                      addToast('已改回默认目录，重启应用后生效', 'success');
-                      refreshBackups();
-                    }}
-                  >
-                    改回默认
-                  </button>
-                )}
+                {/* 1.37.0（S2）：「改回默认数据目录」按契约 §1.1 归到「危险区」（danger 分区），
+                    这里只保留「打开目录 / 迁移到其他盘」这两个非破坏性动作。 */}
               </div>
             </div>
             <div className="text-sm text-muted" style={{ marginTop: 6 }}>
@@ -1459,44 +1421,8 @@ export function Settings() {
               </div>
             </div>
 
-            {/* ============ 1.36.0（B8）：遗留数据（导出 / 清理） ============ */}
-            <h3 style={{ marginTop: 24 }}>遗留数据</h3>
-            <div className="setting-row">
-              <div style={{ minWidth: 0 }}>
-                <div className="setting-label">导出 / 清理遗留数据</div>
-                <div className="setting-desc">
-                  {legacyCounts
-                    ? LEGACY_KEYS.map((k) => `${k}=${legacyCounts[k] ?? 0}`).join(' / ')
-                    : '读取中…'}
-                </div>
-                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
-                  这四个集合在 1.36.0 起没有写入方了（周报 / 录制器 / 覆盖统计 / 用例映射已下线）。
-                  <b>必须先导出成功才能清理</b>；元素库（<code>pomPages</code>）与体检历史（<code>scanRuns</code>）永不清。
-                </div>
-                {legacyExportedAt && (
-                  <div className="text-sm" style={{ marginTop: 4 }} data-legacy-exported="1">
-                    ✓ 已导出（{formatDateTime(legacyExportedAt)}），现在可以清理了
-                  </div>
-                )}
-              </div>
-              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => void exportLegacyData()}
-                  disabled={!!legacyBusy}
-                >
-                  {legacyBusy === 'export' ? '导出中…' : '导出遗留数据'}
-                </button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={clearLegacyData}
-                  disabled={!legacyExportedAt || !!legacyBusy}
-                  title={legacyExportedAt ? '清空那四个集合' : '先导出一次再清理'}
-                >
-                  {legacyBusy === 'clear' ? '清理中…' : '清理遗留数据'}
-                </button>
-              </div>
-            </div>
+            {/* 1.37.0（S2）：「遗留数据导出 / 清理」按契约 §1.1 整块搬到「危险区」，
+                数据分区只留备份 / 目录 / 自检这些日常操作。 */}
           </div>
         );
 
@@ -1701,7 +1627,37 @@ export function Settings() {
                 </div>
               </>
             )}
+          </div>
+        );
 
+      case 'interaction':
+        return (
+          <div className="settings-section">
+            {/* 1.37.0（S2）：外观分区只留「显示 / 背景」（契约 §1.1：主题 / 背景 / 玻璃）；
+                托盘、浏览器路径、快捷键、防截屏、开机自启按契约归到「交互」。 */}
+            <h3>防截屏</h3>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">防截屏 / 录屏</div>
+                <div className="setting-desc">开启后窗口内容在截图和录屏中显示为黑屏（Windows 10+）</div>
+              </div>
+              <div className="setting-control">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={!!contentProtection}
+                    onChange={async e => {
+                      const val = e.target.checked;
+                      setContentProtection(val);
+                      updateSettings({ contentProtection: val });
+                      await window.electronAPI.settingsSave({ contentProtection: val });
+                      addToast(val ? '已开启防截屏' : '已关闭防截屏', 'success');
+                    }}
+                  />
+                  <span className="switch-slider" />
+                </label>
+              </div>
+            </div>
 
             <h3 style={{ marginTop: 24 }}>窗口与启动</h3>
             <div className="setting-row">
@@ -2365,6 +2321,90 @@ export function Settings() {
             </div>
           </div>
         );
+
+      case 'danger':
+        return (
+          <div className="settings-section">
+            {/* 1.37.0（S4）：卸载入口（契约 §3.5）。卡片内自己调 app:uninstall-info / app:uninstall，
+                两层确认 + 绝对路径/体积回显 + dataDirAck 回传都在卡内实现，页面只做引用。 */}
+            <UninstallCard />
+
+            {/* 1.37.0（S2）：「遗留数据」与「恢复默认数据目录」按契约 §1.1 从数据分区搬到危险区 */}
+            <h3 style={{ marginTop: 24 }}>遗留数据</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">导出 / 清理遗留数据</div>
+                <div className="setting-desc">
+                  {legacyCounts
+                    ? LEGACY_KEYS.map((k) => `${k}=${legacyCounts[k] ?? 0}`).join(' / ')
+                    : '读取中…'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  这四个集合在 1.36.0 起没有写入方了（周报 / 录制器 / 覆盖统计 / 用例映射已下线）。
+                  <b>必须先导出成功才能清理</b>；元素库（<code>pomPages</code>）与体检历史（<code>scanRuns</code>）永不清。
+                </div>
+                {legacyExportedAt && (
+                  <div className="text-sm" style={{ marginTop: 4 }} data-legacy-exported="1">
+                    ✓ 已导出（{formatDateTime(legacyExportedAt)}），现在可以清理了
+                  </div>
+                )}
+              </div>
+              <div className="setting-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => void exportLegacyData()}
+                  disabled={!!legacyBusy}
+                >
+                  {legacyBusy === 'export' ? '导出中…' : '导出遗留数据'}
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={clearLegacyData}
+                  disabled={!legacyExportedAt || !!legacyBusy}
+                  title={legacyExportedAt ? '清空那四个集合' : '先导出一次再清理'}
+                >
+                  {legacyBusy === 'clear' ? '清理中…' : '清理遗留数据'}
+                </button>
+              </div>
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>数据目录</h3>
+            <div className="setting-row">
+              <div style={{ minWidth: 0 }}>
+                <div className="setting-label">恢复默认数据目录</div>
+                <div className="setting-desc" style={{ wordBreak: 'break-all' }}>
+                  当前：{dataInfo?.dataDir || '读取中…'}{dataInfo?.isCustom ? '（自定义）' : '（默认）'}
+                </div>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                  只改「下次启动从哪读数据」的指针，不移动、不删除任何文件；自定义目录里的数据需要你自己处理。
+                </div>
+              </div>
+              <div className="setting-control">
+                <button
+                  className="btn btn-sm btn-ghost"
+                  data-danger-reset-location="1"
+                  disabled={!dataInfo?.isCustom}
+                  title={dataInfo?.isCustom ? '重启后回到默认目录' : '当前已经是默认目录'}
+                  onClick={async () => {
+                    const r = await window.electronAPI.dataResetLocation();
+                    if (!r.success) { addToast(r.error || '操作失败', 'error'); return; }
+                    addToast('已改回默认目录，重启应用后生效', 'success');
+                    refreshBackups();
+                  }}
+                >
+                  改回默认目录
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+      default: {
+        // 归一化（契约 §1.3）保证 activeTab 只可能是 7 个合法值之一；这里是**二道保险**。
+        // 与 case 'security' 共用同一段 JSX（不是拷贝），且绝不 return null —— 那就是白屏（契约 §1.4）。
+        console.warn('[settings] 未知 tab 已回落 security:', activeTab);
+        return renderSecurityPane();
+      }
     }
   };
 
@@ -2376,27 +2416,32 @@ export function Settings() {
         <PageHead
           icon={<Icons.tool size={16} />}
           title="设置"
-          desc="安全、数据与备份、外观与交互、定时任务、关于与更新；大部分改动会自动保存，也可点右下角统一保存"
+          desc="安全 / 外观 / 交互 / 数据与备份 / 定时任务 / 关于与更新 / 危险区；大部分改动会自动保存，也可点右下角统一保存"
         />
 
         {/* 左侧竖排菜单 + 右侧内容：以前是顶部横排 tab + 600px 居中窄栏，右边大片留白 */}
         <div className="set-shell">
           <nav className="set-rail" aria-label="设置分组">
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`set-nav${activeTab === tab.id ? ' is-active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-                title={tab.hint}
-              >
-                <span className="set-nav-icon">{tab.icon}</span>
-                <span className="set-nav-text">
-                  <b>{tab.label}</b>
-                  <i>{tab.hint}</i>
-                </span>
-              </button>
-            ))}
+            {SETTINGS_TABS.map(tab => {
+              // 图标只存键名（utils/settingsTab.ts 是纯 TS，不认 JSX），节点在这里渲染
+              const TabIcon = Icons[tab.icon];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`set-nav${activeTab === tab.id ? ' is-active' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  title={tab.hint}
+                  data-settings-tab={tab.id}
+                >
+                  <span className="set-nav-icon"><TabIcon size={14} /></span>
+                  <span className="set-nav-text">
+                    <b>{tab.label}</b>
+                    <i>{tab.hint}</i>
+                  </span>
+                </button>
+              );
+            })}
           </nav>
 
           <div className="set-main">

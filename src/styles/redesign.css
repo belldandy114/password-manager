@@ -9554,3 +9554,312 @@ html[data-bg='image'] :is(.el-hit-verdict, .el-hit-log) {
   overflow-x: auto;
   tab-size: 2;
 }
+
+/* ---------------- 1.37.0（S5）网址管理卡片：账号列改为弹性宽度 + 省略号收尾 ----------------
+   用户第 5 条「卡片上账号名太长就显示不全」。
+
+   根因（不是卡片太窄，不要改卡片布局）：global.css:964-972 的
+     `.entry-card .card-credential-row .cred-account { max-width: 120px }`
+   是个**硬上限**，且账号列没有 flex 增长；旁边的 `.cred-password-wrapper` 又是默认
+   `flex: 0 1 auto`（会被挤、也可以被压），于是 40 字符账号只能吃到 120px 再被裁掉，
+   而且裁的是匿名 flex 文本、paint 不出省略号，看起来就是「显示不全」。
+
+   修法（**追加在末尾**，不改 global.css 既有段落：同选择器靠后加载即可覆盖，
+   这是本仓库「新增/修复样式一律写 redesign.css 末尾」的约定）：
+     · `.cred-account` → flex:1 1 auto + min-width:0，max-width 换成比例 62%
+       （px 上限在 1280/1440/1920 三档下表现不一致；比例跟着卡片宽度走）。
+     · 账号文本放进 `.cred-account-text` 才有 ellipsis —— flex 容器的匿名文本项
+       改不了 min-width，省略号必须由独立盒子 paint（见 EntryCard.tsx 的注释）。
+     · `.cred-password-wrapper` → flex:0 0 auto + max-width 38%，**不参与收缩**：
+       保证「•••••••• + 眼睛按钮」永远留在卡片右边界内，不会被长账号挤出去；
+       里面的密文自己 min-width:0 + ellipsis，明文很长时也只在密码列内收尾。
+     · `.cred-more`（+N 角色账号）与 `.cred-eye-btn` 都是 `flex: 0 0 auto`：按钮不许被压缩。
+   列宽合计 62% + 38% = 100%，行长由 flex-shrink 兜底，卡片不会横向溢出。
+
+   ⚠️ 本段**没有** backdrop-filter / z-index / transform / filter / contain：
+   给 .entry-card（卡片容器）任何一条都会新建层叠上下文，把卡片内部的下拉/浮层
+   关在容器里（redesign.css:7947 的告警；scripts/check-stacking.js 在盯这条）。
+   颜色也只用 var(--*) 继承，本段一条色值都没写死。
+   ================================================================ */
+.entry-card .card-credential-row .cred-account {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 62%;
+}
+.entry-card .card-credential-row .cred-account > svg {
+  flex: 0 0 auto;
+}
+.cred-account-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-card .card-credential-row .cred-more {
+  flex: 0 0 auto;
+}
+.entry-card .card-credential-row .cred-password-wrapper {
+  flex: 0 0 auto;
+  max-width: 38%;
+}
+.entry-card .card-credential-row .cred-password-wrapper > svg {
+  flex: 0 0 auto;
+}
+.entry-card .card-credential-row .cred-password {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-card .card-credential-row .cred-eye-btn {
+  flex: 0 0 auto;
+}
+
+/* ---------------- 1.37.0（S5·R4 核对发现的最小修复）设置页选中项在背景图模式下可读性 ----------------
+   现象（实测，不是推测）：`html[data-bg='image']` + 深色主题，设置页左栏选中项
+   `.set-nav.is-active` 的底色是 `var(--accent-light)`（accent 14% 透明），字色是 `var(--accent)`，
+   两层同色相叠在背景图上 —— 实测合成底色 #516a6a、字色 rgb(79,157,153)，
+   对比度只有 **1.83:1**（浅色主题同项 3.61:1，也是贴着下限）。这就是用户说的「文字跟背景一个颜色」。
+
+   为什么在背景图模式下必然踩：`backgroundAutoAccent`（默认开）是**从背景图取色**当强调色，
+   于是「强调色 ≈ 图的主色」是设计使然，accent 字压在 accent 透明底 + 同色系图上，天然低对比。
+   普通（无背景图）模式下 accent-light 压在不透明 surface 上，没有这个问题，所以修复只作用 data-bg='image'。
+
+   修法（最小面，只动这一处，颜色全部 var(--*)）：
+     · **深色**下选中底不再是「纯 accent 透明」，而是 accent 透明混一层 `var(--surface-2)` ——
+       让它在图上是一层「带色相的实底」，字色才有稳定的参照。
+       这条**只作用深色**：浅色主题同项实测 3.61:1 本来就够，改成 surface 混合后底色与
+       左栏玻璃几乎同值（与父层合成差从 15.09 掉到 1.53）→ 选中态反而「边界消失」，
+       所以浅色保持原底色不变（实测按主题分别下的结论，不是漏写）。
+     · 字色往 `var(--text-primary)` 混（深色提亮 / 浅色压深），保持强调色色相不变，
+       深浅两套都吃这条（深色 1.83 → 4.5，浅色 3.61 → 8.38）。
+     · 副标题 `<i>` 回退到 `var(--text-secondary)`（原来的 accent 75% + text-muted 同样对比不足）。
+   不改 tokens.css、不改 --glass-strength（本期不做调节器，见契约 §10 LATER-L1）。
+   ================================================================ */
+html[data-theme='dark'][data-bg='image'] .set-nav.is-active {
+  background-color: color-mix(in srgb, var(--accent-soft) 70%, var(--surface-2));
+}
+html[data-bg='image'] .set-nav.is-active,
+html[data-bg='image'] .set-nav.is-active .set-nav-text b {
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-primary));
+}
+html[data-bg='image'] .set-nav.is-active .set-nav-text i {
+  color: var(--text-secondary);
+}
+
+/* ---------------- 1.37.0（S2/S3/S4）设置细分 / 启动免密卡 / 卸载卡 的新界面样式 ----------------
+   为什么追加在末尾：三份样式表按 global → pages → redesign 加载，新样式只有写在最后才不会被前面
+   同选择器（或更低特异性）的规则压住（AGENTS.md 的约定；不要改前面文件去「猜」优先级）。
+   本段**只新增** `.au-*`（启动免密）与 `.un-*`（卸载）两组类，没有改动任何既有段落。
+
+   为什么颜色一条都没写死：主题有深/浅两套，再叠加自定义背景图的玻璃模式
+   （html[data-bg='image']），写死色值必有一处翻车。代价提示用 --warn、危险回显用 --bad、
+   成功结果用 --ok，其余全部走 --text-* / --line-* / --surface-*。
+
+   为什么**不加** backdrop-filter：这些卡都挂在设置的滚动容器 `.settings-section` 里，
+   给卡片新建层叠上下文会把卡内的下拉/弹层关在卡片里（redesign.css:7947 的告警，
+   scripts/check-stacking.js 在盯这条）。玻璃观感由 `.settings-section` 已有的 `--glass-card` 提供，
+   卡内小色块只用「半透明底 + 细边框」，背景图模式下抬手就能看见图，不会变成实心白板。
+
+   核对结论（html[data-bg='image'] × 深/浅，实测值见回执）：`.au-cost` / `.au-reason` /
+   `.un-echo` / `.un-chip` 的文字与合成底色对比度均 ≥ 3.0，边框 alpha > 0.02（边界不消失）。
+   ================================================================ */
+
+/* ---- 启动免密卡 ---- */
+.au-cost {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.au-reason {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.au-updated {
+  margin-top: 6px;
+}
+.au-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--bad) 42%, transparent);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.au-form {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+.au-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.au-form-row input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.au-form-note {
+  margin-top: 6px;
+}
+
+/* ---- 卸载卡 ---- */
+.un-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.un-meta-k {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.un-path {
+  font-family: var(--font-mono);
+  color: var(--text-1);
+  word-break: break-all;
+}
+.un-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.un-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface-3) 62%, transparent);
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+.un-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.un-note[data-un-dev="1"],
+.un-note[data-un-unsupported="1"] {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--text-1);
+}
+.un-result {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ok) 42%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--text-1);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.un-result-sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.un-ask {
+  margin: 0 0 10px;
+  color: var(--text-1);
+  line-height: 1.6;
+}
+.un-ask-list > div {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.un-echo {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
+/* ---------------- GL-10（t12）dark + 自定义背景图：设置左栏两级文字提到 WCAG 正文门槛 4.5:1 ----------------
+   现象（qa t10 实测 + 本次复测，同一口径「文字色 vs 实际合成底色」）：
+   `html[data-theme='dark'][data-bg='image']` 下设置页左栏 `.set-rail` 的导航文字压在
+   「半透明 rail + 背景图」上，底色被图抬到中灰，原配色只剩
+     .set-nav-text b（12.5px/600，选中 700）2.69:1
+     .set-nav-text i（10.5px 副标题）      2.11:1
+   qa 按 3.0 口径判过，但 12.5px **不属于 WCAG 大文本例外**（大文本是 ≥18.66px 粗体 或 ≥24px 常规），
+   正文门槛就是 4.5:1，所以这是实现要修的问题，不是阈值要放宽（契约 §0.3 阈值不动）。
+
+   修法（只动文字色，字号/字重/行高/布局/rail 底色与边框一律不动）：
+     · 主标题：var(--text-primary) 混 var(--on-accent)（= 「深色块上的文字」那个令牌）提到近白；
+     · 副标题：var(--text-primary) 混 var(--text-secondary) 提一档，达标同时保留下级关系；
+   两级各自的实测值见回执（修复后 5.68 / 4.63，比值 ≈ 1.23，≥1.2 的层级差成立）。
+
+   为什么选中项也用同一套两级色、不再走 accent 字：选中项底色带 accent 透明罩、比未选中**更暗**，
+   一旦给它的标题再叠 accent（亮度更低），实测会出现「副标题比标题还亮」的倒挂
+   （accent 30% 混合下标题 6.08 vs 副标题 5.96）。选中态仍由 accent 底 + 图标承担，字色统一成两级即可。
+
+   作用域严格限定 `html[data-theme='dark'][data-bg='image']`：普通模式（无背景图）与浅色模式
+   一个字节都不变（改前/改后实测值逐项相同，见回执）。颜色全部由 var(--*) 派生，没有写死色值。
+   顺带说明 hover：`.set-nav:hover` 仍改背景（可见反馈），本段只固定文字色，
+   避免 hover 把文字又拉回低对比度。
+   ================================================================ */
+html[data-theme='dark'][data-bg='image'] .set-rail .set-nav .set-nav-text b {
+  color: color-mix(in srgb, var(--text-primary) 56%, var(--on-accent));
+}
+html[data-theme='dark'][data-bg='image'] .set-rail .set-nav .set-nav-text i {
+  color: color-mix(in srgb, var(--text-primary) 84%, var(--text-secondary));
+}
+
+/* ---------------- GL-10 浅色半边（t14）light + 自定义背景图：rail 副标题 4.13 → ≥4.5 ----------------
+   上一轮（t12）只修了 dark，浅色这一格一直在 4.5 以下：同一张 fixture、同一口径
+   （文字色 vs 实际合成底色）实测 `.set-nav-text i`（非选中、10.5px）= **4.13:1**。
+   WCAG 不区分主题，浅色用户一样要读得清，所以这里按同一 4.5 口径补齐（阈值不放宽）。
+
+   为什么 `b` 也跟着调深了：`i` 要 ≥4.5 就必须比原 b（5.19）再深一档才追得上，
+   而 `b/i ≥ 1.2` 的层级要求反推回来 b 至少要 ≥ 4.5×1.2 = 5.4；只抬 i 会让两级几乎同深
+   （b 5.19 / i 4.5 ≈ 1.15）。所以两级一起加深，实测 **b 6.25 / i 4.83 = 1.29**（层级差反而比原来大）。
+   加深后的 b（6.25）与「无背景图」浅色模式的 b（6.53）基本一致，观感更统一。
+
+   选中项**不动**（选择器带 `:not(.is-active)`）：它本来就达标（b 7.55 / i 4.68，比值 1.61），
+   而且它是 accent 字压 accent 底；再按未选中的中性色改会把 accent 识别色洗掉、还可能造成亮度倒挂
+   （t12 在深色那边踩过：标题 6.08 < 副标题 5.96）。
+
+   ⚠️ 已知物理上限（写进交付说明的已知限制，可直接抄）：
+     深色主题 + 接近纯白的背景图时，半透明玻璃底会被背景抬到中灰（约 #8a8d8f），
+     此时任何「浅色文字」都到不了 4.5:1（纯白文字理论上限也只有约 2.9:1）。
+     这是「深色主题 + 亮图」的物理上限，不是配色没调好；缓解手段是设置里既有的两个旋钮：
+     调低「图片不透明度」（backgroundOpacity）或调高「压暗」（backgroundDim），把玻璃底重新压暗。
+     同理，浅色主题 + 极暗图会让玻璃底变深，浅色主题的深色文字同样可能掉到 4.5 以下。
+
+   作用域严格 `html[data-theme='light'][data-bg='image']`：dark 系列与两个无背景图模式
+   一个字节都不变（改前/改后实测逐项相同，见回执）。颜色全部由 var(--*) 派生，没有写死色值。
+   ================================================================ */
+html[data-theme='light'][data-bg='image'] .set-rail .set-nav:not(.is-active) .set-nav-text b {
+  color: color-mix(in srgb, var(--text-primary) 18%, var(--text-secondary));
+}
+html[data-theme='light'][data-bg='image'] .set-rail .set-nav:not(.is-active) .set-nav-text i {
+  color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-muted));
+}
