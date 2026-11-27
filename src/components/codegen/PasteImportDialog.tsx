@@ -184,11 +184,12 @@ export function PasteImportDialog({
       </div>
 
       <textarea
+        className="paste-import-input"
         value={text}
         aria-label="要识别的粘贴内容"
         onChange={(e) => setText(e.target.value)}
         placeholder={'把 Recorder 导出的 JSON / Playwright codegen 脚本 / Elements 复制的 HTML 粘到这里'}
-        rows={6}
+        rows={10}
         spellCheck={false}
       />
 

@@ -9530,3 +9530,27 @@ html[data-bg='image'] :is(.el-hit-verdict, .el-hit-log) {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* ---------------- 1.37.1 粘贴导入：输入框拉满 + 加高 ----------------
+   原因：「粘贴导入元素」弹窗里的 textarea 没写宽度，落回浏览器默认尺寸
+   （约 20 列 ≈ 160px），而弹窗宽 520px —— 粘一段 codegen 脚本只看得到
+   两行半截，根本看不出粘进来的是什么。
+   只覆盖这一个弹窗里的 textarea（挂 .paste-import-input），不动基础 textarea
+   规则：其它页面（接口调试请求体、周报正文等）的 textarea 仍按各自容器走。
+   背景不在这里管：背景图模式下 html[data-bg='image'] 的通用 textarea 规则
+   已经把 --input-bg 换成 --glass-input，再写一条就是玻璃叠玻璃。 */
+.paste-import-input,
+.paste-import textarea {
+  width: 100%;
+  min-height: 200px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 12px;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 2;
+}
