@@ -130,9 +130,20 @@ describe('pomModel：kind=pw 的下拉项与校验（文案逐字定稿见渲染
     className: 'LoginPage', elements: els, updatedAt: '2026-11-27T00:00:00.000Z',
   });
 
-  it('KINDS 含 pw 一项，文案逐字 = `Playwright 链（原样存）`，且原 4 项顺序不变', () => {
-    expect(KINDS.map((k) => k.id)).toEqual(['css', 'xpath', 'text', 'role', 'pw']);
+  it('KINDS 10 项（A₀：5 既有 + 5 新增），pw 文案逐字不变、前 4 项顺序不变且 pw 在第 5 位', () => {
+    // A₀ [A0-1]：取值 5 → 10。`pomModel.KINDS` 现在是 `POM_LOCATOR_KINDS` 的再导出，
+    // 所以**期望值**从 5 项改成 10 项；实现一行不动（这条曾经是断言没跟上实现）。
+    expect(KINDS.map((k) => k.id)).toEqual([
+      'css', 'xpath', 'text', 'role', 'pw',                       // 既有 5 种（顺序不变）
+      'label', 'placeholder', 'alttext', 'title', 'testid',        // A₀ 新增 5 种
+    ]);
+    expect(KINDS).toHaveLength(10);
+    // 老口径的三条约束原样保留
+    expect(KINDS.some((k) => k.id === 'pw')).toBe(true);
     expect(KINDS[4].label).toBe('Playwright 链（原样存）');
+    expect(KINDS.slice(0, 4).map((k) => k.id)).toEqual(['css', 'xpath', 'text', 'role']);
+    // 追加：pw 位于第 5 位（与 `POM_LOCATOR_KINDS` 的既有顺序一致）
+    expect(KINDS[4].id).toBe('pw');
   });
 
   it('pw 链含换行 → 校验文案逐字命中', () => {

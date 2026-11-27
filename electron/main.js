@@ -222,6 +222,9 @@ let trashCache = { password: null, data: null };
 
 // Drops every in-memory secret: derived key plus decrypted vault/trash.
 function clearCaches() {
+  // 元素库 A₂（[A2-12]）：锁定即关点验浏览器 —— 锁完之后主进程拿不到 vault 明文，
+  // 那个还带页面登录态、对本机开放调试端口的浏览器只剩风险、没有收益。
+  try { stopHitSessionForLock(); } catch { /* 锁定路径不许抛 */ }
   keyCache = null;
   keyMemo.clear();
   vaultCache = { password: null, data: null };
@@ -1643,11 +1646,12 @@ const { shouldNotifyUpdate } = require('./update-check');
 const { registerFileIpc } = require('./ipc-files');
 const { registerCasesIpc } = require('./ipc-cases');
 const { registerToolsIpc } = require('./ipc-tools');
-const { registerBrowserIpc } = require('./ipc-browser');
+const { registerBrowserIpc, findBrowser } = require('./ipc-browser');
 const { registerJmeterIpc } = require('./ipc-jmeter');
 const { registerJmxLibIpc } = require('./ipc-jmxlib');
 const { registerScanIpc } = require('./ipc-scan');   // 本地测试资产工作站（13 项）：4 个新 IPC 域，W1 只接线
 const { registerElementIpc } = require('./ipc-element');   // 元素库 · 定位/试跑（B8）：el:* 4 条通道
+const { registerHitIpc, stopHitSessionForLock } = require('./ipc-hit');   // 元素库 A₂：el:hit-test（CDP 点验，1 条通道）
 const { registerTdgIpc } = require('./ipc-tdg');
 const { registerSystemIpc } = require('./ipc-system');
 const { registerCodelabIpc } = require('./ipc-codelab');
@@ -2276,6 +2280,18 @@ function setupIpcHandlers() {
   registerScanIpc({ getMainWindow: () => mainWindow });   // W1 只接线（占位）：业务分别落在 W5 / W6-B / W6-A / W2-B
   // 元素库 · 定位/试跑（B8）：试跑用 which('node') + 临时 .mjs 跑 Playwright，主进程不引浏览器库
   registerElementIpc({ getMainWindow: () => mainWindow });
+  // 元素库 A₂ · CDP 点验（[A2-1] 单通道 3 op）：起用户本机 Chrome/Edge → 连 CDP → 注入固定脚本 → 回报事实 → 干净退出。
+  // 浏览器路径表复用 ipc-browser 的 findBrowser；vault 读与审计注入进来（域模块看不到本文件的模块级状态）。
+  registerHitIpc({
+    app,
+    dataDir: DATA_DIR,
+    findBrowser: (id) => findBrowser(id),
+    isUnlocked: () => currentPassword !== null,
+    getPassword: () => currentPassword,
+    readVault: (password) => loadVault(password),
+    audit: (entry) => appendAudit(entry),
+    log: (msg) => console.log(msg),
+  });
   registerTdgIpc({ getMainWindow: () => mainWindow });
 
   // 1.36.0：UI 录制器整块下线（会话管理器 / 5 条 invoke / record:event 推送 / 四个停录触发源）。

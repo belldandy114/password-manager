@@ -15,9 +15,12 @@ import type { GeneratedFile } from '../../utils/codegen/escape';
 import { ElementTable } from './ElementTable';
 import type { ElementMeta } from './ElementTable';
 import { saveJavaFile, GeneratedFilesView } from './GeneratedFiles';
-import { blankPage, blankElement, cleanPageForWrite, validatePage, trimPagesForWrite, MAX_PAGES, MAX_ELEMENTS, EL_WORK_DIR_KEY } from './pomModel';
+import { blankPage, blankElement, cleanPageForWrite, validatePage, trimPagesForWrite, normalizePageKinds, MAX_PAGES, MAX_ELEMENTS, EL_WORK_DIR_KEY } from './pomModel';
 import type { PomWritePlan } from './pomModel';
 import type { PomPage, PomElementRow } from './pomModel';
+// 1.37.0（S3）：▶ 校验面板（CDP 点验）。**与「试跑」是两件事**，互不替代（[A2-14]）：
+// 试跑 = 子进程 + Playwright（验「Playwright 认不认」）；点验 = 本机浏览器 + CDP（验「现在指到谁」）。
+import { HitTestPanel } from './HitTestPanel';
 // 1.36.0（B6 / 裁定 Z2）：引用守卫已从录制器模型（`record/recorderModel`，B7 整块删除）搬到
 // `utils/codegen/elementUsage` —— 这三个纯函数还要继续守着元素库（老库里仍存 uiRecordings）。
 import { elementUsage, canDeleteElement, scanElementRefs } from '../../utils/codegen/elementUsage';
@@ -297,12 +300,14 @@ export function ElementLibTab({
     const first = items[0];
     if (!first) return;
     setActiveId(first.id);
-    setDraft({ ...first, elements: first.elements.map((e) => ({ ...e })) });
+    // 1.37.0（S3 / [A0-3] ②）：读库投影先归一 kind —— 老记录缺 kind 时下拉显示 `css` 且可保存，
+    // 不归一的话 `<select value={undefined}>` 匹配不到任何 option，界面看起来像「类型丢了」。
+    setDraft(normalizePageKinds({ ...first, elements: first.elements.map((e) => ({ ...e })) }));
   }, [loading, items, draft]);
 
   const select = (p: PomPage) => {
     setActiveId(p.id);
-    setDraft({ ...p, elements: p.elements.map((e) => ({ ...e })) });
+    setDraft(normalizePageKinds({ ...p, elements: p.elements.map((e) => ({ ...e })) }));
     setErr('');
     setFiles([]);
     setGenErr('');
@@ -369,7 +374,11 @@ export function ElementLibTab({
     const items: ElTrialInputItem[] = picked.map((el) => ({
       kind: el.kind,
       locator: el.locator,
-      ...(el.kind === 'role' ? { roleName: String(el.role || '') } : {}),
+      // t26（AR-4 组件侧的第三处，与 HitTestPanel / 生成器同口径 `String(x).trim()`）：
+      // 这里原来写 `String(el.role || '')` —— 用户在元素表里敲 ` 提交 ` 时，
+      // 试跑会把带空格的可访问名发下去，Playwright 的 `getByRole(name)` 是全等匹配 → 必然 0 命中，
+      // 而界面报「选择器未命中」（[A0-6] 那类最难排查的假红）。三处必须同一个口径。
+      ...(el.kind === 'role' ? { roleName: String(el.role ?? '').trim() } : {}),
       ...(el.name ? { name: el.name } : {}),
     }));
     setTrialBusy(true);
@@ -822,6 +831,21 @@ export function ElementLibTab({
                   onPatch={patchElement}
                   onRemove={removeElement}
                   metaOf={metaOf}
+                />
+
+                {/*
+                  1.37.0（S3）：▶ 校验（CDP 点验）。
+                  **常挂**（不是点 ▶ 才挂载）：① 用户得先看到入口才知道有这个能力；
+                  ② `scripts/ui-glass-opaque-scan.js` 只扫「已经在 DOM 里」的元素，
+                  跑完才出现的面板永远扫不到，等于玻璃门禁永远不覆盖它。
+                  **放在元素表之后**（不是浮层/绝对定位）：浮层会压住元素表的操作列。
+                */}
+                <HitTestPanel
+                  pageId={draft.id}
+                  baseUrl={draft.baseUrl}
+                  elements={draft.elements}
+                  pageSaved={items.some((p) => p.id === draft.id)}
+                  addToast={addToast}
                 />
                 {/*
                   1.36.0（B8）：试跑结果。四种状态（命中 1 / 未命中 / 命中多个 / 未执行）各占一行，

@@ -9336,3 +9336,197 @@ html[data-bg='image'] pre.dev-code {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* ================================================================
+   1.37.0（元素库 A₀A₁A₂ / S3）▶ 点验面板 .el-hit（HitTestPanel.tsx）
+   ----------------------------------------------------------------
+   落在文件末尾的理由（AGENTS.md 硬约束）：三份样式表按
+   global.css → pages.css → redesign.css 顺序加载，同名选择器重复 263 个
+   （声明冲突 253 + 完全重复 10）。新增/修复样式一律写在本文件末尾并注明原因，
+   不去改前面两个文件「猜优先级」——按钮变形那次就是这么发生的。
+
+   1) **面板本体不给玻璃**：它挂在 .pnl（「页面基础信息」）里面，玻璃由 .pnl 提供
+      （redesign.css:7863 的 --glass-card + blur）。再给它一层 = 玻璃叠玻璃，
+      blur 二次叠加会在边缘出脏边。所以 .el-hit 及其内部表格/行/标签全部 transparent，
+      只用 --line-subtle 分隔（同屏玻璃叠层 = 面板 + 弹窗，不超过 2 层）。
+   2) **玻璃只在 data-bg='image' 下生效**：本段唯一带背景的规则是下面那条
+      `html[data-bg='image'] :is(.el-hit-verdict, .el-hit-log)`，token 用
+      --glass-input-soft（「结果区 / 日志区」档，tokens.css:177，与 .tb-pre / .perf-log /
+      .busy-progress 同档）。实色模式下它保持 transparent，不会出现「毛玻璃盖实色」的脏边。
+   3) **本段 0 处 backdrop-filter / filter / transform / contain / z-index**：
+      容器带这些属性会新建层叠上下文，把内部下拉关进容器（tokens.css R2 与
+      scripts/check-stacking.js 在盯这条；redesign.css:7928-7931 有同款踩坑记录）。
+   4) **字体不堆叠**：字号只用 3 档（--fs-md 13.5 正文 / --fs-sm 12.5 说明与按钮 /
+      --fs-xs 11.5 标签与进度），字重 3 档（400 正文 / 500 按钮 / 600 结论句）；
+      **面板内不起第二个标题**（面板头只有外层那一行 .pnl-title），也不出现 h 级元素。
+      等宽只给三处：定位器原文、错误码、日志尾部。
+   5) 虚线红框只画在这里（面板内）：`data-hit-state='not-visible'` 时结论行左边条
+      与状态标签外框改虚线红（var(--bad)）。**不改被验页面的样式** ——
+      [A2-7] 的 CDP 白名单里没有任何可写页面样式的调用（Overlay 只能 highlightNode）。
+   ================================================================ */
+
+.el-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-subtle);
+  background: transparent; /* 玻璃由外层 .pnl 提供（见本段 1）*/
+}
+
+.el-hit-bar {
+  display: flex;
+  flex-wrap: wrap; /* 窄档换行，而不是把按钮压成半截字 */
+  align-items: center;
+  gap: 8px;
+}
+
+/* 按钮不换行截断：flex 默认会压缩子项，缩到文字宽度以下就出现「依次校验全…」 */
+.el-hit-bar > .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.el-hit-pick {
+  max-width: 220px;
+  min-width: 120px;
+  flex: 0 1 auto;
+}
+
+.el-hit-tag-wire {
+  display: inline-flex;
+  align-items: center;
+}
+
+.el-hit-progress {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums; /* 数字列：等宽数字，跳动时不抖 */
+  white-space: nowrap;
+}
+
+.el-hit-verdict {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  /* 中文正文行高 1.7：tokens 只有 1.28 / 1.55 两档，1.55 对 13.5px 的长句偏挤；
+     新增 --lh 令牌属全站级改动，本批未授权 → 写字面量并留此注释。 */
+  line-height: 1.7;
+  color: var(--text-1);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  word-break: break-word;
+}
+
+.el-hit-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.el-hit-facts > .num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 定位器列的下限不在 CSS 里：`.tbl` 是 `table-layout: fixed`（见 redesign.css:9222-9240 的注释），
+   这种布局下**单元格的 min-width 不参与列宽分配**（写了也是死声明），列宽只能由第一行的
+   `width` 决定。所以「定位器列不要被压到 0 宽」的修法落在 `ElementTable.tsx` 的 `th` 上
+   （`width: 240`），横向滚动交给 .dev-scroll（它本来就 overflow:auto，8920-8936）。 */
+
+/* 等宽只给三处：定位器原文 / 错误码 / 日志尾部（字体族，不新开字号档） */
+.el-hit-code,
+.el-hit-locator,
+.el-hit-log {
+  font-family: var(--font-code);
+  font-size: var(--fs-sm);
+}
+
+.el-hit-locator {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.el-hit-log {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+}
+
+/* 「命中但不可见」：虚线红框（只在面板内；见本段 5） */
+.el-hit[data-hit-state='not-visible'] .el-hit-verdict {
+  border-left: 2px dashed var(--bad);
+}
+
+.el-hit[data-hit-state='not-visible'] .el-hit-tag-wire {
+  padding: 1px;
+  border: 1px dashed var(--bad);
+  border-radius: var(--r-sm);
+}
+
+/* ---- 玻璃层（本段唯一带背景的一条；仅背景图模式生效，实色模式保持 transparent） ---- */
+html[data-bg='image'] :is(.el-hit-verdict, .el-hit-log) {
+  background-color: var(--glass-input-soft);
+}
+
+/* ================================================================
+   1.37.1（t22）元素表「操作列」内容盒修正：行级 5px 横向溢出
+   ----------------------------------------------------------------
+   症状（qa t15 的 4 条几何红，四档视口各 1 条）：
+     div.dev-scroll > table.tbl > tbody > tr  scrollWidth 1001 > clientWidth 996
+   实测根因（逐格量过，不是猜）：`.tbl td` 的左右内边距各 16px，
+   删除列声明宽 44px → 内容盒只剩 12px，而删除按钮实测 **33px** 宽
+   → 右沿 16 + 33 = 49 > 44，**每一行**都比表格宽 5px（10/10 行，四档一致）。
+   （「上次校验」那格的长文案是另一件事：它是单元格级 max-content 263 > 132，
+     已在 ElementTable.tsx 里用「缩短可见文案 + title 放全文」收敛，不是这一条。）
+
+   修法：**不动列宽合计**（七列仍是 996），只把这一个操作格的横向内边距收到 4px
+   （4 + 33 + 4 = 41 ≤ 44），按钮不再越界；行级横向滚动仍旧归容器 `.dev-scroll`
+   （它本来就是 overflow-x:auto，见 8920-8936）。
+   ⚠️ 这里**没有** overflow:hidden / text-overflow：裁切会把按钮切掉一半，
+   等于用「看不见」冒充「没有溢出」。
+   作用域用 `tr:has(select)` 限定元素库这张表（每行都有类型下拉），不牵连其它 `.tbl`。
+   ================================================================ */
+.dev-scroll > .tbl tbody tr:has(select) > td:last-child {
+  padding-inline: 4px;
+}
+
+/* ================================================================
+   1.37.2（t22）元素表两格派生只读文本：允许换行，不裁切
+   ----------------------------------------------------------------
+   症状（qa t15 的几何红，t22 复现）：
+     td[data-col="last-check"]  scrollWidth 263 > clientWidth 132
+   内容 = 「未校验（pw 链需在 Playwright 中验证）」（pw 元素的固定口径）；
+     td[data-col="last-check"]  scrollWidth 163 > clientWidth 132（试跑过的行，含时间）
+
+   根因不是列宽，也不是文案太长，而是 **t20 给这两格加了 `white-space: nowrap` 当兜底**：
+   一行放不下 → 只能靠 `overflow:hidden + text-overflow:ellipsis` 裁掉后半句，
+   于是「pw 链需在 Playwright 中验证」变成只能 hover 才读得到（违反「关键信息不得只靠 hover」）；
+   同时 max-content 仍是 263，几何门照样红（`overflow:hidden` 不会改变 scrollWidth）。
+
+   修法：**允许换行**（这才是默认行为，nowrap 是后来加的）。折行后最长一行 ≤ 列宽，
+   状态词「未校验 / 命中 N」在首行常显，完整解释也在可见文本里；行高与相邻输入框（34px）一致，
+   不额外占行。`overflow-wrap: anywhere` 兜住将来可能出现的长 latin token（URL / 选择器片段）。
+   ⚠️ 这里**没有** overflow:hidden、**没有** ellipsis、**没有** white-space:nowrap：
+   横向滚动仍然只归容器 `.dev-scroll`（见 8920-8936），单元格只负责把文字排在自己的列里。
+   作用域 `tr:has(select)` 限定元素库这张表，不牵连其它 `.tbl`。
+   ================================================================ */
+.dev-scroll > .tbl tbody tr:has(select) > td[data-col] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

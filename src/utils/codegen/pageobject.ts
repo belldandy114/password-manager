@@ -10,8 +10,10 @@
  *    "某个时刻的元素快照"，页面一跳就容易拿去用错地方；方法每次返回新的 Locator，语义最干净。
  * 2. **`open()` 把 baseUrl 落到 `page.navigate(...)`**：输入里 `baseUrl`/`pageName` 若只出现在注释里，
  *    就是死参数；给一个 `open()` 既让 baseUrl 有用，也省掉每个用例手写导航。
- * 3. **`kind` 的映射写死**（[C-92]）：css / xpath / text / role 四种，role 只认 Playwright
- *    `AriaRole` 枚举里存在的名字；映射不上时**不静默**，降级成 `page.locator("role=...")` 并压告警。
+ * 3. **`kind` 的映射写死**：**10 种**（契约 [A0-1]）—— css / xpath / text / role / pw 五种既有，
+ *    加 label / placeholder / alttext / title / testid 五种（A₀）。role 只认 Playwright `AriaRole`
+ *    枚举里存在的名字；映射不上时**不静默**，降级成 `page.locator("role=...")` 并压告警（[Z-2]：
+ *    不用 `AriaRole.valueOf`——那是 Java 枚举的**必抛**运行期异常，比兜底文本更难排查）。
  * 4. **名字冲突必须可预期**：元素名重复 → 加数字后缀并压告警（[C-93] 给了固定文案）；
  *    `page` / `open` 这两个方法名先占位，元素叫 `page` 时自动变成 `page2`，否则生成物编不过。
  *
@@ -24,15 +26,60 @@ import {
 } from './escape';
 
 /**
- * 元素种类：css / xpath / text / role（[C-92]）+ **1.36.0（B6）新增 `pw`**。
- * 加新的要同时改映射与单测。
+ * 元素种类：**10 种**（契约 [A0-1]，`[Z-1]` 追认）。
+ *
+ * 5 既有（[C-92] + 1.36.0 B6 的 `pw`）：css / xpath / text / role / pw。
+ * 5 新增（A₀）：label / placeholder / alttext / title / testid —— 都是 Playwright 的
+ * `getByLabel` / `getByPlaceholder` / `getByAltText` / `getByTitle` / `getByTestId` 一族。
+ *
+ * **为什么是 10 而不是 9**：参考工程 `1148872017/test-tool` 是 9 种，因为它**没有 `pw`**
+ * （它不做「原样存一行 Playwright 链」这件事）；本仓库在 1.36.0 已经多了一个 `pw`，
+ * 所以 9 + pw = 10。若将来下线 `pw`，才回到 9，且必须同步删掉 [A0-6]③ 与 [A0-7]。
  *
  * `pw` = 「Playwright 链原样存」：用户在元素库里粘的就是一行 JS（`page.getByRole(...).filter(...)`），
  * 这里只做机械改写（见 `pwChainToJava`）。为什么需要它：css/xpath 表达不了 `hasText` / `hasNotText`
  * 这类**语义过滤**，硬塞进 css 会变成 `:has-text()` 这种非标准写法（Playwright 认、浏览器不认），
  * 而元素库的定位器要同时服务「浏览器内校验」和「生成 Java」两个消费者。
+ *
+ * ⚠️ 这份联合类型是**单一真源**：界面下拉（`pomModel.ts` 的 `KINDS`）与主进程白名单
+ * （`electron/element-args.js` 的 `KINDS`）都必须与 `POM_LOCATOR_KINDS` 逐项同序，
+ * 不许再写第二份手写数组（[A0-1] 的证伪形态）。
  */
-export type PomLocatorKind = 'css' | 'xpath' | 'text' | 'role' | 'pw';
+export type PomLocatorKind =
+  | 'css' | 'xpath' | 'text' | 'role' | 'pw'          // 既有 5 种
+  | 'label' | 'placeholder' | 'alttext' | 'title' | 'testid';  // A₀ 新增 5 种
+
+/**
+ * 有序清单（[A0-1]）：顺序 = 界面下拉顺序 = 文档表格顺序 = 主进程白名单顺序。
+ * 改这一份就要同步 `electron/element-args.js` 的 `KINDS`（parity 单测会红）。
+ */
+export const POM_LOCATOR_KINDS: readonly { id: PomLocatorKind; label: string }[] = [
+  { id: 'css', label: 'css 选择器' },
+  { id: 'xpath', label: 'xpath' },
+  { id: 'text', label: '可见文本' },
+  { id: 'role', label: '角色（role）' },
+  { id: 'pw', label: 'Playwright 链（原样存）' },
+  { id: 'label', label: 'label 文本' },
+  { id: 'placeholder', label: 'placeholder 文本' },
+  { id: 'alttext', label: 'alt 文本' },
+  { id: 'title', label: 'title 属性' },
+  { id: 'testid', label: 'data-testid' },
+];
+
+/** 10 个 id 的纯字符串视图（归一与白名单判断用，不另建数组语义） */
+const KIND_IDS: readonly string[] = POM_LOCATOR_KINDS.map((k) => k.id);
+
+/**
+ * kind 归一（[A0-3]）：是清单里的 id（**大小写不敏感、两端空白忽略**）→ 原样返回该 id；
+ * 其它一切（`undefined` / `null` / 空串 / 数字 / 对象 / 未收录的字符串）→ `'css'`。
+ *
+ * 为什么兜底成 css：老库里的 `kind` 缺失是历史数据，拦下来等于「打开老元素就退化到无法保存」；
+ * 而 `css` 是唯一能对任意字符串都不崩的解释（最坏是运行期 not found，不会生成非法 Java）。
+ */
+export function normalizeLocatorKind(raw: unknown): PomLocatorKind {
+  const s = String(raw ?? '').trim().toLowerCase();
+  return (KIND_IDS.includes(s) ? s : 'css') as PomLocatorKind;
+}
 
 export interface PomElement {
   /** 展示名，写在方法注释里；没有 ASCII 时也用作方法名的来源之一 */
@@ -108,6 +155,25 @@ const ARIA_ROLES = new Set([
 function ariaRoleOf(raw: string): string | null {
   const key = String(raw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   return ARIA_ROLES.has(key) ? key : null;
+}
+
+/**
+ * role 原文 → Java 侧的定位表达式（契约 [A1-2]，`[Z-2]` 定死口径）。
+ *
+ * - 已知（82 项内）：`{ expr: 'AriaRole.BUTTON', aria: true }`
+ * - 未知：`{ expr: 'page.locator("role=fancy-widget")', aria: false }` + 压 1 条告警
+ *
+ * **永不返回 null、永不抛**，也**永不生成 `AriaRole.valueOf`** ——Java 的 `AriaRole` 是真枚举，
+ * `Enum.valueOf` 对不存在的常量名**固定抛** `IllegalArgumentException`，编得过、跑到就 100% 崩，
+ * 而 `page.locator("role=x")` 不命中时是超时 + 截图 + 面板高亮（可查）。同样是不工作，一个能定位、一个只能猜。
+ */
+function ariaRoleExpr(raw: string, warnings: string[]): { expr: string; aria: boolean } {
+  const role = ariaRoleOf(raw);
+  if (!role) {
+    warnings.push(`role 无法映射到 AriaRole：${raw}，已用 page.locator("role=${raw}") 兜底`);
+    return { expr: `page.locator(${javaString(`role=${raw}`)})`, aria: false };
+  }
+  return { expr: `AriaRole.${role}`, aria: true };
 }
 
 /* ================================================================
@@ -299,14 +365,24 @@ export function pwChainToJava(chain: string): PwChainResult {
     }
 
     if (lower === 'getbyrole') {
-      // 规则⑥
+      // 规则⑥ —— **与 `locatorExpr` 的 role 分支同一个入口**（契约 [A1-2]，review AR-1）：
+      // 已知角色 → `AriaRole.<KEY>`；未知角色 → `page.locator("role=<raw>")` 兜底（**不再 fail 整链**）。
+      // 两条路径行为一致是硬要求：同一个未知角色，走 kind=role 与走 pw 链必须得到同一条表达式 + 同一条告警。
       const commaAt = args.indexOf(',');
       const roleRaw = commaAt >= 0 ? args.slice(0, commaAt) : args;
       const optsRaw = commaAt >= 0 ? args.slice(commaAt + 1) : '';
-      const role = ariaRoleOf(unquote(roleRaw));
-      if (!role) return fail(`getByRole 的 role「${unquote(roleRaw)}」映射不上 AriaRole`, fallbackCss);
+      const r = ariaRoleExpr(unquote(roleRaw), warnings);
+      if (!r.aria) {
+        // `r.expr` 形如 `page.locator("role=x")`：首段整条用它；非首段去掉 `page.` 前缀，
+        // 变成链上的一段 `locator("role=x")`（`Locator.locator(selector)` 合法，语义等价兜底）
+        parts.push(parts.length ? r.expr.replace(/^page\./, '') : r.expr);
+        continue;
+      }
       const nameRaw = optionOf(optsRaw, 'name');
-      const call = `getByRole(AriaRole.${role}${nameRaw ? `, new Page.GetByRoleOptions().setName(${javaString(regexToText(nameRaw).text)})` : ''})`;
+      // AR-4：roleName 一律 trim（与 `locatorExpr` 的 setName 同一口径）——
+      // 不 trim 会生成 `setName(" 提交 ")`，可访问名匹配不上
+      const roleName = nameRaw ? regexToText(nameRaw).text.trim() : '';
+      const call = `getByRole(${r.expr}${roleName ? `, new Page.GetByRoleOptions().setName(${javaString(roleName)})` : ''})`;
       parts.push(parts.length ? call : `page.${call}`);
       continue;
     }
@@ -329,28 +405,44 @@ export function pwChainToJava(chain: string): PwChainResult {
 }
 
 /* ================================================================
-   定位器表达式（[C-92] 的四种映射 + B6 的 pw）
+   定位器表达式（[A0-2] 的 10 种映射）
    ================================================================ */
+
+/**
+ * 脏 kind 在告警里的**显示值**（review AR-8）。
+ *
+ * 老库里有 `kind` 字段缺失的元素（1.34.0 及以前），告警原本会拼成
+ * `未知的元素类型：，已按 css 处理` —— 冒号后面是空的，读的人根本不知道是"没填"还是"填了个看不见的东西"。
+ * 口径：拿实际值（两端空白去掉）；空 / 只有空白 → 固定文案 `（空）`；**任何情况下都不出现 `undefined`**。
+ */
+function rawKindText(raw: string): string {
+  return String(raw ?? '').trim() || '（空）';
+}
 
 function locatorExpr(el: PomElement, warnings: string[], displayName: string): string {
   const loc = String(el.locator ?? '');
-  switch (el.kind) {
+  // 调用点 ①（[A0-3]）：先把 kind 归一，脏值一律当 css；同时保留既有告警文案（不静默）
+  const rawKind = String(el.kind ?? '');
+  const kind = normalizeLocatorKind(el.kind);
+  if (rawKind !== kind) {
+    warnings.push(`未知的元素类型：${rawKindText(rawKind)}，已按 css 处理`);
+  }
+  switch (kind) {
     case 'css':
       return `page.locator(${javaString(loc)})`;
     case 'xpath':
-      // Playwright 的 xpath 引擎前缀必须带，否则会按 css 解析
+      // Playwright 的 xpath 引擎前缀必须带，否则会按 css 解析；库里存的是**不带前缀**的表达式（[A0-2] 第 2 行）
       return `page.locator(${javaString(`xpath=${loc}`)})`;
     case 'text':
       return `page.getByText(${javaString(loc)})`;
     case 'role': {
-      const role = ariaRoleOf(loc);
-      if (!role) {
-        // 映射不上不是「失败」：角色选择器还有 `role=<role>` 这种字符串写法可用
-        warnings.push(`role 无法映射到 AriaRole：${loc}，已用 page.locator("role=${loc}") 兜底`);
-        return `page.locator(${javaString(`role=${loc}`)})`;
-      }
-      const name = String(el.roleName ?? displayName ?? '');
-      return `page.getByRole(AriaRole.${role}, new Page.GetByRoleOptions().setName(${javaString(name)}))`;
+      const r = ariaRoleExpr(loc, warnings);
+      // 未知角色：`expr` 已经是整条 `page.locator("role=...")`，不能再包 setName（[A1-2]）
+      if (!r.aria) return r.expr;
+      // AR-4：roleName 一律 `String(...).trim()`（与 `pwChainToJava` 规则⑥ 同一口径）；
+      // trim 后为空视为「没填」，退回元素展示名 —— 免得生成 `setName("")`（[C-28] 的失效形态）
+      const name = String(el.roleName ?? '').trim() || String(displayName ?? '').trim();
+      return `page.getByRole(${r.expr}, new Page.GetByRoleOptions().setName(${javaString(name)}))`;
     }
     case 'pw': {
       // 1.36.0（B6）：把存下来的 Playwright 链机械改写成 Java。转不出**不抛**，
@@ -359,9 +451,20 @@ function locatorExpr(el: PomElement, warnings: string[], displayName: string): s
       for (const w of r.warnings) warnings.push(w);
       return r.expr;
     }
+    // A₀ 新增 5 种：与 Playwright Java 的同名方法**逐字一致**，不带 setName / 不带 options（[A0-2]）
+    case 'label':
+      return `page.getByLabel(${javaString(loc)})`;
+    case 'placeholder':
+      return `page.getByPlaceholder(${javaString(loc)})`;
+    case 'alttext':
+      return `page.getByAltText(${javaString(loc)})`;
+    case 'title':
+      return `page.getByTitle(${javaString(loc)})`;
+    case 'testid':
+      return `page.getByTestId(${javaString(loc)})`;
     default:
-      // 未知 kind：当成 css 兜底（类型上不可达，但运行时的脏数据不会让整个生成失败）
-      warnings.push(`未知的元素类型：${String(el.kind)}，已按 css 处理`);
+      // 类型上不可达（normalizeLocatorKind 已收口），运行时脏数据仍不许让整个生成失败
+      warnings.push(`未知的元素类型：${rawKindText(rawKind)}，已按 css 处理`);
       return `page.locator(${javaString(loc)})`;
   }
 }

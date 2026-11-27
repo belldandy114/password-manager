@@ -18,6 +18,7 @@ import {
   summarizeChildError,
   validateTrialArgs,
 } from '../../../electron/element-args.js';
+import { POM_LOCATOR_KINDS } from '../codegen/pageobject';
 
 /**
  * 元素库 · 定位/试跑的纯函数层（1.36.0 / B8，契约 §12.6 / §12.7，裁定 Q4 / Q5）。
@@ -81,15 +82,18 @@ describe('validateTrialArgs：入参校验（文案是契约的一部分）', ()
 
   it('role 必须有 roleName；roleName 也有上限', () => {
     expect(validateTrialArgs(okArgs({ items: [{ kind: 'role', locator: '登录' }] }))).toEqual({ ok: false, error: ERR.roleNeedsName });
-    const longRole = { kind: 'role', locator: '登录', roleName: 'x'.repeat(101) };
+    // C-09：上限统一为 40（与渲染层 validatePage / 输入框 maxLength 同值），41 被拦
+    const longRole = { kind: 'role', locator: '登录', roleName: 'x'.repeat(41) };
     expect(validateTrialArgs(okArgs({ items: [longRole] }))).toEqual({ ok: false, error: ERR.longRoleName });
     const good = validateTrialArgs(okArgs({ items: [{ kind: 'role', locator: '登录', roleName: 'button' }] }));
     expect(good.ok).toBe(true);
   });
 
-  it('五种策略都认（css / xpath / text / role / pw）', () => {
-    expect(KINDS).toEqual(['css', 'xpath', 'text', 'role', 'pw']);
-    for (const kind of KINDS) {
+  it('五种策略都认（css / xpath / text / role / pw）—— A₀ 后扩到 10 种，这 5 种仍全部认', () => {
+    // A₀（[A0-5]）把清单扩到 10 值；这里钉的是「原 5 种一个都没丢、顺序没动」，
+    // 10 值的完整同序断言在下面的「双清单同源门」里（那条才是漂移门）。
+    expect(KINDS.slice(0, 5)).toEqual(['css', 'xpath', 'text', 'role', 'pw']);
+    for (const kind of ['css', 'xpath', 'text', 'role', 'pw']) {
       const item = kind === 'role' ? { kind, locator: '确定', roleName: 'button' } : { kind, locator: '#a' };
       expect(validateTrialArgs(okArgs({ items: [item] })).ok).toBe(true);
     }
@@ -156,9 +160,32 @@ describe('buildTrialScript：临时 .mjs 的结构（不跑浏览器也要能验
 
   it('四种策略的取值方式都在；pw 链原样当 Playwright 表达式用', () => {
     expect(script).toContain("page.locator('xpath=' + it.locator)");
-    expect(script).toContain("page.locator('text=' + it.locator)");
-    expect(script).toContain('page.getByRole(it.roleName, { name: it.locator })');
+    // 契约 [A0-6]③：text 必须与生成物的 getByText 同源。
+    // 旧断言钉的是 page.locator('text=' + it.locator) —— 那是 text= 引擎，大小写/精确度语义不同，
+    // 会造成「试跑假红、POM 命中」。现在两件事都要断言：新的在、旧的**不在**。
+    expect(script).toContain('page.getByText(it.locator)');
+    expect(script).not.toContain('text=');
+    // 契约 [A0-6]②：role 的两个字段不许再颠倒（locator=角色，roleName=可访问名）。
+    // C-08 之后 name 选项**带守卫**（空可访问名不传 name，否则必然 0 命中）：
+    //   (it.roleName && String(it.roleName).trim()) ? { name: it.roleName } : {}
+    expect(script).toContain('page.getByRole(it.locator, (it.roleName && String(it.roleName).trim()) ? { name: it.roleName } : {})');
+    expect(script).not.toContain('page.getByRole(it.roleName, { name: it.locator })');
     expect(script).toContain('page.locator(it.locator)');
+  });
+
+  it('role 的参数顺序：角色在前、可访问名在 name 选项（[A0-6]② 的证伪条件）', () => {
+    const roleLine = script
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.startsWith("else if (it.kind === 'role')"));
+    // C-08：同一行加了「空可访问名不传 name」的守卫，参数顺序不变
+    expect(roleLine).toBe(
+      "else if (it.kind === 'role') loc = page.getByRole(it.locator, (it.roleName && String(it.roleName).trim()) ? { name: it.roleName } : {});"
+    );
+    // 第一个实参是角色（it.locator），不是 it.roleName
+    const args = roleLine!.slice(roleLine!.indexOf('getByRole(') + 'getByRole('.length);
+    expect(args.startsWith('it.locator,')).toBe(true);
+    expect(args).toContain('{ name: it.roleName }');
   });
 
   it('登录态单独成一个字段（不许把「需要登录」报成 0 命中）', () => {
@@ -365,3 +392,87 @@ describe('maskPath / buildDeps：不回真实绝对路径（Q4 硬约束①）',
   });
 });
 
+
+describe('双清单同源门：KINDS ↔ POM_LOCATOR_KINDS（契约 [A0-5]，漂移门）', () => {
+  it('electron/ 的 KINDS 与 pageobject.ts 的 POM_LOCATOR_KINDS 逐项相等且同序', () => {
+    const tsIds = POM_LOCATOR_KINDS.map((k) => k.id);
+    expect(tsIds.length).toBe(10);
+    // 顺序也是契约：界面下拉顺序 = 生成器清单顺序 = 主进程白名单顺序
+    expect(KINDS).toEqual(tsIds);
+  });
+
+  it('10 种 kind 逐一过 validateTrialArgs 全部 ok（5 个新 kind 不许再被判「未知的定位方式」）', () => {
+    // ⚠️ 遍历的是**生成器清单**（10 值），不是 KINDS —— 否则这条测试只能证明「KINDS 自己过得去」，
+    // 抓不到「界面能发 10 种、主进程只认 5 种」这个真实 bug（live bug：badKind 直接挡住试跑）。
+    for (const kind of POM_LOCATOR_KINDS.map((k) => k.id)) {
+      const r = validateTrialArgs({
+        dir: 'C:\\work',
+        url: 'https://example.com',
+        items: [
+          {
+            kind,
+            locator: kind === 'role' ? 'button' : '#x',
+            ...(kind === 'role' ? { roleName: '登录' } : {}),
+          },
+        ],
+      });
+      expect(r.ok, `kind=${kind} 应通过校验，实际：${r.ok ? '' : r.error}`).toBe(true);
+    }
+  });
+
+  it('脏 kind 仍被拦，且文案不变（badKind 只对真正的脏值生效）', () => {
+    const r = validateTrialArgs({ dir: 'C:\\w', url: 'https://e.com', items: [{ kind: 'shadow', locator: '#x' }] });
+    expect(r).toEqual({ ok: false, error: '未知的定位方式：shadow' });
+  });
+});
+
+describe('buildTrialScript 覆盖 10 种 kind 的定位调用（新增 5 种逐条断言）', () => {
+  const script = buildTrialScript({ url: 'https://e.com', items: [], budget: computeBudget(0) });
+
+  it('label → getByLabel', () => {
+    expect(script).toContain('page.getByLabel(it.locator)');
+  });
+
+  it('placeholder → getByPlaceholder', () => {
+    expect(script).toContain('page.getByPlaceholder(it.locator)');
+  });
+
+  it('alttext → getByAltText', () => {
+    expect(script).toContain('page.getByAltText(it.locator)');
+  });
+
+  it('title → getByTitle', () => {
+    expect(script).toContain('page.getByTitle(it.locator)');
+  });
+
+  it('testid → getByTestId（且用 data-testid，不是别的属性）', () => {
+    expect(script).toContain('page.getByTestId(it.locator)');
+  });
+
+  it('5 个新 kind 各有自己的分支：不许都掉进 css 的 page.locator(it.locator)', () => {
+    for (const kind of ['label', 'placeholder', 'alttext', 'title', 'testid']) {
+      expect(script).toContain(`else if (it.kind === '${kind}')`);
+    }
+  });
+});
+
+describe('C-08：role 分支不许传空的可访问名过滤器（否则必然 0 命中）', () => {
+  const script = buildTrialScript({ url: 'https://e.com', items: [], budget: computeBudget(0) });
+  const roleLine = script
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.includes("it.kind === 'role'"));
+
+  it('role 行：可访问名为空时不带 name 选项（老实现无条件传 { name: it.roleName }）', () => {
+    expect(roleLine).toBeTruthy();
+    // 带守卫的三元：空串/空白 → 空对象（= 只按角色匹配）
+    expect(roleLine).toContain('(it.roleName && String(it.roleName).trim()) ? { name: it.roleName } : {}');
+    // 无条件传 name 的旧形态必须不存在
+    expect(script).not.toContain('page.getByRole(it.locator, { name: it.roleName });');
+  });
+
+  it('参数顺序仍然是「角色在前、可访问名在 name 选项」（[A0-6]② 不回退）', () => {
+    expect(roleLine).toContain('page.getByRole(it.locator,');
+    expect(roleLine).not.toContain('page.getByRole(it.roleName');
+  });
+});

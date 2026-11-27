@@ -208,7 +208,7 @@ describe('B8-B ③ 试跑结果面板与字段回填', () => {
     expect(cellText[0]).toMatch(/命中 1/);
     expect(cellText[1]).toMatch(/未命中/);
     expect(cellText[2]).toMatch(/命中 3 个/);
-    // pw + 没有 hitCount → 既有固定口径，不显示数字
+    // pw + 没有 hitCount → 既有固定口径，不显示数字；t22 起这两格允许换行（不裁切、不缩文案）
     expect(cellText[3]).toContain('未校验（pw 链需在 Playwright 中验证）');
   });
 
@@ -259,5 +259,36 @@ describe('B8-B ④ 页面需要登录', () => {
     const panel = await runTrial(booted.container);
     expect(panel.textContent).toContain('缺少 playwright');
     expect(panel.textContent).not.toContain('选择器未命中');
+  });
+});
+
+/* ================================================================
+   t26（AR-4 组件侧第三处）：试跑发出去的 roleName 也必须 trim
+   ================================================================ */
+
+/** 4 行页面：其中一行是 role 且可访问名带首尾空格（用户手滑的典型形态） */
+const PAGE_ROLE: PomPage = {
+  id: 'page-role',
+  name: '登录页',
+  baseUrl: 'https://example.com/login',
+  elements: [
+    { id: 'el-1', name: '用户名', locator: '#user', kind: 'css' },
+    { id: 'el-2', name: '提交按钮', locator: 'button', kind: 'role', role: '  提交  ' },
+    { id: 'el-3', name: '密码', locator: '#pwd', kind: 'css' },
+    { id: 'el-4', name: '登录', locator: '登录', kind: 'text' },
+  ],
+  updatedAt: '2026-11-28T02:00:00.000Z',
+};
+
+describe('AR-4：试跑路径的 roleName 与点验 / 生成器同口径 trim', () => {
+  it('可访问名「 提交 」→ 发给主进程的是「提交」（不带首尾空格）', async () => {
+    localStorage.setItem(EL_WORK_DIR_KEY, 'D:\\pm-el');
+    const booted = await boot({ pages: [PAGE_ROLE] });
+    await runTrial(booted.container);
+    const sent = booted.calls.trial[0];
+    const roleItem = (sent.items as Array<{ roleName?: string; kind: string }>).find((i) => i.kind === 'role');
+    expect(roleItem).toBeTruthy();
+    expect(roleItem!.roleName).toBe('提交');
+    expect(String(roleItem!.roleName)).toBe(String(roleItem!.roleName).trim());
   });
 });

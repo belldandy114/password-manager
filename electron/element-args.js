@@ -21,10 +21,24 @@ const path = require('path');
 const MAX_ITEMS = 20;
 /** 单条 locator 的字符上限 */
 const MAX_LOCATOR_LEN = 500;
-/** roleName 的字符上限 */
-const MAX_ROLE_NAME_LEN = 100;
-/** 支持的定位策略（`pw` = 原样存的 Playwright 链） */
-const KINDS = ['css', 'xpath', 'text', 'role', 'pw'];
+/**
+ * role 可访问名的字符上限（**与渲染层同一个数**）。
+ *
+ * C-09（review-code P2）：这里原来是 100，而 `pomModel.validatePage` 与元素表的输入框都是 40 ——
+ * 同一条元素「界面能填 40、主进程放到 100」，两处结论不同。现在统一取 **40**（写端更严的那一边），
+ * 渲染层两处保持不变即自动一致。
+ */
+const MAX_ROLE_NAME_LEN = 40;
+/**
+ * 支持的定位策略（`pw` = 原样存的 Playwright 链）。
+ *
+ * 契约 [A0-5]：这份清单**不是**第二份手写真源 —— 顺序与取值必须与
+ * `src/utils/codegen/pageobject.ts` 的 `POM_LOCATOR_KINDS` 逐项相等（A₀ 扩到 10 值），
+ * `src/utils/__tests__/elementArgs.test.ts` 的 parity 单测会 red。
+ * 为什么必须扩：界面按生成器清单渲染下拉，能把 10 种都发到 `el:trial-run`；
+ * 这里少一种，运行期就回「未知的定位方式」——A₀ 在试跑这条路径上等于没生效（真实 live bug）。
+ */
+const KINDS = ['css', 'xpath', 'text', 'role', 'pw', 'label', 'placeholder', 'alttext', 'title', 'testid'];
 
 /**
  * 三段超时预算（Q5 定稿：launch ≤15s / goto ≤15s / items ≤20s / 总 ≤50s；单条 trial 2s）。
@@ -54,7 +68,7 @@ const ERR = {
   emptyLocator: '定位器不能为空',
   longLocator: `定位器最多 ${MAX_LOCATOR_LEN} 个字符`,
   badKind: (k) => `未知的定位方式：${k}`,
-  roleNeedsName: 'role 定位缺少 roleName',
+  roleNeedsName: '「角色（role）」定位必须填写可访问名',
   longRoleName: `role 名称最多 ${MAX_ROLE_NAME_LEN} 个字符`,
   emptyDir: '请先选择 Playwright 工作目录',
   busy: '正在运行，请稍候',
@@ -268,19 +282,38 @@ function profileDirOf(workDir) {
  */
 function isInsideProfile(workDir, target) {
   const base = profileDirOf(workDir);
+  if (!base) return false;
+  return isInsidePath(base, target);
+}
+
+/**
+ * 通用路径包含性校验（[A2-9]：从 `isInsideProfile` 抽出来，供点验 profile 复用同一算法）。
+ *
+ * 实现刻意**不是**「字符串拼接后 startsWith」：先 `path.resolve` 归一（消掉 `..`、重复分隔符、
+ * 末尾反斜杠），再比较 `===` 或 `startsWith(base + path.sep)`，最后用 `path.relative` 反证一次。
+ * **真正的删除目标永远由调用方自己算**，不删外部给的路径。
+ *
+ * @param {string} base 基准目录（绝对路径）
+ * @param {string} target 待判定路径
+ * @returns {boolean}
+ */
+function isInsidePath(base, target) {
+  const b = str(base);
   const t = str(target);
-  if (!base || !t) return false;
+  if (!b || !t) return false;
+  let resolvedBase;
   let resolved;
   try {
+    resolvedBase = path.resolve(b);
     resolved = path.resolve(t);
   } catch {
     return false;
   }
-  const eq = resolved === base;
-  const inside = resolved.startsWith(base + path.sep);
+  const eq = resolved === resolvedBase;
+  const inside = resolved.startsWith(resolvedBase + path.sep);
   if (!eq && !inside) return false;
   // 反证：归一后的相对路径不许以 .. 开头（防 win32 大小写/尾分隔符的边缘差异）
-  const rel = path.relative(base, resolved);
+  const rel = path.relative(resolvedBase, resolved);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
@@ -447,8 +480,24 @@ try {
         let loc = null;
         if (it.kind === 'css') loc = page.locator(it.locator);
         else if (it.kind === 'xpath') loc = page.locator('xpath=' + it.locator);
-        else if (it.kind === 'text') loc = page.locator('text=' + it.locator);
-        else if (it.kind === 'role') loc = page.getByRole(it.roleName, { name: it.locator });
+        // 契约 [A0-6]：text 必须与生成物的 getByText 同源。
+        // 以前是 page.locator(文本引擎前缀 + locator) —— 那是 Playwright 的文本引擎，
+        // 大小写/精确度语义与 getByText 不同，结果是「试跑假红、POM 命中」（生成物用的就是 getByText）。
+        else if (it.kind === 'text') loc = page.getByText(it.locator);
+        // 契约 [A0-6]：role 的两个字段以前写反了（getByRole(roleName, { name: locator })）——
+        // locator 才是角色（pageobject.ts 的 ariaRoleOf(el.locator)），roleName 是可访问名
+        // （ElementLibTab.tsx 传的是 el.role）。参数颠倒的后果是试跑里 role 元素必然 0 命中。
+        // C-08（review-code P2）：可访问名**为空时不许传 { name: '' }** —— Playwright 会把空名字
+        // 当「可访问名等于空串」的过滤器，必然 0 命中，正是本批要消灭的「试跑假红」。
+        // 不传 name 选项 = 只按角色匹配（与 Playwright 默认语义一致）。
+        else if (it.kind === 'role') loc = page.getByRole(it.locator, (it.roleName && String(it.roleName).trim()) ? { name: it.roleName } : {});
+        // A₀ 新增的 5 种语义化定位（契约 [A0-5]/[A0-7]）：与生成物的 getByXxx 同源，
+        // 不许掉进 css 的 page.locator(it.locator) —— 那样 label 会被当成非法 CSS 选择器，试跑必然假红。
+        else if (it.kind === 'label') loc = page.getByLabel(it.locator);
+        else if (it.kind === 'placeholder') loc = page.getByPlaceholder(it.locator);
+        else if (it.kind === 'alttext') loc = page.getByAltText(it.locator);
+        else if (it.kind === 'title') loc = page.getByTitle(it.locator);
+        else if (it.kind === 'testid') loc = page.getByTestId(it.locator);
         else loc = buildPw(page, it.pwPlan); // pw：按纯函数层给的「方法名 + 字面量参数」逐个 apply
         row.hit = await loc.count();
         if (row.hit > 0) {
@@ -595,6 +644,7 @@ module.exports = {
   maskPath,
   profileDirOf,
   isInsideProfile,
+  isInsidePath,
   computeBudget,
   validateTrialArgs,
   buildTrialScript,

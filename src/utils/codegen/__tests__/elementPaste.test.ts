@@ -130,12 +130,13 @@ describe('parsePlaywright：getByRole / getByText / locator / filter 链', () =>
     expect(nth!.confidence).toBe('guess');
   });
 
-  it('getByPlaceholder 单条 → kind=pw / guess（元素库没有 placeholder 这种 kind，只能原样存）', () => {
+  it('getByPlaceholder 单条 → kind=placeholder / exact（A₀ 之后有专属 kind，不再暂存成 pw）', () => {
     const rows = parsePlaywright(SCRIPT);
-    const ph = rows.find((r) => r.locator.includes('getByPlaceholder'));
+    const ph = rows.find((r) => r.locator === '请输入账号');
     expect(ph).toBeTruthy();
-    expect(ph!.kind).toBe('pw');
-    expect(ph!.confidence).toBe('guess');
+    // D-4（[A1-8] (3)）：A₀ 之前这里落 pw；A₀ 之后落 placeholder —— 断言改值，用例保留
+    expect(ph!.kind).toBe('placeholder');
+    expect(ph!.confidence).toBe('exact');
     expect(ph!.name).toContain('请输入账号');
   });
 

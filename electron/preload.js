@@ -386,6 +386,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   elDeps: (input) => ipcRenderer.invoke('el:deps', input),
   elPickDir: () => ipcRenderer.invoke('el:pick-dir'),
   elProfileClear: (input) => ipcRenderer.invoke('el:profile-clear', input),
+  /* 元素库 A₂ · CDP 点验（契约 [A2-1]）：**一条通道三个 op**（verify / status / stop，缺省 verify）。
+   * 不拆成三条的理由：单会话单例的状态判断只能有一处，否则必然漂移。 */
+  elHitTest: (input) => ipcRenderer.invoke('el:hit-test', input),
   // 运行输出（流式）：返回取消订阅函数
   // 应用日志（排障）
   dataLegacyInfo: () => ipcRenderer.invoke('data:legacy-info'),

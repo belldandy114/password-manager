@@ -1104,9 +1104,18 @@ export interface ElDepsResult {
 
 /** `el:trial-run` 的入参条目（`items ≤ 20`、`locator ≤ 500` 字符） */
 export interface ElTrialInputItem {
-  kind: 'css' | 'xpath' | 'text' | 'role' | 'pw';
+  /**
+   * 与 `POM_LOCATOR_KINDS` 同一套取值（契约 [A0-5]：清单唯一真源在生成器，三处逐项同序）。
+   *
+   * 这里写成 10 个值而不是 5 个，是因为渲染层把 `PomLocatorKind` 原样传进来：
+   * 类型窄于真源会让 `ElTrialInputItem[]` 的赋值直接报错（A₀ 扩枚举后的真实 TS 错误）。
+   */
+  kind: 'css' | 'xpath' | 'text' | 'role' | 'pw' | 'label' | 'placeholder' | 'alttext' | 'title' | 'testid';
   locator: string;
-  /** `kind==='role'` 必填 */
+  /**
+   * `kind==='role'` 必填：**可访问名**（与页面对象元素对象的 `role` 字段同义）。
+   * `locator` 才是角色（button / textbox …）—— 契约 [A0-6]② 修正过这对字段的方向。
+   */
   roleName?: string;
   name?: string;
 }
@@ -1149,8 +1158,96 @@ export interface ElTrialResult {
   message?: string;
 }
 
-/** `tdg:write-start` → `{ writerId, path }` */
-export interface TdgWriteStartResult {
+/** 点验事实的 7 个 reason（契约 [A2-3]：每个值只对应一种事实，界面文案逐字） */
+export type ElHitReason =
+  | 'ok'
+  | 'not-found'
+  | 'not-visible'
+  | 'iframe-only'
+  | 'login-required'
+  | 'unsupported'
+  | 'timeout';
+
+/**
+ * `el:hit-test` 的入参（契约 [A2-2]）。
+ *
+ * 两种来源**恰好给一组**：
+ *   - 落库元素：`pageId + elementId`（主进程自己读 vault 取真值，验的就是库里那一条）
+ *   - 草稿：`locator + kind`（还没保存的元素）
+ */
+export interface ElHitTestInput {
+  /** 缺省 'verify' */
+  op?: 'verify' | 'status' | 'stop';
+  pageId?: string;
+  elementId?: string;
+  locator?: string;
+  /** 与 `PomLocatorKind` 同一套取值；脏值按 css 处理（主进程侧是普通字符串） */
+  kind?: string;
+  /** 仅 `kind='role'` 必填：可访问名（与页面对象的 `role` 字段同义） */
+  roleName?: string;
+  /** `op='verify'` 必填：要打开/切换到的地址（只放行 http/https） */
+  url?: string;
+  /** 只能压小，不能突破单段上限（[A2-6]） */
+  timeoutMs?: number;
+}
+
+/**
+ * 点验回报的**事实**（契约 [A2-3]）。
+ *
+ * 「只报事实、不判对错」：命中了几个、第一个可见不可见、在不在子框架里。
+ * `approx:true` 表示这条定位方式在这里是近似实现（text / role / pw），界面**不许**写「已验证」「等价」。
+ */
+export interface ElHitFacts {
+  found: boolean;
+  /** 命中数，上限 50（超出置 `truncated`） */
+  total: number;
+  truncated: boolean;
+  /** 按 [A2-3] 的判据：`getClientRects().length > 0 && visibility !== 'hidden'`（opacity:0 仍算可见） */
+  visible: boolean;
+  /** 本期恒为 false（[N-2]：不进 iframe） */
+  inIframe: boolean;
+  /** 主文档里 iframe 的数量（给 `reason='iframe-only'` 用） */
+  iframes: number;
+  reason: ElHitReason;
+  /** 第一个命中的可读标签，≤ 40 字；**不落盘**（[A2-13]） */
+  label: string;
+  approx: boolean;
+  kind: string;
+  locator: string;
+  roleName?: string;
+  source: 'vault' | 'draft';
+  pageId?: string;
+  elementId?: string;
+  ms: number;
+}
+
+/** 点验会话状态（`op:'status'` 出参；只读，绝不拉起浏览器） */
+export interface ElHitSession {
+  open: boolean;
+  sessionId: string;
+  browserId: 'chrome' | 'msedge' | '';
+  /** 从 DevToolsActivePort 读到的真实端口（0 = 尚未就绪） */
+  port: number;
+  /** 脱敏后的地址（协议//host/path，不含 query） */
+  url: string;
+  startedAt: string;
+  lastHitAt: string;
+  /** 距空闲自停还剩多久（[A2-6]） */
+  idleStopInMs: number;
+}
+
+/** `el:hit-test` 的成功出参 */
+export interface ElHitTestResult {
+  op: 'verify' | 'status' | 'stop';
+  /** 只有 `op:'verify'` 且**真的查过**才有；任何「没连上」都不许带这个字段（[A2-4]） */
+  hit?: ElHitFacts;
+  session: ElHitSession;
+  stopped?: boolean;
+  killed?: boolean;
+  alreadyStopped?: boolean;
+}
+
+/** `tdg:write-start` → `{ writerId, path }` */export interface TdgWriteStartResult {
   writerId: string;
   path: string;
 }
@@ -1730,6 +1827,17 @@ export interface ElectronAPI {
   /** 清空 profile（= 退出登录）；只允许 `<dir>/.pm-profile`，外部路径一律拒绝 */
   elProfileClear: (input: { dir: string; target?: string })
     => Promise<{ success: boolean; data?: { cleared: boolean; path: string }; error?: string }>;
+  /**
+   * 元素库 A₂ · CDP 点验（契约 [A2-1]：一条通道三个 op）。
+   *
+   * - `op:'verify'`：起/复用本应用自己的浏览器 → 连 CDP → 注入固定脚本 → 回报事实；
+   * - `op:'status'`：只读会话状态（绝不拉起浏览器）；
+   * - `op:'stop'`：三级降级关浏览器（幂等）。
+   *
+   * 「没连上」一律 `success:false + error`，**不带** `hit`（[A2-4]：不许把没验成说成没命中）。
+   */
+  elHitTest: (input: ElHitTestInput)
+    => Promise<{ success: boolean; data?: ElHitTestResult; error?: string; code?: string }>;
 
   tdgWriteStart: (payload: { savePath?: string; format: 'csv' | 'json' | 'txt'; columns?: string[]; bom?: boolean })
     => Promise<{ success: boolean; data?: TdgWriteStartResult; error?: string; canceled?: boolean }>;

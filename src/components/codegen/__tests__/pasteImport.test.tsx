@@ -10,7 +10,7 @@
  *    老元素的 id 不被洗掉；
  * 5. 「来源」列优先读元素自带 `source`（粘贴导入 / 手工添加 / 录制器），老元素回退派生；
  * 6. 类型下拉 5 项、含「Playwright 链（原样存）」；
- * 7. `pw` 元素的「上次校验」列是固定文案「未校验（pw 链需在 Playwright 中验证）」且**不含任何数字**
+ * 7. pw 元素的「上次校验」列是固定文案「未校验（pw 链）」且**不含任何数字**（t22：可见文案按列宽收敛，完整解释在 title）
  *    （Z9：body 兜底必然命中 1，显示命中数就是假阳性）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -254,21 +254,44 @@ describe('B6-B ⑤ 来源列：优先 source，老元素回退派生', () => {
 });
 
 /* ================================================================
-   ⑥⑦ 类型下拉 5 项 + pw 的上次校验（Z9）
+   ⑥⑦ 类型下拉 10 项 + pw 的上次校验（Z9）
    ================================================================ */
 describe('B6-B ⑥⑦ pw 下拉与上次校验', () => {
-  it('类型下拉 5 项且含「Playwright 链（原样存）」', async () => {
+  /**
+   * 1.37.0（S3 / [A0-8]）：下拉从 5 项扩到 **10** 项（+ label / placeholder / alttext / title / testid）。
+   * 这条断言就是「界面只剩一份 kind 清单」的机械判据——文案与顺序都来自 `POM_LOCATOR_KINDS`，
+   * 如果谁又手写了一份 5 项数组，这里立刻红。
+   */
+  it('类型下拉 10 项（含 pw 与 5 个新增），顺序与 POM_LOCATOR_KINDS 一致', async () => {
     const { container } = await bootTrimmed();
     const select = container.querySelector('tbody select') as HTMLSelectElement;
     const opts = [...select.querySelectorAll('option')].map((o) => (o.textContent || '').trim());
-    expect(opts).toEqual(['css 选择器', 'xpath', '可见文本', '角色（role）', 'Playwright 链（原样存）']);
+    expect(opts).toEqual([
+      'css 选择器',
+      'xpath',
+      '可见文本',
+      '角色（role）',
+      'Playwright 链（原样存）',
+      'label 文本',
+      'placeholder 文本',
+      'alt 文本',
+      'title 属性',
+      'data-testid',
+    ]);
   });
 
   it('pw 元素的「上次校验」是固定文案且不含任何数字（Z9 不许伪造命中）', async () => {
     const { container } = await bootTrimmed();
-    const checks = [...container.querySelectorAll('[data-col="last-check"]')].map((td) => (td.textContent || '').trim());
+    const cells = [...container.querySelectorAll('[data-col="last-check"]')] as HTMLElement[];
+    const checks = cells.map((td) => (td.textContent || '').trim());
+    // t22：文案不缩短、不裁切 —— 这两格改为**允许换行**（样式在 redesign.css 末尾），
+    // 所以完整解释都在可见文本里；状态词「未校验」是前缀，不靠 hover 读得到。
     expect(checks[2]).toBe('未校验（pw 链需在 Playwright 中验证）');
+    expect(checks[2].startsWith('未校验')).toBe(true);
+    expect(cells[2].getAttribute('title') || '').toContain('Playwright');
     expect(checks[2]).not.toMatch(/\d/);
+    // 单元格上不许再挂 nowrap / ellipsis 那套「裁切兜底」（t22：nowrap 才是病根）
+    expect(cells[2].getAttribute('style') || '').not.toMatch(/nowrap|ellipsis/);
     // 非 pw 元素仍是派生口径（B8 才改字段）
     expect(checks[1]).toBe('未校验');
   });

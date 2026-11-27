@@ -9,6 +9,7 @@
 
 import { newId } from '../../utils/id';
 import { trimToCaps, capsOf, trimNotice } from '../../utils/collectionTrim';
+import { POM_LOCATOR_KINDS, normalizeLocatorKind } from '../../utils/codegen/pageobject';
 import type { PomLocatorKind } from '../../utils/codegen/pageobject';
 
 /* ================================================================
@@ -65,16 +66,19 @@ export interface PomPage {
   updatedAt: string;
 }
 
-export const KINDS: Array<{ id: PomLocatorKind; label: string }> = [
-  { id: 'css', label: 'css 选择器' },
-  { id: 'xpath', label: 'xpath' },
-  { id: 'text', label: '可见文本' },
-  { id: 'role', label: '角色（role）' },
-  // 1.36.0（B6，渲染层契约 §6.1）：第 5 种。文案逐字定稿，改它要同步 §6.1 的表。
-  // 为什么需要它：css/xpath 表达不了 `hasText` / `hasNotText` 这类语义过滤（`:has-text()` 只有
-  // Playwright 认，浏览器不认），而元素库的定位器要同时服务「浏览器内校验」和「生成 Java」。
-  { id: 'pw', label: 'Playwright 链（原样存）' },
-];
+/**
+ * 定位方式清单（下拉渲染用）。
+ *
+ * **1.37.0（S3 / [A0-8]）改为再导出单一真源**：以前这里是手写的 5 项数组，与生成器里的
+ * `PomLocatorKind` 是两份清单——加一种定位方式必须改两处，漏一处就是「下拉里选不到」
+ * 或「选了被 `validatePage` 拦下」。现在只保留 `utils/codegen/pageobject.ts` 的
+ * `POM_LOCATOR_KINDS`（10 项，含顺序），这里**不再出现任何字面量**。
+ * 判据（[A0-8] 证伪形态）：本文件里出现第二份 `['css','xpath',…]` 白名单即不通过。
+ */
+export const KINDS: ReadonlyArray<{ id: PomLocatorKind; label: string }> = POM_LOCATOR_KINDS;
+
+/** kind 归一（[A0-3]）：脏值 / 缺值 / 大小写与空白差异一律当 `css`，与生成器、主进程同一函数 */
+export { normalizeLocatorKind };
 
 /** 上限（契约 §1.2 [C-27]） */
 export const MAX_PAGES = 200;
@@ -116,19 +120,42 @@ export function validatePage(draft: PomPage, all: PomPage[]): string | null {
     if (el.name.trim().length > 60) return `${at}：名称最多 60 个字符`;
     if (!el.locator.trim()) return `${at}：定位器不能为空`;
     if (el.locator.length > 500) return `${at}：定位器最多 500 个字符`;
-    if (!KINDS.some((k) => k.id === el.kind)) return `${at}：定位器类型无效`;
-    if (el.kind === 'pw') {
+    // [A0-3]：脏 kind（缺失 / 空串 / 大小写 / 未收录）先归一成 `css`，再往下校验。
+    // 老库里的元素因此「打开即可保存」，而不是被拦在「定位器类型无效」——
+    // 归一后理论上不可能非法，下面那行保留为**防御性断言**（[A0-4] 的原话：归一后仍非法理论上不可达）。
+    const kind = normalizeLocatorKind(el.kind);
+    if (!KINDS.some((k) => k.id === kind)) return `${at}：定位器类型无效`;
+    if (kind === 'pw') {
       // 1.36.0（B6）：pw 存的是一行 JS 链，换行/控制字符会让它落库后既生成不了 Java
       // 也没法在预览表里等宽显示（文案逐字定稿，见渲染层契约 §6.1）。
       if (/[\r\n\u0000-\u001f]/.test(el.locator)) return `${at}：Playwright 链不能包含换行或控制字符`;
     }
-    if (el.kind === 'role') {
+    if (kind === 'xpath') {
+      // [A0-4] 新增（文案逐字）：xpath 的 `xpath=` 前缀由生成器加，用户再写一遍会变成
+      // `page.locator("xpath=xpath=//div")`——生成得出、跑起来必然 0 命中，属最难排查的一类。
+      if (/^\s*xpath=/i.test(el.locator)) return `${at}：xpath 类型不要再写 xpath= 前缀（生成器会加）`;
+    }
+    if (kind === 'role') {
       // [C-28] 固定文案：少了它生成的 Java 会 setName("")，等于没写选择器
       if (!String(el.role ?? '').trim()) return `role 定位器必须填写 role 名称`;
       if (String(el.role).length > 40) return `${at}：role 名称最多 40 个字符`;
     }
   }
   return null;
+}
+
+/**
+ * 读库投影：[A0-3] ② 把整页元素的 `kind` 归一。
+ *
+ * 为什么在**读**的时候就归一、而不是等保存：老记录（1.34.0 及以前）没有 kind 概念，
+ * 或存了 `'CSS'` / `''` 这类脏值。不归一的话，下拉会显示成空白（`<select value>` 匹配不到任何
+ * `<option>`）、用户以为「类型丢了」；归一后它显示为 `css` 并可直接保存（保存即写回 `kind:'css'`）。
+ */
+export function normalizePageKinds(page: PomPage): PomPage {
+  return {
+    ...page,
+    elements: page.elements.map((el) => ({ ...el, kind: normalizeLocatorKind(el.kind) })),
+  };
 }
 
 /** 新建一份空白页面 */
@@ -151,7 +178,16 @@ export function blankPage(): PomPage {
  * 保存时再生成会让「同一次编辑」在不同保存轮次拿到不同 id，引用它的录制步骤就漂了。
  */
 export function blankElement(): PomElementRow {
-  return { id: newId('el-'), name: '', locator: '', kind: 'css', role: '', source: 'manual' };
+  // 默认 kind 取清单第一项（`css`）而不是写字面量：这样「文件里没有第二处 kind 清单/默认值字面量」，
+  // 将来若调整清单顺序，新元素的默认类型会跟着清单走，不会与下拉第一项不一致。
+  return {
+    id: newId('el-'),
+    name: '',
+    locator: '',
+    kind: POM_LOCATOR_KINDS[0].id,
+    role: '',
+    source: 'manual',
+  };
 }
 
 /**
@@ -176,7 +212,13 @@ export function cleanPageForWrite(draft: PomPage): PomPage {
       id: el.id ? String(el.id) : newId('el-'), // [C-110] ②：透传，不许写 undefined / 空串
       name: el.name.trim(),
       locator: el.locator, // [C-27]：定位器原样存，转义只在生成器里做
-      kind: el.kind,
+      // t26（AR-7）：**写端也归一 kind**。以前这里写 `kind: el.kind` 原样透传，脏值（`'CSS'` /
+      // `'foo'` / `''` / undefined）会原样落库，只能等下次读出来由 `normalizeLocatorKind` 兜底 ——
+      // 同一份脏数据在库里躺着，任何直接读 vault 的地方（导出 / 备份比对 / 未来的消费者）都得再归一一次。
+      // 写端一处收口更省事，且与 [A0-3] 的口径完全一致（用同一个函数，不新写第二套判定）。
+      // 注意 `el.kind === 'role'` 那个判断仍看**原值**：脏值本来就不是 role，归一后也不会变成 role，
+      // 所以两个分支不会因为归一而错位。
+      kind: normalizeLocatorKind(el.kind),
       ...(el.kind === 'role' ? { role: String(el.role ?? '').trim() } : {}),
       // 1.36.0（B6）：来源必须透传（漏它 = 保存一次就把「粘贴导入 / 手工添加」洗成 `—`）。
       // 用条件展开而不是 `source: el.source`：历史元素没有这个字段时不该多出一个永远空的键。
